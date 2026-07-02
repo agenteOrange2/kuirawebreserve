@@ -1,0 +1,8 @@
+@layer components {
+  .scrollbar-hidden {
+    &::-webkit-scrollbar {
+      width: 0;
+      background-color: transparent;
+    }
+  }
+}

@@ -1,0 +1,15 @@
+html {
+    body {
+        letter-spacing: 0.025em;
+        font-size: 0.875rem;
+        line-height: 1.25rem;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        font-family: "Public Sans", sans-serif;
+        color: rgb(71 85 105);
+    }
+    &.dark body {
+        background-color: rgb(15 23 42);
+        color: rgb(203 213 225);
+    }
+}

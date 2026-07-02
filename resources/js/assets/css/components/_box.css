@@ -1,0 +1,32 @@
+@layer components {
+  .box {
+    box-shadow: 0px 3px 5px #0000000b;
+    background-color: white;
+    border: 1px solid rgb(226 232 240);
+    border-radius: 0.6rem;
+    position: relative;
+    &--stacked:before {
+      content: "";
+      z-index: -1;
+      box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+      height: 100%;
+      background-color: rgb(248 250 252);
+      border: 1px solid rgb(226 232 240);
+      position: absolute;
+      border-radius: 0.5rem;
+      left: 0.875rem;
+      right: 0.875rem;
+      top: 0;
+      margin-top: 0.75rem;
+    }
+  }
+
+  :is(.dark *).box {
+    background-color: rgb(40 51 78);
+    border-color: rgb(41 53 82);
+    &--stacked:before {
+      background-color: rgb(40 51 78 / 0.7);
+      border-color: rgb(100 116 139 / 0.6);
+    }
+  }
+}

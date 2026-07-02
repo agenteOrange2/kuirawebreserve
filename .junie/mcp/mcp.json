@@ -1,0 +1,11 @@
+{
+    "mcpServers": {
+        "laravel-boost": {
+            "command": "E:\\Xampp\\php\\php.exe",
+            "args": [
+                "E:\\xampp\\htdocs\\Vue\\efservice_vue_inertia\\artisan",
+                "boost:mcp"
+            ]
+        }
+    }
+}
