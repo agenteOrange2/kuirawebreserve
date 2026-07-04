@@ -73,3 +73,7 @@
   --container-2xl: 1320px;
   --breakpoint-3xl: 1600px;
 }
+
+.container {
+  max-width: 100%!important;
+}

@@ -6,6 +6,20 @@ import { createPinia } from 'pinia';
 import { ZiggyVue } from '../../vendor/tightenco/ziggy';
 import '../css/app.css';
 import { initializeTheme } from '@/composables/useAppearance';
+import { configureEcho } from '@laravel/echo-vue';
+
+// El websocket entra por el proxy /app de nginx en el mismo dominio de la
+// página, así el semáforo en vivo funciona igual en el panel central y en
+// cualquier subdominio de tenant.
+configureEcho({
+    broadcaster: 'reverb',
+    key: import.meta.env.VITE_REVERB_APP_KEY,
+    wsHost: window.location.hostname,
+    wsPort: 80,
+    wssPort: 443,
+    forceTLS: window.location.protocol === 'https:',
+    enabledTransports: ['ws', 'wss'],
+});
 
 const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
 

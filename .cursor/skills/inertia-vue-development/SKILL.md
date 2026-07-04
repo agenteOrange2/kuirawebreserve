@@ -8,6 +8,18 @@ metadata:
 
 # Inertia Vue Development
 
+## REGLAS DEL PROYECTO KuiraWebReserve (obligatorias, sobreescriben lo genérico)
+
+Al construir layouts y diseños en este proyecto usa SIEMPRE el theme Raze/Midone:
+
+- Toda página del panel se envuelve en `RazeLayout` (`@/layouts/RazeLayout.vue`) con su prop `title`. Retícula del theme: `grid grid-cols-12 gap-5` + `col-span-12 sm:col-span-6 xl:col-span-N`.
+- Componentes SOLO de `resources/js/components/Base`: Button, FormInput/FormSelect/FormSwitch/FormTextarea/FormHelp/FormLabel, Dialog y Menu (Headless), Table, Lucide. No crear botones/inputs/modales a mano.
+- Iconos: SOLO el componente `Lucide` del theme (`@/components/Base/Lucide`, lucide-vue-next). Nada de SVG inline, otras librerías de iconos ni emojis. Verificar que el icono existe: `grep "@name Nombre$" node_modules/lucide-vue-next/dist/lucide-vue-next.d.ts`.
+- Sin emojis en ningún texto visible (options, badges, toasts, placeholders, mensajes del bot).
+- Cards: `box box--stacked`; círculos de icono `border-<token>/10 bg-<token>/10 text-<token>`; headers de página estilo reportes (título izquierda, acciones derecha); alturas alineadas (`h-full`/`flex-1`).
+- Referencias de diseño en `estructura/diseño/` (DashboardOverview8.vue es la hotelera).
+- Tippy del theme rompe el build de vite: tooltips con atributo nativo `title`.
+
 ## When to Apply
 
 Activate this skill when:
@@ -15,7 +27,7 @@ Activate this skill when:
 - Creating or modifying Vue page components for Inertia
 - Working with forms in Vue (using `<Form>` or `useForm`)
 - Implementing client-side navigation with `<Link>` or `router`
-- Using v2 features: deferred props, prefetching, or polling
+- Using v2 features: deferred props, prefetching, WhenVisible, InfiniteScroll, once props, flash data, or polling
 - Building Vue-specific features with the Inertia protocol
 
 ## Documentation
@@ -371,14 +383,49 @@ const { start, stop } = usePoll(5000, {
 - `autoStart` (default `true`) — set to `false` to start polling manually via the returned `start()` function
 - `keepAlive` (default `false`) — set to `true` to prevent throttling when the browser tab is inactive
 
-### WhenVisible (Infinite Scroll)
+### WhenVisible
 
-Load more data when user scrolls to a specific element:
+Lazy-load a prop when an element scrolls into view. Useful for deferring expensive data that sits below the fold:
 
-<!-- Infinite Scroll with WhenVisible -->
+<!-- WhenVisible Example -->
 ```vue
 <script setup>
 import { WhenVisible } from '@inertiajs/vue3'
+
+defineProps({
+    stats: Object
+})
+</script>
+
+<template>
+    <div>
+        <h1>Dashboard</h1>
+
+        <WhenVisible data="stats" :buffer="200">
+            <template #fallback>
+                <div class="animate-pulse">Loading stats...</div>
+            </template>
+
+            <template #default="{ fetching }">
+                <div>
+                    <p>Total Users: {{ stats.total_users }}</p>
+                    <p>Revenue: {{ stats.revenue }}</p>
+                    <span v-if="fetching">Refreshing...</span>
+                </div>
+            </template>
+        </WhenVisible>
+    </div>
+</template>
+```
+
+### InfiniteScroll
+
+Automatically load additional pages of paginated data as users scroll:
+
+<!-- InfiniteScroll Example -->
+```vue
+<script setup>
+import { InfiniteScroll } from '@inertiajs/vue3'
 
 defineProps({
     users: Object
@@ -386,23 +433,15 @@ defineProps({
 </script>
 
 <template>
-    <div>
+    <InfiniteScroll data="users">
         <div v-for="user in users.data" :key="user.id">
             {{ user.name }}
         </div>
-
-        <WhenVisible
-            v-if="users.next_page_url"
-            data="users"
-            :params="{ page: users.current_page + 1 }"
-        >
-            <template #fallback>
-                <div>Loading more...</div>
-            </template>
-        </WhenVisible>
-    </div>
+    </InfiniteScroll>
 </template>
 ```
+
+The server must use `Inertia::scroll()` to configure the paginated data. Use the `search-docs` tool with a query of `infinite scroll` for detailed guidance on buffers, manual loading, reverse mode, and custom trigger elements.
 
 ## Server-Side Patterns
 

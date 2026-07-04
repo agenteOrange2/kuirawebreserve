@@ -101,7 +101,15 @@ return [
     |
     */
 
-    'middleware' => ['web'],
+    // 'universal' + InitializeTenancyByDomain (con la feature UniversalRoutes
+    // activa en config/tenancy.php): el login autentica contra la DB central
+    // en kuirawebreserve.la y contra la DB del tenant en sus subdominios.
+    'middleware' => [
+        'universal',
+        'web',
+        Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class,
+        App\Http\Middleware\EnsureTenantIsActive::class,
+    ],
 
     /*
     |--------------------------------------------------------------------------

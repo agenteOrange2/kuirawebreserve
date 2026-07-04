@@ -38,6 +38,13 @@ class HandleInertiaRequests extends Middleware
         return [
             ...parent::share($request),
             'name' => config('app.name'),
+            // Contexto del panel: null en el dominio central; datos del hotel
+            // en sus subdominios (el menú lateral cambia según esto).
+            'tenant' => tenancy()->initialized ? [
+                'id' => tenant('id'),
+                'name' => tenant('name'),
+                'plan' => tenant('plan'),
+            ] : null,
             'auth' => [
                 'user' => $request->user(),
             ],

@@ -8,6 +8,13 @@ metadata:
 
 # Tailwind CSS Development
 
+## REGLAS DEL PROYECTO KuiraWebReserve (obligatorias, sobreescriben lo genérico)
+
+- Colores SOLO con los tokens del theme Raze definidos en `resources/css/app.css`: `primary`, `secondary`, `success`, `info`, `warning`, `pending`, `danger`, `dark`. Nunca la paleta cruda de Tailwind (red-500, emerald-*, sky-*, violet-*, amber-*...). `slate-*` solo para texto/bordes neutros y `darkmode-*` para modo oscuro.
+- Semáforo de habitaciones: available→success, reserved→info, occupied→primary, dirty→pending, cleaning→warning, maintenance→dark.
+- Patrones del theme: cards `box box--stacked`, círculos de icono `border-<token>/10 bg-<token>/10 text-<token>`, tablas anchas con `overflow-auto lg:overflow-visible`.
+- Iconos con el componente `Lucide` del theme, nunca SVG inline ni emojis.
+
 ## When to Apply
 
 Activate this skill when:

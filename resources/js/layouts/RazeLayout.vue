@@ -1,17 +1,32 @@
 <script setup lang="ts">
-import { Link, usePage } from '@inertiajs/vue3';
+import { Head, Link, usePage } from '@inertiajs/vue3';
 import { ref, computed } from 'vue';
 import Breadcrumb from '@/components/Base/Breadcrumb';
 import { Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import ToastHost from '@/components/ToastHost.vue';
 import { useAppearance } from '@/composables/useAppearance';
 import { useCompactMenu } from '@/composables/useCompactMenu';
 import { useMenu } from '@/composables/useMenu';
 
+const props = defineProps<{ title?: string }>();
+
 const page = usePage();
 const auth = computed(() => page.props.auth as any);
+const tenant = computed(() => page.props.tenant as { id: string; name: string; plan: string } | null);
 
-const { menu } = useMenu();
+const { menu, isTenantPanel } = useMenu();
+const brandName = computed(() => tenant.value?.name ?? 'KuiraReserve');
+const userInitials = computed(() => {
+  const name = (auth.value?.user?.name ?? '').trim();
+  if (!name) return '?';
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part: string) => part.charAt(0).toUpperCase())
+    .join('');
+});
+const homeRoute = computed(() => (isTenantPanel.value ? route('tenant.dashboard') : route('admin.dashboard')));
 const { appearance, updateAppearance } = useAppearance();
 
 const toggleDarkMode = () => {
@@ -48,6 +63,7 @@ const requestFullscreen = () => {
 </script>
 
 <template>
+  <Head :title="props.title" />
   <div :class="[
     'raze',
     'before:content-[\'\'] before:bg-linear-to-b before:from-slate-100 before:to-slate-50 dark:before:from-darkmode-800 dark:before:to-darkmode-800 before:h-screen before:w-full before:fixed before:top-0',
@@ -81,11 +97,11 @@ const requestFullscreen = () => {
             class="flex items-center transition-[margin] duration-300 group-[.side-menu--collapsed]:xl:ml-2 group-[.side-menu--collapsed.side-menu--on-hover]:xl:ml-0">
             <div
               class="flex items-center justify-center w-[34px] rounded-lg h-[34px] bg-white/8 transition-transform ease-in-out group-[.side-menu--collapsed.side-menu--on-hover]:xl:-rotate-180">
-              <Lucide icon="Truck" class="w-5 h-5 text-white" />
+              <Lucide icon="Building2" class="w-5 h-5 text-white" />
             </div>
             <div
-              class="ml-3.5 group-[.side-menu--collapsed.side-menu--on-hover]:xl:opacity-100 group-[.side-menu--collapsed]:xl:opacity-0 transition-opacity font-medium text-white">
-              EFService
+              class="ml-3.5 group-[.side-menu--collapsed.side-menu--on-hover]:xl:opacity-100 group-[.side-menu--collapsed]:xl:opacity-0 transition-opacity font-medium text-white truncate max-w-[160px]">
+              {{ brandName }}
             </div>
           </Link>
           <a href="#" @click="toggleCompactMenu"
@@ -142,10 +158,9 @@ const requestFullscreen = () => {
 
             <!-- BEGIN: Breadcrumb -->
             <Breadcrumb class="flex-1 hidden xl:block">
-              <Breadcrumb.Link to="/">App</Breadcrumb.Link>
-              <Breadcrumb.Link to="/dashboard">Dashboards</Breadcrumb.Link>
+              <Breadcrumb.Link :to="homeRoute">{{ isTenantPanel ? 'Panel' : 'Admin' }}</Breadcrumb.Link>
               <Breadcrumb.Link :to="page.url" :active="true">
-                {{ page.props.title || 'Dashboard' }}
+                {{ props.title || 'Dashboard' }}
               </Breadcrumb.Link>
             </Breadcrumb>
             <!-- END: Breadcrumb -->
@@ -164,19 +179,24 @@ const requestFullscreen = () => {
             <!-- BEGIN: Notification & User Menu -->
             <div class="flex items-center flex-1">
               <div class="flex items-center gap-1 ml-auto">
+                <div v-if="isTenantPanel && tenant"
+                  class="hidden sm:flex items-center gap-1.5 mr-2 rounded-full bg-primary/10 py-1 pl-1.5 pr-2.5 text-xs font-medium text-primary">
+                  <Lucide icon="BadgeCheck" class="w-3.5 h-3.5" />
+                  <span class="capitalize">{{ tenant.plan }}</span>
+                </div>
                 <a href="#" @click.prevent="toggleDarkMode"
                   class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-darkmode-400">
                   <Lucide :icon="appearance === 'dark' ? 'Sun' : 'Moon'" class="w-[18px] h-[18px]" />
                 </a>
                 <a href="#" @click.prevent="requestFullscreen"
-                  class="p-2 rounded-full hover:bg-slate-100 dark:hover:bg-darkmode-400">
+                  class="hidden sm:block p-2 rounded-full hover:bg-slate-100 dark:hover:bg-darkmode-400">
                   <Lucide icon="Expand" class="w-[18px] h-[18px]" />
                 </a>
               </div>
-              <Menu class="ml-5">
+              <Menu class="ml-4">
                 <Menu.Button
-                  class="overflow-hidden rounded-full w-[36px] h-[36px] border-[3px] border-slate-200/70 bg-slate-200 flex items-center justify-center">
-                  <Lucide icon="User" class="w-5 h-5 text-slate-600" />
+                  class="overflow-hidden rounded-full w-[38px] h-[38px] border-2 border-white shadow-sm bg-linear-to-br from-theme-1 to-theme-2 flex items-center justify-center text-xs font-semibold text-white">
+                  {{ userInitials }}
                 </Menu.Button>
                 <Menu.Items class="w-56 mt-1">
                   <Menu.Item>
@@ -186,7 +206,7 @@ const requestFullscreen = () => {
                     </div>
                   </Menu.Item>
                   <Menu.Divider />
-                  <Menu.Item>
+                  <Menu.Item v-if="!isTenantPanel">
                     <Link :href="route('admin.settings.profile.edit')">
                       <Lucide icon="User" class="w-4 h-4 mr-2" />
                       Perfil
@@ -224,19 +244,19 @@ const requestFullscreen = () => {
           </div>
           <div class="p-3 max-h-[50vh] overflow-y-auto">
             <div class="px-2 py-1.5 text-xs font-medium text-slate-400 uppercase">Páginas</div>
-            <Link :href="route('dashboard')"
+            <Link :href="homeRoute"
               class="flex items-center px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-darkmode-400 cursor-pointer"
               @click="showSearch = false">
               <Lucide icon="LayoutDashboard" class="w-4 h-4 text-slate-500 mr-3" />
               <span class="dark:text-slate-300">Dashboard</span>
             </Link>
-            <Link :href="route('admin.settings.profile.edit')"
+            <Link v-if="isTenantPanel" :href="route('tenant.plano')"
               class="flex items-center px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-darkmode-400 cursor-pointer"
               @click="showSearch = false">
-              <Lucide icon="User" class="w-4 h-4 text-slate-500 mr-3" />
-              <span class="dark:text-slate-300">Perfil</span>
+              <Lucide icon="Map" class="w-4 h-4 text-slate-500 mr-3" />
+              <span class="dark:text-slate-300">Plano</span>
             </Link>
-            <Link :href="route('admin.settings.profile.edit')"
+            <Link v-if="!isTenantPanel" :href="route('admin.settings.profile.edit')"
               class="flex items-center px-3 py-2.5 rounded-lg hover:bg-slate-100 dark:hover:bg-darkmode-400 cursor-pointer"
               @click="showSearch = false">
               <Lucide icon="Settings" class="w-4 h-4 text-slate-500 mr-3" />
@@ -259,5 +279,7 @@ const requestFullscreen = () => {
       </div>
     </div>
     <!-- END: Content -->
+
+    <ToastHost />
   </div>
 </template>

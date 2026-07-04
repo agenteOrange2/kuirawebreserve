@@ -24,10 +24,23 @@ declare module '@inertiajs/core' {
     }
 }
 
+// route() de Ziggy: registrado como global por ZiggyVue en app.ts, disponible
+// también en templates (config.globalProperties).
+type ZiggyRouteFn = (
+    name: string,
+    params?: Record<string, unknown> | string | number | Array<unknown>,
+    absolute?: boolean,
+) => string;
+
+declare global {
+    const route: ZiggyRouteFn;
+}
+
 declare module 'vue' {
     interface ComponentCustomProperties {
         $inertia: typeof Router;
         $page: Page;
         $headManager: ReturnType<typeof createHeadManager>;
+        route: ZiggyRouteFn;
     }
 }
