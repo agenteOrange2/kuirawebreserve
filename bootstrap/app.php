@@ -36,6 +36,11 @@ return Application::configure(basePath: dirname(__DIR__))
         ['middleware' => ['universal', 'web', \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class]],
     )
     ->withMiddleware(function (Middleware $middleware): void {
+        // Detrás del túnel/proxy de Cloudflare: sin esto Laravel no ve el
+        // esquema https de X-Forwarded-Proto y generaría URLs http (mixed
+        // content). El origen solo es alcanzable vía túnel, '*' es seguro.
+        $middleware->trustProxies(at: '*');
+
         // Marcador para Stancl\Tenancy\Features\UniversalRoutes: las rutas con
         // este grupo funcionan tanto en dominio central como en tenants.
         $middleware->group('universal', []);

@@ -122,10 +122,19 @@ const impersonateError = ref<string | null>(null);
 async function impersonate(tenant: TenantRow) {
     impersonating.value = tenant.id;
     impersonateError.value = null;
+    // Abrir la pestaña ANTES del await: tras una respuesta asíncrona el
+    // navegador ya no lo trata como gesto del usuario y bloquea el popup
+    // (y el token de impersonación solo vive 60 s, no admite copiar/pegar).
+    const win = window.open('', '_blank');
     try {
         const { data } = await axios.post<{ url: string }>(route('admin.tenants.impersonate', tenant.id));
-        window.open(data.url, '_blank');
+        if (win) {
+            win.location.href = data.url;
+        } else {
+            window.location.href = data.url;
+        }
     } catch (error: any) {
+        win?.close();
         impersonateError.value = error?.response?.data?.message ?? 'No se pudo generar el acceso.';
     } finally {
         impersonating.value = null;
