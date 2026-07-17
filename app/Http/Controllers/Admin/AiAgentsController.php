@@ -35,6 +35,11 @@ class AiAgentsController extends Controller
 
         $settings = TenantAgentSetting::query()->get()->keyBy('tenant_id');
 
+        // Canales conectados por hotel (Meta + Evolution) para los iconos de
+        // la tabla; la gestión completa vive en admin.ai.channels.
+        $metaByTenant = \App\Models\Central\MetaChannelLink::query()->get()->groupBy('tenant_id');
+        $evoByTenant = \App\Models\Central\EvolutionChannelLink::query()->get()->groupBy('tenant_id');
+
         return Inertia::render('admin/AiAgents', [
             'providers' => PlatformAiProvider::query()->orderBy('sort_order')->orderBy('id')->get()
                 ->map(fn (PlatformAiProvider $p) => [
@@ -52,7 +57,7 @@ class AiAgentsController extends Controller
                 'key_hint' => $meta['key_hint'],
                 'models' => $meta['models'],
             ])->values(),
-            'tenants' => Tenant::query()->with('domains')->get()->map(function (Tenant $tenant) use ($usage, $settings) {
+            'tenants' => Tenant::query()->with('domains')->get()->map(function (Tenant $tenant) use ($usage, $settings, $metaByTenant, $evoByTenant) {
                 $setting = $settings->get($tenant->id);
                 $planAi = config("plans.{$tenant->plan}.ai", ['enabled' => false, 'monthly_replies' => 0]);
 
@@ -72,20 +77,56 @@ class AiAgentsController extends Controller
                     'used_replies' => (int) ($usage->get($tenant->id)?->replies ?? 0),
                     'used_tokens' => (int) ($usage->get($tenant->id)?->tokens ?? 0),
                     'suspended' => $tenant->isSuspended(),
+                    'channels' => collect()
+                        ->concat(($metaByTenant->get($tenant->id) ?? collect())->map(fn ($l) => [
+                            'type' => $l->type,
+                            'label' => $l->typeLabel().($l->name ? " · {$l->name}" : ''),
+                            'active' => (bool) $l->active,
+                            'last_event_at' => $l->last_event_at?->diffForHumans(short: true),
+                        ]))
+                        ->concat(($evoByTenant->get($tenant->id) ?? collect())->map(fn ($l) => [
+                            'type' => 'whatsapp_evo',
+                            'label' => 'WhatsApp (Evolution)'.($l->name ? " · {$l->name}" : ''),
+                            'active' => (bool) $l->active,
+                            'last_event_at' => $l->last_event_at?->diffForHumans(short: true),
+                        ]))
+                        ->values(),
                 ];
             }),
-            'metaChannels' => \App\Models\Central\MetaChannelLink::query()->latest()->get()
+        ]);
+    }
+
+    /**
+     * Canales de UN hotel: sus conexiones Meta + Evolution aisladas, con la
+     * configuración del webhook de Meta. Espejo de la vista de contexto.
+     */
+    public function channels(Tenant $tenant): Response
+    {
+        return Inertia::render('admin/AgentChannels', [
+            'tenant' => [
+                'id' => $tenant->id,
+                'name' => $tenant->name ?? $tenant->id,
+                'domain' => $tenant->domains()->first()?->domain,
+            ],
+            'meta' => \App\Models\Central\MetaChannelLink::query()
+                ->where('tenant_id', $tenant->id)->latest()->get()
                 ->map(fn ($link) => app(MetaChannelController::class)->serialize($link))->values(),
+            'evolution' => \App\Models\Central\EvolutionChannelLink::query()
+                ->where('tenant_id', $tenant->id)->orderBy('id')->get()
+                ->map(fn ($link) => [
+                    'id' => $link->id,
+                    'name' => $link->name,
+                    'base_url' => $link->base_url,
+                    'instance' => $link->instance,
+                    'active' => (bool) $link->active,
+                    'last_event_at' => $link->last_event_at?->diffForHumans(short: true),
+                ])->values(),
             'metaConfig' => [
                 'mode' => config('meta.mode'),
                 'webhook_url' => rtrim(config('app.url'), '/').'/webhooks/meta',
                 'verify_token' => config('meta.verify_token'),
                 'app_configured' => filled(config('meta.app_id')),
             ],
-            'tenantOptions' => Tenant::query()->orderBy('id')->get()->map(fn (Tenant $t) => [
-                'value' => $t->id,
-                'label' => $t->name ?? $t->id,
-            ])->values(),
         ]);
     }
 
@@ -120,6 +161,67 @@ class AiAgentsController extends Controller
         $platformAiProvider->update($data);
 
         return response()->json(['ok' => true]);
+    }
+
+    /**
+     * El "ojito": prompt efectivo del bot para un hotel (identidad, datos,
+     * FAQs, instrucciones de plataforma y del hotel, reglas) tal como lo
+     * recibe el modelo — se arma dentro del contexto del tenant.
+     */
+    /** Plantilla base de instrucciones de plataforma (punto de partida). */
+    public const INSTRUCTIONS_TEMPLATE = <<<'TXT'
+IDENTIDAD Y TONO
+- Presentate como el asistente del hotel. Trato calido, profesional y breve; maximo 2-3 oraciones salvo que listes opciones.
+
+COMO COTIZAR (cero errores de calculo)
+- Todo precio sale de tus herramientas, nunca de memoria.
+- Cada tarifa pertenece a UN tipo de habitacion: cotiza solo tarifas del tipo que el huesped pidio.
+- El precio de la tarifa es POR UNIDAD (noche o bloque). El TOTAL de la estancia lo calcula consultar_disponibilidad: entrega siempre ese total desglosado, p. ej. "2 noches x $650 = $1,300".
+- Estancia con fechas = tarifa por noche. Tarifas por horas/bloque SOLO si piden un rato de horas.
+- Al comparar, presenta maximo 3 opciones: tipo, tarifa y total de cada una.
+
+COMO APARTAR (reservar)
+- Antes de crear el apartado repite y espera confirmacion de: tipo de habitacion, tarifa, TOTAL exacto, llegada/salida y nombre completo.
+- Tras crearlo entrega el folio y aclara que es un apartado pendiente que el hotel confirmara.
+- No prometas habitacion especifica, piso ni vista: eso lo asigna recepcion.
+
+PAGOS
+- El pago se realiza o registra en recepcion (efectivo, tarjeta o transferencia segun el hotel).
+- NUNCA pidas numeros de tarjeta ni datos bancarios por chat.
+- Si preguntan por anticipos, informa solo lo que la tarifa indique; sin dato, ofrece comunicar con recepcion.
+
+CUANDO PASAR CON UNA PERSONA
+- Quejas, cambios a reservas ya pagadas, grupos grandes, facturas o cualquier dato que no tengas: usa transferir_a_humano.
+TXT;
+
+    public function promptPreview(Tenant $tenant): JsonResponse
+    {
+        $prompt = $tenant->run(fn () => app(\App\Services\Agent\AgentBrain::class)->promptPreview());
+
+        return response()->json([
+            'prompt' => $prompt,
+            'platform_instructions' => TenantAgentSetting::for($tenant->id)->platform_instructions,
+        ]);
+    }
+
+    /** Vista dedicada "Contexto del bot" por hotel (el ojito). */
+    public function context(Tenant $tenant): \Inertia\Response
+    {
+        $prompt = $tenant->run(fn () => app(\App\Services\Agent\AgentBrain::class)->promptPreview());
+        // Sin esto, la página del ADMIN se renderiza con tenancy inicializada
+        // y el layout pinta el menú del tenant (fuga de contexto).
+        tenancy()->end();
+
+        $settings = TenantAgentSetting::for($tenant->id);
+
+        return \Inertia\Inertia::render('admin/AgentContext', [
+            'tenant' => ['id' => $tenant->id, 'name' => $tenant->name],
+            'platformInstructions' => $settings->platform_instructions,
+            'contextEditable' => (bool) $settings->context_editable,
+            'guidelinesEditable' => (bool) $settings->guidelines_editable,
+            'template' => self::INSTRUCTIONS_TEMPLATE,
+            'prompt' => $prompt,
+        ]);
     }
 
     public function destroyProvider(PlatformAiProvider $platformAiProvider): JsonResponse
@@ -163,6 +265,9 @@ class AiAgentsController extends Controller
             'monthly_reply_limit' => ['sometimes', 'nullable', 'integer', 'min:0'],
             'byok_allowed' => ['sometimes', 'boolean'],
             'api_allowed' => ['sometimes', 'boolean'],
+            'platform_instructions' => ['sometimes', 'nullable', 'string', 'max:6000'],
+            'context_editable' => ['sometimes', 'boolean'],
+            'guidelines_editable' => ['sometimes', 'boolean'],
         ]);
 
         TenantAgentSetting::for($tenant->id)->update($data);

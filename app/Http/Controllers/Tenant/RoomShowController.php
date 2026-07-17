@@ -18,7 +18,7 @@ class RoomShowController extends Controller
 {
     public function __invoke(Room $room): Response
     {
-        $room->load(['zone:id,name,color', 'roomType:id,name,capacity,base_price']);
+        $room->load(['zone:id,name,color', 'roomType:id,name,capacity']);
 
         $now = Carbon::now();
 
@@ -58,7 +58,7 @@ class RoomShowController extends Controller
                 'name' => $room->name,
                 'description' => $room->description,
                 'room_type' => $room->roomType->name,
-                'base_price' => (float) $room->roomType->base_price,
+                'price_from' => $room->roomType->priceFrom(),
                 'zone' => $room->zone?->name,
                 'zone_color' => $room->zone?->color,
                 'status' => $room->status->getMorphClass(),

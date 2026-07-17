@@ -58,6 +58,14 @@ class CreateWalkInStay
                 );
             }
 
+            // Cargos extra de la ficha: personas sobre las incluidas +
+            // cargos opcionales elegidos (mascota, decoración…).
+            $extraCharges = $room->extraChargeLines(
+                max(1, (int) ($data['num_people'] ?? 1)),
+                $ratePlan->unitsFor($start, $end),
+                $data['extra_charges'] ?? [],
+            );
+
             $stay = Stay::create([
                 'room_id' => $room->id,
                 'rate_plan_id' => $ratePlan->id,
@@ -69,7 +77,11 @@ class CreateWalkInStay
                 'check_in_at' => $start,
                 'planned_end_at' => $end,
                 'status' => Stay::STATUS_ACTIVE,
-                'amount' => $ratePlan->priceFor($start, $end, $room),
+                'amount' => round(
+                    $ratePlan->priceFor($start, $end, $room) + array_sum(array_column($extraCharges, 'amount')),
+                    2,
+                ),
+                'extra_charges' => $extraCharges ?: null,
                 'channel' => 'walk_in',
                 'notes' => $data['notes'] ?? null,
                 'created_by' => $user?->id,

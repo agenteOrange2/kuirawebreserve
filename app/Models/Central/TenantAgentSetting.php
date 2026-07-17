@@ -20,6 +20,9 @@ class TenantAgentSetting extends CentralModel
         'monthly_reply_limit',
         'byok_allowed',
         'api_allowed',
+        'platform_instructions',
+        'context_editable',
+        'guidelines_editable',
     ];
 
     protected function casts(): array
@@ -28,6 +31,8 @@ class TenantAgentSetting extends CentralModel
             'enabled' => 'boolean',
             'byok_allowed' => 'boolean',
             'api_allowed' => 'boolean',
+            'context_editable' => 'boolean',
+            'guidelines_editable' => 'boolean',
         ];
     }
 

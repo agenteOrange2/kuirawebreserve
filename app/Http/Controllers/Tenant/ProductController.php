@@ -113,6 +113,9 @@ class ProductController extends Controller
             'track_stock' => ['sometimes', 'boolean'],
             'reorder_point' => ['nullable', 'numeric', 'min:0'],
             'active' => ['sometimes', 'boolean'],
+            // Curación del wizard público (/ajustes/wizard): qué productos
+            // se ofrecen SIN staff de por medio al huésped en /reservar.
+            'available_in_wizard' => ['sometimes', 'boolean'],
             'recipe' => ['sometimes', 'array'],
             'recipe.*.ingredient_id' => ['required_with:recipe', 'exists:ingredients,id'],
             'recipe.*.quantity' => ['required_with:recipe', 'numeric', 'gt:0'],

@@ -34,24 +34,34 @@ class CatalogPageController extends Controller
                 ]),
             'zoneKinds' => Zone::KINDS,
             'roomTypes' => RoomType::query()
-                ->where('property_id', $property->id)
-                ->withCount('rooms')
-                ->orderBy('sort_order')
-                ->orderBy('name')
-                ->get([
+                ->select([
                     'id', 'name', 'description', 'capacity', 'max_adults', 'max_children',
-                    'base_price', 'check_in_time', 'check_out_time', 'amenities',
+                    'check_in_time', 'check_out_time', 'amenities',
                     'sort_order', 'active',
                 ])
+                ->where('property_id', $property->id)
+                ->with('media')
+                ->withCount('rooms')
+                // Precio único: "desde" derivado de la tarifa activa más
+                // barata; sin tarifa activa el tipo no es reservable.
+                ->withMin(['ratePlans as price_from' => fn ($q) => $q->where('active', true)], 'price')
+                ->orderBy('sort_order')
+                ->orderBy('name')
+                ->get()
                 ->map(fn (RoomType $type) => [
-                    ...$type->toArray(),
+                    ...collect($type->toArray())->except('media')->all(),
                     'check_in_time' => $type->check_in_time ? substr($type->check_in_time, 0, 5) : null,
                     'check_out_time' => $type->check_out_time ? substr($type->check_out_time, 0, 5) : null,
                     'amenities' => $type->amenities ?? [],
+                    'price_from' => $type->priceFrom(),
+                    'has_active_rate' => $type->hasActiveRate(),
+                    'photos' => $type->photosPayload(),
                 ]),
+            'totalRooms' => \App\Models\Room::where('property_id', $property->id)->count(),
             'ratePlans' => RatePlan::query()
                 ->where('property_id', $property->id)
                 ->with('roomType:id,name')
+                ->withCount('seasons')
                 ->orderBy('room_type_id')
                 ->orderBy('price')
                 ->get()
@@ -73,6 +83,7 @@ class CatalogPageController extends Controller
                     'payment_due_value' => $plan->payment_due_value,
                     'payment_due_label' => $plan->paymentDueLabel(),
                     'active' => $plan->active,
+                    'seasons_count' => $plan->seasons_count,
                 ]),
             'canManage' => $request->user()->can('rooms.manage'),
         ]);

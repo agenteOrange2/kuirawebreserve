@@ -138,7 +138,7 @@ it('serializes floor plan payload with rates, active stay, upcoming reservation 
         ->whereKey($this->room->id)
         ->with([
             'zone:id,name',
-            'roomType:id,name,capacity,base_price,amenities',
+            'roomType:id,name,capacity,amenities',
             'roomType.ratePlans' => fn ($query) => $query
                 ->select(['id', 'room_type_id', 'name', 'type', 'price', 'duration_minutes', 'active'])
                 ->where('active', true)
@@ -162,6 +162,8 @@ it('serializes floor plan payload with rates, active stay, upcoming reservation 
 
     expect($payload['zone'])->toBe('Planta baja')
         ->and($payload['room_type'])->toBe('Suite Deluxe')
+        // Precio único: "desde" = tarifa activa más barata (el rato de 350).
+        ->and($payload['price_from'])->toBe(350.0)
         ->and($payload['amenities'])->toBe(['wifi', 'jacuzzi'])
         ->and($payload['rate_plans'])->toHaveCount(2)
         ->and($payload['rate_plans'][0]['name'])->toBe('Rato 3 horas')

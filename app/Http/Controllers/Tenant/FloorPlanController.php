@@ -26,7 +26,7 @@ class FloorPlanController extends Controller
             ->where('property_id', $property->id)
             ->with([
                 'zone:id,name,kind,color',
-                'roomType:id,name,capacity,base_price,amenities,check_in_time,check_out_time',
+                'roomType:id,name,capacity,amenities,check_in_time,check_out_time',
                 'roomType.ratePlans' => fn ($query) => $query
                     ->select(['id', 'room_type_id', 'name', 'type', 'price', 'duration_minutes', 'duration_unit', 'duration_value', 'active'])
                     ->where('active', true)

@@ -9,6 +9,7 @@ import Lucide from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import { AMENITY_SUGGESTIONS } from '@/lib/amenities';
 
 interface ZoneRow {
     id: number;
@@ -18,6 +19,12 @@ interface ZoneRow {
     color: string | null;
     sort_order: number;
     rooms_count: number;
+}
+
+interface TypePhoto {
+    id: number;
+    url: string;
+    thumb_url: string;
 }
 
 interface RoomTypeRow {
@@ -32,8 +39,11 @@ interface RoomTypeRow {
     amenities: string[];
     sort_order: number;
     active: boolean;
-    base_price: string;
+    // Precio único: derivado de la tarifa activa más barata (null = sin tarifa).
+    price_from: number | null;
+    has_active_rate: boolean;
     rooms_count: number;
+    photos: TypePhoto[];
 }
 
 interface RatePlanRow {
@@ -53,6 +63,23 @@ interface RatePlanRow {
     payment_due_unit: string | null;
     payment_due_value: number | null;
     payment_due_label: string | null;
+    cancel_free_unit: string | null;
+    cancel_free_value: number | null;
+    cancel_penalty_percent: string | null;
+    cancellation_policy_label: string | null;
+    active: boolean;
+    seasons_count: number;
+}
+
+interface SeasonRow {
+    id: number;
+    rate_plan_id: number;
+    name: string;
+    kind: 'season' | 'promo';
+    starts_on: string;
+    ends_on: string;
+    price: string | number;
+    priority: number;
     active: boolean;
 }
 
@@ -62,8 +89,12 @@ const props = defineProps<{
     roomTypes: RoomTypeRow[];
     ratePlans: RatePlanRow[];
     zoneKinds: Record<string, string>;
+    totalRooms: number;
     canManage: boolean;
 }>();
+
+const money = (v: number | string) =>
+    `$${Number(v).toLocaleString('es-MX', { maximumFractionDigits: 2 })}`;
 
 const toast = useToasts();
 
@@ -95,7 +126,15 @@ function handleError(error: any) {
     clearErrors();
     const data = error.response?.data;
     if (data?.errors) {
-        Object.entries(data.errors).forEach(([key, messages]) => (errors[key] = (messages as string[])[0]));
+        Object.entries(data.errors).forEach(([key, messages]) => {
+            errors[key] = (messages as string[])[0];
+            // Los campos de arreglo llegan como `amenities.8`: se copia el
+            // mensaje a la clave base para que se pinte bajo el input.
+            const base = key.split('.')[0];
+            if (!errors[base]) {
+                errors[base] = (messages as string[])[0];
+            }
+        });
         toast.error('Revisa el formulario', Object.values(errors)[0]);
     } else {
         generalError.value = data?.message ?? 'Ocurrió un error inesperado.';
@@ -163,7 +202,9 @@ function deleteZone(zone: ZoneRow) {
     mutate(() => axios.delete(`/api/zones/${zone.id}`), 'Zona eliminada');
 }
 
-// Tipos de habitación
+// Tipos de habitación. El precio se captura UNA sola vez al crear (se
+// guarda como la tarifa "Tarifa base"); al editar, el precio vive en las
+// tarifas del tipo.
 const showTypeForm = ref(false);
 const editingType = ref<RoomTypeRow | null>(null);
 const typeForm = reactive({
@@ -175,7 +216,10 @@ const typeForm = reactive({
     check_in_time: '',
     check_out_time: '',
     amenities: [] as string[],
-    base_price: '',
+    price: '' as string | number,
+    rate_type: 'night',
+    duration_value: 3 as number | string,
+    duration_unit: 'hour',
     sort_order: 0 as number | string,
     active: true,
 });
@@ -191,12 +235,72 @@ function openType(type: RoomTypeRow | null) {
     typeForm.check_in_time = type?.check_in_time ?? '';
     typeForm.check_out_time = type?.check_out_time ?? '';
     typeForm.amenities = [...(type?.amenities ?? [])];
-    typeForm.base_price = type?.base_price ?? '';
+    typeForm.price = '';
+    typeForm.rate_type = 'night';
+    typeForm.duration_value = 3;
+    typeForm.duration_unit = 'hour';
     typeForm.sort_order = type?.sort_order ?? props.roomTypes.length;
     typeForm.active = type?.active ?? true;
     typeAmenityInput.value = '';
+    typePhotos.value = [...(type?.photos ?? [])];
     clearErrors();
     showTypeForm.value = true;
+}
+
+// ── Fotos del tipo (galería del wizard): la primera es la portada ──
+const typePhotos = ref<TypePhoto[]>([]);
+const photoBusy = ref(false);
+const photoInput = ref<HTMLInputElement | null>(null);
+
+async function uploadPhotos(event: Event) {
+    const files = (event.target as HTMLInputElement).files;
+    if (!files?.length || !editingType.value) return;
+    const formData = new FormData();
+    [...files].forEach((file) => formData.append('photos[]', file));
+    photoBusy.value = true;
+    try {
+        const { data } = await axios.post<{ photos: TypePhoto[] }>(`/api/room-types/${editingType.value.id}/photos`, formData);
+        typePhotos.value = data.photos;
+        toast.success('Fotos subidas', 'La galería del wizard ya las muestra.');
+        router.reload({ only: ['roomTypes'] });
+    } catch (e: any) {
+        const errs = e.response?.data?.errors as Record<string, string[]> | undefined;
+        toast.error('No se pudieron subir', e.response?.data?.message ?? (errs ? Object.values(errs)[0]?.[0] : 'Revisa formato (JPG, PNG, WebP) y peso (máx. 6 MB).'));
+    } finally {
+        photoBusy.value = false;
+        if (photoInput.value) photoInput.value.value = '';
+    }
+}
+
+async function removePhoto(photo: TypePhoto) {
+    if (!editingType.value) return;
+    photoBusy.value = true;
+    try {
+        const { data } = await axios.delete<{ photos: TypePhoto[] }>(`/api/room-types/${editingType.value.id}/photos/${photo.id}`);
+        typePhotos.value = data.photos;
+        router.reload({ only: ['roomTypes'] });
+    } catch {
+        toast.error('Error', 'No se pudo quitar la foto.');
+    } finally {
+        photoBusy.value = false;
+    }
+}
+
+// Portada = primera de la galería: reordena poniendo la elegida al frente.
+async function makeCover(photo: TypePhoto) {
+    if (!editingType.value) return;
+    photoBusy.value = true;
+    try {
+        const order = [photo.id, ...typePhotos.value.filter((p) => p.id !== photo.id).map((p) => p.id)];
+        const { data } = await axios.patch<{ photos: TypePhoto[] }>(`/api/room-types/${editingType.value.id}/photos/order`, { order });
+        typePhotos.value = data.photos;
+        toast.success('Portada actualizada', 'Esa foto encabeza la galería.');
+        router.reload({ only: ['roomTypes'] });
+    } catch {
+        toast.error('Error', 'No se pudo cambiar la portada.');
+    } finally {
+        photoBusy.value = false;
+    }
 }
 
 function addTypeAmenity() {
@@ -212,7 +316,7 @@ function removeTypeAmenity(index: number) {
 }
 
 function submitType() {
-    const payload = {
+    const payload: Record<string, unknown> = {
         name: typeForm.name,
         description: typeForm.description.trim() === '' ? null : typeForm.description,
         capacity: typeForm.capacity,
@@ -221,16 +325,25 @@ function submitType() {
         check_in_time: typeForm.check_in_time === '' ? null : typeForm.check_in_time,
         check_out_time: typeForm.check_out_time === '' ? null : typeForm.check_out_time,
         amenities: typeForm.amenities,
-        base_price: typeForm.base_price || 0,
         sort_order: typeForm.sort_order === '' ? 0 : Number(typeForm.sort_order),
         active: typeForm.active,
     };
+
+    // Alta en una sola captura: el precio se guarda como la tarifa
+    // "Tarifa base" del tipo (editar precio después = editar la tarifa).
+    if (!editingType.value) {
+        payload.price = typeForm.price;
+        payload.rate_type = typeForm.rate_type;
+        payload.duration_unit = typeForm.rate_type === 'block' ? typeForm.duration_unit : null;
+        payload.duration_value = typeForm.rate_type === 'block' ? typeForm.duration_value : null;
+    }
+
     mutate(
         () =>
             editingType.value
                 ? axios.patch(`/api/room-types/${editingType.value.id}`, payload)
                 : axios.post('/api/room-types', { ...payload, property_id: props.property.id }),
-        editingType.value ? 'Tipo de habitación actualizado' : 'Tipo de habitación creado',
+        editingType.value ? 'Tipo de habitación actualizado' : 'Tipo creado con su tarifa base',
         () => (showTypeForm.value = false),
     );
 }
@@ -238,6 +351,36 @@ function submitType() {
 function deleteType(type: RoomTypeRow) {
     mutate(() => axios.delete(`/api/room-types/${type.id}`), 'Tipo de habitación eliminado');
 }
+
+function duplicateType(type: RoomTypeRow) {
+    mutate(() => axios.post(`/api/room-types/${type.id}/duplicate`), 'Tipo duplicado con sus tarifas');
+}
+
+// Tipos expandibles: los que no tienen tarifa nacen abiertos (guarda visible).
+const expandedTypes = ref<Set<number>>(
+    new Set(props.roomTypes.filter((t) => !t.has_active_rate).map((t) => t.id)),
+);
+
+function toggleTypeRow(id: number) {
+    const next = new Set(expandedTypes.value);
+    if (next.has(id)) {
+        next.delete(id);
+    } else {
+        next.add(id);
+    }
+    expandedTypes.value = next;
+}
+
+const plansForType = (typeId: number) => props.ratePlans.filter((plan) => plan.room_type_id === typeId);
+
+// Tarifas cuyo tipo ya no existe (defensivo; no debería ocurrir).
+const orphanPlans = computed(() => {
+    const knownIds = new Set(props.roomTypes.map((type) => type.id));
+    return props.ratePlans.filter((plan) => !knownIds.has(plan.room_type_id));
+});
+
+// Progreso real del stepper (guía de 3 pasos).
+const typesWithoutRate = computed(() => props.roomTypes.filter((t) => !t.has_active_rate));
 
 function occupancyBreakdown(type: RoomTypeRow): string | null {
     const parts: string[] = [];
@@ -263,23 +406,11 @@ const planForm = reactive({
     deposit_percent: 20 as number | string,
     payment_due_value: 1 as number | string,
     payment_due_unit: 'week',
+    has_cancel_policy: false,
+    cancel_free_value: 1 as number | string,
+    cancel_free_unit: 'day',
+    cancel_penalty_percent: 100 as number | string,
     active: true,
-});
-
-// Lista agrupada por tipo de habitación (tarifas huérfanas al final, por si acaso).
-const groupedPlans = computed(() => {
-    const groups = props.roomTypes.map((type) => ({
-        key: `type-${type.id}`,
-        typeId: type.id as number | null,
-        name: type.name,
-        plans: props.ratePlans.filter((plan) => plan.room_type_id === type.id),
-    }));
-    const knownIds = new Set(props.roomTypes.map((type) => type.id));
-    const orphans = props.ratePlans.filter((plan) => !knownIds.has(plan.room_type_id));
-    if (orphans.length) {
-        groups.push({ key: 'type-none', typeId: null, name: 'Sin tipo asignado', plans: orphans });
-    }
-    return groups;
 });
 
 function openPlan(plan: RatePlanRow | null) {
@@ -297,6 +428,10 @@ function openPlan(plan: RatePlanRow | null) {
     planForm.deposit_percent = plan?.deposit_percent ? Number(plan.deposit_percent) : 20;
     planForm.payment_due_value = plan?.payment_due_value ?? 1;
     planForm.payment_due_unit = plan?.payment_due_unit ?? 'week';
+    planForm.has_cancel_policy = Boolean(plan?.cancel_free_value);
+    planForm.cancel_free_value = plan?.cancel_free_value ?? 1;
+    planForm.cancel_free_unit = plan?.cancel_free_unit ?? 'day';
+    planForm.cancel_penalty_percent = plan?.cancel_penalty_percent ? Number(plan.cancel_penalty_percent) : 100;
     planForm.active = plan?.active ?? true;
     clearErrors();
     showPlanForm.value = true;
@@ -320,6 +455,9 @@ function submitPlan() {
         deposit_percent: planForm.has_prepayment ? planForm.deposit_percent : null,
         payment_due_unit: planForm.has_prepayment ? planForm.payment_due_unit : null,
         payment_due_value: planForm.has_prepayment ? planForm.payment_due_value : null,
+        cancel_free_unit: planForm.has_cancel_policy ? planForm.cancel_free_unit : null,
+        cancel_free_value: planForm.has_cancel_policy ? planForm.cancel_free_value : null,
+        cancel_penalty_percent: planForm.has_cancel_policy ? planForm.cancel_penalty_percent : null,
         active: planForm.active,
     };
 
@@ -335,6 +473,87 @@ function submitPlan() {
 
 function deletePlan(plan: RatePlanRow) {
     mutate(() => axios.delete(`/api/rate-plans/${plan.id}`), 'Tarifa eliminada');
+}
+
+// Temporadas y promos por tarifa (spec-motor-reservas-web E0.5): un rango
+// de fechas con un precio que sustituye al de la tarifa mientras esté
+// vigente. Modal aparte (no dentro del de la tarifa) para no saturarlo —
+// se abre directo desde la tabla.
+const showSeasonsModal = ref(false);
+const seasonsPlan = ref<RatePlanRow | null>(null);
+const seasons = ref<SeasonRow[]>([]);
+const loadingSeasons = ref(false);
+const editingSeason = ref<SeasonRow | null>(null);
+const seasonForm = reactive({
+    name: '',
+    kind: 'season' as 'season' | 'promo',
+    starts_on: '',
+    ends_on: '',
+    price: '' as string | number,
+    priority: 0 as number | string,
+});
+
+function resetSeasonForm() {
+    editingSeason.value = null;
+    seasonForm.name = '';
+    seasonForm.kind = 'season';
+    seasonForm.starts_on = '';
+    seasonForm.ends_on = '';
+    seasonForm.price = '';
+    seasonForm.priority = 0;
+}
+
+async function openSeasons(plan: RatePlanRow) {
+    seasonsPlan.value = plan;
+    resetSeasonForm();
+    clearErrors();
+    showSeasonsModal.value = true;
+    loadingSeasons.value = true;
+    try {
+        const { data } = await axios.get<SeasonRow[]>(`/api/rate-plans/${plan.id}/seasons`);
+        seasons.value = data;
+    } catch {
+        toast.error('No se pudieron cargar las temporadas');
+    } finally {
+        loadingSeasons.value = false;
+    }
+}
+
+function editSeason(season: SeasonRow) {
+    editingSeason.value = season;
+    seasonForm.name = season.name;
+    seasonForm.kind = season.kind;
+    seasonForm.starts_on = season.starts_on;
+    seasonForm.ends_on = season.ends_on;
+    seasonForm.price = season.price;
+    seasonForm.priority = season.priority;
+    clearErrors();
+}
+
+function submitSeason() {
+    if (!seasonsPlan.value) return;
+    const planId = seasonsPlan.value.id;
+    const payload = { ...seasonForm };
+
+    mutate(
+        () =>
+            editingSeason.value
+                ? axios.patch(`/api/rate-plans/${planId}/seasons/${editingSeason.value.id}`, payload)
+                : axios.post(`/api/rate-plans/${planId}/seasons`, payload),
+        editingSeason.value ? 'Temporada actualizada' : 'Temporada creada',
+        async () => {
+            resetSeasonForm();
+            const { data } = await axios.get<SeasonRow[]>(`/api/rate-plans/${planId}/seasons`);
+            seasons.value = data;
+        },
+    );
+}
+
+async function deleteSeason(season: SeasonRow) {
+    if (!seasonsPlan.value) return;
+    const planId = seasonsPlan.value.id;
+    await mutate(() => axios.delete(`/api/rate-plans/${planId}/seasons/${season.id}`), 'Temporada eliminada');
+    seasons.value = seasons.value.filter((s) => s.id !== season.id);
 }
 </script>
 
@@ -364,8 +583,8 @@ function deletePlan(plan: RatePlanRow) {
                     </button>
                 </div>
                 <div v-if="showGuide" class="grid gap-4 p-5 md:grid-cols-3">
-                    <!-- Paso 1 -->
-                    <div class="rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400">
+                    <!-- Paso 1: Zonas -->
+                    <div class="flex flex-col rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400">
                         <div class="flex items-center gap-2.5">
                             <div class="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-sm font-semibold text-primary">1</div>
                             <div class="flex items-center gap-1.5 font-medium">
@@ -376,46 +595,68 @@ function deletePlan(plan: RatePlanRow) {
                             <span class="font-medium text-slate-600 dark:text-slate-300">Dónde</span> están las habitaciones. Agrupas por ubicación para el plano.
                             Ej: <span class="font-medium">Planta baja</span>, <span class="font-medium">Piso 1</span>.
                         </p>
+                        <div class="mt-auto flex items-center gap-1.5 pt-2.5 text-xs" :class="zones.length ? 'text-success' : 'text-slate-400'">
+                            <Lucide :icon="zones.length ? 'CircleCheck' : 'Circle'" class="h-3.5 w-3.5" />
+                            {{ zones.length ? `${zones.length} zona(s) creada(s)` : 'Pendiente: crea la primera zona' }}
+                        </div>
                     </div>
-                    <!-- Paso 2 -->
-                    <div class="rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400">
+                    <!-- Paso 2: Tipos y tarifas -->
+                    <div class="flex flex-col rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400">
                         <div class="flex items-center gap-2.5">
                             <div class="flex h-8 w-8 items-center justify-center rounded-full bg-info/10 text-sm font-semibold text-info">2</div>
                             <div class="flex items-center gap-1.5 font-medium">
-                                <Lucide icon="BedDouble" class="h-4 w-4 text-info" /> Tipos de habitación
+                                <Lucide icon="BedDouble" class="h-4 w-4 text-info" /> Tipos y tarifas
                             </div>
                         </div>
                         <p class="mt-2.5 text-xs leading-relaxed text-slate-500">
-                            <span class="font-medium text-slate-600 dark:text-slate-300">Qué</span> ofreces. Cada tipo agrupa habitaciones con igual capacidad y precio base.
-                            Ej: <span class="font-medium">Sencilla</span>, <span class="font-medium">Suite</span>.
+                            <span class="font-medium text-slate-600 dark:text-slate-300">Qué ofreces y cómo lo cobras.</span>
+                            Al crear un tipo capturas su precio UNA vez (queda como su tarifa base); luego puedes agregar más tarifas: rato, semana, promo.
                         </p>
+                        <div
+                            class="mt-auto flex items-center gap-1.5 pt-2.5 text-xs"
+                            :class="!roomTypes.length ? 'text-slate-400' : typesWithoutRate.length ? 'text-warning' : 'text-success'"
+                        >
+                            <Lucide
+                                :icon="!roomTypes.length ? 'Circle' : typesWithoutRate.length ? 'TriangleAlert' : 'CircleCheck'"
+                                class="h-3.5 w-3.5"
+                            />
+                            {{
+                                !roomTypes.length
+                                    ? 'Pendiente: crea el primer tipo'
+                                    : typesWithoutRate.length
+                                      ? `${typesWithoutRate.length} tipo(s) sin tarifa — no reservables`
+                                      : `${roomTypes.length} tipo(s), todos con tarifa`
+                            }}
+                        </div>
                     </div>
-                    <!-- Paso 3 -->
-                    <div class="rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400">
+                    <!-- Paso 3: Habitaciones -->
+                    <div class="flex flex-col rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400">
                         <div class="flex items-center gap-2.5">
                             <div class="flex h-8 w-8 items-center justify-center rounded-full bg-success/10 text-sm font-semibold text-success">3</div>
                             <div class="flex items-center gap-1.5 font-medium">
-                                <Lucide icon="Tag" class="h-4 w-4 text-success" /> Tarifas
+                                <Lucide icon="DoorOpen" class="h-4 w-4 text-success" /> Habitaciones
                             </div>
                         </div>
                         <p class="mt-2.5 text-xs leading-relaxed text-slate-500">
-                            <span class="font-medium text-slate-600 dark:text-slate-300">Cómo cobras</span> cada tipo: por noche, por rato (horas), semana… con anticipo opcional.
+                            Las habitaciones <span class="font-medium text-slate-600 dark:text-slate-300">reales</span>, cada una con su zona y su tipo.
+                            Se dan de alta en
+                            <Link :href="route('tenant.rooms')" class="font-medium text-primary hover:underline">Habitaciones</Link>.
                         </p>
-                    </div>
-                    <div class="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs text-slate-500 md:col-span-3 dark:bg-darkmode-700">
-                        <Lucide icon="Info" class="h-4 w-4 shrink-0 text-slate-400" />
-                        <span>
-                            Después, las habitaciones reales se dan de alta en
-                            <Link :href="route('tenant.rooms')" class="font-medium text-primary hover:underline">Habitaciones</Link>,
-                            eligiendo una <span class="font-medium">zona</span> y un <span class="font-medium">tipo</span>.
-                        </span>
+                        <div class="mt-auto flex items-center gap-1.5 pt-2.5 text-xs" :class="totalRooms ? 'text-success' : 'text-slate-400'">
+                            <Lucide :icon="totalRooms ? 'CircleCheck' : 'Circle'" class="h-3.5 w-3.5" />
+                            <template v-if="totalRooms">{{ totalRooms }} habitación(es) dada(s) de alta</template>
+                            <template v-else>
+                                Pendiente:&nbsp;
+                                <Link :href="route('tenant.rooms')" class="font-medium text-primary hover:underline">ir a Habitaciones</Link>
+                            </template>
+                        </div>
                     </div>
                 </div>
             </div>
 
             <div class="mt-6 grid grid-cols-12 items-stretch gap-6">
                 <!-- Zonas -->
-                <div class="col-span-12 flex flex-col xl:col-span-5">
+                <div class="col-span-12 flex flex-col xl:col-span-4">
                     <div class="box box--stacked flex flex-1 flex-col">
                         <div class="flex items-center justify-between gap-3 border-b border-slate-200/60 p-5 dark:border-darkmode-400">
                             <div class="flex items-center gap-2.5">
@@ -486,86 +727,204 @@ function deletePlan(plan: RatePlanRow) {
                     </div>
                 </div>
 
-                <!-- Tipos -->
-                <div class="col-span-12 flex flex-col xl:col-span-7">
+                <!-- Tipos y tarifas -->
+                <div class="col-span-12 flex flex-col xl:col-span-8">
                     <div class="box box--stacked flex flex-1 flex-col">
                         <div class="flex items-center justify-between gap-3 border-b border-slate-200/60 p-5 dark:border-darkmode-400">
                             <div class="flex items-center gap-2.5">
                                 <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10 text-xs font-semibold text-info">2</div>
                                 <div>
                                     <h2 class="flex items-center gap-1.5 text-base font-medium">
-                                        Tipos de habitación
+                                        Tipos y tarifas
                                         <span
-                                            title="Cada tipo es una categoría con la misma capacidad y precio base (ej. Sencilla, Suite). Las habitaciones reales se asignan a un tipo. El precio base es la referencia; el cobro real lo definen las tarifas (paso 3)."
+                                            title="Cada tipo es una categoría (ej. Sencilla, Suite) con sus tarifas anidadas. El precio vive ÚNICAMENTE en las tarifas: el 'Desde' es la tarifa activa más barata. Un tipo sin tarifa activa no se puede reservar."
                                             class="inline-flex cursor-help"
                                         >
                                             <Lucide icon="Info" class="h-3.5 w-3.5 text-slate-400" />
                                         </span>
                                     </h2>
-                                    <p class="text-xs text-slate-500">Categorías con capacidad y precio base</p>
+                                    <p class="text-xs text-slate-500">Qué ofreces y cómo lo cobras — el precio vive en las tarifas</p>
                                 </div>
                             </div>
                             <Button v-if="canManage" variant="outline-primary" size="sm" class="rounded-[0.5rem]" @click="openType(null)">
-                                <Lucide icon="Plus" class="mr-1 h-4 w-4" /> Agregar
+                                <Lucide icon="Plus" class="mr-1 h-4 w-4" /> Agregar tipo
                             </Button>
                         </div>
-                        <div class="overflow-x-auto p-5">
-                            <Table v-if="roomTypes.length">
-                                <Table.Thead>
-                                    <Table.Tr>
-                                        <Table.Th>Nombre</Table.Th>
-                                        <Table.Th>Capacidad</Table.Th>
-                                        <Table.Th>Check-in / out</Table.Th>
-                                        <Table.Th>Precio base</Table.Th>
-                                        <Table.Th>Habs.</Table.Th>
-                                        <Table.Th v-if="canManage" class="text-right" />
-                                    </Table.Tr>
-                                </Table.Thead>
-                                <Table.Tbody>
-                                    <Table.Tr v-for="type in roomTypes" :key="type.id" :class="!type.active && 'opacity-60'">
-                                        <Table.Td class="font-medium">
-                                            {{ type.name }}
-                                            <span
-                                                v-if="!type.active"
-                                                class="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
-                                            >
-                                                Inactivo
-                                            </span>
-                                        </Table.Td>
-                                        <Table.Td>
-                                            {{ type.capacity }} pers
-                                            <span v-if="occupancyBreakdown(type)" class="block text-xs text-slate-500">
-                                                ({{ occupancyBreakdown(type) }})
-                                            </span>
-                                        </Table.Td>
-                                        <Table.Td class="whitespace-nowrap text-slate-500">
-                                            <template v-if="type.check_in_time || type.check_out_time">
-                                                {{ type.check_in_time ?? '—' }} / {{ type.check_out_time ?? '—' }}
-                                            </template>
-                                            <span v-else>—</span>
-                                        </Table.Td>
-                                        <Table.Td>${{ type.base_price }}</Table.Td>
-                                        <Table.Td class="text-slate-500">{{ type.rooms_count }}</Table.Td>
-                                        <Table.Td v-if="canManage">
-                                            <div class="flex justify-end gap-3">
-                                                <a href="#" class="text-primary" @click.prevent="openType(type)">
-                                                    <Lucide icon="Pencil" class="h-4 w-4" />
-                                                </a>
-                                                <a href="#" class="text-danger" @click.prevent="deleteType(type)">
-                                                    <Lucide icon="Trash2" class="h-4 w-4" />
-                                                </a>
+                        <div class="flex-1">
+                            <div v-if="roomTypes.length" class="divide-y divide-slate-200/60 dark:divide-darkmode-400">
+                                <div v-for="type in roomTypes" :key="type.id">
+                                    <!-- Fila del tipo -->
+                                    <div
+                                        class="flex cursor-pointer items-center gap-3 px-5 py-3.5 transition-colors hover:bg-slate-50/70 dark:hover:bg-darkmode-600/40"
+                                        :class="!type.active && 'opacity-60'"
+                                        @click="toggleTypeRow(type.id)"
+                                    >
+                                        <Lucide
+                                            :icon="expandedTypes.has(type.id) ? 'ChevronDown' : 'ChevronRight'"
+                                            class="h-4 w-4 shrink-0 text-slate-400"
+                                        />
+                                        <div class="min-w-0 flex-1">
+                                            <div class="flex flex-wrap items-center gap-2">
+                                                <span class="font-medium">{{ type.name }}</span>
+                                                <span
+                                                    v-if="!type.active"
+                                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                                                >
+                                                    Inactivo
+                                                </span>
+                                                <span
+                                                    v-if="!type.has_active_rate"
+                                                    class="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                                                    title="Agrega una tarifa activa para poder reservar este tipo"
+                                                >
+                                                    Sin tarifa — no reservable
+                                                </span>
                                             </div>
-                                        </Table.Td>
-                                    </Table.Tr>
-                                </Table.Tbody>
-                            </Table>
-                            <div v-else class="flex flex-col items-center gap-3 py-8 text-center">
+                                            <div class="mt-0.5 text-xs text-slate-500">
+                                                {{ type.capacity }} pers<template v-if="occupancyBreakdown(type)"> ({{ occupancyBreakdown(type) }})</template>
+                                                · {{ type.rooms_count }} hab. · {{ plansForType(type.id).length }} tarifa(s)
+                                            </div>
+                                        </div>
+                                        <div class="shrink-0 text-right">
+                                            <div v-if="type.price_from !== null" class="text-sm font-medium">
+                                                Desde {{ money(type.price_from) }}
+                                            </div>
+                                        </div>
+                                        <div v-if="canManage" class="flex shrink-0 gap-2.5" @click.stop>
+                                            <a href="#" class="text-success" title="Agregar tarifa" @click.prevent="openPlanForType(type.id)">
+                                                <Lucide icon="Tag" class="h-4 w-4" />
+                                            </a>
+                                            <a href="#" class="text-slate-500" title="Duplicar tipo con sus tarifas" @click.prevent="duplicateType(type)">
+                                                <Lucide icon="Copy" class="h-4 w-4" />
+                                            </a>
+                                            <a href="#" class="text-primary" title="Editar tipo" @click.prevent="openType(type)">
+                                                <Lucide icon="Pencil" class="h-4 w-4" />
+                                            </a>
+                                            <a href="#" class="text-danger" title="Eliminar tipo" @click.prevent="deleteType(type)">
+                                                <Lucide icon="Trash2" class="h-4 w-4" />
+                                            </a>
+                                        </div>
+                                    </div>
+
+                                    <!-- Ficha y tarifas del tipo (expandido) -->
+                                    <div v-if="expandedTypes.has(type.id)" class="bg-slate-50/60 px-5 pb-4 dark:bg-darkmode-600/30">
+                                        <!-- Ficha comercial: lo que ve la web, el bot y el importador -->
+                                        <div v-if="type.description || type.amenities.length" class="border-b border-dashed border-slate-300/70 py-3">
+                                            <p v-if="type.description" class="text-xs leading-relaxed text-slate-600 dark:text-slate-300">
+                                                {{ type.description }}
+                                            </p>
+                                            <div v-if="type.amenities.length" class="mt-2 flex flex-wrap gap-1.5">
+                                                <span
+                                                    v-for="amenity in type.amenities"
+                                                    :key="amenity"
+                                                    class="rounded-full bg-white px-2 py-0.5 text-xs text-slate-500 shadow-sm dark:bg-darkmode-400 dark:text-slate-300"
+                                                >
+                                                    {{ amenity }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                        <div v-else class="border-b border-dashed border-slate-300/70 py-3 text-xs text-slate-400">
+                                            Sin descripción ni amenidades aún — edítalas en el tipo o impórtalas desde tu sitio en
+                                            <Link :href="route('tenant.integration')" class="font-medium text-primary hover:underline">Integración</Link>.
+                                        </div>
+                                        <div v-if="plansForType(type.id).length" class="overflow-x-auto">
+                                            <Table>
+                                                <Table.Thead>
+                                                    <Table.Tr>
+                                                        <Table.Th class="whitespace-nowrap">Tarifa</Table.Th>
+                                                        <Table.Th>Duración</Table.Th>
+                                                        <Table.Th>Precio</Table.Th>
+                                                        <Table.Th>Anticipo</Table.Th>
+                                                        <Table.Th>Antelación</Table.Th>
+                                                        <Table.Th>Estado</Table.Th>
+                                                        <Table.Th v-if="canManage" class="text-right" />
+                                                    </Table.Tr>
+                                                </Table.Thead>
+                                                <Table.Tbody>
+                                                    <Table.Tr v-for="plan in plansForType(type.id)" :key="plan.id">
+                                                        <Table.Td class="font-medium">{{ plan.name }}</Table.Td>
+                                                        <Table.Td>
+                                                            <span
+                                                                class="whitespace-nowrap rounded-full px-2 py-0.5 text-xs"
+                                                                :class="plan.type === 'night' ? 'bg-primary/10 text-primary' : 'bg-pending/10 text-pending'"
+                                                            >
+                                                                {{ plan.duration_label }}
+                                                            </span>
+                                                        </Table.Td>
+                                                        <Table.Td class="whitespace-nowrap font-medium">
+                                                            {{ money(plan.price) }}
+                                                            <button
+                                                                type="button"
+                                                                class="ml-1.5 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-normal text-slate-500 hover:bg-slate-200 dark:bg-darkmode-400 dark:hover:bg-darkmode-300"
+                                                                title="Temporadas y promos"
+                                                                @click="openSeasons(plan)"
+                                                            >
+                                                                <Lucide icon="CalendarRange" class="h-3 w-3" />
+                                                                {{ plan.seasons_count || 'Temporadas' }}
+                                                            </button>
+                                                        </Table.Td>
+                                                        <Table.Td class="text-slate-500">
+                                                            <template v-if="plan.deposit_percent">
+                                                                {{ Number(plan.deposit_percent) }}%
+                                                                <span v-if="plan.payment_due_label" class="block text-xs">liquidar {{ plan.payment_due_label }}</span>
+                                                            </template>
+                                                            <span v-else>No requiere</span>
+                                                        </Table.Td>
+                                                        <Table.Td class="text-slate-500">{{ plan.min_advance_label ?? 'Sin restricción' }}</Table.Td>
+                                                        <Table.Td>
+                                                            <span
+                                                                class="rounded-full px-2 py-0.5 text-xs"
+                                                                :class="plan.active ? 'bg-success/10 text-success' : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'"
+                                                            >
+                                                                {{ plan.active ? 'Activa' : 'Inactiva' }}
+                                                            </span>
+                                                        </Table.Td>
+                                                        <Table.Td v-if="canManage">
+                                                            <div class="flex justify-end gap-3">
+                                                                <a href="#" class="text-primary" title="Editar tarifa" @click.prevent="openPlan(plan)">
+                                                                    <Lucide icon="Pencil" class="h-4 w-4" />
+                                                                </a>
+                                                                <a href="#" class="text-danger" title="Eliminar tarifa" @click.prevent="deletePlan(plan)">
+                                                                    <Lucide icon="Trash2" class="h-4 w-4" />
+                                                                </a>
+                                                            </div>
+                                                        </Table.Td>
+                                                    </Table.Tr>
+                                                </Table.Tbody>
+                                            </Table>
+                                        </div>
+                                        <div
+                                            v-else
+                                            class="flex flex-wrap items-center gap-3 rounded-md border border-dashed border-warning/40 bg-warning/5 px-4 py-3 text-xs text-slate-600 dark:text-slate-300"
+                                        >
+                                            <Lucide icon="TriangleAlert" class="h-4 w-4 shrink-0 text-warning" />
+                                            Este tipo no tiene tarifas: no se puede reservar.
+                                            <Button v-if="canManage" variant="outline-primary" size="sm" @click="openPlanForType(type.id)">
+                                                <Lucide icon="Plus" class="mr-1 h-3 w-3" /> Agregar tarifa
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Tarifas sin tipo (defensivo) -->
+                                <div v-if="orphanPlans.length" class="px-5 py-3.5">
+                                    <div class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Tarifas sin tipo asignado</div>
+                                    <div v-for="plan in orphanPlans" :key="plan.id" class="flex items-center gap-3 py-1.5 text-sm">
+                                        <span class="font-medium">{{ plan.name }}</span>
+                                        <span class="text-slate-500">{{ plan.duration_label }} · {{ money(plan.price) }}</span>
+                                        <a v-if="canManage" href="#" class="ml-auto text-danger" title="Eliminar tarifa" @click.prevent="deletePlan(plan)">
+                                            <Lucide icon="Trash2" class="h-4 w-4" />
+                                        </a>
+                                    </div>
+                                </div>
+                            </div>
+                            <div v-else class="flex flex-col items-center gap-3 py-10 text-center">
                                 <div class="flex h-12 w-12 items-center justify-center rounded-full bg-info/10 text-info">
                                     <Lucide icon="BedDouble" class="h-6 w-6" />
                                 </div>
                                 <div>
                                     <p class="text-sm font-medium">Aún no hay tipos de habitación</p>
-                                    <p class="mt-0.5 text-xs text-slate-500">Ej: "Sencilla", "Doble", "Suite", "Jacuzzi".</p>
+                                    <p class="mt-0.5 text-xs text-slate-500">Ej: "Sencilla", "Suite", "Jacuzzi". Al crearlo capturas su precio una sola vez.</p>
                                 </div>
                                 <Button v-if="canManage" variant="outline-primary" size="sm" class="rounded-[0.5rem]" @click="openType(null)">
                                     <Lucide icon="Plus" class="mr-1 h-4 w-4" /> Crear primer tipo
@@ -575,123 +934,6 @@ function deletePlan(plan: RatePlanRow) {
                     </div>
                 </div>
 
-                <!-- Tarifas -->
-                <div class="col-span-12">
-                    <div class="box box--stacked">
-                        <div class="flex items-center justify-between gap-3 border-b border-slate-200/60 p-5 dark:border-darkmode-400">
-                            <div class="flex items-center gap-2.5">
-                                <div class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success/10 text-xs font-semibold text-success">3</div>
-                                <div>
-                                    <h2 class="flex items-center gap-1.5 text-base font-medium">
-                                        Tarifas
-                                        <span
-                                            title="Definen cómo cobras cada tipo de habitación: por noche o por periodo (horas, días, semanas, meses). Puedes pedir antelación mínima y un anticipo. Un mismo tipo puede tener varias tarifas (ej. Rato 3h, Noche, Semana)."
-                                            class="inline-flex cursor-help"
-                                        >
-                                            <Lucide icon="Info" class="h-3.5 w-3.5 text-slate-400" />
-                                        </span>
-                                    </h2>
-                                    <p class="mt-0.5 text-xs text-slate-500">
-                                        Cómo cobras cada tipo: por noche o por periodo, con anticipo opcional
-                                    </p>
-                                </div>
-                            </div>
-                            <Button v-if="canManage" variant="outline-primary" size="sm" class="rounded-[0.5rem]" :disabled="!roomTypes.length" @click="openPlan(null)">
-                                <Lucide icon="Plus" class="mr-1 h-4 w-4" /> Agregar
-                            </Button>
-                        </div>
-                        <div v-if="canManage && !roomTypes.length" class="flex items-center gap-2 border-b border-slate-200/60 bg-warning/5 px-5 py-3 text-xs text-slate-600 dark:border-darkmode-400 dark:text-slate-300">
-                            <Lucide icon="TriangleAlert" class="h-4 w-4 shrink-0 text-warning" />
-                            Primero crea un <span class="font-medium">tipo de habitación</span> (paso 2). Las tarifas se agregan sobre un tipo.
-                        </div>
-                        <div class="overflow-x-auto p-5">
-                            <Table v-if="groupedPlans.length">
-                                <Table.Thead>
-                                    <Table.Tr>
-                                        <Table.Th>Tarifa</Table.Th>
-                                        <Table.Th>Duración</Table.Th>
-                                        <Table.Th>Antelación mínima</Table.Th>
-                                        <Table.Th>Cobro anticipado</Table.Th>
-                                        <Table.Th>Precio</Table.Th>
-                                        <Table.Th>Estado</Table.Th>
-                                        <Table.Th v-if="canManage" class="text-right" />
-                                    </Table.Tr>
-                                </Table.Thead>
-                                <Table.Tbody>
-                                    <template v-for="group in groupedPlans" :key="group.key">
-                                        <Table.Tr>
-                                            <Table.Td
-                                                :colspan="canManage ? 7 : 6"
-                                                class="bg-slate-50 py-2 dark:bg-darkmode-600/60"
-                                            >
-                                                <div class="flex items-center justify-between">
-                                                    <span class="text-sm font-medium">{{ group.name }}</span>
-                                                    <Button
-                                                        v-if="canManage && group.typeId !== null"
-                                                        variant="outline-primary"
-                                                        size="sm"
-                                                        @click="openPlanForType(group.typeId)"
-                                                    >
-                                                        <Lucide icon="Plus" class="mr-1 h-3 w-3" /> Tarifa
-                                                    </Button>
-                                                </div>
-                                            </Table.Td>
-                                        </Table.Tr>
-                                        <Table.Tr v-for="plan in group.plans" :key="plan.id">
-                                            <Table.Td class="font-medium">{{ plan.name }}</Table.Td>
-                                            <Table.Td>
-                                                <span class="rounded-full px-2 py-0.5 text-xs" :class="plan.type === 'night' ? 'bg-primary/10 text-primary' : 'bg-pending/10 text-pending'">
-                                                    {{ plan.duration_label }}
-                                                </span>
-                                            </Table.Td>
-                                            <Table.Td class="text-slate-500">{{ plan.min_advance_label ?? 'Sin restricción' }}</Table.Td>
-                                            <Table.Td class="text-slate-500">
-                                                <template v-if="plan.deposit_percent">
-                                                    {{ Number(plan.deposit_percent) }}% de anticipo
-                                                    <span v-if="plan.payment_due_label" class="block text-xs">liquidar {{ plan.payment_due_label }}</span>
-                                                </template>
-                                                <span v-else>No requiere</span>
-                                            </Table.Td>
-                                            <Table.Td>${{ plan.price }}</Table.Td>
-                                            <Table.Td>
-                                                <span class="rounded-full px-2 py-0.5 text-xs" :class="plan.active ? 'bg-success/10 text-success' : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'">
-                                                    {{ plan.active ? 'Activa' : 'Inactiva' }}
-                                                </span>
-                                            </Table.Td>
-                                            <Table.Td v-if="canManage">
-                                                <div class="flex justify-end gap-3">
-                                                    <a href="#" class="text-primary" @click.prevent="openPlan(plan)">
-                                                        <Lucide icon="Pencil" class="h-4 w-4" />
-                                                    </a>
-                                                    <a href="#" class="text-danger" @click.prevent="deletePlan(plan)">
-                                                        <Lucide icon="Trash2" class="h-4 w-4" />
-                                                    </a>
-                                                </div>
-                                            </Table.Td>
-                                        </Table.Tr>
-                                        <Table.Tr v-if="!group.plans.length">
-                                            <Table.Td :colspan="canManage ? 7 : 6" class="text-sm text-slate-500">
-                                                Sin tarifas para este tipo.
-                                            </Table.Td>
-                                        </Table.Tr>
-                                    </template>
-                                </Table.Tbody>
-                            </Table>
-                            <div v-else class="flex flex-col items-center gap-3 py-8 text-center">
-                                <div class="flex h-12 w-12 items-center justify-center rounded-full bg-success/10 text-success">
-                                    <Lucide icon="Tag" class="h-6 w-6" />
-                                </div>
-                                <div>
-                                    <p class="text-sm font-medium">Aún no hay tarifas</p>
-                                    <p class="mt-0.5 text-xs text-slate-500">Ej: "Noche sencilla $650", "Rato 3 horas $250", "Semana $3,800".</p>
-                                </div>
-                                <Button v-if="canManage && roomTypes.length" variant="outline-primary" size="sm" class="rounded-[0.5rem]" @click="openPlan(null)">
-                                    <Lucide icon="Plus" class="mr-1 h-4 w-4" /> Crear primera tarifa
-                                </Button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
             </div>
         </div>
 
@@ -791,6 +1033,34 @@ function deletePlan(plan: RatePlanRow) {
                             </div>
                         </div>
 
+                        <div class="rounded-md border border-slate-200/70 p-3 dark:border-darkmode-400">
+                            <FormCheck>
+                                <FormCheck.Input id="plan-cancel-policy" v-model="planForm.has_cancel_policy" type="checkbox" />
+                                <FormCheck.Label htmlFor="plan-cancel-policy">Política de cancelación con reembolso</FormCheck.Label>
+                            </FormCheck>
+                            <div v-if="planForm.has_cancel_policy" class="mt-3 space-y-3">
+                                <div>
+                                    <FormLabel>Cancelación sin costo hasta</FormLabel>
+                                    <div class="flex gap-2">
+                                        <FormInput v-model.number="planForm.cancel_free_value" type="number" min="1" class="w-24" />
+                                        <FormSelect v-model="planForm.cancel_free_unit" class="flex-1">
+                                            <option v-for="unit in advanceUnits" :key="unit.value" :value="unit.value">{{ unit.label }}</option>
+                                        </FormSelect>
+                                    </div>
+                                    <FormHelp>Antes de este límite se sugiere reembolsar todo lo pagado.</FormHelp>
+                                    <FormHelp v-if="errors.cancel_free_value || errors.cancel_free_unit" class="text-danger">
+                                        {{ errors.cancel_free_value ?? errors.cancel_free_unit }}
+                                    </FormHelp>
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="plan-cancel-penalty">Penalidad fuera de la ventana (% de lo pagado que se retiene)</FormLabel>
+                                    <FormInput id="plan-cancel-penalty" v-model.number="planForm.cancel_penalty_percent" type="number" min="0" max="100" step="0.5" class="w-32" />
+                                    <FormHelp>100 = sin reembolso al cancelar tarde (lo típico). Es una sugerencia al reembolsar; tu equipo siempre decide.</FormHelp>
+                                    <FormHelp v-if="errors.cancel_penalty_percent" class="text-danger">{{ errors.cancel_penalty_percent }}</FormHelp>
+                                </div>
+                            </div>
+                        </div>
+
                         <FormCheck v-if="editingPlan">
                             <FormCheck.Input id="plan-active" v-model="planForm.active" type="checkbox" />
                             <FormCheck.Label htmlFor="plan-active">Tarifa activa</FormCheck.Label>
@@ -801,6 +1071,116 @@ function deletePlan(plan: RatePlanRow) {
                             <Button type="submit" variant="primary" :disabled="saving">Guardar</Button>
                         </div>
                     </form>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Modal temporadas y promos -->
+        <Dialog :open="showSeasonsModal" size="lg" @close="showSeasonsModal = false">
+            <Dialog.Panel>
+                <div class="p-5">
+                    <h2 class="mb-1 text-base font-medium">Temporadas y promos</h2>
+                    <p class="mb-4 text-xs text-slate-500">
+                        {{ seasonsPlan?.name }} — un rango de fechas con un precio que SUSTITUYE al de la tarifa mientras esté
+                        vigente. Si dos se solapan, gana la de mayor prioridad.
+                    </p>
+
+                    <div v-if="loadingSeasons" class="py-6 text-center text-sm text-slate-500">Cargando…</div>
+                    <template v-else>
+                        <div v-if="seasons.length" class="mb-5 space-y-2">
+                            <div
+                                v-for="season in seasons"
+                                :key="season.id"
+                                class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200/70 p-3 text-sm dark:border-darkmode-400"
+                            >
+                                <div class="min-w-0">
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-medium">{{ season.name }}</span>
+                                        <span
+                                            class="rounded-full px-2 py-0.5 text-[11px]"
+                                            :class="season.kind === 'promo' ? 'bg-pending/10 text-pending' : 'bg-primary/10 text-primary'"
+                                        >
+                                            {{ season.kind === 'promo' ? 'Promo' : 'Temporada' }}
+                                        </span>
+                                        <span v-if="!season.active" class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400">
+                                            Inactiva
+                                        </span>
+                                    </div>
+                                    <div class="mt-0.5 text-xs text-slate-500">
+                                        {{ season.starts_on }} → {{ season.ends_on }} · {{ money(season.price) }} · prioridad {{ season.priority }}
+                                    </div>
+                                </div>
+                                <div class="flex shrink-0 gap-3">
+                                    <a href="#" class="text-primary" title="Editar" @click.prevent="editSeason(season)">
+                                        <Lucide icon="Pencil" class="h-4 w-4" />
+                                    </a>
+                                    <a href="#" class="text-danger" title="Eliminar" @click.prevent="deleteSeason(season)">
+                                        <Lucide icon="Trash2" class="h-4 w-4" />
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                        <div v-else class="mb-5 rounded-md border border-dashed border-slate-200 px-4 py-3 text-center text-xs text-slate-500 dark:border-darkmode-400">
+                            Sin temporadas — la tarifa cobra su precio normal todo el año.
+                        </div>
+
+                        <form class="space-y-3 border-t border-slate-200/60 pt-4 dark:border-darkmode-400" @submit.prevent="submitSeason">
+                            <h3 class="text-xs font-medium uppercase tracking-wide text-slate-400">
+                                {{ editingSeason ? 'Editar temporada' : 'Agregar temporada o promo' }}
+                            </h3>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <FormLabel htmlFor="season-name">Nombre</FormLabel>
+                                    <FormInput id="season-name" v-model="seasonForm.name" type="text" placeholder="Semana Santa" />
+                                    <FormHelp v-if="errors.name" class="text-danger">{{ errors.name }}</FormHelp>
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="season-kind">Tipo</FormLabel>
+                                    <FormSelect id="season-kind" v-model="seasonForm.kind">
+                                        <option value="season">Temporada</option>
+                                        <option value="promo">Promo</option>
+                                    </FormSelect>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <FormLabel htmlFor="season-starts">Desde</FormLabel>
+                                    <FormInput id="season-starts" v-model="seasonForm.starts_on" type="date" />
+                                    <FormHelp v-if="errors.starts_on" class="text-danger">{{ errors.starts_on }}</FormHelp>
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="season-ends">Hasta</FormLabel>
+                                    <FormInput id="season-ends" v-model="seasonForm.ends_on" type="date" />
+                                    <FormHelp v-if="errors.ends_on" class="text-danger">{{ errors.ends_on }}</FormHelp>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div>
+                                    <FormLabel htmlFor="season-price">Precio ($)</FormLabel>
+                                    <FormInput id="season-price" v-model="seasonForm.price" type="number" step="0.01" min="0" />
+                                    <FormHelp>Sustituye el precio normal ({{ money(seasonsPlan?.price ?? 0) }}) mientras esté vigente.</FormHelp>
+                                    <FormHelp v-if="errors.price" class="text-danger">{{ errors.price }}</FormHelp>
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="season-priority">Prioridad</FormLabel>
+                                    <FormInput id="season-priority" v-model.number="seasonForm.priority" type="number" min="0" />
+                                    <FormHelp>Si se solapa con otra, gana la de número más alto.</FormHelp>
+                                </div>
+                            </div>
+                            <div class="flex justify-end gap-2 pt-1">
+                                <Button v-if="editingSeason" type="button" variant="outline-secondary" size="sm" @click="resetSeasonForm">
+                                    Cancelar edición
+                                </Button>
+                                <Button type="submit" variant="primary" size="sm" :disabled="saving">
+                                    {{ editingSeason ? 'Guardar cambios' : 'Agregar' }}
+                                </Button>
+                            </div>
+                        </form>
+                    </template>
+
+                    <div class="flex justify-end pt-4">
+                        <Button type="button" variant="outline-secondary" @click="showSeasonsModal = false">Cerrar</Button>
+                    </div>
                 </div>
             </Dialog.Panel>
         </Dialog>
@@ -860,60 +1240,210 @@ function deletePlan(plan: RatePlanRow) {
         <!-- Modal tipo -->
         <Dialog :open="showTypeForm" size="lg" @close="showTypeForm = false">
             <Dialog.Panel>
-                <div class="p-5">
-                    <h2 class="mb-4 text-base font-medium">{{ editingType ? 'Editar tipo' : 'Nuevo tipo de habitación' }}</h2>
-                    <form class="space-y-4" @submit.prevent="submitType">
-                        <div>
-                            <FormLabel htmlFor="type-name">Nombre</FormLabel>
-                            <FormInput id="type-name" v-model="typeForm.name" type="text" placeholder="Suite" />
-                            <FormHelp v-if="errors.name" class="text-danger">{{ errors.name }}</FormHelp>
+                <form class="flex flex-col" @submit.prevent="submitType">
+                    <div class="flex items-center gap-3.5 border-b border-slate-200/70 px-7 py-5 dark:border-darkmode-400">
+                        <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10">
+                            <Lucide icon="BedDouble" class="h-5 w-5 text-primary" />
                         </div>
-                        <div>
-                            <FormLabel htmlFor="type-description">Descripción</FormLabel>
-                            <FormTextarea id="type-description" v-model="typeForm.description" placeholder="Suite amplia con jacuzzi y balcón…" />
-                            <FormHelp>La usará el widget web y los bots para vender.</FormHelp>
-                            <FormHelp v-if="errors.description" class="text-danger">{{ errors.description }}</FormHelp>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">{{ editingType ? `Editar tipo ${editingType.name}` : 'Nuevo tipo de habitación' }}</h2>
+                            <p class="mt-0.5 text-xs text-slate-500">Es la ficha que el widget web y los bots usan para vender.</p>
                         </div>
-                        <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
-                            <div>
-                                <FormLabel htmlFor="type-capacity">Capacidad (pax)</FormLabel>
-                                <FormInput id="type-capacity" v-model.number="typeForm.capacity" type="number" min="1" max="20" />
-                                <FormHelp v-if="errors.capacity" class="text-danger">{{ errors.capacity }}</FormHelp>
+                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400" @click="showTypeForm = false">
+                            <Lucide icon="X" class="h-5 w-5" />
+                        </button>
+                    </div>
+
+                    <div class="max-h-[70vh] space-y-6 overflow-y-auto px-7 py-6">
+                        <!-- Identidad -->
+                        <section>
+                            <div class="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                <Lucide icon="BadgeCheck" class="h-3.5 w-3.5" /> Identidad
                             </div>
-                            <div>
-                                <FormLabel htmlFor="type-max-adults">Máx. adultos</FormLabel>
-                                <FormInput id="type-max-adults" v-model="typeForm.max_adults" type="number" min="0" placeholder="—" />
-                                <FormHelp v-if="errors.max_adults" class="text-danger">{{ errors.max_adults }}</FormHelp>
+                            <div class="grid grid-cols-12 gap-5">
+                                <div class="col-span-12">
+                                    <FormLabel htmlFor="type-name">Nombre</FormLabel>
+                                    <FormInput id="type-name" v-model="typeForm.name" type="text" placeholder="Suite" />
+                                    <FormHelp v-if="errors.name" class="text-danger">{{ errors.name }}</FormHelp>
+                                </div>
+                                <div class="col-span-12">
+                                    <FormLabel htmlFor="type-description">Descripción</FormLabel>
+                                    <FormTextarea id="type-description" v-model="typeForm.description" placeholder="Suite amplia con jacuzzi y balcón…" />
+                                    <FormHelp v-if="errors.description" class="text-danger">{{ errors.description }}</FormHelp>
+                                    <FormHelp v-else>Es el texto con el que el widget y los bots describen la habitación.</FormHelp>
+                                </div>
                             </div>
-                            <div>
-                                <FormLabel htmlFor="type-max-children">Máx. niños</FormLabel>
-                                <FormInput id="type-max-children" v-model="typeForm.max_children" type="number" min="0" placeholder="—" />
-                                <FormHelp v-if="errors.max_children" class="text-danger">{{ errors.max_children }}</FormHelp>
+                        </section>
+
+                        <!-- Fotos (solo al editar: la galería se liga al tipo ya guardado) -->
+                        <section class="border-t border-dashed border-slate-300/70 pt-5">
+                            <div class="mb-1 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                <Lucide icon="Image" class="h-3.5 w-3.5" /> Fotos
                             </div>
-                        </div>
-                        <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
-                            <div>
-                                <FormLabel htmlFor="type-price">Precio base ($)</FormLabel>
-                                <FormInput id="type-price" v-model="typeForm.base_price" type="number" step="0.01" min="0" placeholder="650.00" />
-                                <FormHelp v-if="errors.base_price" class="text-danger">{{ errors.base_price }}</FormHelp>
+                            <p class="mb-4 text-xs text-slate-500">
+                                La galería que ve el huésped en el wizard. La primera foto es la portada de la tarjeta.
+                            </p>
+
+                            <div v-if="!editingType" class="rounded-lg border border-dashed border-slate-300/70 px-4 py-5 text-center text-xs text-slate-500 dark:border-darkmode-400">
+                                Guarda el tipo primero; después podrás subir sus fotos desde aquí.
                             </div>
-                            <div>
-                                <FormLabel htmlFor="type-checkin">Check-in</FormLabel>
-                                <FormInput id="type-checkin" v-model="typeForm.check_in_time" type="time" />
-                                <FormHelp v-if="errors.check_in_time" class="text-danger">{{ errors.check_in_time }}</FormHelp>
+                            <template v-else>
+                                <div v-if="typePhotos.length" class="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
+                                    <div
+                                        v-for="(photo, index) in typePhotos"
+                                        :key="photo.id"
+                                        class="group relative aspect-[4/3] overflow-hidden rounded-lg border border-slate-200/70 dark:border-darkmode-400"
+                                    >
+                                        <img :src="photo.thumb_url" alt="" class="h-full w-full object-cover" loading="lazy" />
+                                        <span
+                                            v-if="index === 0"
+                                            class="absolute left-1.5 top-1.5 rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium text-white"
+                                        >
+                                            Portada
+                                        </span>
+                                        <div class="absolute inset-x-0 bottom-0 flex justify-end gap-1 bg-gradient-to-t from-black/60 to-transparent p-1.5 opacity-0 transition group-hover:opacity-100">
+                                            <button
+                                                v-if="index !== 0"
+                                                type="button"
+                                                class="rounded bg-white/90 px-1.5 py-1 text-[10px] font-medium text-slate-700 transition hover:bg-white"
+                                                title="Usar como portada"
+                                                :disabled="photoBusy"
+                                                @click="makeCover(photo)"
+                                            >
+                                                Portada
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="rounded bg-white/90 p-1 text-danger transition hover:bg-white"
+                                                title="Quitar foto"
+                                                :disabled="photoBusy"
+                                                @click="removePhoto(photo)"
+                                            >
+                                                <Lucide icon="Trash2" class="h-3.5 w-3.5" />
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div v-else class="rounded-lg border border-dashed border-slate-300/70 px-4 py-5 text-center text-xs text-slate-500 dark:border-darkmode-400">
+                                    Sin fotos: la tarjeta del wizard se muestra solo con texto. Una buena galería es lo que más ayuda a que reserven.
+                                </div>
+
+                                <div class="mt-3 flex items-center gap-3">
+                                    <input
+                                        ref="photoInput"
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp"
+                                        multiple
+                                        class="hidden"
+                                        @change="uploadPhotos"
+                                    />
+                                    <Button type="button" variant="outline-secondary" class="rounded-[0.5rem] bg-white" :disabled="photoBusy || typePhotos.length >= 12" @click="photoInput?.click()">
+                                        <Lucide :icon="photoBusy ? 'RefreshCw' : 'ImagePlus'" class="mr-2 h-4 w-4" :class="photoBusy && 'animate-spin'" />
+                                        {{ photoBusy ? 'Subiendo…' : 'Agregar fotos' }}
+                                    </Button>
+                                    <span class="text-xs text-slate-400">{{ typePhotos.length }} de 12 · JPG, PNG o WebP, máx. 6 MB</span>
+                                </div>
+                            </template>
+                        </section>
+
+                        <!-- Capacidad -->
+                        <section class="border-t border-dashed border-slate-300/70 pt-5">
+                            <div class="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                <Lucide icon="Users" class="h-3.5 w-3.5" /> Capacidad
                             </div>
-                            <div>
-                                <FormLabel htmlFor="type-checkout">Check-out</FormLabel>
-                                <FormInput id="type-checkout" v-model="typeForm.check_out_time" type="time" />
-                                <FormHelp v-if="errors.check_out_time" class="text-danger">{{ errors.check_out_time }}</FormHelp>
+                            <div class="grid grid-cols-12 gap-5">
+                                <div class="col-span-12 sm:col-span-4">
+                                    <FormLabel htmlFor="type-capacity">Capacidad (pax)</FormLabel>
+                                    <FormInput id="type-capacity" v-model.number="typeForm.capacity" type="number" min="1" max="20" />
+                                    <FormHelp v-if="errors.capacity" class="text-danger">{{ errors.capacity }}</FormHelp>
+                                </div>
+                                <div class="col-span-12 sm:col-span-4">
+                                    <FormLabel htmlFor="type-max-adults">Máx. adultos</FormLabel>
+                                    <FormInput id="type-max-adults" v-model="typeForm.max_adults" type="number" min="0" placeholder="—" />
+                                    <FormHelp v-if="errors.max_adults" class="text-danger">{{ errors.max_adults }}</FormHelp>
+                                </div>
+                                <div class="col-span-12 sm:col-span-4">
+                                    <FormLabel htmlFor="type-max-children">Máx. niños</FormLabel>
+                                    <FormInput id="type-max-children" v-model="typeForm.max_children" type="number" min="0" placeholder="—" />
+                                    <FormHelp v-if="errors.max_children" class="text-danger">{{ errors.max_children }}</FormHelp>
+                                </div>
                             </div>
-                        </div>
-                        <div>
-                            <FormLabel htmlFor="type-amenities">Amenidades</FormLabel>
+                        </section>
+
+                        <!-- Precio único: solo se captura al crear; después vive en las tarifas -->
+                        <section v-if="!editingType" class="border-t border-dashed border-slate-300/70 pt-5">
+                            <div class="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                <Lucide icon="Tag" class="h-3.5 w-3.5" /> Precio y modalidad
+                            </div>
+                            <div class="grid grid-cols-12 gap-5">
+                                <div class="col-span-12 sm:col-span-4">
+                                    <FormLabel htmlFor="type-price">Precio ($)</FormLabel>
+                                    <FormInput id="type-price" v-model="typeForm.price" type="number" step="0.01" min="0.01" placeholder="650.00" />
+                                    <FormHelp v-if="errors.price" class="text-danger">{{ errors.price }}</FormHelp>
+                                </div>
+                                <div class="col-span-12 sm:col-span-8">
+                                    <FormLabel htmlFor="type-rate-type">Cobro</FormLabel>
+                                    <FormSelect id="type-rate-type" v-model="typeForm.rate_type">
+                                        <option value="night">Por noche</option>
+                                        <option value="block">Por periodo (horas/días/semanas)</option>
+                                    </FormSelect>
+                                </div>
+                                <div v-if="typeForm.rate_type === 'block'" class="col-span-12">
+                                    <FormLabel>Duración del periodo</FormLabel>
+                                    <div class="flex gap-2">
+                                        <FormInput v-model.number="typeForm.duration_value" type="number" min="1" class="w-24" />
+                                        <FormSelect v-model="typeForm.duration_unit" class="flex-1">
+                                            <option v-for="unit in durationUnits" :key="unit.value" :value="unit.value">{{ unit.label }}</option>
+                                        </FormSelect>
+                                    </div>
+                                    <FormHelp v-if="errors.duration_value || errors.duration_unit" class="text-danger">
+                                        {{ errors.duration_value ?? errors.duration_unit }}
+                                    </FormHelp>
+                                </div>
+                            </div>
+                            <FormHelp class="mt-2">
+                                Se guarda como la tarifa "Tarifa base" del tipo. Después puedes agregar más tarifas (rato, semana, promo) desde la lista.
+                            </FormHelp>
+                        </section>
+                        <section v-else class="border-t border-dashed border-slate-300/70 pt-5">
+                            <div class="flex items-start gap-2 rounded-lg border border-info/20 bg-info/5 px-3 py-2.5 text-xs text-slate-600 dark:text-slate-300">
+                                <Lucide icon="Info" class="h-4 w-4 shrink-0 text-info" />
+                                <span>
+                                    El precio de este tipo vive en sus <span class="font-medium">tarifas</span>: se editan en su fila de la lista
+                                    (expande el tipo) o agrega una nueva con el icono de etiqueta.
+                                </span>
+                            </div>
+                        </section>
+
+                        <!-- Horarios -->
+                        <section class="border-t border-dashed border-slate-300/70 pt-5">
+                            <div class="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                <Lucide icon="Clock" class="h-3.5 w-3.5" /> Horarios
+                            </div>
+                            <div class="grid grid-cols-12 gap-5">
+                                <div class="col-span-12 sm:col-span-4">
+                                    <FormLabel htmlFor="type-checkin">Check-in</FormLabel>
+                                    <FormInput id="type-checkin" v-model="typeForm.check_in_time" type="time" />
+                                    <FormHelp v-if="errors.check_in_time" class="text-danger">{{ errors.check_in_time }}</FormHelp>
+                                </div>
+                                <div class="col-span-12 sm:col-span-4">
+                                    <FormLabel htmlFor="type-checkout">Check-out</FormLabel>
+                                    <FormInput id="type-checkout" v-model="typeForm.check_out_time" type="time" />
+                                    <FormHelp v-if="errors.check_out_time" class="text-danger">{{ errors.check_out_time }}</FormHelp>
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Amenidades -->
+                        <section class="border-t border-dashed border-slate-300/70 pt-5">
+                            <div class="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                <Lucide icon="Sparkles" class="h-3.5 w-3.5" /> Amenidades
+                            </div>
                             <FormInput
                                 id="type-amenities"
                                 v-model="typeAmenityInput"
                                 type="text"
+                                maxlength="100"
                                 placeholder="Escribe y presiona Enter (TV, minibar, jacuzzi…)"
                                 @keydown.enter.prevent="addTypeAmenity"
                             />
@@ -934,25 +1464,53 @@ function deletePlan(plan: RatePlanRow) {
                                     </button>
                                 </span>
                             </div>
-                            <FormHelp v-if="errors.amenities" class="text-danger">{{ errors.amenities }}</FormHelp>
-                        </div>
-                        <div class="flex flex-wrap items-end justify-between gap-4">
-                            <div>
-                                <FormLabel htmlFor="type-sort">Orden</FormLabel>
-                                <FormInput id="type-sort" v-model.number="typeForm.sort_order" type="number" min="0" class="w-24" />
-                                <FormHelp v-if="errors.sort_order" class="text-danger">{{ errors.sort_order }}</FormHelp>
+                            <!-- Sugerencias comunes (spec-integracion-sitios §5): un clic agrega -->
+                            <div class="mt-2.5 flex flex-wrap gap-1.5">
+                                <button
+                                    v-for="suggestion in AMENITY_SUGGESTIONS.filter((a) => !typeForm.amenities.includes(a))"
+                                    :key="suggestion"
+                                    type="button"
+                                    class="rounded-full border border-dashed border-slate-300 px-2 py-0.5 text-xs text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
+                                    @click="typeForm.amenities.push(suggestion)"
+                                >
+                                    + {{ suggestion }}
+                                </button>
                             </div>
-                            <FormSwitch class="mb-2">
-                                <FormSwitch.Input id="type-active" v-model="typeForm.active" type="checkbox" />
-                                <FormSwitch.Label htmlFor="type-active">Activo (a la venta)</FormSwitch.Label>
-                            </FormSwitch>
-                        </div>
-                        <div class="flex justify-end gap-2 pt-2">
-                            <Button type="button" variant="outline-secondary" @click="showTypeForm = false">Cancelar</Button>
-                            <Button type="submit" variant="primary" :disabled="saving">Guardar</Button>
-                        </div>
-                    </form>
-                </div>
+                            <FormHelp v-if="errors.amenities" class="text-danger">{{ errors.amenities }}</FormHelp>
+                        </section>
+
+                        <!-- Publicación -->
+                        <section class="border-t border-dashed border-slate-300/70 pt-5">
+                            <div class="mb-4 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                <Lucide icon="Store" class="h-3.5 w-3.5" /> Publicación
+                            </div>
+                            <div class="grid grid-cols-12 gap-5">
+                                <div class="col-span-12 sm:col-span-4">
+                                    <FormLabel htmlFor="type-sort">Orden</FormLabel>
+                                    <FormInput id="type-sort" v-model.number="typeForm.sort_order" type="number" min="0" />
+                                    <FormHelp v-if="errors.sort_order" class="text-danger">{{ errors.sort_order }}</FormHelp>
+                                    <FormHelp v-else>Menor número aparece primero.</FormHelp>
+                                </div>
+                                <label class="col-span-12 flex cursor-pointer items-start gap-3.5 rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400 sm:col-span-8">
+                                    <FormSwitch class="mt-0.5">
+                                        <FormSwitch.Input id="type-active" v-model="typeForm.active" type="checkbox" />
+                                    </FormSwitch>
+                                    <span class="min-w-0">
+                                        <span class="block text-sm font-medium">Activo (a la venta)</span>
+                                        <span class="mt-0.5 block text-xs text-slate-500">El widget y los bots pueden ofrecerlo; al apagarlo deja de venderse sin tocar sus habitaciones.</span>
+                                    </span>
+                                </label>
+                            </div>
+                        </section>
+                    </div>
+
+                    <div class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-7 py-4 dark:border-darkmode-400">
+                        <Button type="button" variant="outline-secondary" @click="showTypeForm = false">Cancelar</Button>
+                        <Button type="submit" variant="primary" class="shadow-md shadow-primary/20" :disabled="saving">
+                            <Lucide icon="Check" class="mr-2 h-4 w-4" /> {{ saving ? 'Guardando…' : 'Guardar tipo' }}
+                        </Button>
+                    </div>
+                </form>
             </Dialog.Panel>
         </Dialog>
     </RazeLayout>

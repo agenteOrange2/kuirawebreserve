@@ -42,6 +42,15 @@ class RoomsPageController extends Controller
                     'smoking' => $room->smoking,
                     'accessible' => $room->accessible,
                     'price_modifier' => $room->price_modifier !== null ? (float) $room->price_modifier : null,
+                    'included_occupancy' => $room->included_occupancy,
+                    'extra_guest_fee' => $room->extra_guest_fee !== null ? (float) $room->extra_guest_fee : null,
+                    'optional_charges' => collect($room->optional_charges ?? [])
+                        ->map(fn (array $charge) => [
+                            'concept' => (string) ($charge['concept'] ?? ''),
+                            'amount' => round((float) ($charge['amount'] ?? 0), 2),
+                        ])
+                        ->values()
+                        ->all(),
                     'zone_id' => $room->zone_id,
                     'zone' => $room->zone?->name,
                     'zone_color' => $room->zone?->color,
@@ -54,7 +63,19 @@ class RoomsPageController extends Controller
                     'maintenance_notes' => $room->maintenance_notes,
                 ]),
             'zones' => Zone::where('property_id', $property->id)->orderBy('sort_order')->get(['id', 'name', 'kind', 'color']),
-            'roomTypes' => RoomType::where('property_id', $property->id)->orderBy('sort_order')->get(['id', 'name', 'capacity', 'base_price']),
+            'roomTypes' => RoomType::query()
+                ->select(['id', 'name', 'capacity'])
+                ->where('property_id', $property->id)
+                ->withMin(['ratePlans as price_from' => fn ($q) => $q->where('active', true)], 'price')
+                ->orderBy('sort_order')
+                ->get()
+                ->map(fn (RoomType $type) => [
+                    'id' => $type->id,
+                    'name' => $type->name,
+                    'capacity' => $type->capacity,
+                    'price_from' => $type->priceFrom(),
+                    'has_active_rate' => $type->hasActiveRate(),
+                ]),
             'bedTypes' => Room::BED_TYPES,
             'maxRooms' => tenant()->planLimit('max_rooms'),
             'canManage' => $request->user()->can('rooms.manage'),

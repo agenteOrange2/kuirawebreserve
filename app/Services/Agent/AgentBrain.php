@@ -154,6 +154,8 @@ class AgentBrain
         $policies = json_decode($this->tools->policies()->getContent(), true);
         $guestBlock = $this->guestBlock($conversation);
         $summaryBlock = $this->summaryBlock($conversation);
+        $instructionsBlock = $this->instructionsBlock();
+        $guidelinesBlock = $this->guidelinesBlock();
 
         return <<<PROMPT
 Eres el asistente virtual del hotel "{$policies['hotel']['name']}". Atiendes huéspedes por chat en español (responde en el idioma del huésped si escribe en otro).
@@ -162,19 +164,93 @@ DATOS DEL HOTEL (única fuente de verdad — si algo no está aquí ni en tus he
 ```json
 {$this->tools->policies()->getContent()}
 ```
-{$guestBlock}{$summaryBlock}
+{$guestBlock}{$summaryBlock}{$instructionsBlock}{$guidelinesBlock}
 REGLAS ESTRICTAS:
 - Si la duda del huésped coincide con una pregunta de "faqs", responde con esa respuesta tal cual (puedes adaptarla al tono de la conversación, sin cambiar los datos).
 - Si el huésped comparte su teléfono, usa identificar_huesped para reconocerlo; si ya nos visitó, salúdalo por su nombre como cliente frecuente (sin recitar sus datos).
 - Usa las herramientas para tarifas, disponibilidad y reservas; NUNCA inventes precios, fechas ni políticas.
-- Puedes crear APARTADOS (holds) que el hotel confirmará; NUNCA confirmes reservas ni cobres dinero.
-- Antes de crear un apartado confirma con el huésped: tarifa, fecha de llegada y nombre completo.
+- Cada tarifa pertenece a UN tipo de habitación (room_type en consultar_tarifas). Si el huésped pidió un tipo, cotiza y aparta SOLO con tarifas de ese tipo — jamás uses la tarifa de otro tipo.
+- El precio de una tarifa es POR UNIDAD (por noche o por bloque); el TOTAL del rango lo calcula consultar_disponibilidad. Nunca presentes el total del rango como si fuera el precio por unidad ("$1,750 por 3 horas" está MAL si es el total de varias unidades). Para estancias con fechas usa tarifas por noche; las tarifas por bloque (ratos/horas) solo si el huésped pide horas.
+- Antes de crear un apartado repite al huésped: tipo de habitación, nombre de la tarifa, TOTAL exacto, fecha de llegada y nombre completo — y espera su confirmación.
+- PAGOS: si el apartado requiere prepago (requires_prepayment), usa solicitar_pago y comparte lo que devuelva tal cual: link de pago (el huésped paga ahí y el sistema confirma solo) o cuentas para transferencia (pide el comprobante por este chat; el hotel lo verifica). NUNCA digas que un pago fue recibido o verificado: eso solo lo confirma el sistema (consultar_reserva) o el personal. Si el huésped insiste en que ya pagó y el sistema no lo refleja, usa transferir_a_humano.
+- NUNCA pidas ni aceptes números de tarjeta por el chat; si el huésped los envía, dile que por seguridad los borre y no los uses.
 - Cita montos exactamente como los devuelven las herramientas (usa *_label).
+- Si el huésped pide VARIAS habitaciones, haz UNA llamada de crear_apartado por cada una y reporta el resultado real de CADA llamada (código de reserva o el error exacto). Nunca resumas dos apartados en uno ni des por hecho uno que no confirmaste con la herramienta.
+- Si una herramienta devuelve un error, comunica al huésped el mensaje EXACTO que devolvió — nunca inventes la causa ni digas "no hay disponibilidad" si la herramienta dijo otra cosa.
 - Si el huésped pide hablar con una persona, se queja, o pide algo fuera de tu alcance, usa la herramienta transferir_a_humano.
 - Hoy es {$this->today()}. Fechas en formato YYYY-MM-DD HH:MM.
 - Sé breve, cálido y profesional; máximo 2-3 oraciones por respuesta salvo que listes opciones. No uses emojis.
 - No saludes de nuevo si la conversación ya empezó: continúa el hilo donde va.
 PROMPT;
+    }
+
+    /**
+     * Aprendizajes del hotel (agent_guidelines): correcciones capturadas de
+     * conversaciones reales, inyectadas como reglas numeradas. Es el canal
+     * para que el bot "aprenda" de sus errores con control humano.
+     */
+    protected function guidelinesBlock(): string
+    {
+        $guidelines = \App\Models\AgentGuideline::query()
+            ->where('active', true)
+            ->orderBy('sort_order')
+            ->orderBy('id')
+            ->pluck('instruction');
+
+        if ($guidelines->isEmpty()) {
+            return '';
+        }
+
+        $list = $guidelines->map(fn (string $g, int $i) => ($i + 1).'. '.$g)->implode("\n");
+
+        return <<<BLOCK
+
+APRENDIZAJES DEL HOTEL (correcciones de conversaciones reales — cúmplelas SIEMPRE, tienen prioridad sobre tu criterio):
+{$list}
+
+BLOCK;
+    }
+
+    /**
+     * Vista del prompt efectivo (sin conversación): lo que el bot realmente
+     * recibe — para el "ojito" del admin de plataforma.
+     */
+    public function promptPreview(): string
+    {
+        return $this->systemPrompt(null);
+    }
+
+    /**
+     * Instrucciones en dos niveles, ambas subordinadas a las REGLAS
+     * ESTRICTAS: primero las de PLATAFORMA (super-admin, por hotel — cómo
+     * cotizar, apartar, métodos de pago) y luego las del propio hotel
+     * (settings.agent_instructions, editadas en /ajustes).
+     */
+    protected function instructionsBlock(): string
+    {
+        $blocks = '';
+
+        $platform = trim((string) (\App\Models\Central\TenantAgentSetting::for((string) tenant('id'))->platform_instructions ?? ''));
+        if ($platform !== '') {
+            $blocks .= <<<BLOCK
+
+INSTRUCCIONES DE LA PLATAFORMA (prioritarias sobre las del hotel; síguelas siempre que no contradigan las REGLAS ESTRICTAS):
+{$platform}
+
+BLOCK;
+        }
+
+        $hotel = trim((string) (\App\Models\Property::query()->first()?->settings['agent_instructions'] ?? ''));
+        if ($hotel !== '') {
+            $blocks .= <<<BLOCK
+
+INSTRUCCIONES DEL EQUIPO DEL HOTEL (síguelas siempre que no contradigan las REGLAS ESTRICTAS ni las de la plataforma):
+{$hotel}
+
+BLOCK;
+        }
+
+        return $blocks === '' ? "\n" : $blocks;
     }
 
     /**
@@ -393,9 +469,9 @@ BLOCK;
     }
 
     /**
-     * Las mismas 5 herramientas de la Agent API + memoria del huésped +
+     * Las mismas herramientas de la Agent API + memoria del huésped +
      * handoff. Con $readOnly (modo copiloto) se excluyen las que tienen
-     * efectos: crear_apartado y transferir_a_humano.
+     * efectos: crear_apartado, solicitar_pago y transferir_a_humano.
      *
      * @return array<int, \Prism\Prism\Tool>
      */
@@ -404,15 +480,32 @@ BLOCK;
         $call = function (string $method, array $params = []): string {
             $request = Request::create('/brain', 'POST', $params);
 
+            $respond = fn (\Illuminate\Http\JsonResponse $response) => tap($response->getContent(), function () use ($method, $params, $response) {
+                // Bitácora de fallos de herramientas: sin esto, un "desvarío"
+                // del bot es indiagnosticable (incidente cabañas 2026-07-16).
+                if ($response->getStatusCode() >= 400) {
+                    \Illuminate\Support\Facades\Log::warning('Agente: herramienta falló', [
+                        'tool' => $method,
+                        'params' => $params,
+                        'status' => $response->getStatusCode(),
+                        'body' => $response->getContent(),
+                    ]);
+                }
+            });
+
             return match ($method) {
-                'policies' => $this->tools->policies()->getContent(),
-                'rate_plans' => $this->tools->ratePlans()->getContent(),
-                'availability' => $this->tools->availability($request, app(\App\Services\AvailabilityService::class))->getContent(),
-                'reservation' => $this->tools->showReservation((string) ($params['code'] ?? ''))->getContent(),
-                'hold' => $this->tools->storeHold(
+                'policies' => $respond($this->tools->policies()),
+                'rate_plans' => $respond($this->tools->ratePlans()),
+                'availability' => $respond($this->tools->availability($request, app(\App\Services\AvailabilityService::class))),
+                'reservation' => $respond($this->tools->showReservation((string) ($params['code'] ?? ''))),
+                'hold' => $respond($this->tools->storeHold(
                     tap($request, fn ($r) => $r->setUserResolver(fn () => \App\Http\Controllers\Tenant\AgentTokenController::ensureAgentUser())),
                     app(\App\Actions\Reservations\CreateReservation::class),
-                )->getContent(),
+                )),
+                'payment' => $respond($this->tools->requestPayment(
+                    tap($request, fn ($r) => $r->setUserResolver(fn () => \App\Http\Controllers\Tenant\AgentTokenController::ensureAgentUser())),
+                    app(\App\Actions\Payments\IssuePaymentRequest::class),
+                )),
                 default => '{}',
             };
         };
@@ -427,8 +520,8 @@ BLOCK;
                 }),
 
             Tool::as('consultar_disponibilidad')
-                ->for('Verifica habitaciones libres y el total para una tarifa y fecha de llegada.')
-                ->withNumberParameter('rate_plan_id', 'ID de la tarifa (de consultar_tarifas)')
+                ->for('Verifica habitaciones libres y calcula el TOTAL del rango completo para una tarifa (el total NO es el precio por unidad de la tarifa).')
+                ->withNumberParameter('rate_plan_id', 'ID de la tarifa (de consultar_tarifas; debe ser del tipo de habitación que el huésped pidió)')
                 ->withStringParameter('starts_at', 'Fecha/hora de llegada, formato YYYY-MM-DD HH:MM')
                 ->withStringParameter('ends_at', 'Fecha/hora de salida (opcional, se calcula sola)', false)
                 ->using(function (int|float $rate_plan_id, string $starts_at, ?string $ends_at = null) use ($call, $conversation): string {
@@ -442,8 +535,8 @@ BLOCK;
                 }),
 
             Tool::as('crear_apartado')
-                ->for('Crea un apartado (hold) de habitación como reserva PENDIENTE que el hotel confirmará. Úsalo solo tras confirmar tarifa, fecha y nombre con el huésped.')
-                ->withNumberParameter('rate_plan_id', 'ID de la tarifa')
+                ->for('Crea un apartado (hold) de habitación como reserva PENDIENTE que el hotel confirmará. Úsalo solo tras confirmar con el huésped: tipo de habitación, tarifa, TOTAL exacto, fecha y nombre. La tarifa DEBE pertenecer al tipo de habitación que el huésped pidió (verifica room_type en consultar_tarifas).')
+                ->withNumberParameter('rate_plan_id', 'ID de la tarifa (su room_type debe coincidir con la habitación solicitada)')
                 ->withStringParameter('starts_at', 'Llegada, YYYY-MM-DD HH:MM')
                 ->withStringParameter('guest_name', 'Nombre completo del huésped')
                 ->withStringParameter('guest_phone', 'Teléfono del huésped (opcional)', false)
@@ -479,9 +572,22 @@ BLOCK;
                 }),
 
             Tool::as('consultar_reserva')
-                ->for('Consulta el estado de una reserva por su código (ej. RES-2026-0001).')
+                ->for('Consulta el estado de una reserva por su código (ej. RES-2026-0001), incluido su estado de pago y saldo pendiente.')
                 ->withStringParameter('code', 'Código de la reserva')
                 ->using(fn (string $code): string => $call('reservation', ['code' => $code])),
+
+            Tool::as('solicitar_pago')
+                ->for('Emite el cobro de una reserva (anticipo o saldo; el sistema decide monto y concepto). Úsala tras crear un apartado que requiere prepago, o si el huésped quiere pagar. Devuelve un LINK de pago (payment_link) o cuentas bancarias para transferencia: comparte lo que devuelva tal cual, con el monto exacto. Si es transferencia, pide el comprobante por el chat. NUNCA des un pago por recibido: eso lo confirma el sistema.')
+                ->withStringParameter('codigo_reserva', 'Código de la reserva (ej. RES-2026-0001)')
+                ->using(function (string $codigo_reserva) use ($call, $conversation): string {
+                    $result = $call('payment', ['code' => $codigo_reserva]);
+
+                    if ($conversation && (json_decode($result, true)['amount'] ?? null) !== null) {
+                        $conversation->markLead(Conversation::LEAD_HOLD);
+                    }
+
+                    return $result;
+                }),
 
             Tool::as('identificar_huesped')
                 ->for('Busca al huésped en la base del hotel por su teléfono para reconocerlo (visitas anteriores, atención personalizada). Úsala cuando comparta su teléfono.')
@@ -541,7 +647,7 @@ BLOCK;
         if ($readOnly) {
             $tools = array_values(array_filter(
                 $tools,
-                fn ($tool) => ! in_array($tool->name(), ['crear_apartado', 'transferir_a_humano'], true),
+                fn ($tool) => ! in_array($tool->name(), ['crear_apartado', 'solicitar_pago', 'transferir_a_humano'], true),
             ));
         }
 

@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { useForm, Head, Link } from '@inertiajs/vue3';
+import { useForm, Head, Link, usePage } from '@inertiajs/vue3';
+import { computed } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormCheck, FormInput, FormLabel } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
@@ -8,6 +9,22 @@ defineProps<{
     canResetPassword?: boolean;
     status?: string;
 }>();
+
+// Branding de plataforma (se edita en /admin/apariencia).
+const page = usePage();
+const branding = computed(() => (page.props.branding ?? {}) as {
+    app_name?: string | null;
+    logo_url?: string | null;
+    login_title?: string | null;
+    login_subtitle?: string | null;
+    login_background_url?: string | null;
+});
+
+const appName = computed(() => branding.value.app_name || 'KuiraReserve');
+const loginTitle = computed(() => branding.value.login_title || appName.value);
+const loginSubtitle = computed(
+    () => branding.value.login_subtitle || 'Reservas, atención por WhatsApp y cobros de tu hotel en un solo lugar.',
+);
 
 const form = useForm({
     email: '',
@@ -25,7 +42,7 @@ const submit = () => {
 </script>
 
 <template>
-  <Head title="Iniciar Sesión" />
+  <Head title="Iniciar sesión" />
   <div
     class="container grid lg:h-screen grid-cols-12 lg:max-w-[1550px] 2xl:max-w-[1750px] py-10 px-5 sm:py-14 sm:px-10 md:px-36 lg:py-0 lg:pl-14 lg:pr-12 xl:px-24"
   >
@@ -38,28 +55,31 @@ const submit = () => {
       <div
         class="relative z-10 flex flex-col justify-center w-full h-full py-2 lg:py-32"
       >
-        <div class="rounded-[0.8rem] w-[55px] h-[55px] border border-primary/30 flex items-center justify-center">
+        <div v-if="branding.logo_url" class="flex h-[55px] items-center">
+          <img :src="branding.logo_url" :alt="appName" class="max-h-[55px] max-w-[200px] object-contain" />
+        </div>
+        <div v-else class="rounded-[0.8rem] w-[55px] h-[55px] border border-primary/30 flex items-center justify-center">
           <div class="relative flex items-center justify-center w-[50px] rounded-[0.6rem] h-[50px] bg-linear-to-b from-theme-1/90 to-theme-2/90 bg-white">
-            <Lucide icon="Truck" class="w-8 h-8 text-primary" />
+            <Lucide icon="Building2" class="w-8 h-8 text-white" />
           </div>
         </div>
         <div class="mt-10">
-          <div class="text-2xl font-medium">EFService Login</div>
+          <div class="text-2xl font-medium">{{ appName }}</div>
           <div class="mt-2.5 text-slate-600">
             Ingresa tus credenciales para acceder
           </div>
 
-          <div v-if="status" class="mt-4 p-3 bg-green-100 border border-green-400 text-green-700 rounded-lg text-sm">
+          <div v-if="status" class="mt-4 rounded-lg border border-success/30 bg-success/10 p-3 text-sm text-success">
             {{ status }}
           </div>
 
-          <div v-if="form.errors.email || form.errors.password" class="mt-4 p-3 bg-red-100 border border-red-400 text-red-700 rounded-lg text-sm">
+          <div v-if="form.errors.email || form.errors.password" class="mt-4 rounded-lg border border-danger/30 bg-danger/10 p-3 text-sm text-danger">
             <p v-if="form.errors.email">{{ form.errors.email }}</p>
             <p v-if="form.errors.password">{{ form.errors.password }}</p>
           </div>
 
           <form @submit.prevent="submit" class="mt-6">
-            <FormLabel>Email*</FormLabel>
+            <FormLabel>Correo electrónico</FormLabel>
             <FormInput
               v-model="form.email"
               type="email"
@@ -67,7 +87,7 @@ const submit = () => {
               placeholder="correo@ejemplo.com"
               required
             />
-            <FormLabel class="mt-4">Password*</FormLabel>
+            <FormLabel class="mt-4">Contraseña</FormLabel>
             <FormInput
               v-model="form.password"
               type="password"
@@ -102,14 +122,8 @@ const submit = () => {
                 :disabled="form.processing"
               >
                 <Lucide v-if="form.processing" icon="Loader" class="w-5 h-5 animate-spin mr-2" />
-                {{ form.processing ? 'Ingresando...' : 'Iniciar Sesión' }}
+                {{ form.processing ? 'Ingresando...' : 'Iniciar sesión' }}
               </Button>
-            </div>
-            <div class="mt-4 text-center text-xs text-slate-500 sm:text-sm">
-              ¿No tienes cuenta?
-              <Link :href="route('register')" class="text-primary font-medium">
-                Regístrate
-              </Link>
             </div>
           </form>
         </div>
@@ -131,15 +145,23 @@ const submit = () => {
         'after:content-[\'\'] after:absolute after:inset-y-0 after:left-0 after:w-screen after:lg:w-[800%] after:bg-texture-white after:bg-fixed after:bg-center after:lg:bg-[25rem_-25rem] after:bg-no-repeat',
       ]"
     >
+      <!-- Fondo configurable (anclado al viewport: el panel blanco lo tapa a
+           la izquierda y a la derecha cubre hasta el borde de la pantalla) -->
+      <template v-if="branding.login_background_url">
+        <img
+          :src="branding.login_background_url"
+          alt=""
+          class="fixed inset-0 h-full w-full object-cover"
+        />
+        <div class="fixed inset-0 bg-linear-to-b from-theme-1/80 to-theme-2/80"></div>
+      </template>
+
       <div
         class="sticky top-0 z-10 flex-col justify-center hidden h-screen ml-16 lg:flex xl:ml-28 2xl:ml-36"
       >
-        <div class="leading-[1.4] text-[2.6rem] xl:text-5xl font-medium xl:leading-[1.2] text-white">
-          Sistema de <br />
-          Transporte
-        </div>
-        <div class="mt-5 text-base leading-relaxed xl:text-lg text-white/70">
-          Gestiona tus conductores, vehículos y viajes desde un solo lugar.
+        <div class="leading-[1.4] text-[2.6rem] xl:text-5xl font-medium xl:leading-[1.2] text-white whitespace-pre-line">{{ loginTitle }}</div>
+        <div class="mt-5 text-base leading-relaxed xl:text-lg text-white/70 max-w-xl">
+          {{ loginSubtitle }}
         </div>
       </div>
     </div>

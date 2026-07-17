@@ -24,6 +24,7 @@
 @import "../js/assets/css/components/_global.css";
 @import "../js/assets/css/components/_image-fit.css";
 @import "../js/assets/css/components/_scrollbar-hidden.css";
+@import "../js/assets/css/components/_scrollbar-slim.css";
 @import "../js/assets/css/components/_typing-dots.css";
 @import "../js/assets/css/components/_zoom-in.css";
 
@@ -76,4 +77,24 @@
 
 .container {
   max-width: 100%!important;
+}
+
+/*
+ |--------------------------------------------------------------------------
+ | El preflight de Tailwind v4 pone cursor: default en los botones; en el
+ | panel todo lo clickeable debe mostrar la manita.
+ |--------------------------------------------------------------------------
+ */
+@layer base {
+  button:not(:disabled),
+  [role="button"]:not(:disabled),
+  select:not(:disabled),
+  summary,
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled),
+  input[type="range"]:not(:disabled),
+  label:has(> input[type="checkbox"]:not(:disabled)),
+  label:has(> input[type="radio"]:not(:disabled)) {
+    cursor: pointer;
+  }
 }

@@ -30,10 +30,16 @@
             }
         </style>
 
-        <title inertia>{{ config('app.name', 'Laravel') }}</title>
+        @php($__brandName = \App\Models\Central\PlatformSetting::get('app_name', config('app.name', 'KuiraReserve')))
+        @php($__favicon = \App\Models\Central\PlatformSetting::get('favicon_path'))
+        <title inertia>{{ $__brandName }}</title>
 
+        @if ($__favicon)
+        <link rel="icon" href="/storage/{{ $__favicon }}">
+        @else
         <link rel="icon" href="/favicon.ico" sizes="any">
         <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+        @endif
         <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 
         <link rel="preconnect" href="https://fonts.bunny.net">

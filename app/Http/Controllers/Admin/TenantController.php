@@ -103,13 +103,17 @@ class TenantController extends Controller
         $ops = $tenant->run(fn () => [
             'owner' => ($owner = User::role('owner')->first()) ? $owner->only(['name', 'email']) : null,
             'users' => User::count(),
-            'users_list' => User::with('roles:id,name')->orderBy('name')->take(15)->get()
+            // El bot es identidad técnica (rol agent), no personal: se excluye.
+            'users_list' => User::with('roles:id,name')
+                ->whereDoesntHave('roles', fn ($q) => $q->where('name', 'agent'))
+                ->orderBy('name')->get()
                 ->map(fn (User $u) => [
                     'id' => $u->id,
                     'name' => $u->name,
                     'email' => $u->email,
                     'role' => $u->roles->first()?->name,
                 ])->values(),
+            'assignable_roles' => \App\Http\Controllers\Tenant\UserController::assignableRoles(),
             'properties' => \App\Models\Property::count(),
             'rooms' => \App\Models\Room::count(),
             'guests' => \App\Models\Guest::count(),
@@ -130,6 +134,46 @@ class TenantController extends Controller
                 ])->values(),
         ]);
 
+        $paymentGate = app(\App\Services\Payments\PaymentMethodGate::class);
+        $paymentMethods = collect(\App\Services\Payments\PaymentMethodGate::METHODS)
+            ->map(fn ($label, $method) => [
+                'method' => $method,
+                'label' => $label,
+                'platform_enabled' => $paymentGate->platformEnabled($method),
+                // El toggle del hotel se muestra tal cual; el efectivo es AND.
+                'tenant_enabled' => \App\Models\Central\PaymentMethodSetting::query()
+                    ->where('tenant_id', $tenant->id)->where('method', $method)->value('enabled') ?? true,
+            ])->values();
+
+        // Módulos: estado efectivo por módulo con su origen (plan u override)
+        // + solicitudes de activación pendientes hechas desde "Tu plan".
+        $moduleOverrides = \App\Models\Central\TenantModule::query()
+            ->where('tenant_id', $tenant->id)
+            ->pluck('enabled', 'module');
+        $moduleRequests = \App\Models\Central\ModuleActivationRequest::query()
+            ->where('tenant_id', $tenant->id)
+            ->pluck('created_at', 'module');
+        $planModules = $plan['modules'] ?? [];
+
+        $modules = collect(config('modules', []))
+            ->map(function (array $def, string $key) use ($moduleOverrides, $moduleRequests, $planModules) {
+                $override = $moduleOverrides->has($key) ? (bool) $moduleOverrides[$key] : null;
+                $inPlan = in_array($key, $planModules, true);
+
+                return [
+                    'key' => $key,
+                    'label' => $def['label'],
+                    'description' => $def['description'],
+                    'available' => $def['available'],
+                    'in_plan' => $inPlan,
+                    'override' => $override, // null = hereda del plan
+                    'enabled' => $override ?? $inPlan,
+                    'requested_at' => $moduleRequests->has($key)
+                        ? \Illuminate\Support\Carbon::parse($moduleRequests[$key])->format('d/m/Y')
+                        : null,
+                ];
+            })->values();
+
         $agentSetting = \App\Models\Central\TenantAgentSetting::for($tenant->id);
         $aiUsed = \App\Models\Central\TenantAiUsage::repliesThisMonth($tenant->id);
         $aiTokens = (int) \App\Models\Central\TenantAiUsage::query()
@@ -139,6 +183,8 @@ class TenantController extends Controller
             ->value('t');
 
         return Inertia::render('admin/tenants/Show', [
+            'paymentMethods' => $paymentMethods,
+            'modules' => $modules,
             'tenant' => [
                 'id' => $tenant->id,
                 'name' => $tenant->name,
@@ -231,6 +277,51 @@ class TenantController extends Controller
         $tenant->update($data);
 
         return redirect()->route('admin.tenants.index');
+    }
+
+    /**
+     * Override de un módulo para este hotel: heredar del plan (borra la
+     * fila), forzar encendido o forzar apagado. Forzar en cualquier sentido
+     * atiende (borra) la solicitud de activación pendiente.
+     */
+    public function updateModule(Request $request, Tenant $tenant): RedirectResponse
+    {
+        $data = $request->validate([
+            'module' => ['required', Rule::in(array_keys(config('modules', [])))],
+            'mode' => ['required', Rule::in(['inherit', 'on', 'off'])],
+        ]);
+
+        if ($data['mode'] === 'inherit') {
+            \App\Models\Central\TenantModule::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('module', $data['module'])
+                ->delete();
+        } else {
+            \App\Models\Central\TenantModule::updateOrCreate(
+                ['tenant_id' => $tenant->id, 'module' => $data['module']],
+                ['enabled' => $data['mode'] === 'on'],
+            );
+
+            \App\Models\Central\ModuleActivationRequest::query()
+                ->where('tenant_id', $tenant->id)
+                ->where('module', $data['module'])
+                ->delete();
+        }
+
+        return back();
+    }
+
+    /**
+     * Descarta una solicitud de activación sin cambiar el módulo.
+     */
+    public function dismissModuleRequest(Tenant $tenant, string $module): RedirectResponse
+    {
+        \App\Models\Central\ModuleActivationRequest::query()
+            ->where('tenant_id', $tenant->id)
+            ->where('module', $module)
+            ->delete();
+
+        return back();
     }
 
     /**

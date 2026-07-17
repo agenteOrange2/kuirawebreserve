@@ -16,9 +16,21 @@ class Channel extends Model
 
     public const TYPE_WEBCHAT = 'webchat';
 
+    /** WhatsApp vía Evolution API self-hosted (alternativa a Meta Cloud API). */
+    public const TYPE_WHATSAPP_EVOLUTION = 'whatsapp_evo';
+
+    public const TYPE_LABELS = [
+        'webchat' => 'Webchat',
+        'whatsapp' => 'WhatsApp',
+        'whatsapp_evo' => 'WhatsApp (Evolution)',
+        'messenger' => 'Messenger',
+        'instagram' => 'Instagram',
+    ];
+
     protected $fillable = [
         'property_id',
         'type',
+        'external_id',
         'name',
         'mode',
         'credentials',

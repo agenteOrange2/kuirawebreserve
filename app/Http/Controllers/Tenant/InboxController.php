@@ -27,7 +27,7 @@ class InboxController extends Controller
         Channel::webchat(); // garantiza el canal base
 
         $conversations = Conversation::query()
-            ->with(['channel:id,type,name,mode', 'guest:id,first_name,last_name', 'assignee:id,name'])
+            ->with(['channel:id,type,name,mode', 'guest:id,first_name,last_name', 'assignee:id,name', 'reservation:id,code,payment_status'])
             ->withCount(['messages as unread_count' => fn ($q) => $q->where('direction', 'in')->whereNull('read_at')])
             ->orderByDesc('last_message_at')
             ->take(100)
@@ -37,7 +37,9 @@ class InboxController extends Controller
         return Inertia::render('tenant/inbox/Index', [
             'property' => $property->only(['id', 'name']),
             'conversations' => $conversations,
-            'channels' => Channel::query()->get()->map(fn (Channel $ch) => [
+            // Solo canales vivos: los desconectados conservan su historial en
+            // la lista, pero no ofrecen selector de modo que "desconfigurar".
+            'channels' => Channel::query()->where('active', true)->get()->map(fn (Channel $ch) => [
                 'id' => $ch->id,
                 'type' => $ch->type,
                 'name' => $ch->name,
@@ -45,8 +47,49 @@ class InboxController extends Controller
             ]),
             'staff' => User::query()->orderBy('name')->get(['id', 'name']),
             'canManage' => $request->user()->can('reservations.manage'),
+            // Botón "Enseñar al asistente": solo si la plataforma habilitó
+            // los aprendizajes para este hotel (guidelines_editable).
+            'canTeach' => $request->user()->can('reservations.manage')
+                && (bool) \App\Models\Central\TenantAgentSetting::for((string) tenant('id'))->guidelines_editable,
             'llmReady' => app(AgentBrain::class)->isConfigured(),
+            // Transferencias reportadas que esperan verificación humana
+            // (spec-pagos §7.4): aprobar registra el pago y confirma.
+            'paymentQueue' => $request->user()->can('reservations.manage')
+                ? PaymentRequestController::queue()
+                : [],
+            // Saldos vencidos (spec-pagos §7.2): el impago NO cancela solo
+            // por default — alerta aquí y el equipo decide.
+            'overdueBalances' => $request->user()->can('reservations.manage')
+                ? $this->overdueBalances()
+                : [],
         ]);
+    }
+
+    /**
+     * @return array<int, array<string, mixed>>
+     */
+    protected function overdueBalances(): array
+    {
+        return \App\Models\Reservation::query()
+            ->where('status', \App\Enums\ReservationStatus::Confirmed)
+            ->where('payment_status', '!=', \App\Enums\PaymentStatus::Paid)
+            ->whereNotNull('payment_due_at')
+            ->where('payment_due_at', '<', now())
+            ->orderBy('payment_due_at')
+            ->get()
+            ->filter(fn ($r) => $r->pendingBalance() > 0)
+            ->map(fn ($r) => [
+                'id' => $r->id,
+                'code' => $r->displayCode(),
+                'guest_name' => $r->guest_name ?? 'Huésped',
+                'pending_label' => '$'.number_format($r->pendingBalance(), 2),
+                'due_label' => $r->payment_due_at->diffForHumans(),
+                'starts_label' => $r->starts_at->format('d/m'),
+                'conversation_id' => Conversation::query()
+                    ->where('reservation_id', $r->id)->latest('id')->value('id'),
+            ])
+            ->values()
+            ->all();
     }
 
     /** Hilo completo (y marca como leído). */
@@ -114,9 +157,9 @@ class InboxController extends Controller
             'last_message_at' => now(),
         ]);
 
-        // Canales Meta: el mensaje sale por WhatsApp/Messenger/Instagram
-        // (webchat no necesita: el visitante lee por polling).
-        app(\App\Services\Meta\MetaApi::class)->pushToConversation($conversation, $data['body']);
+        // El mensaje sale por el transporte del canal (Meta o Evolution;
+        // webchat no necesita: el visitante lee por polling).
+        app(\App\Services\Channels\OutboundMessenger::class)->pushToConversation($conversation, $data['body']);
 
         return response()->json(['id' => $message->id], 201);
     }
@@ -131,6 +174,14 @@ class InboxController extends Controller
         ]);
 
         $conversation->update($data);
+
+        return response()->json(['ok' => true]);
+    }
+
+    /** Elimina la conversación; los mensajes caen en cascada (FK). */
+    public function destroy(Conversation $conversation): JsonResponse
+    {
+        $conversation->delete();
 
         return response()->json(['ok' => true]);
     }
@@ -168,6 +219,15 @@ class InboxController extends Controller
             'unread' => (int) ($c->unread_count ?? 0),
             'last_message_at' => $c->last_message_at?->diffForHumans(short: true),
             'preview' => $c->messages()->latest('id')->value('body'),
+            // Chip de pago (spec-pagos §9.3) para conversaciones con reserva.
+            'reservation_code' => $c->reservation?->displayCode(),
+            'payment_status' => $c->reservation?->payment_status?->value,
+            'payment_status_label' => $c->reservation?->payment_status?->label(),
+            'payment_pending_verification' => $c->reservation_id !== null && \App\Models\PaymentRequest::query()
+                ->where('reservation_id', $c->reservation_id)
+                ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
+                ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)
+                ->exists(),
         ];
     }
 }

@@ -61,11 +61,40 @@ class UpdateReservation
                 ]);
             }
 
-            $total = $ratePlan->priceFor($start, $end, $room);
-
             // num_people sin desglose (API vieja) cuenta como adultos.
             $adults = max(1, (int) ($data['adults'] ?? $data['num_people'] ?? $reservation->adults ?? $reservation->num_people ?? 1));
             $children = max(0, (int) ($data['children'] ?? $reservation->children ?? 0));
+
+            // Cargos extra: personas se recalculan siempre (pudo cambiar
+            // gente/fechas/habitación); los opcionales usan lo mandado o, si
+            // el request no los trae, se conservan los conceptos ya elegidos.
+            $selectedConcepts = array_key_exists('extra_charges', $data)
+                ? ($data['extra_charges'] ?? [])
+                : collect($reservation->extra_charges ?? [])
+                    ->where('kind', 'optional')
+                    ->pluck('concept')
+                    ->all();
+
+            $extraCharges = $room->extraChargeLines(
+                $adults + $children,
+                $ratePlan->unitsFor($start, $end),
+                $selectedConcepts,
+            );
+
+            // Las líneas congeladas (productos del wizard, add-ons y
+            // experiencias) sobreviven a la edición y siguen sumando: editar
+            // fechas o habitación no puede descontarle al hotel lo ya vendido.
+            $frozenLines = round(
+                array_sum(array_column($reservation->products ?? [], 'total'))
+                    + array_sum(array_column($reservation->extras ?? [], 'total'))
+                    + array_sum(array_column($reservation->experiences ?? [], 'total')),
+                2,
+            );
+
+            $total = round(
+                $ratePlan->priceFor($start, $end, $room) + array_sum(array_column($extraCharges, 'amount')) + $frozenLines,
+                2,
+            );
 
             $reservation->update([
                 'property_id' => $room->property_id,
@@ -86,6 +115,7 @@ class UpdateReservation
                 'ends_at' => $end,
                 'source_channel' => $data['source_channel'] ?? $reservation->source_channel,
                 'total_amount' => $total,
+                'extra_charges' => $extraCharges ?: null,
                 // Cambiar tarifa/fechas recalcula anticipo y fecha límite.
                 'deposit_amount' => $ratePlan->depositAmountFor($total)
                     ?? $data['deposit_amount']
@@ -97,6 +127,18 @@ class UpdateReservation
 
             // El total pudo cambiar: re-deriva el estado de pago.
             $reservation->syncPaymentStatus();
+
+            // Un cobro vivo no puede cobrar un monto que ya no corresponde
+            // (spec-pagos §6.4): al cambiar total/anticipo, se cancela; el
+            // siguiente solicitar_pago emitirá uno con el monto correcto.
+            if ($reservation->wasChanged(['total_amount', 'deposit_amount'])) {
+                $reservation->paymentRequests()
+                    ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)
+                    ->update([
+                        'status' => \App\Models\PaymentRequest::STATUS_CANCELED,
+                        'updated_at' => now(),
+                    ]);
+            }
 
             $shouldReserveToday = $reservation->status === ReservationStatus::Confirmed && $start->isToday();
 

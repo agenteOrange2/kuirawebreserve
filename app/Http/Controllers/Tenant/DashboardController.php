@@ -182,7 +182,26 @@ class DashboardController extends Controller
                 'at' => $log->created_at->diffForHumans(),
             ]);
 
+        // Holds por vencer (spec-plan-maestro E4): apartados pendientes cuyo
+        // hold expira en los próximos 30 minutos — hoy mueren sin que nadie
+        // los vea.
+        $expiringHolds = Reservation::query()
+            ->with('room:id,number')
+            ->where('status', ReservationStatus::Pending)
+            ->whereNotNull('hold_expires_at')
+            ->whereBetween('hold_expires_at', [$now, $now->copy()->addMinutes(30)])
+            ->orderBy('hold_expires_at')
+            ->get()
+            ->map(fn (Reservation $r) => [
+                'id' => $r->id,
+                'code' => $r->displayCode(),
+                'guest_name' => $r->guest_name,
+                'room' => $r->room?->number,
+                'expires_at' => $r->hold_expires_at->format('H:i'),
+            ]);
+
         return Inertia::render('tenant/Dashboard', [
+            'expiringHolds' => $expiringHolds,
             'hero' => [
                 'revenue' => $this->money($monthRevenue),
                 'change' => $pct($monthRevenue, $lastMonthRevenue),

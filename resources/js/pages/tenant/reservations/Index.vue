@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormCheck,
@@ -16,6 +16,54 @@ import Lucide, { type Icon } from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import MonthCalendar from './MonthCalendar.vue';
+import RackCalendar from './RackCalendar.vue';
+
+interface PaymentRow {
+    id: number;
+    amount: string;
+    method: string;
+    reference: string | null;
+    paid_at: string;
+    received_by: string | null;
+    refunded: number;
+    refundable: number;
+    via_gateway: boolean;
+}
+
+interface ExtraChargeLine {
+    concept: string;
+    amount: number;
+    kind: string;
+}
+
+// Líneas congeladas del wizard: productos POS y add-ons del módulo extras.
+interface FrozenLine {
+    name: string;
+    qty: number;
+    total: number;
+}
+
+// Experiencia comprada como plus de la reserva (reserva EXP- ligada).
+interface ExperienceLine {
+    code: string | null;
+    name: string;
+    starts_at: string;
+    people: number;
+    total: number;
+}
+
+interface OptionalChargeOption {
+    concept: string;
+    amount: number;
+}
+
+// Ficha de cobros del cuarto (viene en /api/availability y en el prefill).
+interface RoomChargeInfo {
+    included_occupancy?: number | null;
+    extra_guest_fee?: number | null;
+    optional_charges?: OptionalChargeOption[];
+}
 
 interface ReservationRow {
     id: number;
@@ -42,7 +90,12 @@ interface ReservationRow {
     status: string;
     status_label: string;
     hold_expires_at: string | null;
+    hold_expires_at_iso: string | null;
     total_amount: string;
+    extra_charges: ExtraChargeLine[];
+    products: FrozenLine[];
+    extras: FrozenLine[];
+    experiences: ExperienceLine[];
     starts_today: boolean;
     source_channel: string;
     notes: string | null;
@@ -55,6 +108,20 @@ interface ReservationRow {
     payment_overdue: boolean;
     paid_total: number;
     pending_balance: number;
+    payment_request: {
+        id: number;
+        concept: string;
+        amount_label: string;
+        method: string;
+        provider_label: string | null;
+        checkout_url: string | null;
+        public_url: string;
+        status_label: string;
+        expires_label: string | null;
+    } | null;
+    payments: PaymentRow[];
+    refunded_total: number;
+    refund_suggestion: { amount: number; amount_label: string; policy_label: string | null } | null;
     updated_at: string | null;
     timeline: {
         id: string;
@@ -74,6 +141,7 @@ interface StayRow {
     rate_plan: string | null;
     check_in_at: string;
     planned_end_at: string;
+    planned_end_at_iso: string;
     overdue: boolean;
     amount: string;
     channel: string;
@@ -94,21 +162,23 @@ interface RatePlanOption {
 }
 
 const props = defineProps<{
+    view: 'list' | 'calendar';
     property: { id: number; name: string };
     reservations: ReservationRow[];
     history: ReservationRow[];
+    inHouse: ReservationRow[];
     stays: StayRow[];
     ratePlans: RatePlanOption[];
     canManage: boolean;
     focusReservationId: number | null;
     prefill: {
         intent: 'walkin' | 'reserve' | null;
-        room: {
+        room: ({
             id: number;
             number: string;
             room_type: string | null;
             rate_plan_id: number | null;
-        } | null;
+        } & RoomChargeInfo) | null;
         guest: {
             id: number;
             full_name: string | null;
@@ -123,7 +193,121 @@ const props = defineProps<{
 
 const toast = useToasts();
 const money = (n: number) => '$' + new Intl.NumberFormat('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
-const tab = ref<'reservas' | 'encasa' | 'historial'>('reservas');
+// Fecha corta de la sesión del tour (las líneas traen ISO del servidor).
+const formatExperienceDate = (iso: string) =>
+    new Date(iso).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+// ── Resumen operativo del día (tarjetas sobre la lista) ──
+const endsToday = (iso: string) => new Date(iso).toDateString() === new Date().toDateString();
+const arrivalsToday = computed(() => props.reservations.filter((r) => r.starts_today).length);
+const pendingCount = computed(() => props.reservations.filter((r) => r.status === 'pending').length);
+const overdueStays = computed(() => props.stays.filter((s) => s.overdue).length);
+const departuresToday = computed(() => props.stays.filter((s) => s.overdue || endsToday(s.planned_end_at_iso)).length);
+
+// ── Calendario (/reservas/calendario): mes clásico o habitaciones × días ──
+const calMode = ref<'month' | 'rooms'>('month');
+
+function openFromRack(reservationId: number) {
+    if ([...props.reservations, ...props.history, ...props.inHouse].some((r) => r.id === reservationId)) {
+        selectedReservationId.value = reservationId;
+    }
+}
+
+function createFromRack(payload: {
+    room: { id: number; number: string; room_type: string | null; rate_plan_id: number | null };
+    date: string;
+}) {
+    openCreate(false, payload.room);
+    // Llegada precargada desde la celda del rack (15:00, hora hotelera
+    // típica); la salida se autocalcula según la tarifa.
+    form.starts_at = `${payload.date}T15:00`;
+    autoFillEnd();
+}
+
+// Desde un día del calendario mensual: sin habitación preseleccionada.
+function createFromDate(date: string) {
+    openCreate(false);
+    form.starts_at = `${date}T15:00`;
+    autoFillEnd();
+}
+
+// ── Holds por vencer (< 30 min): que nadie los vea morir ──
+const nowTick = ref(Date.now());
+let holdTimer: number | null = null;
+
+onMounted(() => {
+    holdTimer = window.setInterval(() => (nowTick.value = Date.now()), 60000);
+});
+
+onBeforeUnmount(() => {
+    if (holdTimer) {
+        window.clearInterval(holdTimer);
+    }
+});
+
+const expiringHolds = computed(() =>
+    props.reservations.filter((r) => {
+        if (r.status !== 'pending' || !r.hold_expires_at_iso) {
+            return false;
+        }
+        const remaining = Date.parse(r.hold_expires_at_iso) - nowTick.value;
+        return remaining > 0 && remaining <= 30 * 60 * 1000;
+    }),
+);
+
+// ── Filtros de la lista Próximas (estado + rango de llegada) ──
+const listFilters = reactive({ status: '', from: '', to: '' });
+
+const listFiltersActive = computed(() => listFilters.status !== '' || listFilters.from !== '' || listFilters.to !== '');
+
+function clearListFilters() {
+    listFilters.status = '';
+    listFilters.from = '';
+    listFilters.to = '';
+}
+
+const filteredReservations = computed(() =>
+    props.reservations.filter((r) => {
+        if (listFilters.status && r.status !== listFilters.status) return false;
+        const arrival = r.starts_at_input.slice(0, 10);
+        if (listFilters.from && arrival < listFilters.from) return false;
+        if (listFilters.to && arrival > listFilters.to) return false;
+        return true;
+    }),
+);
+// ── Selección múltiple del Historial (borrado en masa) ──
+const selectedHistoryIds = ref<number[]>([]);
+const bulkDeleteOpen = ref(false);
+const bulkDeleting = ref(false);
+
+const allHistorySelected = computed(() => props.history.length > 0 && selectedHistoryIds.value.length === props.history.length);
+const selectedHistoryRows = computed(() => props.history.filter((r) => selectedHistoryIds.value.includes(r.id)));
+
+function toggleHistoryRow(id: number) {
+    selectedHistoryIds.value = selectedHistoryIds.value.includes(id)
+        ? selectedHistoryIds.value.filter((x) => x !== id)
+        : [...selectedHistoryIds.value, id];
+}
+
+function toggleAllHistory() {
+    selectedHistoryIds.value = allHistorySelected.value ? [] : props.history.map((r) => r.id);
+}
+
+async function bulkDeleteHistory() {
+    bulkDeleting.value = true;
+    try {
+        const { data } = await axios.delete('/api/reservations', { data: { ids: selectedHistoryIds.value } });
+        toast.success('Historial depurado', `Se eliminaron ${data.deleted} reserva(s) definitivamente.`);
+        selectedHistoryIds.value = [];
+        bulkDeleteOpen.value = false;
+        reload();
+    } catch (e: any) {
+        toast.error('No se pudo eliminar', e.response?.data?.message ?? 'Ocurrió un error inesperado.');
+    } finally {
+        bulkDeleting.value = false;
+    }
+}
+
 const selectedReservationId = ref<number | null>(null);
 const prefillConsumed = ref(false);
 const focusReservationConsumed = ref(false);
@@ -131,7 +315,7 @@ const editingReservationId = ref<number | null>(null);
 const currentRoomPreset = ref<typeof props.prefill.room>(null);
 
 function reload() {
-    router.reload({ only: ['reservations', 'history', 'stays'] });
+    router.reload({ only: ['reservations', 'history', 'inHouse', 'stays'] });
 }
 
 // ── Acciones de estado con confirmación en modal ──
@@ -277,6 +461,9 @@ const form = reactive({
     vehicle_desc: '',
     eta: '',
     confirmed: true,
+    // Conceptos de cargos opcionales del cuarto elegidos (el monto lo
+    // resuelve el servidor desde la ficha de la habitación).
+    extra_charges: [] as string[],
     notes: '',
     guest_notes: '',
 });
@@ -414,6 +601,28 @@ watch(
     },
 );
 
+interface AvailabilityResult {
+    total: number;
+    units: number;
+    duration_label: string;
+    advance_error: string | null;
+    rooms: ({ id: number; number: string; status: string } & RoomChargeInfo)[];
+}
+const availability = ref<AvailabilityResult | null>(null);
+const searching = ref(false);
+
+// Ficha de cobros del cuarto elegido: manda la disponibilidad (viene
+// fresca del servidor); el prefill del plano cubre el primer render.
+const selectedRoomInfo = computed<RoomChargeInfo | null>(() => {
+    const id = Number(form.room_id);
+    if (!id) return null;
+    const preset = currentRoomPreset.value;
+    return (
+        availability.value?.rooms.find((room) => room.id === id) ??
+        (preset && preset.id === id ? preset : null)
+    );
+});
+
 // Estimación en vivo; el total definitivo lo recalcula el servidor al
 // guardar (puede variar por modificador de precio de la habitación).
 const estimate = computed(() => {
@@ -426,7 +635,24 @@ const estimate = computed(() => {
     const units = unitsForEstimate(plan, start, end);
     const unitPrice = Number(plan.price);
     if (!Number.isFinite(unitPrice)) return null;
-    const total = Math.round(units * unitPrice * 100) / 100;
+    const base = Math.round(units * unitPrice * 100) / 100;
+
+    // Cargos de la ficha del cuarto: personas sobre las incluidas (por
+    // noche/periodo) + cargos opcionales elegidos (una sola vez).
+    const room = selectedRoomInfo.value;
+    const people = Number(form.adults || 1) + Number(form.children || 0);
+    let extraGuests: { count: number; amount: number } | null = null;
+    if (room?.included_occupancy && room.extra_guest_fee && people > room.included_occupancy) {
+        const count = people - room.included_occupancy;
+        extraGuests = {
+            count,
+            amount: Math.round(count * Number(room.extra_guest_fee) * units * 100) / 100,
+        };
+    }
+    const optionalCharges = (room?.optional_charges ?? []).filter((charge) => form.extra_charges.includes(charge.concept));
+    const optionalTotal = Math.round(optionalCharges.reduce((sum, charge) => sum + Number(charge.amount), 0) * 100) / 100;
+
+    const total = Math.round((base + (extraGuests?.amount ?? 0) + optionalTotal) * 100) / 100;
     const depositPct = plan.deposit_percent ? Number(plan.deposit_percent) : null;
     return {
         units,
@@ -437,21 +663,14 @@ const estimate = computed(() => {
                   ? plan.duration_label
                   : `${units} × ${plan.duration_label}`,
         unitPrice,
+        base,
+        extraGuests,
+        optionalCharges,
         total,
         depositPct,
         deposit: depositPct ? Math.round(total * depositPct) / 100 : null,
     };
 });
-
-interface AvailabilityResult {
-    total: number;
-    units: number;
-    duration_label: string;
-    advance_error: string | null;
-    rooms: { id: number; number: string; status: string }[];
-}
-const availability = ref<AvailabilityResult | null>(null);
-const searching = ref(false);
 
 function openCreate(
     asWalkIn: boolean,
@@ -483,6 +702,7 @@ function openCreate(
     form.vehicle_desc = '';
     form.eta = '';
     form.confirmed = true;
+    form.extra_charges = [];
     form.notes = '';
     form.guest_notes = '';
     selectedGuest.value = null;
@@ -517,6 +737,11 @@ function openEdit(reservation: ReservationRow) {
     form.vehicle_desc = reservation.vehicle_desc ?? '';
     form.eta = reservation.eta ?? '';
     form.confirmed = reservation.status === 'confirmed';
+    // Solo los opcionales se re-eligen; la línea de personas extra la
+    // recalcula el servidor según huéspedes/fechas.
+    form.extra_charges = (reservation.extra_charges ?? [])
+        .filter((line) => line.kind === 'optional')
+        .map((line) => line.concept);
     form.notes = reservation.notes ?? '';
     form.guest_notes = reservation.guest_notes ?? '';
     selectedGuest.value = null;
@@ -524,10 +749,10 @@ function openEdit(reservation: ReservationRow) {
     showCreate.value = true;
 }
 
-// El slideover de detalle sirve tanto para próximas como para historial.
+// El slideover de detalle sirve para próximas, historial y en casa.
 const selectedReservation = computed(
     () =>
-        [...props.reservations, ...props.history].find(
+        [...props.reservations, ...props.history, ...props.inHouse].find(
             (reservation) => reservation.id === selectedReservationId.value,
         ) ?? null,
 );
@@ -679,6 +904,7 @@ async function submitCreate() {
             vehicle_plate: form.vehicle_plate || null,
             vehicle_desc: form.vehicle_desc || null,
             eta: form.eta || null,
+            extra_charges: form.extra_charges,
             notes: form.notes || undefined,
             guest_notes: form.guest_notes || undefined,
         };
@@ -694,6 +920,7 @@ async function submitCreate() {
                 num_people: form.adults + form.children,
                 vehicle_plate: form.vehicle_plate || null,
                 vehicle_desc: form.vehicle_desc || null,
+                extra_charges: form.extra_charges,
                 notes: form.notes || undefined,
             });
             toast.success('Walk-in registrado', 'La habitación quedó ocupada.');
@@ -803,6 +1030,84 @@ async function submitPayment() {
     }
 }
 
+// ── Cobro en línea desde el panel (link de pasarela o transferencia) ──
+const issuingLink = ref(false);
+
+async function issuePaymentLink() {
+    if (!payingReservation.value || issuingLink.value) return;
+    issuingLink.value = true;
+    paymentError.value = null;
+    try {
+        const { data } = await axios.post<ReservationRow>(`/api/reservations/${payingReservation.value.id}/payment-request`);
+        payingReservation.value = data;
+        toast.success('Cobro generado', data.payment_request?.checkout_url ? 'Link de pago listo para enviar.' : 'Datos de transferencia listos.');
+    } catch (error: any) {
+        paymentError.value = error.response?.data?.message ?? 'No se pudo generar el cobro.';
+    } finally {
+        issuingLink.value = false;
+    }
+}
+
+async function cancelPaymentLink() {
+    if (!payingReservation.value?.payment_request) return;
+    issuingLink.value = true;
+    try {
+        const { data } = await axios.delete<ReservationRow>(
+            `/api/reservations/${payingReservation.value.id}/payment-request/${payingReservation.value.payment_request.id}`,
+        );
+        payingReservation.value = data;
+        toast.success('Cobro cancelado');
+    } catch (error: any) {
+        toast.error('No se pudo cancelar', error.response?.data?.message ?? 'Ocurrió un error.');
+    } finally {
+        issuingLink.value = false;
+    }
+}
+
+async function copyPaymentLink() {
+    const url = payingReservation.value?.payment_request?.checkout_url ?? payingReservation.value?.payment_request?.public_url;
+    if (!url) return;
+    try {
+        await navigator.clipboard.writeText(url);
+        toast.success('Link copiado', 'Pégalo en el chat del huésped.');
+    } catch {
+        toast.error('No se pudo copiar', url);
+    }
+}
+
+// ── Reembolsos (F4): siempre decisión humana ──
+const refundingPayment = ref<PaymentRow | null>(null);
+const refundForm = reactive({ amount: 0 as number | string, reason: '', manual: false });
+const refundBusy = ref(false);
+
+function openRefund(p: PaymentRow) {
+    refundingPayment.value = p;
+    // Default: la sugerencia de la política si cabe en este pago; si no, lo reembolsable.
+    const suggested = payingReservation.value?.refund_suggestion?.amount;
+    refundForm.amount = suggested !== undefined && suggested > 0 && suggested <= p.refundable ? suggested : p.refundable;
+    refundForm.reason = '';
+    refundForm.manual = false;
+}
+
+async function submitRefund() {
+    if (!payingReservation.value || !refundingPayment.value || refundBusy.value) return;
+    refundBusy.value = true;
+    try {
+        const { data } = await axios.post<ReservationRow>(
+            `/api/reservations/${payingReservation.value.id}/payments/${refundingPayment.value.id}/refund`,
+            { amount: refundForm.amount, reason: refundForm.reason || null, manual: refundForm.manual },
+        );
+        payingReservation.value = data;
+        refundingPayment.value = null;
+        reload();
+        toast.success('Reembolso registrado', 'Se avisó al huésped por su canal.');
+    } catch (error: any) {
+        toast.error('No se pudo reembolsar', error.response?.data?.message ?? 'Ocurrió un error.');
+    } finally {
+        refundBusy.value = false;
+    }
+}
+
 const channelLabel: Record<string, string> = {
     front_desk: 'Mostrador',
     phone: 'Teléfono',
@@ -843,14 +1148,32 @@ const modalTitle = computed(() => {
 </script>
 
 <template>
-    <RazeLayout title="Reservas">
+    <RazeLayout :title="view === 'calendar' ? 'Calendario' : 'Reservas'">
         <div class="mt-2">
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                    <h1 class="text-lg font-medium">Reservas</h1>
+                    <h1 class="text-lg font-medium">{{ view === 'calendar' ? 'Calendario de ocupación' : 'Reservas' }}</h1>
                     <p class="text-sm text-slate-500">{{ property.name }}</p>
                 </div>
                 <div class="flex flex-wrap gap-2">
+                    <Button
+                        v-if="view === 'list'"
+                        :as="Link"
+                        :href="route('tenant.reservations.calendar')"
+                        variant="outline-secondary"
+                        class="rounded-[0.5rem] bg-white"
+                    >
+                        <Lucide icon="CalendarRange" class="mr-2 h-4 w-4 stroke-[1.3]" /> Calendario
+                    </Button>
+                    <Button
+                        v-else
+                        :as="Link"
+                        :href="route('tenant.reservations')"
+                        variant="outline-secondary"
+                        class="rounded-[0.5rem] bg-white"
+                    >
+                        <Lucide icon="List" class="mr-2 h-4 w-4 stroke-[1.3]" /> Lista de reservas
+                    </Button>
                     <Button
                         as="a"
                         :href="route('tenant.reservations.reports')"
@@ -889,44 +1212,107 @@ const modalTitle = computed(() => {
                 </p>
             </div>
 
-            <!-- Tabs -->
-            <div
-                class="mt-5 inline-flex flex-wrap gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
-            >
-                <button
-                    v-for="t in [
-                        { key: 'reservas', label: 'Próximas', icon: 'CalendarDays', count: reservations.length },
-                        { key: 'encasa', label: 'En uso', icon: 'DoorOpen', count: stays.length },
-                        { key: 'historial', label: 'Historial', icon: 'History', count: history.length },
-                    ]"
-                    :key="t.key"
-                    class="flex items-center gap-2 rounded-[0.5rem] px-4 py-2 text-sm font-medium transition"
-                    :class="
-                        tab === t.key
-                            ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
-                            : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                    "
-                    @click="tab = t.key as typeof tab"
-                >
-                    <Lucide :icon="t.icon as Icon" class="h-4 w-4" />
-                    {{ t.label }}
-                    <span
-                        class="rounded-full px-1.5 py-0.5 text-xs leading-none"
-                        :class="
-                            tab === t.key
-                                ? 'bg-primary/10 text-primary'
-                                : 'bg-slate-200/80 text-slate-500 dark:bg-darkmode-400'
-                        "
+            <!-- Holds por vencer: apartados que expiran en < 30 min -->
+            <div v-if="view === 'list' && expiringHolds.length" class="mt-5 box box--stacked border-l-4 border-l-warning p-4">
+                <div class="flex items-center gap-2 text-sm font-medium">
+                    <Lucide icon="AlarmClock" class="h-4 w-4 text-warning" />
+                    Apartados por vencer
+                    <span class="text-xs font-normal text-slate-500">— expiran en menos de 30 minutos; confírmalos o se liberan solos</span>
+                </div>
+                <div class="mt-2.5 flex flex-wrap gap-2">
+                    <button
+                        v-for="r in expiringHolds"
+                        :key="r.id"
+                        type="button"
+                        class="flex items-center gap-1.5 rounded-full bg-warning/10 px-3 py-1.5 text-xs font-medium text-warning transition hover:bg-warning/20"
+                        @click="selectedReservationId = r.id"
                     >
-                        {{ t.count }}
-                    </span>
-                </button>
+                        {{ r.code }} · {{ r.guest_name }}
+                        <span class="font-normal">expira {{ r.hold_expires_at }}</span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Resumen operativo del día -->
+            <div v-if="view === 'list'" class="mt-5 grid grid-cols-12 gap-5">
+                <div class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3">
+                    <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10">
+                        <Lucide icon="LogIn" class="h-5 w-5 text-info" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-xl font-medium">{{ arrivalsToday }}</div>
+                        <div class="truncate text-xs text-slate-500">Llegadas hoy</div>
+                    </div>
+                </div>
+                <div class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3">
+                    <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10">
+                        <Lucide icon="AlarmClock" class="h-5 w-5 text-pending" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-xl font-medium">{{ pendingCount }}</div>
+                        <div class="truncate text-xs text-slate-500">Por confirmar</div>
+                    </div>
+                </div>
+                <div class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3">
+                    <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10">
+                        <Lucide icon="DoorOpen" class="h-5 w-5 text-primary" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-xl font-medium">{{ stays.length }}</div>
+                        <div class="truncate text-xs text-slate-500">En casa ahora</div>
+                    </div>
+                </div>
+                <div class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3">
+                    <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10">
+                        <Lucide icon="LogOut" class="h-5 w-5 text-success" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-xl font-medium">{{ departuresToday }}</div>
+                        <div class="truncate text-xs text-slate-500">
+                            Salidas hoy<span v-if="overdueStays" class="text-danger"> · {{ overdueStays }} vencida{{ overdueStays > 1 ? 's' : '' }}</span>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Próximas -->
-            <div v-show="tab === 'reservas'" class="box mt-5">
+            <div v-if="view === 'list'" class="box box--stacked mt-5">
+                <div class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400">
+                    <div class="flex items-center gap-2 font-medium">
+                        <Lucide icon="CalendarDays" class="h-4 w-4 text-slate-400" />
+                        Próximas reservas
+                        <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400">{{ reservations.length }}</span>
+                    </div>
+                    <div v-if="listFiltersActive" class="ml-auto flex items-center gap-2 text-xs text-slate-500">
+                        Mostrando {{ filteredReservations.length }} de {{ reservations.length }}
+                        <button type="button" class="font-medium text-primary hover:underline" @click="clearListFilters">Limpiar filtros</button>
+                    </div>
+                </div>
+                <!-- Filtros: estado y rango de llegada, en su propia franja -->
+                <div
+                    v-if="reservations.length"
+                    class="flex flex-wrap items-center gap-x-6 gap-y-3 border-b border-slate-200/60 bg-slate-50/70 px-5 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                >
+                    <div class="flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
+                        <Lucide icon="Filter" class="h-3.5 w-3.5" /> Filtros
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-slate-500">Estado</span>
+                        <FormSelect v-model="listFilters.status" class="!w-44">
+                            <option value="">Todos los estados</option>
+                            <option value="pending">Pendiente</option>
+                            <option value="confirmed">Confirmada</option>
+                        </FormSelect>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span class="text-xs text-slate-500">Llegada del</span>
+                        <FormInput v-model="listFilters.from" type="date" class="!w-36" />
+                        <span class="text-xs text-slate-500">al</span>
+                        <FormInput v-model="listFilters.to" type="date" class="!w-36" />
+                    </div>
+                </div>
                 <div class="overflow-auto p-5 lg:overflow-visible">
-                    <Table v-if="reservations.length" striped>
+                    <Table v-if="filteredReservations.length" striped>
                         <Table.Thead>
                             <Table.Tr>
                                 <Table.Th>Huésped</Table.Th>
@@ -940,7 +1326,7 @@ const modalTitle = computed(() => {
                             </Table.Tr>
                         </Table.Thead>
                         <Table.Tbody>
-                            <Table.Tr v-for="r in reservations" :key="r.id">
+                            <Table.Tr v-for="r in filteredReservations" :key="r.id">
                                 <Table.Td>
                                     <div
                                         class="flex flex-wrap items-center gap-2"
@@ -1117,14 +1503,59 @@ const modalTitle = computed(() => {
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
+                    <div v-else-if="reservations.length" class="flex flex-col items-center gap-2 py-8 text-center text-slate-500">
+                        Ninguna reserva coincide con los filtros.
+                        <button type="button" class="text-sm font-medium text-primary hover:underline" @click="clearListFilters">
+                            Limpiar filtros
+                        </button>
+                    </div>
                     <div v-else class="py-8 text-center text-slate-500">
                         Sin reservas próximas.
                     </div>
                 </div>
             </div>
 
+            <!-- Calendario: mes clásico o rack de ocupación (habitaciones × días) -->
+            <div v-if="view === 'calendar'" class="mt-5">
+                <div
+                    class="mb-5 inline-flex gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
+                >
+                    <button
+                        type="button"
+                        class="flex items-center gap-2 rounded-[0.5rem] px-4 py-1.5 text-sm font-medium transition"
+                        :class="
+                            calMode === 'month'
+                                ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
+                                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                        "
+                        @click="calMode = 'month'"
+                    >
+                        <Lucide icon="CalendarDays" class="h-4 w-4" /> Mes
+                    </button>
+                    <button
+                        type="button"
+                        class="flex items-center gap-2 rounded-[0.5rem] px-4 py-1.5 text-sm font-medium transition"
+                        :class="
+                            calMode === 'rooms'
+                                ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
+                                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                        "
+                        @click="calMode = 'rooms'"
+                    >
+                        <Lucide icon="CalendarRange" class="h-4 w-4" /> Por habitación
+                    </button>
+                </div>
+                <MonthCalendar v-if="calMode === 'month'" :can-manage="canManage" @open-reservation="openFromRack" @create-date="createFromDate" />
+                <RackCalendar v-else :can-manage="canManage" @open-reservation="openFromRack" @create="createFromRack" />
+            </div>
+
             <!-- En uso (estancias activas) -->
-            <div v-show="tab === 'encasa'" class="box mt-5">
+            <div v-if="view === 'list'" class="box box--stacked mt-5">
+                <div class="flex flex-wrap items-center gap-2 border-b border-slate-200/60 px-5 py-4 font-medium dark:border-darkmode-400">
+                    <Lucide icon="DoorOpen" class="h-4 w-4 text-slate-400" />
+                    En casa ahora
+                    <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400">{{ stays.length }}</span>
+                </div>
                 <div class="overflow-auto p-5 lg:overflow-visible">
                     <Table v-if="stays.length" striped>
                         <Table.Thead>
@@ -1193,16 +1624,38 @@ const modalTitle = computed(() => {
             </div>
 
             <!-- Historial: completadas, canceladas y no-shows -->
-            <div v-show="tab === 'historial'" class="box mt-5">
+            <div v-if="view === 'list'" class="box box--stacked mt-5">
+                <div class="flex flex-wrap items-center gap-2 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400">
+                    <div class="flex items-center gap-2 font-medium">
+                        <Lucide icon="History" class="h-4 w-4 text-slate-400" />
+                        Historial
+                        <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400">{{ history.length }}</span>
+                    </div>
+                    <div v-if="canManage && selectedHistoryIds.length" class="ml-auto flex flex-wrap items-center gap-3">
+                        <span class="text-xs text-slate-500">{{ selectedHistoryIds.length }} seleccionada(s)</span>
+                        <button type="button" class="text-xs font-medium text-primary hover:underline" @click="selectedHistoryIds = []">
+                            Quitar selección
+                        </button>
+                        <Button variant="danger" class="rounded-[0.5rem] !px-3 !py-1.5 text-xs" @click="bulkDeleteOpen = true">
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" /> Eliminar seleccionadas
+                        </Button>
+                    </div>
+                    <span v-else class="ml-auto text-xs font-normal text-slate-500">
+                        Completadas, canceladas y no-shows; los no-shows cuentan en la confiabilidad del huésped.
+                    </span>
+                </div>
                 <div class="overflow-auto p-5 lg:overflow-visible">
-                    <p class="mb-4 text-xs text-slate-500">
-                        Últimas reservas que salieron del flujo: completadas,
-                        canceladas y no-shows. Los no-shows cuentan en la
-                        confiabilidad del huésped (visible en su perfil).
-                    </p>
                     <Table v-if="history.length" striped>
                         <Table.Thead>
                             <Table.Tr>
+                                <Table.Th v-if="canManage" class="w-10">
+                                    <FormCheck.Input
+                                        type="checkbox"
+                                        :checked="allHistorySelected"
+                                        title="Seleccionar todo el historial"
+                                        @change="toggleAllHistory"
+                                    />
+                                </Table.Th>
                                 <Table.Th>Huésped</Table.Th>
                                 <Table.Th>Habitación</Table.Th>
                                 <Table.Th>Llegada → Salida</Table.Th>
@@ -1213,6 +1666,13 @@ const modalTitle = computed(() => {
                         </Table.Thead>
                         <Table.Tbody>
                             <Table.Tr v-for="r in history" :key="r.id">
+                                <Table.Td v-if="canManage" class="w-10">
+                                    <FormCheck.Input
+                                        type="checkbox"
+                                        :checked="selectedHistoryIds.includes(r.id)"
+                                        @change="toggleHistoryRow(r.id)"
+                                    />
+                                </Table.Td>
                                 <Table.Td>
                                     <span
                                         class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600"
@@ -1268,6 +1728,54 @@ const modalTitle = computed(() => {
                 </div>
             </div>
         </div>
+
+        <!-- Confirmación de borrado en masa del Historial -->
+        <Dialog :open="bulkDeleteOpen" @close="bulkDeleteOpen = false">
+            <Dialog.Panel>
+                <div class="flex max-h-[85vh] flex-col">
+                    <div class="flex items-start gap-3.5 p-6 pb-4">
+                        <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger">
+                            <Lucide icon="Trash2" class="h-5 w-5" />
+                        </div>
+                        <div class="min-w-0">
+                            <h2 class="text-base font-medium">¿Eliminar {{ selectedHistoryRows.length }} reserva(s) del historial?</h2>
+                            <p class="mt-0.5 text-sm text-slate-500">
+                                Se borran definitivamente junto con sus pagos registrados y su línea de tiempo.
+                                Esta acción no se puede deshacer.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="min-h-0 flex-1 overflow-y-auto px-6">
+                        <div class="rounded-lg border border-dashed border-slate-300/70 dark:border-darkmode-400">
+                            <div
+                                v-for="r in selectedHistoryRows"
+                                :key="r.id"
+                                class="flex items-center justify-between gap-3 border-b border-dashed border-slate-200/80 px-3.5 py-2.5 text-sm last:border-0 dark:border-darkmode-400"
+                            >
+                                <div class="min-w-0 truncate">
+                                    <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400">
+                                        {{ r.code }}
+                                    </span>
+                                    <span class="ml-2">{{ r.guest_name ?? 'Anónimo' }}</span>
+                                </div>
+                                <span
+                                    class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs"
+                                    :class="statusFor(r.status).class"
+                                >
+                                    <Lucide :icon="statusFor(r.status).icon" class="h-3 w-3" /> {{ r.status_label }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-2 p-6 pt-5">
+                        <Button type="button" variant="outline-secondary" @click="bulkDeleteOpen = false">Cancelar</Button>
+                        <Button type="button" variant="danger" :disabled="bulkDeleting" @click="bulkDeleteHistory">
+                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" /> {{ bulkDeleting ? 'Eliminando…' : 'Sí, eliminar' }}
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
 
         <!-- Confirmación de No-show / Cancelación -->
         <Dialog
@@ -1471,6 +1979,41 @@ const modalTitle = computed(() => {
                             </p>
                         </div>
 
+                        <!-- Cobro en línea: link de pasarela o transferencia -->
+                        <div v-if="payingReservation.pending_balance > 0" class="rounded-lg border border-primary/20 bg-primary/[0.03] p-3.5">
+                            <div class="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                <Lucide icon="Link" class="h-3.5 w-3.5 text-primary" /> Cobrar en línea
+                            </div>
+                            <template v-if="payingReservation.payment_request">
+                                <p class="mt-2 text-sm text-slate-600 dark:text-slate-300">
+                                    {{ payingReservation.payment_request.concept }} de {{ payingReservation.payment_request.amount_label }} ·
+                                    <span class="font-medium">{{ payingReservation.payment_request.provider_label ?? 'Transferencia' }}</span>
+                                    <span v-if="payingReservation.payment_request.expires_label" class="text-slate-400"> · vence {{ payingReservation.payment_request.expires_label }}</span>
+                                </p>
+                                <div class="mt-2.5 flex flex-wrap items-center gap-2">
+                                    <Button type="button" variant="primary" size="sm" class="rounded-[0.5rem]" @click="copyPaymentLink">
+                                        <Lucide icon="Copy" class="mr-1.5 h-3.5 w-3.5" /> Copiar link
+                                    </Button>
+                                    <Button type="button" variant="outline-secondary" size="sm" class="rounded-[0.5rem] bg-white" :disabled="issuingLink" @click="cancelPaymentLink">
+                                        <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" /> Cancelar cobro
+                                    </Button>
+                                    <span v-if="!payingReservation.payment_request.checkout_url" class="text-xs text-slate-400">Transferencia: comparte las cuentas del hotel y verifica el comprobante en la bandeja.</span>
+                                </div>
+                            </template>
+                            <template v-else>
+                                <p class="mt-2 text-xs text-slate-500">Genera un link de pago (si hay pasarela conectada) o una solicitud de transferencia para enviar al huésped.</p>
+                                <Button type="button" variant="outline-primary" size="sm" class="mt-2.5 rounded-[0.5rem] bg-white" :disabled="issuingLink" @click="issuePaymentLink">
+                                    <Lucide icon="Link" class="mr-1.5 h-3.5 w-3.5" /> {{ issuingLink ? 'Generando…' : 'Generar cobro en línea' }}
+                                </Button>
+                            </template>
+                        </div>
+
+                        <div class="relative flex items-center gap-3 text-xs text-slate-400">
+                            <div class="h-px flex-1 bg-slate-200/70 dark:bg-darkmode-400"></div>
+                            O registra un pago recibido
+                            <div class="h-px flex-1 bg-slate-200/70 dark:bg-darkmode-400"></div>
+                        </div>
+
                         <div class="grid grid-cols-1 gap-x-6 gap-y-5 sm:grid-cols-2">
                             <div>
                                 <FormLabel htmlFor="pay-amount">Monto</FormLabel>
@@ -1504,6 +2047,73 @@ const modalTitle = computed(() => {
                         </div>
 
                         <p v-if="paymentError" class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{{ paymentError }}</p>
+
+                        <!-- Pagos registrados y reembolsos (F4) -->
+                        <div v-if="payingReservation.payments?.length">
+                            <div class="mb-2 flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-slate-400">
+                                <Lucide icon="History" class="h-3.5 w-3.5" /> Pagos registrados
+                                <span v-if="payingReservation.refunded_total > 0" class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium normal-case tracking-normal text-pending">
+                                    Reembolsado ${{ payingReservation.refunded_total.toFixed(2) }}
+                                </span>
+                            </div>
+                            <div
+                                v-if="payingReservation.refund_suggestion"
+                                class="mb-2 flex items-start gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
+                            >
+                                <Lucide icon="Scale" class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                                <span>
+                                    Según la política de la tarifa, correspondería reembolsar
+                                    <span class="font-medium">{{ payingReservation.refund_suggestion.amount_label }}</span> si se cancela ahora.
+                                    <template v-if="payingReservation.refund_suggestion.policy_label"> {{ payingReservation.refund_suggestion.policy_label }}</template>
+                                    La decisión final es de tu equipo.
+                                </span>
+                            </div>
+                            <div class="divide-y divide-dashed divide-slate-300/70 rounded-lg border border-slate-200/70 dark:border-darkmode-400">
+                                <div v-for="p in payingReservation.payments" :key="p.id" class="px-3.5 py-2.5">
+                                    <div class="flex flex-wrap items-center gap-2">
+                                        <span class="text-sm font-medium">${{ p.amount }}</span>
+                                        <span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400">{{ p.method }}</span>
+                                        <span class="text-xs text-slate-400">{{ p.paid_at }}</span>
+                                        <span v-if="p.refunded > 0" class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending">
+                                            Reembolsado ${{ p.refunded.toFixed(2) }}
+                                        </span>
+                                        <button
+                                            v-if="p.refundable > 0 && refundingPayment?.id !== p.id"
+                                            type="button"
+                                            class="ml-auto text-xs font-medium text-primary hover:underline"
+                                            @click="openRefund(p)"
+                                        >
+                                            Reembolsar
+                                        </button>
+                                    </div>
+
+                                    <!-- Formulario inline de reembolso -->
+                                    <div v-if="refundingPayment?.id === p.id" class="mt-3 space-y-3 rounded-lg bg-slate-50 p-3 dark:bg-darkmode-700">
+                                        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                            <div>
+                                                <label class="mb-1 block text-xs text-slate-500">Monto a devolver (máx. ${{ p.refundable.toFixed(2) }})</label>
+                                                <FormInput v-model.number="refundForm.amount" type="number" step="0.01" min="0.01" :max="p.refundable" />
+                                            </div>
+                                            <div>
+                                                <label class="mb-1 block text-xs text-slate-500">Motivo</label>
+                                                <FormInput v-model="refundForm.reason" type="text" placeholder="Cancelación dentro de la ventana…" />
+                                            </div>
+                                        </div>
+                                        <label v-if="p.via_gateway" class="flex items-start gap-2 text-xs text-slate-500">
+                                            <input v-model="refundForm.manual" type="checkbox" class="mt-0.5" />
+                                            <span>Solo registrar (ya lo devolví en el dashboard del proveedor). Sin marcar, el reembolso se envía a la pasarela automáticamente.</span>
+                                        </label>
+                                        <p v-else class="text-xs text-slate-400">Devolución manual del hotel (efectivo/transferencia); aquí solo queda registrada.</p>
+                                        <div class="flex items-center justify-end gap-2">
+                                            <Button type="button" variant="outline-secondary" size="sm" class="rounded-[0.5rem] bg-white" @click="refundingPayment = null">Cancelar</Button>
+                                            <Button type="button" variant="danger" size="sm" class="rounded-[0.5rem]" :disabled="refundBusy" @click="submitRefund">
+                                                <Lucide icon="Undo2" class="mr-1.5 h-3.5 w-3.5" /> {{ refundBusy ? 'Procesando…' : 'Reembolsar' }}
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <!-- Footer -->
@@ -1657,6 +2267,20 @@ const modalTitle = computed(() => {
                                     Total estimado: ${{ estimate.total.toFixed(2) }}
                                 </div>
                             </div>
+                            <div
+                                v-if="estimate.extraGuests || estimate.optionalCharges.length"
+                                class="mt-1.5 space-y-0.5 text-xs text-slate-500"
+                            >
+                                <div v-if="estimate.extraGuests" class="flex items-center gap-1.5">
+                                    <Lucide icon="UserPlus" class="h-3.5 w-3.5" />
+                                    {{ estimate.extraGuests.count }} persona{{ estimate.extraGuests.count === 1 ? '' : 's' }} extra:
+                                    <span class="font-medium">+${{ estimate.extraGuests.amount.toFixed(2) }}</span>
+                                </div>
+                                <div v-for="charge in estimate.optionalCharges" :key="charge.concept" class="flex items-center gap-1.5">
+                                    <Lucide icon="Receipt" class="h-3.5 w-3.5" />
+                                    {{ charge.concept }}: <span class="font-medium">+${{ charge.amount.toFixed(2) }}</span>
+                                </div>
+                            </div>
                             <div v-if="estimate.deposit" class="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500">
                                 <Lucide icon="PiggyBank" class="h-3.5 w-3.5" />
                                 Anticipo {{ estimate.depositPct }}%: <span class="font-medium">${{ estimate.deposit.toFixed(2) }}</span>
@@ -1682,6 +2306,25 @@ const modalTitle = computed(() => {
                         >
                             <Lucide icon="TriangleAlert" class="h-4 w-4 shrink-0" />
                             No hay habitaciones de este tipo libres en ese rango. Cambia las fechas o elige otra tarifa.
+                        </div>
+
+                        <!-- Cargos opcionales del cuarto elegido -->
+                        <div v-if="selectedRoomInfo?.optional_charges?.length" class="col-span-full">
+                            <FormLabel class="mb-0">Cargos opcionales de la habitación</FormLabel>
+                            <div class="mt-2 grid gap-2 sm:grid-cols-2">
+                                <label
+                                    v-for="charge in selectedRoomInfo.optional_charges"
+                                    :key="charge.concept"
+                                    class="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-200/70 px-3 py-2.5 transition hover:border-primary/40 dark:border-darkmode-400"
+                                >
+                                    <span class="flex items-center gap-2 text-sm">
+                                        <FormCheck.Input v-model="form.extra_charges" type="checkbox" :value="charge.concept" />
+                                        {{ charge.concept }}
+                                    </span>
+                                    <span class="text-sm font-medium text-slate-600 dark:text-slate-300">${{ charge.amount.toFixed(2) }}</span>
+                                </label>
+                            </div>
+                            <FormHelp>Se suman al total una sola vez; el servidor toma el precio de la ficha de la habitación.</FormHelp>
                         </div>
 
                         <!-- Sección: huésped -->
@@ -2047,6 +2690,67 @@ const modalTitle = computed(() => {
                                     </dd>
                                 </div>
                             </dl>
+                            <div
+                                v-if="selectedReservation.extra_charges?.length"
+                                class="mt-3 rounded-xl bg-slate-50/80 p-3 text-sm"
+                            >
+                                <div class="text-slate-500">Cargos extra incluidos en el total</div>
+                                <div
+                                    v-for="line in selectedReservation.extra_charges"
+                                    :key="line.concept"
+                                    class="mt-1 flex items-center justify-between gap-3"
+                                >
+                                    <span class="flex items-center gap-1.5 text-slate-600 dark:text-slate-300">
+                                        <Lucide
+                                            :icon="line.kind === 'extra_guests' ? 'UserPlus' : 'Receipt'"
+                                            class="h-3.5 w-3.5 text-slate-400"
+                                        />
+                                        {{ line.concept }}
+                                    </span>
+                                    <span class="font-medium">{{ money(line.amount) }}</span>
+                                </div>
+                            </div>
+                            <!-- Experiencias compradas como plus (reserva EXP-
+                                 ligada): siguen la suerte de esta reserva y su
+                                 dinero ya está dentro del total. -->
+                            <div
+                                v-if="selectedReservation.experiences?.length"
+                                class="mt-3 rounded-xl bg-slate-50/80 p-3 text-sm"
+                            >
+                                <div class="text-slate-500">Experiencias incluidas en el total</div>
+                                <div
+                                    v-for="line in selectedReservation.experiences"
+                                    :key="line.code ?? line.name"
+                                    class="mt-1 flex items-center justify-between gap-3"
+                                >
+                                    <span class="flex min-w-0 items-center gap-1.5 text-slate-600 dark:text-slate-300">
+                                        <Lucide icon="Compass" class="h-3.5 w-3.5 shrink-0 text-slate-400" />
+                                        <span class="truncate">
+                                            {{ line.people }}× {{ line.name }}
+                                            <span class="text-xs text-slate-400">· {{ formatExperienceDate(line.starts_at) }}<template v-if="line.code"> · {{ line.code }}</template></span>
+                                        </span>
+                                    </span>
+                                    <span class="shrink-0 font-medium">{{ money(line.total) }}</span>
+                                </div>
+                            </div>
+                            <!-- Extras y productos del wizard, congelados al reservar -->
+                            <div
+                                v-if="selectedReservation.extras?.length || selectedReservation.products?.length"
+                                class="mt-3 rounded-xl bg-slate-50/80 p-3 text-sm"
+                            >
+                                <div class="text-slate-500">Extras incluidos en el total</div>
+                                <div
+                                    v-for="line in [...(selectedReservation.extras ?? []), ...(selectedReservation.products ?? [])]"
+                                    :key="line.name"
+                                    class="mt-1 flex items-center justify-between gap-3"
+                                >
+                                    <span class="flex items-center gap-1.5 text-slate-600 dark:text-slate-300">
+                                        <Lucide icon="Gift" class="h-3.5 w-3.5 text-slate-400" />
+                                        {{ line.qty }}× {{ line.name }}
+                                    </span>
+                                    <span class="font-medium">{{ money(line.total) }}</span>
+                                </div>
+                            </div>
                             <p
                                 v-if="selectedReservation.hold_expires_at"
                                 class="mt-3 text-xs text-slate-500"

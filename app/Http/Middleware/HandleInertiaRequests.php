@@ -45,6 +45,26 @@ class HandleInertiaRequests extends Middleware
                 'name' => tenant('name'),
                 'plan' => tenant('plan'),
             ] : null,
+            // Contexto del PANEL para layout/menú. OJO: no usar 'tenant' para
+            // esto — las páginas del admin pasan props llamados 'tenant' (datos
+            // del hotel consultado) y pisarían al compartido, disfrazando al
+            // admin de panel de hotel (bug real que ya ocurrió).
+            'panelTenant' => tenancy()->initialized ? [
+                'id' => tenant('id'),
+                'name' => tenant('name'),
+                'plan' => tenant('plan'),
+                // Módulos activos del hotel (plan + overrides): el menú
+                // lateral oculta los items de módulos apagados.
+                'modules' => tenant()->enabledModules(),
+            ] : null,
+            // Branding de plataforma (login universal, layout). Cacheado.
+            'branding' => [
+                'app_name' => \App\Models\Central\PlatformSetting::get('app_name', 'KuiraReserve'),
+                'logo_url' => ($p = \App\Models\Central\PlatformSetting::get('logo_path')) ? '/storage/'.$p : null,
+                'login_title' => \App\Models\Central\PlatformSetting::get('login_title'),
+                'login_subtitle' => \App\Models\Central\PlatformSetting::get('login_subtitle'),
+                'login_background_url' => ($b = \App\Models\Central\PlatformSetting::get('login_background_path')) ? '/storage/'.$b : null,
+            ],
             'auth' => [
                 'user' => $request->user(),
             ],

@@ -17,6 +17,7 @@ class RatePlanController extends Controller
         return response()->json(
             RatePlan::query()
                 ->with('roomType:id,name')
+                ->withCount('seasons')
                 ->when($request->integer('room_type_id'), fn ($q, $id) => $q->where('room_type_id', $id))
                 ->when($request->boolean('active_only'), fn ($q) => $q->where('active', true))
                 ->get()
@@ -29,7 +30,7 @@ class RatePlanController extends Controller
         $data = $this->validated($request);
 
         return response()->json(
-            $this->serialize(RatePlan::create($data)->load('roomType:id,name')),
+            $this->serialize(RatePlan::create($data)->load('roomType:id,name')->loadCount('seasons')),
             201,
         );
     }
@@ -38,7 +39,7 @@ class RatePlanController extends Controller
     {
         $ratePlan->update($this->validated($request, $ratePlan));
 
-        return response()->json($this->serialize($ratePlan->refresh()->load('roomType:id,name')));
+        return response()->json($this->serialize($ratePlan->refresh()->load('roomType:id,name')->loadCount('seasons')));
     }
 
     public function destroy(RatePlan $ratePlan): JsonResponse
@@ -87,6 +88,15 @@ class RatePlanController extends Controller
                 Rule::in(array_map(fn (RateDurationUnit $unit) => $unit->value, RateDurationUnit::advanceUnits())),
             ],
             'payment_due_value' => ['nullable', 'required_with:payment_due_unit', 'integer', 'min:1', 'max:365'],
+            // Política de cancelación con dinero (spec-pagos F4): sin costo
+            // hasta X antes de llegar; después se retiene el % de lo pagado.
+            'cancel_free_unit' => [
+                'nullable',
+                'required_with:cancel_free_value',
+                Rule::in(array_map(fn (RateDurationUnit $unit) => $unit->value, RateDurationUnit::advanceUnits())),
+            ],
+            'cancel_free_value' => ['nullable', 'required_with:cancel_free_unit', 'integer', 'min:1', 'max:365'],
+            'cancel_penalty_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'active' => ['sometimes', 'boolean'],
         ], [
             'duration_unit.required_if' => 'Las tarifas por periodo necesitan una unidad de duración.',
@@ -135,7 +145,12 @@ class RatePlanController extends Controller
             'payment_due_unit' => $plan->payment_due_unit?->value,
             'payment_due_value' => $plan->payment_due_value,
             'payment_due_label' => $plan->paymentDueLabel(),
+            'cancel_free_unit' => $plan->cancel_free_unit?->value,
+            'cancel_free_value' => $plan->cancel_free_value,
+            'cancel_penalty_percent' => $plan->cancel_penalty_percent,
+            'cancellation_policy_label' => $plan->cancellationPolicyLabel(),
             'active' => $plan->active,
+            'seasons_count' => $plan->seasons_count ?? $plan->seasons()->count(),
         ];
     }
 }

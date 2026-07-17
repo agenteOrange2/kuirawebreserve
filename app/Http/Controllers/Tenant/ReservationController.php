@@ -14,6 +14,7 @@ use App\Models\Payment;
 use App\Models\Reservation;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use InvalidArgumentException;
 
@@ -53,6 +54,10 @@ class ReservationController extends Controller
             'confirmed' => ['sometimes', 'boolean'],
             'source_channel' => ['sometimes', Rule::in(['front_desk', 'phone', 'web', 'whatsapp', 'walk_in'])],
             'deposit_amount' => ['sometimes', 'numeric', 'min:0'],
+            // Conceptos de cargos opcionales de la habitación; el monto
+            // SIEMPRE se resuelve del catálogo del cuarto, nunca del cliente.
+            'extra_charges' => ['sometimes', 'array', 'max:20'],
+            'extra_charges.*' => ['string', 'max:100'],
             'notes' => ['nullable', 'string'],
             'guest_notes' => ['nullable', 'string'],
         ]);
@@ -100,6 +105,39 @@ class ReservationController extends Controller
     public function checkIn(Request $request, Reservation $reservation, TransitionReservation $action): JsonResponse
     {
         return $this->transition(fn () => $action->checkIn($reservation, $request->user()), $reservation);
+    }
+
+    /**
+     * Borrado en masa desde el Historial. Solo acepta estados terminales
+     * (completada, cancelada, no-show): una reserva viva no se elimina,
+     * primero se cancela. Pagos y solicitudes de cobro caen en cascada;
+     * estancias y conversaciones solo pierden la referencia.
+     */
+    public function destroyBulk(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:100'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $reservations = Reservation::query()
+            ->whereIn('id', $data['ids'])
+            ->whereIn('status', [
+                ReservationStatus::Completed,
+                ReservationStatus::Cancelled,
+                ReservationStatus::NoShow,
+            ])
+            ->get();
+
+        if ($reservations->count() !== count($data['ids'])) {
+            return response()->json([
+                'message' => 'Solo se pueden eliminar reservas del historial (completadas, canceladas o no-show).',
+            ], 422);
+        }
+
+        DB::transaction(fn () => $reservations->each->delete());
+
+        return response()->json(['deleted' => $reservations->count()]);
     }
 
     /**
@@ -167,6 +205,7 @@ class ReservationController extends Controller
             'hold_expires_at' => $r->hold_expires_at?->format('d/m/Y H:i'),
             'source_channel' => $r->source_channel,
             'total_amount' => $r->total_amount,
+            'extra_charges' => $r->extra_charges ?? [],
             'deposit_amount' => $r->deposit_amount,
             'payment_status' => $r->payment_status->value,
             'payment_status_label' => $r->payment_status->label(),
@@ -181,8 +220,110 @@ class ReservationController extends Controller
                 'reference' => $p->reference,
                 'paid_at' => $p->paid_at->format('d/m/Y H:i'),
                 'received_by' => $p->receivedBy?->name,
+                // F4: cuánto puede devolverse de este pago todavía.
+                'refunded' => $p->refundedTotal(),
+                'refundable' => $p->refundableAmount(),
+                'via_gateway' => $p->gateway !== null,
             ]),
+            'refunded_total' => $r->refundedTotal(),
+            // Sugerencia por política de cancelación (si la tarifa la define):
+            // "si se cancela ahora / ya cancelada, correspondería devolver X".
+            'refund_suggestion' => ($suggestion = $r->suggestedRefund()) !== null ? [
+                'amount' => $suggestion,
+                'amount_label' => '$'.number_format($suggestion, 2),
+                'policy_label' => $r->ratePlan?->cancellationPolicyLabel(),
+            ] : null,
             'stay_id' => $r->stay?->id,
+            // Cobro en curso (spec-pagos §7.5): link vivo para copiar/enviar.
+            'payment_request' => ($pr = $r->paymentRequests()->active()->latest('id')->first()) ? [
+                'id' => $pr->id,
+                'concept' => $pr->conceptLabel(),
+                'amount_label' => $pr->amountLabel(),
+                'method' => $pr->method,
+                'provider_label' => $pr->provider ? (\App\Models\Central\PaymentGatewayLink::PROVIDERS[$pr->provider] ?? $pr->provider) : null,
+                'checkout_url' => $pr->checkout_url,
+                'public_url' => route('tenant.payment.return', $pr->uuid),
+                'status_label' => $pr->statusLabel(),
+                'expires_label' => $pr->expires_at?->diffForHumans(),
+            ] : null,
         ];
+    }
+
+    /**
+     * Genera un cobro para la reserva desde el panel (spec-pagos §7.5):
+     * link de pasarela si hay una activa, o transferencia con las cuentas
+     * del hotel. Reutiliza el mismo IssuePaymentRequest que el bot.
+     */
+    public function issuePayment(Request $request, Reservation $reservation, \App\Actions\Payments\IssuePaymentRequest $action): JsonResponse
+    {
+        $link = \App\Models\Central\PaymentGatewayLink::query()
+            ->where('tenant_id', (string) tenant('id'))
+            ->where('active', true)
+            ->orderBy('id')
+            ->first();
+
+        try {
+            $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user(), $link);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\RuntimeException $e) {
+            // La pasarela falló: cae a transferencia (spec-pagos §7.1).
+            try {
+                $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user());
+            } catch (InvalidArgumentException $inner) {
+                return response()->json(['message' => $inner->getMessage()], 422);
+            }
+        }
+
+        return response()->json($this->serialize(
+            $reservation->refresh()->load(['room:id,number', 'roomType:id,name', 'ratePlan:id,name,type']),
+        ));
+    }
+
+    /**
+     * Reembolsa un pago, total o parcial (spec-pagos F4). Pasarela = via API
+     * del proveedor; manual = solo registro (efectivo o hecho en el dashboard).
+     */
+    public function refundPayment(Request $request, Reservation $reservation, Payment $payment, \App\Actions\Payments\RefundPayment $action): JsonResponse
+    {
+        abort_unless($payment->reservation_id === $reservation->id, 404);
+
+        $data = $request->validate([
+            'amount' => ['required', 'numeric', 'gt:0'],
+            'reason' => ['nullable', 'string', 'max:255'],
+            'manual' => ['sometimes', 'boolean'],
+        ]);
+
+        try {
+            $refund = $action->handle(
+                $payment,
+                (float) $data['amount'],
+                $data['reason'] ?? null,
+                $request->user(),
+                (bool) ($data['manual'] ?? false),
+            );
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        app(\App\Services\Payments\PaymentGuestNotifier::class)->refundIssued($refund);
+
+        return response()->json($this->serialize(
+            $reservation->refresh()->load(['room:id,number', 'roomType:id,name', 'ratePlan:id,name,type']),
+        ));
+    }
+
+    /** Cancela el cobro pendiente de la reserva (spec-pagos §7.5). */
+    public function cancelPayment(Reservation $reservation, \App\Models\PaymentRequest $paymentRequest): JsonResponse
+    {
+        abort_unless($paymentRequest->reservation_id === $reservation->id, 404);
+
+        if ($paymentRequest->status === \App\Models\PaymentRequest::STATUS_PENDING) {
+            $paymentRequest->update(['status' => \App\Models\PaymentRequest::STATUS_CANCELED]);
+        }
+
+        return response()->json($this->serialize(
+            $reservation->refresh()->load(['room:id,number', 'roomType:id,name', 'ratePlan:id,name,type']),
+        ));
     }
 }

@@ -361,7 +361,7 @@ El POS actual vende y carga a habitación. Para operar en serio le falta:
 
 | Canal | Vía | Notas |
 |---|---|---|
-| **WhatsApp** | Meta **Cloud API** (recomendado) o Evolution API | Cloud API: oficial, sin riesgo de ban, webhooks, mensajes interactivos (botones, listas), **ventana de 24 h** (fuera de ella solo plantillas aprobadas/HSM). Evolution: rápido para arrancar, riesgo ToS — útil solo para demo/dev |
+| **WhatsApp** | Meta **Cloud API** o **Evolution API** (self-hosted) — ✅ ambos implementados como adapters independientes | Cloud API: oficial, sin riesgo de ban, mensajes interactivos, **ventana de 24 h** (fuera solo plantillas HSM), requiere Business Verification (semanas). Evolution: instancia propia en VPS, conexión por QR inmediata, sin plantillas/ventana, riesgo ToS de Meta — es la vía rápida mientras corren los trámites de Meta, o la alternativa permanente para quien prefiere self-hosted. Cada instancia Evolution = un canal con su propio modo (auto/copilot/off); el nº de canales conectados (Meta + Evolution) lo limita el plan (`max_channels`) |
 | **Facebook Messenger** | Meta Graph API (Messenger Platform) | misma app de Meta, webhooks unificados |
 | **Instagram DM** | Instagram Messaging API | requiere cuenta business + app review de Meta |
 | **TikTok** | ⚠️ realidad: TikTok **no tiene API pública de DM** general (Business Messaging es limitado/por región/partners). Estrategia honesta: perfil TikTok con **link a WhatsApp (wa.me)** para captar; si su API de mensajes se abre en la región, se agrega como un adapter más | el diseño multicanal lo permite sin retrabajo |

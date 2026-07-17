@@ -65,7 +65,10 @@ return [
     |
     */
 
-    'timezone' => 'UTC',
+    // Hora de pared mexicana en TODO el sistema: los huéspedes capturan
+    // horas locales y los tenants operan en México. UTC etiquetaba mal esas
+    // horas y el navegador las corría 6 horas (incidente 2026-07-16).
+    'timezone' => env('APP_TIMEZONE', 'America/Mexico_City'),
 
     /*
     |--------------------------------------------------------------------------

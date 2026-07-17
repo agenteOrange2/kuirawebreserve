@@ -118,6 +118,13 @@
   margin-bottom: 0;
 }
 
+/* Hover/activo de links anidados: el theme solo lo traía para el primer
+   nivel; sin esto los submenus no marcan dónde estás. */
+.raze .side-menu ul.scrollable > li ul .side-menu__link:hover,
+.raze .side-menu ul.scrollable > li ul .side-menu__link--active {
+  background: rgb(255 255 255 / 0.08);
+}
+
 .raze .side-menu ul.scrollable > li ul ul {
   margin: 0px -1px;
   box-shadow: none;

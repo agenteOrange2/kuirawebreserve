@@ -52,6 +52,9 @@ class AgentPageController extends Controller
 
         return Inertia::render('tenant/agent/Index', [
             'property' => $property->only(['id', 'name']),
+            // Aprendizajes del bot: área aislada /asistente/aprendizajes,
+            // visible solo si el super-admin la habilitó para este hotel.
+            'guidelinesEditable' => (bool) \App\Models\Central\TenantAgentSetting::for((string) tenant('id'))->guidelines_editable,
             'tokens' => $tokens,
             'aiProviders' => AiProvider::query()->orderBy('sort_order')->orderBy('id')->get()->map(fn (AiProvider $p) => [
                 'id' => $p->id,
@@ -96,8 +99,31 @@ class AgentPageController extends Controller
                     ? \Illuminate\Support\Carbon::parse($agent->tokens()->max('last_used_at'))->diffForHumans()
                     : null,
             ],
+            // El hotel ve/edita su contexto del bot solo si la plataforma
+            // habilitó la palanca para este tenant.
+            'contextEditable' => (bool) \App\Models\Central\TenantAgentSetting::for((string) tenant('id'))->context_editable,
             'baseUrl' => $request->getSchemeAndHttpHost().'/api/agent',
             'ratePlansCount' => \App\Models\RatePlan::where('active', true)->count(),
+            // WhatsApp vía Evolution API: instancias conectadas por el hotel.
+            'evolutionChannels' => \App\Models\Central\EvolutionChannelLink::query()
+                ->where('tenant_id', tenant('id'))
+                ->orderBy('id')
+                ->get()
+                ->map(fn ($link) => [
+                    'id' => $link->id,
+                    'name' => $link->name,
+                    'base_url' => $link->base_url,
+                    'instance' => $link->instance,
+                    'masked_key' => $link->maskedKey(),
+                    'webhook_url' => $link->webhookUrl(),
+                    'active' => $link->active,
+                    'created_at' => $link->created_at?->format('d/m/Y'),
+                ]),
+            'channelLimit' => [
+                'max' => tenant()->planLimit('max_channels'),
+                'used' => \App\Models\Central\EvolutionChannelLink::query()->where('tenant_id', tenant('id'))->count()
+                    + \App\Models\Central\MetaChannelLink::query()->where('tenant_id', tenant('id'))->count(),
+            ],
         ]);
     }
 }

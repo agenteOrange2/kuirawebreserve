@@ -21,6 +21,7 @@ class Reservation extends Model
         'room_type_id',
         'room_id',
         'rate_plan_id',
+        'reservation_group_id',
         'guest_id',
         'code',
         'guest_name',
@@ -36,6 +37,10 @@ class Reservation extends Model
         'hold_expires_at',
         'source_channel',
         'total_amount',
+        'extra_charges',
+        'products',
+        'extras',
+        'experiences',
         'deposit_amount',
         'payment_status',
         'payment_due_at',
@@ -55,6 +60,10 @@ class Reservation extends Model
             'ends_at' => 'datetime',
             'hold_expires_at' => 'datetime',
             'total_amount' => 'decimal:2',
+            'extra_charges' => 'array',
+            'products' => 'array',
+            'extras' => 'array',
+            'experiences' => 'array',
             'deposit_amount' => 'decimal:2',
             'payment_status' => \App\Enums\PaymentStatus::class,
             'payment_due_at' => 'datetime',
@@ -80,6 +89,11 @@ class Reservation extends Model
         return $this->belongsTo(RoomType::class);
     }
 
+    public function group(): BelongsTo
+    {
+        return $this->belongsTo(ReservationGroup::class, 'reservation_group_id');
+    }
+
     public function ratePlan(): BelongsTo
     {
         return $this->belongsTo(RatePlan::class);
@@ -95,9 +109,62 @@ class Reservation extends Model
         return $this->hasOne(Stay::class);
     }
 
+    /** Tours comprados como extra de esta reserva (líneas en `experiences`). */
+    public function experienceBookings(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(ExperienceBooking::class);
+    }
+
     public function payments(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(Payment::class);
+    }
+
+    public function paymentRequests(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(PaymentRequest::class);
+    }
+
+    public function refunds(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(Refund::class);
+    }
+
+    public function refundedTotal(): float
+    {
+        return round((float) $this->refunds()->where('status', Refund::STATUS_COMPLETED)->sum('amount'), 2);
+    }
+
+    /**
+     * Reembolso sugerido por la política de cancelación de la tarifa
+     * (spec-pagos F4): lo pagado no reembolsado, menos la penalidad si se
+     * cancela fuera de la ventana. null = la tarifa no define política
+     * (decisión humana, como siempre). Es SUGERENCIA: el staff decide.
+     */
+    public function suggestedRefund(?\DateTimeInterface $at = null): ?float
+    {
+        $plan = $this->ratePlan;
+
+        if (! $plan || ! $plan->hasCancellationPolicy()) {
+            return null;
+        }
+
+        $refundable = max(0, round($this->paidTotal() - $this->refundedTotal(), 2));
+
+        if ($refundable <= 0) {
+            return null;
+        }
+
+        $deadline = $plan->cancelFreeDeadlineFor($this->starts_at);
+        $moment = $at ? \Carbon\Carbon::instance(\Carbon\Carbon::parse($at)) : now();
+
+        if ($deadline !== null && $moment->lte($deadline)) {
+            return $refundable; // dentro de la ventana: se devuelve todo
+        }
+
+        $penalty = $plan->cancel_penalty_percent !== null ? (float) $plan->cancel_penalty_percent : 100.0;
+
+        return max(0, round($refundable * (1 - $penalty / 100), 2));
     }
 
     public function paidTotal(): float

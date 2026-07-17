@@ -30,12 +30,16 @@ class PlatformAgentGate
             return $this->blocked('Sin tenant.', planEnabled: false);
         }
 
+        // El módulo agente-ia decide si el plan/hotel tiene IA (incluye
+        // overrides del admin en tenant_modules); la cuota mensual sigue
+        // saliendo del plan.
         $planAi = config("plans.{$tenant->plan}.ai", ['enabled' => false, 'monthly_replies' => 0]);
+        $moduleEnabled = $tenant->hasModule('agente-ia');
         $settings = TenantAgentSetting::for($tenant->id);
         $planLabel = $tenant->planLimits()['label'] ?? $tenant->plan;
 
         $base = [
-            'plan_enabled' => (bool) $planAi['enabled'],
+            'plan_enabled' => $moduleEnabled,
             'enabled' => $settings->enabled,
             'byok_allowed' => $settings->byok_allowed,
             'api_allowed' => $settings->api_allowed,
@@ -43,7 +47,7 @@ class PlatformAgentGate
             'plan_label' => $planLabel,
         ];
 
-        if (! $planAi['enabled']) {
+        if (! $moduleEnabled) {
             return $base + ['limit' => 0, 'used' => 0, 'blocked_reason' => 'plan', 'chain' => collect()];
         }
 

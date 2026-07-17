@@ -101,10 +101,13 @@ interface RoomData {
     smoking: boolean;
     accessible: boolean;
     price_modifier: number | null;
+    included_occupancy: number | null;
+    extra_guest_fee: number | null;
+    optional_charges: { concept: string; amount: number }[];
     check_in_time: string | null;
     check_out_time: string | null;
     maintenance_notes: string | null;
-    base_price: string | null;
+    price_from: number | null;
     status: string;
     color: string;
     label: string;
@@ -242,12 +245,17 @@ const currencyFormatter = new Intl.NumberFormat('es-MX', {
     maximumFractionDigits: 2,
 });
 
+// Candado de edición (spec-plan-maestro E5): por defecto NADIE mueve
+// cuartos; "Editar plano" habilita el drag explícitamente y evita el plano
+// desacomodado por accidente.
+const editMode = ref(false);
+
 function buildNodes(rooms: RoomData[]): Node[] {
     return rooms.map((room) => ({
         id: String(room.id),
         type: 'room',
         position: { x: room.pos_x, y: room.pos_y },
-        draggable: props.canManage,
+        draggable: props.canManage && editMode.value,
         data: room,
     }));
 }
@@ -273,6 +281,12 @@ watch(
     { deep: true },
 );
 
+watch(editMode, (enabled) => {
+    nodes.value.forEach((node) => {
+        node.draggable = props.canManage && enabled;
+    });
+});
+
 const selectedRoom = computed<RoomData | null>(() => {
     const node = nodes.value.find(
         (item) => (item.data as RoomData).id === selectedId.value,
@@ -280,57 +294,119 @@ const selectedRoom = computed<RoomData | null>(() => {
     return (node?.data as RoomData) ?? null;
 });
 
-const fichaItems = computed<{ icon: Icon; text: string }[]>(() => {
-    const room = selectedRoom.value;
+const fichaItems = computed<{ icon: Icon; label: string; text: string }[]>(
+    () => {
+        const room = selectedRoom.value;
 
-    if (!room) {
-        return [];
+        if (!room) {
+            return [];
+        }
+
+        const items: { icon: Icon; label: string; text: string }[] = [];
+
+        if (room.beds_label) {
+            items.push({
+                icon: 'BedDouble',
+                label: 'Camas',
+                text: room.beds_label,
+            });
+        }
+
+        if (room.capacity) {
+            items.push({
+                icon: 'Users',
+                label: 'Capacidad',
+                text: `Hasta ${room.capacity} personas`,
+            });
+        }
+
+        if (room.included_occupancy && room.extra_guest_fee) {
+            items.push({
+                icon: 'UserPlus',
+                label: 'Persona extra',
+                text: `${formatMoney(room.extra_guest_fee)} c/u después de ${room.included_occupancy}`,
+            });
+        }
+
+        if (room.size_m2) {
+            items.push({
+                icon: 'Ruler',
+                label: 'Superficie',
+                text: `${room.size_m2} m²`,
+            });
+        }
+
+        if (room.view) {
+            items.push({ icon: 'Eye', label: 'Vista', text: room.view });
+        }
+
+        items.push(
+            room.smoking
+                ? {
+                      icon: 'Cigarette',
+                      label: 'Fumar',
+                      text: 'Permitido',
+                  }
+                : {
+                      icon: 'CigaretteOff',
+                      label: 'Fumar',
+                      text: 'No permitido',
+                  },
+        );
+
+        if (room.accessible) {
+            items.push({
+                icon: 'Accessibility',
+                label: 'Accesibilidad',
+                text: 'Accesible',
+            });
+        }
+
+        if (room.check_in_time || room.check_out_time) {
+            const times = [
+                room.check_in_time ? `Check-in ${room.check_in_time}` : null,
+                room.check_out_time ? `Check-out ${room.check_out_time}` : null,
+            ].filter((part): part is string => part !== null);
+
+            items.push({
+                icon: 'Clock',
+                label: 'Horarios',
+                text: times.join(' · '),
+            });
+        }
+
+        return items;
+    },
+);
+
+// Refresco de respaldo (spec-plan-maestro E5): Echo empuja los cambios de
+// ESTADO, pero estancias, reservas próximas y consumos solo viajan con el
+// prop `rooms` — se refrescan cada minuto y al volver el foco a la pestaña
+// (también cubre el caso de websocket caído). Nunca mientras se edita el
+// plano o corre una acción, para no pisar al usuario.
+let refreshTimer: number | null = null;
+
+function refreshIfIdle() {
+    if (document.hidden || editMode.value || saving.value || busyAction.value) {
+        return;
     }
 
-    const items: { icon: Icon; text: string }[] = [];
+    reloadRooms();
+}
 
-    if (room.beds_label) {
-        items.push({ icon: 'BedDouble', text: room.beds_label });
+function onVisibilityChange() {
+    if (!document.hidden) {
+        refreshIfIdle();
     }
-
-    if (room.capacity) {
-        items.push({ icon: 'Users', text: `Hasta ${room.capacity} personas` });
-    }
-
-    if (room.size_m2) {
-        items.push({ icon: 'Ruler', text: `${room.size_m2} m²` });
-    }
-
-    if (room.view) {
-        items.push({ icon: 'Eye', text: `Vista: ${room.view}` });
-    }
-
-    items.push(
-        room.smoking
-            ? { icon: 'Cigarette', text: 'Fumar permitido' }
-            : { icon: 'CigaretteOff', text: 'No fumar' },
-    );
-
-    if (room.accessible) {
-        items.push({ icon: 'Accessibility', text: 'Accesible' });
-    }
-
-    if (room.check_in_time || room.check_out_time) {
-        const times = [
-            room.check_in_time ? `Check-in ${room.check_in_time}` : null,
-            room.check_out_time ? `Check-out ${room.check_out_time}` : null,
-        ].filter((part): part is string => part !== null);
-
-        items.push({ icon: 'Clock', text: times.join(' · ') });
-    }
-
-    return items;
-});
+}
 
 onMounted(() => {
     clockTimer = window.setInterval(() => {
         nowMs.value = Date.now();
     }, 30000);
+
+    refreshTimer = window.setInterval(refreshIfIdle, 60000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
 });
 
 onBeforeUnmount(() => {
@@ -340,6 +416,10 @@ onBeforeUnmount(() => {
     if (lastEventTimer) {
         window.clearTimeout(lastEventTimer);
     }
+    if (refreshTimer) {
+        window.clearInterval(refreshTimer);
+    }
+    document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 
 function formatMoney(value: number | string | null | undefined): string {
@@ -396,6 +476,25 @@ function stayTone(iso: string | null | undefined): string {
         : 'text-danger';
 }
 
+// "Sale hoy": la estancia activa termina hoy (si ya se excedió, el nodo ya
+// trae su propio badge "Excedida" y este no se muestra).
+function endsToday(room: RoomData): boolean {
+    const iso = room.active_stay?.planned_end_at_iso;
+
+    if (!iso || room.active_stay?.is_overdue) {
+        return false;
+    }
+
+    const end = new Date(iso);
+    const now = new Date(nowMs.value);
+
+    return (
+        end.getFullYear() === now.getFullYear() &&
+        end.getMonth() === now.getMonth() &&
+        end.getDate() === now.getDate()
+    );
+}
+
 function nodeHint(room: RoomData): string {
     if (room.status === 'occupied' && room.active_stay?.planned_end_at_iso) {
         return countdownLabel(room.active_stay.planned_end_at_iso);
@@ -425,6 +524,10 @@ function reloadRooms() {
 }
 
 async function onNodeDragStop(event: NodeDragEvent) {
+    if (!editMode.value) {
+        return;
+    }
+
     const room = event.node.data as RoomData;
     const pos_x = Math.round(event.node.position.x);
     const pos_y = Math.round(event.node.position.y);
@@ -601,7 +704,30 @@ useEcho<RoomStatusChangedPayload>(
                     />
                     {{ meta.label }}
                 </span>
+                <Button
+                    v-if="canManage"
+                    :variant="editMode ? 'primary' : 'outline-secondary'"
+                    class="rounded-[0.5rem]"
+                    :title="
+                        editMode
+                            ? 'Al terminar, bloquea para que nadie mueva cuartos por accidente'
+                            : 'Habilita mover los cuartos para acomodar el plano'
+                    "
+                    @click="editMode = !editMode"
+                >
+                    <Lucide :icon="editMode ? 'LockOpen' : 'Lock'" class="mr-2 h-4 w-4" />
+                    {{ editMode ? 'Terminar edición' : 'Editar plano' }}
+                </Button>
             </div>
+        </div>
+
+        <div
+            v-if="editMode"
+            class="mt-3 flex items-center gap-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-slate-600 dark:text-slate-300"
+        >
+            <Lucide icon="Move" class="h-4 w-4 shrink-0 text-warning" />
+            Modo edición: arrastra los cuartos para acomodarlos; la posición se guarda sola. El refresco automático queda pausado
+            hasta que presiones "Terminar edición".
         </div>
 
         <div
@@ -649,6 +775,7 @@ useEcho<RoomStatusChangedPayload>(
                         <span
                             v-if="data.upcoming_reservation?.starts_today"
                             class="absolute -top-2 -left-2 inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-info px-1.5 text-[10px] font-semibold text-white shadow-lg"
+                            title="Llega hoy"
                         >
                             <Lucide icon="CalendarDays" class="h-3.5 w-3.5" />
                         </span>
@@ -678,6 +805,13 @@ useEcho<RoomStatusChangedPayload>(
                             class="absolute -bottom-2 rounded-full bg-danger px-2 py-1 text-[9px] font-semibold text-white shadow-lg"
                         >
                             Excedida
+                        </span>
+                        <span
+                            v-if="endsToday(data)"
+                            class="absolute -bottom-2 -left-2 inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-warning px-1.5 text-[10px] font-semibold text-white shadow-lg"
+                            title="Sale hoy"
+                        >
+                            <Lucide icon="LogOut" class="h-3.5 w-3.5" />
                         </span>
                         <span
                             v-if="data.zone_color"
@@ -778,19 +912,19 @@ useEcho<RoomStatusChangedPayload>(
                                     </p>
                                 </div>
                                 <div
-                                    v-if="selectedRoom.base_price"
+                                    v-if="selectedRoom.price_from !== null"
                                     class="rounded-xl bg-white px-3 py-2 text-right shadow-sm dark:bg-darkmode-600"
                                 >
                                     <div
                                         class="text-[11px] tracking-wide text-slate-500 uppercase"
                                     >
-                                        Base
+                                        Desde
                                     </div>
                                     <div
                                         class="text-sm font-semibold text-slate-900 dark:text-slate-100"
                                     >
                                         {{
-                                            formatMoney(selectedRoom.base_price)
+                                            formatMoney(selectedRoom.price_from)
                                         }}
                                     </div>
                                 </div>
@@ -798,18 +932,29 @@ useEcho<RoomStatusChangedPayload>(
 
                             <div
                                 v-if="fichaItems.length"
-                                class="mt-4 grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-2"
+                                class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2"
                             >
                                 <div
                                     v-for="item in fichaItems"
-                                    :key="item.text"
-                                    class="flex items-center gap-2 text-slate-600 dark:text-slate-300"
+                                    :key="item.label"
+                                    class="flex items-start gap-2.5 rounded-xl bg-white px-3 py-2.5 shadow-sm dark:bg-darkmode-600"
                                 >
                                     <Lucide
                                         :icon="item.icon"
-                                        class="h-4 w-4 shrink-0 text-slate-400"
+                                        class="mt-0.5 h-4 w-4 shrink-0 text-slate-400"
                                     />
-                                    <span>{{ item.text }}</span>
+                                    <div class="min-w-0">
+                                        <div
+                                            class="text-[11px] tracking-wide text-slate-500 uppercase"
+                                        >
+                                            {{ item.label }}
+                                        </div>
+                                        <div
+                                            class="mt-0.5 text-sm font-medium text-slate-700 dark:text-slate-200"
+                                        >
+                                            {{ item.text }}
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -822,23 +967,60 @@ useEcho<RoomStatusChangedPayload>(
 
                             <div
                                 v-if="selectedRoom.amenities.length"
-                                class="mt-4 flex flex-wrap gap-2"
+                                class="mt-4 border-t border-slate-200/70 pt-4 dark:border-darkmode-400"
                             >
-                                <span
-                                    v-for="amenity in selectedRoom.amenities"
-                                    :key="amenity"
-                                    class="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm dark:bg-darkmode-600 dark:text-slate-200"
+                                <div
+                                    class="text-[11px] tracking-wide text-slate-500 uppercase"
                                 >
-                                    {{ amenity }}
-                                </span>
+                                    Amenidades
+                                </div>
+                                <div class="mt-2 flex flex-wrap gap-1.5">
+                                    <span
+                                        v-for="amenity in selectedRoom.amenities"
+                                        :key="amenity"
+                                        class="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm dark:bg-darkmode-600 dark:text-slate-200"
+                                    >
+                                        {{ amenity }}
+                                    </span>
+                                </div>
                             </div>
 
-                            <p
-                                v-if="selectedRoom.notes"
-                                class="mt-4 text-sm whitespace-pre-line text-slate-600 dark:text-slate-300"
+                            <div
+                                v-if="selectedRoom.optional_charges.length"
+                                class="mt-4 border-t border-slate-200/70 pt-4 dark:border-darkmode-400"
                             >
-                                {{ selectedRoom.notes }}
-                            </p>
+                                <div
+                                    class="text-[11px] tracking-wide text-slate-500 uppercase"
+                                >
+                                    Cargos opcionales
+                                </div>
+                                <div class="mt-2 flex flex-wrap gap-1.5">
+                                    <span
+                                        v-for="charge in selectedRoom.optional_charges"
+                                        :key="charge.concept"
+                                        class="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm dark:bg-darkmode-600 dark:text-slate-200"
+                                    >
+                                        {{ charge.concept }} ·
+                                        {{ formatMoney(charge.amount) }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div
+                                v-if="selectedRoom.notes"
+                                class="mt-4 border-t border-slate-200/70 pt-4 dark:border-darkmode-400"
+                            >
+                                <div
+                                    class="text-[11px] tracking-wide text-slate-500 uppercase"
+                                >
+                                    Notas
+                                </div>
+                                <p
+                                    class="mt-2 text-sm whitespace-pre-line text-slate-600 dark:text-slate-300"
+                                >
+                                    {{ selectedRoom.notes }}
+                                </p>
+                            </div>
                         </section>
 
                         <section

@@ -13,5 +13,7 @@ class TenantDatabaseSeeder extends Seeder
     public function run(): void
     {
         $this->call(TenantRolesSeeder::class);
+        // Lecciones de arranque del bot (editables/eliminables por hotel).
+        $this->call(AgentGuidelineSeeder::class);
     }
 }

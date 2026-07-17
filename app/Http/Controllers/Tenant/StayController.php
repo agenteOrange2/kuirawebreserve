@@ -48,6 +48,10 @@ class StayController extends Controller
             'num_people' => ['sometimes', 'integer', 'min:1', 'max:20'],
             'vehicle_plate' => ['nullable', 'string', 'max:20'],
             'vehicle_desc' => ['nullable', 'string', 'max:100'],
+            // Conceptos de cargos opcionales de la habitación; el monto
+            // SIEMPRE se resuelve del catálogo del cuarto, nunca del cliente.
+            'extra_charges' => ['sometimes', 'array', 'max:20'],
+            'extra_charges.*' => ['string', 'max:100'],
             'notes' => ['nullable', 'string'],
         ]);
 
@@ -147,6 +151,7 @@ class StayController extends Controller
             'check_out_at' => $stay->check_out_at?->format('d/m/Y H:i'),
             'status' => $stay->status,
             'amount' => $stay->amount,
+            'extra_charges' => $stay->extra_charges ?? [],
             'channel' => $stay->channel,
             'reservation_id' => $stay->reservation_id,
         ];

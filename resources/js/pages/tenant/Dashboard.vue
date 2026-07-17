@@ -18,6 +18,7 @@ interface ArrivalRow { id: number; code: string; guest_name: string; room: strin
 interface DepartureRow { id: number; code: string; guest_name: string; room: string | null; time: string; balance: number }
 
 const props = defineProps<{
+    expiringHolds: { id: number; code: string; guest_name: string | null; room: string | null; expires_at: string }[];
     hero: { revenue: string; change: number | null; month: string };
     metrics: Metric[];
     series: {
@@ -110,6 +111,27 @@ const cellClass =
 <template>
     <RazeLayout title="Dashboard">
         <div class="grid grid-cols-12 gap-y-10 gap-x-6">
+            <!-- Holds por vencer: apartados que expiran en < 30 min -->
+            <div v-if="expiringHolds.length" class="col-span-12 -mb-5">
+                <div class="box box--stacked border-l-4 border-l-warning p-4">
+                    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <div class="flex items-center gap-2 text-sm font-medium">
+                            <Lucide icon="AlarmClock" class="h-4 w-4 text-warning" />
+                            Apartados por vencer
+                        </div>
+                        <Link
+                            v-for="hold in expiringHolds"
+                            :key="hold.id"
+                            :href="route('tenant.reservations', { reservation: hold.id })"
+                            class="flex items-center gap-1.5 rounded-full bg-warning/10 px-3 py-1.5 text-xs font-medium text-warning transition hover:bg-warning/20"
+                        >
+                            {{ hold.code }} · {{ hold.guest_name ?? 'Sin nombre' }}<template v-if="hold.room"> · hab. {{ hold.room }}</template>
+                            <span class="font-normal">expira {{ hold.expires_at }}</span>
+                        </Link>
+                    </div>
+                </div>
+            </div>
+
             <!-- Onboarding -->
             <div v-if="!hasRooms" class="col-span-12">
                 <div class="box box--stacked border-l-4 border-l-primary p-5">

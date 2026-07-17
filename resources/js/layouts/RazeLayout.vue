@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, Link, usePage } from '@inertiajs/vue3';
-import { ref, computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import Breadcrumb from '@/components/Base/Breadcrumb';
 import { Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
@@ -13,10 +13,10 @@ const props = defineProps<{ title?: string }>();
 
 const page = usePage();
 const auth = computed(() => page.props.auth as any);
-const tenant = computed(() => page.props.tenant as { id: string; name: string; plan: string } | null);
+const tenant = computed(() => page.props.panelTenant as { id: string; name: string; plan: string } | null);
 
 const { menu, isTenantPanel } = useMenu();
-const brandName = computed(() => tenant.value?.name ?? 'KuiraReserve');
+const brandName = computed(() => tenant.value?.name ?? ((page.props.branding as { app_name?: string } | undefined)?.app_name || 'KuiraReserve'));
 const userInitials = computed(() => {
   const name = (auth.value?.user?.name ?? '').trim();
   if (!name) return '?';
@@ -44,15 +44,64 @@ const toggleCompactMenu = (event: MouseEvent) => {
   setCompactMenu(!compactMenu.value);
 };
 
-const isActive = (pageName?: string) => {
-  if (!pageName) return false;
+const pathFor = (pageName?: string) => {
+  if (!pageName) return null;
   try {
-    const routeUrl = route(pageName);
-    return page.url.startsWith(new URL(routeUrl).pathname);
+    return new URL(route(pageName)).pathname;
   } catch {
-    return false;
+    return null;
   }
 };
+
+// Solo se ilumina el item cuya ruta es la coincidencia MÁS específica de la
+// URL actual; sin esto, /reservas/calendario encendería también "Reservas".
+const activePageName = computed(() => {
+  const current = page.url.split('?')[0];
+  let best: string | undefined;
+  let bestLength = -1;
+
+  for (const item of menu.value) {
+    if (typeof item === 'string') continue;
+    for (const entry of [item, ...(item.subMenu ?? [])]) {
+      if (!entry.pageName) continue;
+      const path = pathFor(entry.pageName);
+      if (!path) continue;
+      const matches = current === path || current.startsWith(path.endsWith('/') ? path : `${path}/`);
+      if (matches && path.length > bestLength) {
+        best = entry.pageName;
+        bestLength = path.length;
+      }
+    }
+  }
+
+  return best;
+});
+
+const isActive = (pageName?: string) => pageName !== undefined && pageName === activePageName.value;
+
+// ── Grupos colapsables del menú ──
+const openGroups = ref<Record<string, boolean>>({});
+
+const groupHasActive = (item: { subMenu?: { pageName?: string }[] }) =>
+  item.subMenu?.some((sub) => isActive(sub.pageName)) ?? false;
+
+const toggleGroup = (title: string) => {
+  openGroups.value[title] = !openGroups.value[title];
+};
+
+// El grupo que contiene la página actual se abre solo (también al navegar).
+watch(
+  activePageName,
+  (name) => {
+    for (const item of menu.value) {
+      if (typeof item === 'string' || !item.subMenu) continue;
+      if (item.subMenu.some((sub) => sub.pageName === name)) {
+        openGroups.value[item.title] = true;
+      }
+    }
+  },
+  { immediate: true },
+);
 
 const requestFullscreen = () => {
   const el = document.documentElement;
@@ -111,12 +160,41 @@ const requestFullscreen = () => {
         </div>
 
         <!-- Menu Items -->
-        <div class="w-full h-full z-20 px-5 overflow-y-auto overflow-x-hidden pb-3">
+        <div class="w-full h-full z-20 px-5 overflow-y-auto overflow-x-hidden pb-3 scrollbar-slim">
           <ul class="scrollable">
             <template v-for="(item, index) in menu" :key="index">
               <!-- Divider -->
               <li v-if="typeof item === 'string'" class="side-menu__divider">
                 {{ item }}
+              </li>
+              <!-- Grupo con submenu -->
+              <li v-else-if="item.subMenu">
+                <a href="#" :class="[
+                  'side-menu__link',
+                  { 'side-menu__link--active': groupHasActive(item) && !openGroups[item.title] },
+                  { 'side-menu__link--active-dropdown': openGroups[item.title] },
+                ]" @click.prevent="toggleGroup(item.title)">
+                  <Lucide :icon="item.icon" class="side-menu__link__icon" />
+                  <div class="side-menu__link__title">{{ item.title }}</div>
+                  <Lucide icon="ChevronDown" :class="[
+                    'side-menu__link__chevron h-4 w-4 stroke-[1.3] transition-transform',
+                    { 'rotate-180': openGroups[item.title] },
+                  ]" />
+                </a>
+                <ul v-show="openGroups[item.title]">
+                  <li v-for="(sub, subIndex) in item.subMenu" :key="subIndex">
+                    <Link :href="sub.pageName ? route(sub.pageName) : '#'" :class="[
+                      'side-menu__link',
+                      { 'side-menu__link--active': isActive(sub.pageName) },
+                    ]">
+                      <Lucide :icon="sub.icon" class="side-menu__link__icon" />
+                      <div class="side-menu__link__title">{{ sub.title }}</div>
+                      <div v-if="sub.badge" class="side-menu__link__badge">
+                        {{ sub.badge }}
+                      </div>
+                    </Link>
+                  </li>
+                </ul>
               </li>
               <!-- Menu Item -->
               <li v-else>

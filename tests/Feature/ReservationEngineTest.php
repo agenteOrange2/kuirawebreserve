@@ -180,3 +180,19 @@ it('excluye habitaciones en mantenimiento', function () {
     expect($available->pluck('id'))->not->toContain($this->rooms[0]->id)
         ->and($available->pluck('id'))->toContain($this->rooms[1]->id);
 });
+
+it('CreateReservation rechaza si la gente excede la capacidad real del cuarto (único punto de verdad para todos los canales)', function () {
+    $this->rooms[0]->update(['max_occupancy' => 2]);
+
+    expect(fn () => makeReservation(['room_id' => $this->rooms[0]->id, 'adults' => 3]))
+        ->toThrow(NoAvailabilityException::class, "La habitación {$this->rooms[0]->number} admite hasta 2 personas.");
+});
+
+it('CreateReservation permite hasta el override propio del cuarto aunque supere la capacidad del tipo', function () {
+    $this->roomType->update(['capacity' => 2]);
+    $this->rooms[0]->update(['max_occupancy' => 4]);
+
+    $reservation = makeReservation(['room_id' => $this->rooms[0]->id, 'adults' => 4]);
+
+    expect($reservation->adults)->toBe(4);
+});

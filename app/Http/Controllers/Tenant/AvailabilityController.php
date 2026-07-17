@@ -52,6 +52,17 @@ class AvailabilityController extends Controller
                 'id' => $room->id,
                 'number' => $room->number,
                 'status' => $room->status->getMorphClass(),
+                // Ficha de cobros del cuarto: el panel estima personas extra
+                // y ofrece los cargos opcionales antes de crear la reserva.
+                'included_occupancy' => $room->included_occupancy,
+                'extra_guest_fee' => $room->extra_guest_fee !== null ? (float) $room->extra_guest_fee : null,
+                'optional_charges' => collect($room->optional_charges ?? [])
+                    ->map(fn (array $charge) => [
+                        'concept' => (string) ($charge['concept'] ?? ''),
+                        'amount' => round((float) ($charge['amount'] ?? 0), 2),
+                    ])
+                    ->values()
+                    ->all(),
             ])->values(),
         ]);
     }

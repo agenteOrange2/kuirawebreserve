@@ -15,7 +15,7 @@ const props = defineProps<{
         name: string | null;
         description: string | null;
         room_type: string;
-        base_price: number;
+        price_from: number | null;
         zone: string | null;
         zone_color: string | null;
         status: string;
@@ -125,9 +125,9 @@ const priceModifierLabel = computed(() => {
                             <dd class="font-medium">{{ room.room_type }}</dd>
                         </div>
                         <div class="flex items-center justify-between border-b border-dashed border-slate-200/70 pb-3 dark:border-darkmode-400">
-                            <dt class="flex items-center gap-2 text-slate-500"><Lucide icon="DollarSign" class="h-4 w-4" /> Precio base + ajuste</dt>
+                            <dt class="flex items-center gap-2 text-slate-500"><Lucide icon="DollarSign" class="h-4 w-4" /> Precio desde + ajuste</dt>
                             <dd class="font-medium">
-                                {{ money(room.base_price) }}
+                                {{ room.price_from !== null ? money(room.price_from) : 'Sin tarifa' }}
                                 <span v-if="priceModifierLabel" class="ml-1 rounded-full px-1.5 py-0.5 text-xs" :class="room.price_modifier! > 0 ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'">{{ priceModifierLabel }}</span>
                             </dd>
                         </div>

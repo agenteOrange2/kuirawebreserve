@@ -152,7 +152,8 @@ return [
     */
 
     'features' => [
-        Features::registration(),
+        // Registro público deshabilitado: las cuentas las crea la plataforma.
+        // Features::registration(),
         Features::resetPasswords(),
         Features::emailVerification(),
         Features::twoFactorAuthentication([

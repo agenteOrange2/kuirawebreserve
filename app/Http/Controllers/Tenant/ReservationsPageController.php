@@ -49,9 +49,21 @@ class ReservationsPageController extends Controller
             ->limit(50)
             ->get();
 
+        // En casa: reservas con check-in. No van en la lista de próximas ni
+        // en historial, pero el calendario abre su detalle desde la barra.
+        $inHouseModels = Reservation::query()
+            ->with($relations)
+            ->where('status', ReservationStatus::CheckedIn)
+            ->orderBy('starts_at')
+            ->get();
+
         $reservationTimeline = Activity::query()
             ->where('subject_type', Reservation::class)
-            ->whereIn('subject_id', [...$reservationModels->modelKeys(), ...$historyModels->modelKeys()])
+            ->whereIn('subject_id', [
+                ...$reservationModels->modelKeys(),
+                ...$historyModels->modelKeys(),
+                ...$inHouseModels->modelKeys(),
+            ])
             ->latest()
             ->get()
             ->groupBy('subject_id');
@@ -60,6 +72,7 @@ class ReservationsPageController extends Controller
 
         $reservations = $reservationModels->map($serialize);
         $history = $historyModels->map($serialize);
+        $inHouse = $inHouseModels->map($serialize);
 
         $stays = Stay::query()
             ->active()
@@ -112,9 +125,12 @@ class ReservationsPageController extends Controller
         $focusReservationId = $request->integer('reservation') ?: null;
 
         return Inertia::render('tenant/reservations/Index', [
+            // Lista y calendario comparten componente y datos; cambia la vista.
+            'view' => $request->routeIs('tenant.reservations.calendar') ? 'calendar' : 'list',
             'property' => $property->only(['id', 'name']),
             'reservations' => $reservations,
             'history' => $history,
+            'inHouse' => $inHouse,
             'stays' => $stays,
             'ratePlans' => RatePlan::query()
                 ->where('active', true)
@@ -141,6 +157,15 @@ class ReservationsPageController extends Controller
                     'number' => $prefillRoom->number,
                     'room_type' => $prefillRoom->roomType?->name,
                     'rate_plan_id' => $prefillRoom->roomType?->ratePlans->first()?->id,
+                    'included_occupancy' => $prefillRoom->included_occupancy,
+                    'extra_guest_fee' => $prefillRoom->extra_guest_fee !== null ? (float) $prefillRoom->extra_guest_fee : null,
+                    'optional_charges' => collect($prefillRoom->optional_charges ?? [])
+                        ->map(fn (array $charge) => [
+                            'concept' => (string) ($charge['concept'] ?? ''),
+                            'amount' => round((float) ($charge['amount'] ?? 0), 2),
+                        ])
+                        ->values()
+                        ->all(),
                 ] : null,
                 'guest' => $prefillGuest ? $this->prefillGuestPayload($prefillGuest) : null,
             ],
@@ -204,7 +229,15 @@ class ReservationsPageController extends Controller
             'status' => $r->status->value,
             'status_label' => $r->status->label(),
             'hold_expires_at' => $r->hold_expires_at?->format('H:i'),
+            // ISO para la tarjeta "holds por vencer" (se calcula en cliente).
+            'hold_expires_at_iso' => $r->hold_expires_at?->toIso8601String(),
             'total_amount' => $r->total_amount,
+            'extra_charges' => $r->extra_charges ?? [],
+            // Líneas congeladas del wizard: productos POS, add-ons y
+            // experiencias — el detalle desglosa de qué está hecho el total.
+            'products' => $r->products ?? [],
+            'extras' => $r->extras ?? [],
+            'experiences' => $r->experiences ?? [],
             'starts_today' => $r->starts_at->isToday(),
             'source_channel' => $r->source_channel,
             'notes' => $r->notes,

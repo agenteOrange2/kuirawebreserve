@@ -52,6 +52,8 @@ return Application::configure(basePath: dirname(__DIR__))
             // Abilities de tokens Sanctum (Agent API).
             'abilities' => \Laravel\Sanctum\Http\Middleware\CheckAbilities::class,
             'ability' => \Laravel\Sanctum\Http\Middleware\CheckForAnyAbility::class,
+            // Módulos por plan (spec-plan-maestro E1): module:pos, module:cobros…
+            'module' => \App\Http\Middleware\EnsureModuleEnabled::class,
         ]);
 
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);

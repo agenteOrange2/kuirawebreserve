@@ -29,6 +29,11 @@ class Product extends Model
         'stock_qty',
         'reorder_point',
         'active',
+        // Curación del wizard público (spec-plan-maestro, área aislada
+        // /ajustes/wizard): "activo" solo dice si se puede vender en el
+        // POS; esto decide si además se ofrece SIN staff de por medio al
+        // huésped en /reservar. Default false — el admin elige a propósito.
+        'available_in_wizard',
     ];
 
     protected function casts(): array
@@ -40,6 +45,7 @@ class Product extends Model
             'stock_qty' => 'decimal:3',
             'reorder_point' => 'decimal:3',
             'active' => 'boolean',
+            'available_in_wizard' => 'boolean',
         ];
     }
 

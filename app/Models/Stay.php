@@ -35,6 +35,7 @@ class Stay extends Model
         'check_out_at',
         'status',
         'amount',
+        'extra_charges',
         'channel',
         'notes',
         'created_by',
@@ -47,6 +48,7 @@ class Stay extends Model
             'planned_end_at' => 'datetime',
             'check_out_at' => 'datetime',
             'amount' => 'decimal:2',
+            'extra_charges' => 'array',
         ];
     }
 

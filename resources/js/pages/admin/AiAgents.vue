@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { router } from '@inertiajs/vue3';
+import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
@@ -17,19 +17,13 @@ interface TenantRow {
     plan_ai_enabled: boolean; plan_ai_limit: number | null;
     enabled: boolean; provider_id: number | null; monthly_reply_limit: number | null;
     byok_allowed: boolean; api_allowed: boolean; used_replies: number; used_tokens: number; suspended: boolean;
-}
-interface MetaLinkRow {
-    id: number; tenant_id: string; tenant_name: string; type: string; type_label: string;
-    external_id: string; masked_token: string; name: string | null; active: boolean;
+    channels: { type: string; label: string; active: boolean; last_event_at: string | null }[];
 }
 
 const props = defineProps<{
     providers: ProviderRow[];
     catalog: CatalogEntry[];
     tenants: TenantRow[];
-    metaChannels: MetaLinkRow[];
-    metaConfig: { mode: string; webhook_url: string; verify_token: string; app_configured: boolean };
-    tenantOptions: { value: string; label: string }[];
 }>();
 
 const toast = useToasts();
@@ -152,59 +146,13 @@ async function testProvider(p: ProviderRow) {
     }
 }
 
-// ── Canales Meta (WhatsApp / Messenger / Instagram) ──
-const metaLinks = ref<MetaLinkRow[]>([...props.metaChannels]);
-const showMetaForm = ref(false);
-const metaError = ref<string | null>(null);
-const metaForm = reactive({ tenant_id: '', type: 'whatsapp', external_id: '', access_token: '', name: '' });
-const metaTypeMeta: Record<string, { label: string; icon: string; tone: string; idLabel: string }> = {
-    whatsapp: { label: 'WhatsApp', icon: 'MessageCircle', tone: 'bg-success/10 text-success', idLabel: 'phone_number_id' },
-    messenger: { label: 'Messenger', icon: 'Facebook', tone: 'bg-primary/10 text-primary', idLabel: 'page_id' },
-    instagram: { label: 'Instagram', icon: 'Instagram', tone: 'bg-pending/10 text-pending', idLabel: 'ig_business_id' },
+// ── Canales conectados por hotel (iconos; la gestión vive en admin.ai.channels) ──
+const channelIcon: Record<string, string> = {
+    whatsapp: 'MessageCircle',
+    whatsapp_evo: 'MessageCircle',
+    messenger: 'Facebook',
+    instagram: 'Instagram',
 };
-
-function openMetaForm() {
-    metaForm.tenant_id = props.tenantOptions[0]?.value ?? '';
-    metaForm.type = 'whatsapp';
-    metaForm.external_id = '';
-    metaForm.access_token = '';
-    metaForm.name = '';
-    metaError.value = null;
-    showMetaForm.value = true;
-}
-
-async function submitMetaLink() {
-    saving.value = true;
-    metaError.value = null;
-    try {
-        const { data } = await axios.post<MetaLinkRow>(route('admin.meta.store'), { ...metaForm, name: metaForm.name || null });
-        metaLinks.value = [data, ...metaLinks.value];
-        showMetaForm.value = false;
-        toast.success('Canal vinculado', 'El webhook ya enruta este canal a su hotel.');
-    } catch (e: any) {
-        metaError.value = e.response?.data?.message ?? (Object.values(e.response?.data?.errors ?? {})[0] as string[] | undefined)?.[0] ?? 'No se pudo vincular.';
-    } finally {
-        saving.value = false;
-    }
-}
-
-async function toggleMetaLink(link: MetaLinkRow) {
-    const { data } = await axios.patch<MetaLinkRow>(route('admin.meta.update', link.id), { active: !link.active });
-    metaLinks.value = metaLinks.value.map((l) => (l.id === data.id ? data : l));
-}
-
-async function deleteMetaLink(link: MetaLinkRow) {
-    await axios.delete(route('admin.meta.destroy', link.id));
-    metaLinks.value = metaLinks.value.filter((l) => l.id !== link.id);
-    toast.success('Canal desvinculado');
-}
-
-const copiedField = ref<string | null>(null);
-async function copyMeta(field: string, value: string) {
-    await navigator.clipboard.writeText(value);
-    copiedField.value = field;
-    setTimeout(() => (copiedField.value = null), 2000);
-}
 
 // ── Configuración por tenant ──
 async function patchTenant(t: TenantRow, payload: Record<string, unknown>) {
@@ -245,9 +193,11 @@ const cellClass =
                     </div>
                     <p class="text-sm text-slate-500">Keys maestras, asignación por hotel, cuotas y consumo — la IA es producto de la plataforma</p>
                 </div>
-                <Button variant="primary" class="rounded-[0.5rem] shadow-md shadow-primary/20" @click="openCreate">
-                    <Lucide icon="Plus" class="mr-2 h-4 w-4 stroke-[1.3]" /> Key maestra
-                </Button>
+                <div class="flex flex-wrap items-center gap-2">
+                    <Button variant="primary" class="rounded-[0.5rem] shadow-md shadow-primary/20" @click="openCreate">
+                        <Lucide icon="Plus" class="mr-2 h-4 w-4 stroke-[1.3]" /> Key maestra
+                    </Button>
+                </div>
             </div>
 
             <!-- Proveedores de plataforma -->
@@ -313,11 +263,12 @@ const cellClass =
                     <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400">{{ tenants.length }}</span>
                 </div>
                 <div class="mt-2 overflow-auto lg:overflow-visible">
-                    <table v-if="tenants.length" class="w-full min-w-[1000px] border-separate border-spacing-y-[8px] text-sm">
+                    <table v-if="tenants.length" class="w-full min-w-[1100px] border-separate border-spacing-y-[8px] text-sm">
                         <thead>
                             <tr>
                                 <th class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500">Hotel</th>
                                 <th class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500">Plan</th>
+                                <th class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500">Canales</th>
                                 <th class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500">Bot</th>
                                 <th class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500">Proveedor asignado</th>
                                 <th class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500">Cuota / mes</th>
@@ -339,9 +290,36 @@ const cellClass =
                                     </div>
                                 </td>
                                 <td :class="cellClass" class="px-5 py-3.5">
-                                    <FormSwitch>
-                                        <FormSwitch.Input :checked="t.enabled" :disabled="!t.plan_ai_enabled" type="checkbox" @change="patchTenant(t, { enabled: !t.enabled })" />
-                                    </FormSwitch>
+                                    <Link :href="route('admin.ai.channels', t.id)" title="Gestionar canales de este hotel" class="inline-flex items-center gap-1.5">
+                                        <template v-if="t.channels.length">
+                                            <Lucide
+                                                v-for="(c, i) in t.channels"
+                                                :key="i"
+                                                :icon="(channelIcon[c.type] as any) ?? 'MessageCircle'"
+                                                class="h-4 w-4 stroke-[1.5]"
+                                                :class="c.active ? 'text-success' : 'text-slate-300'"
+                                                :title="`${c.label}${c.last_event_at ? ' · último evento hace ' + c.last_event_at : ' · sin eventos'}`"
+                                            />
+                                        </template>
+                                        <span v-else class="inline-flex items-center gap-1 text-xs text-primary">
+                                            <Lucide icon="Plus" class="h-3.5 w-3.5" /> Conectar
+                                        </span>
+                                    </Link>
+                                </td>
+                                <td :class="cellClass" class="px-5 py-3.5">
+                                    <div class="flex items-center gap-1.5">
+                                        <FormSwitch>
+                                            <FormSwitch.Input :checked="t.enabled" :disabled="!t.plan_ai_enabled" type="checkbox" @change="patchTenant(t, { enabled: !t.enabled })" />
+                                        </FormSwitch>
+                                        <button
+                                            type="button"
+                                            title="Ver contexto del bot"
+                                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
+                                            @click="router.visit(route('admin.ai.tenants.context', t.id))"
+                                        >
+                                            <Lucide icon="Eye" class="h-4 w-4" />
+                                        </button>
+                                    </div>
                                 </td>
                                 <td :class="cellClass" class="px-5 py-3.5">
                                     <FormSelect
@@ -395,155 +373,7 @@ const cellClass =
                     Cuota vacía = la del plan. "Auto" prueba las keys activas en orden (fallback). BYOK = el hotel usa sus propias llaves (no consume cuota). API = ve tokens y playground de integraciones en su panel.
                 </p>
             </div>
-
-            <!-- Canales Meta -->
-            <div class="mt-8">
-                <div class="flex flex-wrap items-center gap-2 md:h-10">
-                    <Lucide icon="Share2" class="h-4 w-4 stroke-[1.5] text-primary" />
-                    <div class="text-base font-medium">Canales Meta</div>
-                    <span
-                        class="rounded-full px-2 py-0.5 text-xs font-medium"
-                        :class="metaConfig.mode === 'production' ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning'"
-                    >
-                        {{ metaConfig.mode === 'production' ? 'Producción' : 'Entorno de prueba' }}
-                    </span>
-                    <Button variant="primary" size="sm" class="ml-auto rounded-[0.5rem]" @click="openMetaForm">
-                        <Lucide icon="Plus" class="mr-1.5 h-4 w-4" /> Vincular canal
-                    </Button>
-                </div>
-
-                <div class="mt-2 grid grid-cols-12 gap-5">
-                    <!-- Config del webhook -->
-                    <div class="col-span-12 xl:col-span-5">
-                        <div class="box box--stacked flex h-full flex-col p-5">
-                            <div class="mb-3 flex items-center gap-2 text-xs font-medium uppercase tracking-wide text-slate-400">
-                                <Lucide icon="Webhook" class="h-3.5 w-3.5" /> Configuración en developers.facebook.com
-                            </div>
-                            <div class="space-y-3 text-sm">
-                                <div>
-                                    <div class="mb-1 text-xs text-slate-500">URL del webhook (Callback URL)</div>
-                                    <button type="button" class="flex w-full items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-left font-mono text-xs text-slate-200" title="Copiar" @click="copyMeta('url', metaConfig.webhook_url)">
-                                        <span class="min-w-0 flex-1 truncate">{{ metaConfig.webhook_url }}</span>
-                                        <Lucide :icon="copiedField === 'url' ? 'Check' : 'Copy'" class="h-3.5 w-3.5 shrink-0" :class="{ 'text-success': copiedField === 'url' }" />
-                                    </button>
-                                </div>
-                                <div>
-                                    <div class="mb-1 text-xs text-slate-500">Verify token</div>
-                                    <button type="button" class="flex w-full items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-left font-mono text-xs text-slate-200" title="Copiar" @click="copyMeta('token', metaConfig.verify_token)">
-                                        <span class="min-w-0 flex-1 truncate">{{ metaConfig.verify_token }}</span>
-                                        <Lucide :icon="copiedField === 'token' ? 'Check' : 'Copy'" class="h-3.5 w-3.5 shrink-0" :class="{ 'text-success': copiedField === 'token' }" />
-                                    </button>
-                                </div>
-                            </div>
-                            <div class="mt-4 flex items-start gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700">
-                                <Lucide icon="Info" class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-                                <span>
-                                    Pega ambos en Webhooks de tu app de Meta y suscribe el campo "messages".
-                                    En entorno de prueba usa el número de prueba de WhatsApp Cloud API (gratis, hasta 5 destinos verificados).
-                                    <span v-if="!metaConfig.app_configured" class="font-medium text-warning">Falta META_APP_ID/SECRET en el .env — la firma no se valida.</span>
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Canales vinculados -->
-                    <div class="col-span-12 xl:col-span-7">
-                        <div class="box box--stacked flex h-full flex-col">
-                            <div class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4">
-                                <h2 class="text-base font-medium">Canales vinculados</h2>
-                                <span class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400">{{ metaLinks.length }}</span>
-                            </div>
-                            <div v-if="metaLinks.length" class="flex-1 divide-y divide-dashed divide-slate-300/70 px-5 py-2">
-                                <div v-for="link in metaLinks" :key="link.id" class="flex items-center gap-3 py-3" :class="{ 'opacity-60': !link.active }">
-                                    <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full" :class="metaTypeMeta[link.type]?.tone ?? 'bg-slate-100 text-slate-500'">
-                                        <Lucide :icon="(metaTypeMeta[link.type]?.icon as any) ?? 'MessageCircle'" class="h-4 w-4" />
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <div class="flex items-center gap-2">
-                                            <span class="truncate text-sm font-medium">{{ link.name || link.type_label }}</span>
-                                            <span class="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] text-primary">{{ link.tenant_name }}</span>
-                                        </div>
-                                        <div class="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-slate-400">
-                                            <span class="truncate">{{ link.external_id }}</span>
-                                            <span>{{ link.masked_token }}</span>
-                                        </div>
-                                    </div>
-                                    <FormSwitch class="shrink-0">
-                                        <FormSwitch.Input :checked="link.active" type="checkbox" @change="toggleMetaLink(link)" />
-                                    </FormSwitch>
-                                    <button type="button" title="Desvincular" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger" @click="deleteMetaLink(link)">
-                                        <Lucide icon="Trash2" class="h-4 w-4" />
-                                    </button>
-                                </div>
-                            </div>
-                            <div v-else class="flex flex-1 flex-col items-center justify-center gap-3 py-10 text-center">
-                                <div class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"><Lucide icon="Share2" class="h-6 w-6" /></div>
-                                <p class="max-w-sm px-6 text-sm text-slate-500">
-                                    Vincula el número de prueba de WhatsApp (o una página de FB/IG) a un hotel y los mensajes entrarán a su bandeja con bot incluido.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
         </div>
-
-        <!-- Modal vincular canal Meta -->
-        <Dialog :open="showMetaForm" @close="showMetaForm = false">
-            <Dialog.Panel>
-                <form class="flex flex-col" @submit.prevent="submitMetaLink">
-                    <div class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400">
-                        <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full" :class="metaTypeMeta[metaForm.type]?.tone ?? 'bg-primary/10 text-primary'">
-                            <Lucide :icon="(metaTypeMeta[metaForm.type]?.icon as any) ?? 'Share2'" class="h-5 w-5" />
-                        </div>
-                        <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">Vincular canal Meta</h2>
-                            <p class="mt-0.5 text-xs text-slate-500">Los mensajes de este canal entrarán a la bandeja del hotel elegido</p>
-                        </div>
-                        <button type="button" class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400" @click="showMetaForm = false"><Lucide icon="X" class="h-5 w-5" /></button>
-                    </div>
-                    <div class="space-y-4 px-6 py-5">
-                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <div>
-                                <label class="mb-1 block text-sm">Hotel</label>
-                                <FormSelect v-model="metaForm.tenant_id">
-                                    <option v-for="t in tenantOptions" :key="t.value" :value="t.value">{{ t.label }}</option>
-                                </FormSelect>
-                            </div>
-                            <div>
-                                <label class="mb-1 block text-sm">Canal</label>
-                                <FormSelect v-model="metaForm.type">
-                                    <option value="whatsapp">WhatsApp</option>
-                                    <option value="messenger">Messenger</option>
-                                    <option value="instagram">Instagram</option>
-                                </FormSelect>
-                            </div>
-                        </div>
-                        <div>
-                            <label class="mb-1 block text-sm">{{ metaTypeMeta[metaForm.type]?.idLabel ?? 'ID externo' }}</label>
-                            <FormInput v-model="metaForm.external_id" type="text" class="font-mono" placeholder="1055XXXXXXXXXXX" />
-                            <p class="mt-1 text-xs text-slate-400">WhatsApp: el phone_number_id del panel de la app. FB/IG: el id de la página.</p>
-                        </div>
-                        <div>
-                            <label class="mb-1 block text-sm">Access token</label>
-                            <FormInput v-model="metaForm.access_token" type="password" class="font-mono" placeholder="EAAG…" autocomplete="off" />
-                            <p class="mt-1 text-xs text-slate-400">Se guarda cifrado. En prueba sirve el token temporal (24 h) del panel de Meta.</p>
-                        </div>
-                        <div>
-                            <label class="mb-1 block text-sm">Etiqueta (opcional)</label>
-                            <FormInput v-model="metaForm.name" type="text" placeholder="WhatsApp prueba" />
-                        </div>
-                        <p v-if="metaError" class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{{ metaError }}</p>
-                    </div>
-                    <div class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400">
-                        <Button type="button" variant="outline-secondary" @click="showMetaForm = false">Cancelar</Button>
-                        <Button type="submit" variant="primary" class="shadow-md shadow-primary/20" :disabled="saving || !metaForm.external_id || !metaForm.access_token">
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" /> {{ saving ? 'Vinculando…' : 'Vincular' }}
-                        </Button>
-                    </div>
-                </form>
-            </Dialog.Panel>
-        </Dialog>
 
         <!-- Modal key maestra -->
         <Dialog size="lg" :open="showForm" @close="showForm = false">

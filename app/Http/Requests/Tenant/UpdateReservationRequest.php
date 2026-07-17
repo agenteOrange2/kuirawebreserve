@@ -34,6 +34,10 @@ class UpdateReservationRequest extends FormRequest
             'eta' => ['nullable', 'date_format:H:i'],
             'source_channel' => ['sometimes', Rule::in(['front_desk', 'phone', 'web', 'whatsapp', 'walk_in'])],
             'deposit_amount' => ['sometimes', 'numeric', 'min:0'],
+            // Conceptos de cargos opcionales de la habitación; el monto
+            // SIEMPRE se resuelve del catálogo del cuarto, nunca del cliente.
+            'extra_charges' => ['sometimes', 'array', 'max:20'],
+            'extra_charges.*' => ['string', 'max:100'],
             'notes' => ['nullable', 'string'],
             'guest_notes' => ['nullable', 'string'],
         ];

@@ -163,6 +163,42 @@ last_message_at), `Message` (dirección in/out, tipo texto/imagen/audio/plantill
 `channel_message_id` para dedupe, status sent/delivered/read/failed, `sent_by`
 bot|humano|sistema), `CannedResponse`.
 
+### 4.4.1 `✅ HECHO` — WhatsApp vía Evolution API (alternativa self-hosted)
+
+Canal WhatsApp **sin depender de la aprobación de Meta**: el hotel (o la
+plataforma) conecta instancias de su propio servidor Evolution API desde el
+panel `/asistente` (URL + api key + nombre de instancia). Implementación:
+
+- **Adapter independiente de Meta** (no toca `MetaApi` ni su webhook):
+  `EvolutionApi` (envío, estado de conexión, autoconfiguración del webhook),
+  `EvolutionWebhookController` (inbound con dedupe por `external_id`, ignora
+  ecos/grupos) y `OutboundMessenger` — despachador por `channel->type` que
+  usan bandeja y follow-ups (punto único para futuros canales).
+- **Enrutamiento**: tabla central `evolution_channel_links` (credenciales
+  cifradas); webhook por instancia `/webhooks/evolution/{token}`.
+- **Multi-instancia**: cada número es un `Channel` propio (se quitó el unique
+  property+type) con su modo auto/copilot/off individual en la bandeja.
+- **Límite por plan** `max_channels` (Meta + Evolution; webchat no cuenta):
+  Básico 1, Pro 3.
+- **Instrucciones del bot editables por el hotel**: `settings.agent_instructions`
+  en `/ajustes` se inyecta al system prompt (subordinado a las reglas duras:
+  nunca confirma ni cobra, no inventa precios).
+- Mismo cerebro, bandeja, historial (conversación ligada a huésped y reserva),
+  cuotas y aprobaciones que el resto de canales.
+- **Humanización anti-ban** (respuestas del bot y follow-ups; staff no):
+  `delay` nativo de Evolution — el server muestra "escribiendo..." y entrega
+  después de un retraso proporcional al largo del texto con jitter (2–7 s,
+  `EvolutionApi::humanDelay`). Responder en 0 s es firma de bot para Meta.
+- **Playbook anti-ban del número** (aprendido con ban real en el primer
+  mensaje): SIM física del país, jamás número virtual/VoIP; calentar 1-2
+  semanas de uso normal en teléfono real antes de vincular; proxy
+  residencial/móvil configurado en Evolution (la sesión no debe salir con IP
+  de datacenter); solo tráfico entrante al inicio y sin links en los primeros
+  mensajes. Evolution = vía rápida/plan B; producción seria = Cloud API.
+- Pendiente P2: medios entrantes (imagen/audio → transcripción), alerta de
+  salud del canal (webhook sin eventos / instancia caída → campana), y mover
+  el procesamiento inbound a colas si el volumen crece.
+
 ### 4.5 `P1` — Canales Meta: WhatsApp, Messenger e Instagram DM
 Integración **oficial vía Meta Graph API** (una sola app de Meta, N hoteles
 conectan su número/página con OAuth de incrustación — *Embedded Signup*):
@@ -254,6 +290,14 @@ Lo que separa una integración de juguete de una profesional:
 - **Rate limits** de Graph API respetados por cola con throttling por página/número.
 - **Salud del canal**: monitor de token expirado / permiso revocado / calidad del
   número WhatsApp (quality rating) con aviso en el panel.
+  - ✅ Primera pieza hecha: `last_event_at` por canal (Meta y Evolution — latido
+    del webhook visible en admin), botón **Diagnosticar** (token, número,
+    calidad, callback registrado vs el nuestro, apps suscritas a la WABA) y
+    botón **Reparar suscripción** (ciclo unsubscribe/subscribe de la app a la
+    WABA — la causa #1 de "el Test llega pero los mensajes reales no": la app
+    del token sin suscribir a la cuenta). Requiere capturar `waba_id` en el
+    canal. Pendiente: alerta proactiva (campana) cuando un canal deja de
+    recibir eventos o el token caduca.
 - **Privacidad**: retención configurable de conversaciones, borrado a solicitud
   del usuario (requisito Meta), y las credenciales de página **cifradas** por tenant.
 
@@ -274,7 +318,7 @@ Lo que separa una integración de juguete de una profesional:
 | 3 | **Agent API** (4.1) + **idempotencia** (4.2) | El corazón de la fase agentes; la lógica de negocio ya existe, es exponerla con token y contratos estables. |
 | 4 | **Bandeja unificada + webchat + modos de operación** (4.4, webchat de 4.5, 4.7) | Primer canal end-to-end sin depender de Meta; deja lista la infraestructura de conversaciones que reutilizan todos los canales. |
 | 5 | **Notificaciones al huésped** (2.4) | Cierra la promesa del agente ("te llega confirmación"); base para plantillas WhatsApp. |
-| 6 | **WhatsApp Cloud API + cumplimiento Meta** (4.5/4.8) | Canal de mayor volumen en MX; requiere Business Verification y App Review (empezar trámites desde el paso 4, tardan semanas). |
+| 6 | **WhatsApp Cloud API + cumplimiento Meta** (4.5/4.8) | Canal de mayor volumen en MX; requiere Business Verification y App Review (empezar trámites desde el paso 4, tardan semanas). Mientras corren los trámites, WhatsApp ya opera vía Evolution API (4.4.1 ✅). |
 | 7 | **Messenger + Instagram DM + comentarios FB/IG** (4.5/4.6) | Misma app Meta y misma bandeja: el costo marginal es bajo una vez hecho WhatsApp; los comentarios convierten la fan page en canal de venta. |
 | 8 | Timeline de ocupación (2.3), extender/mover estancia (2.2), housekeeping (3.4), realtime (3.3) | Operación diaria; en paralelo según capacidad. |
 | 9 | Métricas de canales (4.9), temporadas (2.5), cancelación con dinero (2.6), exports (3.6), bitácora (3.5), onboarding (3.7) | Madurez. |

@@ -18,9 +18,11 @@ class MetaChannelLink extends CentralModel
         'tenant_id',
         'type',
         'external_id',
+        'waba_id',
         'access_token',
         'name',
         'active',
+        'last_event_at',
     ];
 
     protected function casts(): array
@@ -28,6 +30,7 @@ class MetaChannelLink extends CentralModel
         return [
             'access_token' => 'encrypted',
             'active' => 'boolean',
+            'last_event_at' => 'datetime',
         ];
     }
 

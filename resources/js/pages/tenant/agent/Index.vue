@@ -3,9 +3,10 @@ import { router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormInput, FormSelect, FormSwitch } from '@/components/Base/Form';
+import { FormHelp, FormInput, FormSelect, FormSwitch } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import Table from '@/components/Base/Table';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
@@ -14,6 +15,7 @@ interface TokenRow { id: number; name: string; last_used_at: string | null; crea
 interface AiProviderRow { id: number; provider: string; label: string; model: string; masked_key: string; active: boolean; replies: number; avg_ms: number | null; tokens: number }
 interface CatalogModel { id: string; tier: 'new' | 'mid' | 'cheap' }
 interface CatalogEntry { key: string; label: string; placeholder_model: string; key_hint: string; models: CatalogModel[] }
+interface EvolutionChannelRow { id: number; name: string | null; base_url: string; instance: string; masked_key: string; webhook_url: string; active: boolean; created_at: string | null }
 
 const props = defineProps<{
     property: { id: number; name: string };
@@ -25,6 +27,10 @@ const props = defineProps<{
     stats: { active: boolean; policies_set: boolean; holds_total: number; holds_confirmed: number; last_activity: string | null };
     baseUrl: string;
     ratePlansCount: number;
+    evolutionChannels: EvolutionChannelRow[];
+    channelLimit: { max: number | null; used: number };
+    contextEditable: boolean;
+    guidelinesEditable: boolean;
 }>();
 
 const toast = useToasts();
@@ -288,6 +294,126 @@ async function testProvider(p: AiProviderRow) {
         testResults[p.id] = { ok: false, ms: d?.ms ?? 0, text: d?.error ?? 'Error de conexión' };
     }
 }
+
+// ── Canales WhatsApp (Evolution API) ──
+const channelLimitReached = computed(() => props.channelLimit.max !== null && props.channelLimit.used >= props.channelLimit.max);
+const channelCountLabel = computed(() =>
+    props.channelLimit.max !== null ? `${props.channelLimit.used} de ${props.channelLimit.max} canales` : `${props.channelLimit.used} conectados`,
+);
+
+function channelName(ch: EvolutionChannelRow): string {
+    return ch.name || `WhatsApp ${ch.instance}`;
+}
+
+const showChannelForm = ref(false);
+const editingChannel = ref<EvolutionChannelRow | null>(null);
+const channelForm = reactive({ name: '', base_url: '', instance: '', api_key: '', active: true });
+const channelError = ref<string | null>(null);
+
+function openChannelCreate() {
+    if (channelLimitReached.value) return;
+    editingChannel.value = null;
+    channelForm.name = '';
+    channelForm.base_url = '';
+    channelForm.instance = '';
+    channelForm.api_key = '';
+    channelForm.active = true;
+    channelError.value = null;
+    showChannelForm.value = true;
+}
+
+function openChannelEdit(ch: EvolutionChannelRow) {
+    editingChannel.value = ch;
+    channelForm.name = ch.name ?? '';
+    channelForm.base_url = ch.base_url;
+    channelForm.instance = ch.instance;
+    channelForm.api_key = '';
+    channelForm.active = ch.active;
+    channelError.value = null;
+    showChannelForm.value = true;
+}
+
+async function submitChannel() {
+    saving.value = true;
+    channelError.value = null;
+    try {
+        if (editingChannel.value) {
+            await axios.patch(route('tenant.evolution-channels.update', editingChannel.value.id), {
+                name: channelForm.name || null,
+                api_key: channelForm.api_key || null,
+                active: channelForm.active,
+            });
+            toast.success('Canal actualizado', 'Los cambios ya están aplicados.');
+        } else {
+            const { data } = await axios.post(route('tenant.evolution-channels.store'), {
+                name: channelForm.name || null,
+                base_url: channelForm.base_url,
+                instance: channelForm.instance,
+                api_key: channelForm.api_key,
+            });
+            if (data.webhook_configured) {
+                toast.success('Instancia conectada', 'Webhook configurado automáticamente.');
+            } else {
+                toast.success('Instancia conectada');
+                toast.error('Configura el webhook manualmente en Evolution', 'La URL del webhook queda visible en la tabla.');
+            }
+        }
+        showChannelForm.value = false;
+        router.reload({ only: ['evolutionChannels', 'channelLimit'] });
+    } catch (e: any) {
+        const msg = e.response?.data?.message ?? (Object.values(e.response?.data?.errors ?? {})[0] as string[] | undefined)?.[0] ?? 'No se pudo guardar.';
+        channelError.value = msg;
+        toast.error('No se pudo guardar el canal', msg);
+    } finally {
+        saving.value = false;
+    }
+}
+
+const deletingChannel = ref<EvolutionChannelRow | null>(null);
+async function submitDeleteChannel() {
+    if (!deletingChannel.value) return;
+    saving.value = true;
+    try {
+        await axios.delete(route('tenant.evolution-channels.destroy', deletingChannel.value.id));
+        deletingChannel.value = null;
+        toast.success('Número desconectado', 'Las conversaciones y su historial se conservan en la bandeja.');
+        router.reload({ only: ['evolutionChannels', 'channelLimit'] });
+    } catch (e: any) {
+        toast.error('No se pudo desconectar', e.response?.data?.message ?? 'Ocurrió un error.');
+    } finally {
+        saving.value = false;
+    }
+}
+
+const channelTests = reactive<Record<number, { ok: boolean; state: string } | 'loading'>>({});
+async function testChannel(ch: EvolutionChannelRow) {
+    channelTests[ch.id] = 'loading';
+    try {
+        const { data } = await axios.post(route('tenant.evolution-channels.test', ch.id));
+        const state: string = data.connection?.state ?? 'desconocido';
+        channelTests[ch.id] = { ok: state === 'open', state };
+        if (state === 'open') {
+            toast.success('Instancia conectada', 'El número de WhatsApp está en línea.');
+        } else {
+            toast.error(`Instancia sin conexión (${state})`, 'Escanea el QR de la instancia en Evolution para vincular el número.');
+        }
+        if (data.webhook_configured === false) {
+            toast.error('Webhook sin configurar', `Configúralo manualmente en Evolution con la URL: ${data.webhook_url}`);
+        }
+    } catch (e: any) {
+        channelTests[ch.id] = { ok: false, state: 'error' };
+        toast.error('No se pudo probar', e.response?.data?.message ?? 'Ocurrió un error.');
+    }
+}
+
+const copiedWebhookId = ref<number | null>(null);
+async function copyWebhook(ch: EvolutionChannelRow) {
+    await navigator.clipboard.writeText(ch.webhook_url);
+    copiedWebhookId.value = ch.id;
+    setTimeout(() => {
+        if (copiedWebhookId.value === ch.id) copiedWebhookId.value = null;
+    }, 2000);
+}
 </script>
 
 <template>
@@ -317,6 +443,12 @@ async function testProvider(p: AiProviderRow) {
                     <div class="flex flex-wrap gap-2">
                         <Button as="a" :href="route('tenant.hotel-settings')" variant="outline-secondary" class="rounded-[0.5rem] bg-white">
                             <Lucide icon="ScrollText" class="mr-2 h-4 w-4 stroke-[1.3]" /> Políticas
+                        </Button>
+                        <Button v-if="guidelinesEditable" as="a" :href="route('tenant.agent-learnings')" variant="outline-primary" class="rounded-[0.5rem] bg-white">
+                            <Lucide icon="GraduationCap" class="mr-2 h-4 w-4 stroke-[1.3]" /> Aprendizajes
+                        </Button>
+                        <Button v-if="contextEditable" as="a" :href="route('tenant.agent-context')" variant="outline-primary" class="rounded-[0.5rem] bg-white">
+                            <Lucide icon="BookOpenText" class="mr-2 h-4 w-4 stroke-[1.3]" /> Contexto del bot
                         </Button>
                         <Button v-if="aiPlan.api_allowed" variant="primary" class="rounded-[0.5rem] shadow-md shadow-primary/20" @click="showCreateToken = true">
                             <Lucide icon="KeyRound" class="mr-2 h-4 w-4 stroke-[1.3]" /> Nuevo token
@@ -523,6 +655,141 @@ async function testProvider(p: AiProviderRow) {
                 </div>
             </div>
 
+            <!-- WhatsApp (Evolution API) -->
+            <div class="col-span-12">
+                <div class="box box--stacked">
+                    <div class="flex flex-wrap items-center gap-4 border-b border-slate-200/60 p-5 dark:border-darkmode-400">
+                        <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success">
+                            <Lucide icon="MessageCircle" class="h-5 w-5" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">WhatsApp (Evolution API)</h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Conecta tu propio servidor Evolution como canal de WhatsApp, alternativa a la Cloud API de Meta. Cada instancia es un número con su propio modo en la bandeja.
+                            </p>
+                        </div>
+                        <div class="flex shrink-0 items-center gap-3">
+                            <span class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500 dark:bg-darkmode-400">{{ channelCountLabel }}</span>
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                                :disabled="channelLimitReached"
+                                :title="channelLimitReached ? 'Alcanzaste el límite de canales de mensajería de tu plan. Mejora tu plan para conectar más números.' : undefined"
+                                @click="openChannelCreate"
+                            >
+                                <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" /> Conectar instancia
+                            </Button>
+                        </div>
+                    </div>
+                    <div class="p-5">
+                        <div v-if="evolutionChannels.length" class="overflow-auto lg:overflow-visible">
+                            <Table>
+                                <Table.Thead>
+                                    <Table.Tr>
+                                        <Table.Th class="whitespace-nowrap">Nombre</Table.Th>
+                                        <Table.Th class="whitespace-nowrap">Servidor</Table.Th>
+                                        <Table.Th class="whitespace-nowrap">API key</Table.Th>
+                                        <Table.Th class="whitespace-nowrap">Estado</Table.Th>
+                                        <Table.Th class="whitespace-nowrap">Webhook</Table.Th>
+                                        <Table.Th class="whitespace-nowrap text-right">Acciones</Table.Th>
+                                    </Table.Tr>
+                                </Table.Thead>
+                                <Table.Tbody>
+                                    <Table.Tr v-for="ch in evolutionChannels" :key="ch.id">
+                                        <Table.Td class="font-medium">{{ channelName(ch) }}</Table.Td>
+                                        <Table.Td>
+                                            <div class="max-w-[16rem] truncate text-sm" :title="ch.base_url">{{ ch.base_url }}</div>
+                                            <div class="font-mono text-xs text-slate-500">{{ ch.instance }}</div>
+                                        </Table.Td>
+                                        <Table.Td class="font-mono text-xs text-slate-500">{{ ch.masked_key }}</Table.Td>
+                                        <Table.Td>
+                                            <span v-if="ch.active" class="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">Activo</span>
+                                            <span v-else class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400">Inactivo</span>
+                                            <div
+                                                v-if="channelTests[ch.id]"
+                                                class="mt-1 flex items-center gap-1 text-xs"
+                                                :class="channelTests[ch.id] === 'loading' ? 'text-slate-400' : (channelTests[ch.id] as any).ok ? 'text-success' : 'text-danger'"
+                                            >
+                                                <Lucide
+                                                    :icon="channelTests[ch.id] === 'loading' ? 'RefreshCw' : (channelTests[ch.id] as any).ok ? 'CircleCheck' : 'TriangleAlert'"
+                                                    class="h-3 w-3 shrink-0"
+                                                    :class="{ 'animate-spin': channelTests[ch.id] === 'loading' }"
+                                                />
+                                                <span v-if="channelTests[ch.id] === 'loading'">Probando…</span>
+                                                <span v-else>{{ (channelTests[ch.id] as any).ok ? 'Conectada' : `Sin conexión (${(channelTests[ch.id] as any).state})` }}</span>
+                                            </div>
+                                        </Table.Td>
+                                        <Table.Td>
+                                            <div class="flex items-center gap-1.5">
+                                                <span class="max-w-[11rem] truncate font-mono text-xs text-slate-500" :title="ch.webhook_url">{{ ch.webhook_url }}</span>
+                                                <button
+                                                    type="button"
+                                                    title="Copiar URL"
+                                                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                                    @click="copyWebhook(ch)"
+                                                >
+                                                    <Lucide :icon="copiedWebhookId === ch.id ? 'Check' : 'Copy'" class="h-3.5 w-3.5" />
+                                                </button>
+                                            </div>
+                                        </Table.Td>
+                                        <Table.Td>
+                                            <div class="flex justify-end gap-1">
+                                                <button
+                                                    type="button"
+                                                    title="Probar conexión"
+                                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-success/10 hover:text-success"
+                                                    :disabled="channelTests[ch.id] === 'loading'"
+                                                    @click="testChannel(ch)"
+                                                >
+                                                    <Lucide icon="PlugZap" class="h-4 w-4" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="Editar"
+                                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                                    @click="openChannelEdit(ch)"
+                                                >
+                                                    <Lucide icon="Pencil" class="h-4 w-4" />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="Desconectar"
+                                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                                    @click="deletingChannel = ch"
+                                                >
+                                                    <Lucide icon="Trash2" class="h-4 w-4" />
+                                                </button>
+                                            </div>
+                                        </Table.Td>
+                                    </Table.Tr>
+                                </Table.Tbody>
+                            </Table>
+                        </div>
+                        <div v-else class="flex flex-col items-center gap-3 py-8 text-center">
+                            <div class="flex h-12 w-12 items-center justify-center rounded-full bg-success/10 text-success"><Lucide icon="MessageCircle" class="h-6 w-6" /></div>
+                            <p class="max-w-md px-6 text-sm text-slate-500">
+                                Sin instancias conectadas. Conecta tu servidor Evolution para que el bot atienda WhatsApp con tu propio número.
+                            </p>
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                class="rounded-[0.5rem]"
+                                :disabled="channelLimitReached"
+                                :title="channelLimitReached ? 'Alcanzaste el límite de canales de mensajería de tu plan. Mejora tu plan para conectar más números.' : undefined"
+                                @click="openChannelCreate"
+                            >
+                                <Lucide icon="Plus" class="mr-1.5 h-4 w-4" /> Conectar instancia
+                            </Button>
+                        </div>
+                        <p class="mt-4 flex items-start gap-2 text-xs text-slate-500">
+                            <Lucide icon="Info" class="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                            <span>El bot, la bandeja y el historial funcionan igual que con Meta: las conversaciones se guardan con su huésped y reserva ligados.</span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+
             <!-- Herramientas -->
             <div v-if="aiPlan.api_allowed" class="col-span-12 flex flex-col xl:col-span-7">
                 <div class="flex items-center md:h-10">
@@ -600,6 +867,7 @@ async function testProvider(p: AiProviderRow) {
                     </div>
                 </div>
             </div>
+
         </div>
 
         <!-- Modal playground -->
@@ -802,6 +1070,95 @@ async function testProvider(p: AiProviderRow) {
                         <Button variant="outline-secondary" @click="deletingProvider = null">Cancelar</Button>
                         <Button variant="danger" :disabled="saving" @click="submitDeleteProvider">
                             <Lucide icon="Trash2" class="mr-2 h-4 w-4" /> Sí, eliminar
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Modal conectar/editar canal Evolution -->
+        <Dialog :open="showChannelForm" @close="showChannelForm = false">
+            <Dialog.Panel>
+                <form class="flex max-h-[85vh] flex-col" @submit.prevent="submitChannel">
+                    <div class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400">
+                        <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"><Lucide icon="MessageCircle" class="h-5 w-5" /></div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">{{ editingChannel ? `Editar ${channelName(editingChannel)}` : 'Conectar instancia de Evolution' }}</h2>
+                            <p class="mt-0.5 text-xs text-slate-500">La API key se guarda cifrada y es solo de este hotel</p>
+                        </div>
+                        <button type="button" class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400" @click="showChannelForm = false">
+                            <Lucide icon="X" class="h-5 w-5" />
+                        </button>
+                    </div>
+                    <div class="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+                        <div>
+                            <label class="mb-1 block text-sm">Nombre <span class="text-slate-400">(opcional)</span></label>
+                            <FormInput v-model="channelForm.name" type="text" placeholder="Recepción, Ventas..." />
+                        </div>
+                        <template v-if="!editingChannel">
+                            <div>
+                                <label class="mb-1 block text-sm">URL del servidor</label>
+                                <div class="relative">
+                                    <Lucide icon="Server" class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400" />
+                                    <FormInput v-model="channelForm.base_url" type="url" class="pl-9" placeholder="https://evolution.midominio.com" required />
+                                </div>
+                                <FormHelp>La URL de tu instalación de Evolution API v2 en tu VPS</FormHelp>
+                            </div>
+                            <div>
+                                <label class="mb-1 block text-sm">Instancia</label>
+                                <FormInput v-model="channelForm.instance" type="text" class="font-mono" placeholder="hotel-demo" required />
+                                <FormHelp>El nombre exacto de la instancia en Evolution</FormHelp>
+                            </div>
+                        </template>
+                        <div>
+                            <label class="mb-1 block text-sm">API key</label>
+                            <div class="relative">
+                                <Lucide icon="KeyRound" class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400" />
+                                <FormInput
+                                    v-model="channelForm.api_key"
+                                    type="password"
+                                    class="pl-9 font-mono"
+                                    :placeholder="editingChannel ? 'Dejar vacío para conservar la actual' : 'API key de tu servidor Evolution'"
+                                    autocomplete="off"
+                                />
+                            </div>
+                        </div>
+                        <FormSwitch v-if="editingChannel">
+                            <FormSwitch.Input id="channel-active" v-model="channelForm.active" type="checkbox" />
+                            <FormSwitch.Label htmlFor="channel-active">Activo</FormSwitch.Label>
+                        </FormSwitch>
+                        <p v-if="channelError" class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{{ channelError }}</p>
+                    </div>
+                    <div class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400">
+                        <Button type="button" variant="outline-secondary" @click="showChannelForm = false">Cancelar</Button>
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            class="shadow-md shadow-primary/20"
+                            :disabled="saving || (!editingChannel && (!channelForm.base_url || !channelForm.instance || !channelForm.api_key))"
+                        >
+                            <Lucide icon="Check" class="mr-2 h-4 w-4" /> {{ saving ? 'Guardando…' : editingChannel ? 'Guardar cambios' : 'Conectar' }}
+                        </Button>
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Modal desconectar canal Evolution -->
+        <Dialog :open="deletingChannel !== null" @close="deletingChannel = null">
+            <Dialog.Panel>
+                <div v-if="deletingChannel" class="p-6">
+                    <div class="flex items-start gap-3.5">
+                        <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"><Lucide icon="Trash2" class="h-5 w-5" /></div>
+                        <div>
+                            <h2 class="text-base font-medium">¿Desconectar {{ channelName(deletingChannel) }}?</h2>
+                            <p class="mt-0.5 text-sm text-slate-500">Las conversaciones y su historial se conservan en la bandeja; solo se desconecta el número.</p>
+                        </div>
+                    </div>
+                    <div class="mt-6 flex justify-end gap-2">
+                        <Button variant="outline-secondary" @click="deletingChannel = null">Cancelar</Button>
+                        <Button variant="danger" :disabled="saving" @click="submitDeleteChannel">
+                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" /> {{ saving ? 'Desconectando…' : 'Sí, desconectar' }}
                         </Button>
                     </div>
                 </div>

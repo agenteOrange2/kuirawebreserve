@@ -41,12 +41,15 @@ class Room extends Model
         'description',
         'beds',
         'max_occupancy',
+        'included_occupancy',
         'size_m2',
         'view',
         'amenities',
         'smoking',
         'accessible',
         'price_modifier',
+        'extra_guest_fee',
+        'optional_charges',
         'status',
         'pos_x',
         'pos_y',
@@ -62,11 +65,14 @@ class Room extends Model
             'status' => RoomState::class,
             'beds' => 'array',
             'max_occupancy' => 'integer',
+            'included_occupancy' => 'integer',
             'size_m2' => 'decimal:2',
             'amenities' => 'array',
             'smoking' => 'boolean',
             'accessible' => 'boolean',
             'price_modifier' => 'decimal:2',
+            'extra_guest_fee' => 'decimal:2',
+            'optional_charges' => 'array',
             'pos_x' => 'integer',
             'pos_y' => 'integer',
             'width' => 'integer',
@@ -102,6 +108,49 @@ class Room extends Model
             $this->roomType?->amenities ?? [],
             $this->amenities ?? [],
         )));
+    }
+
+    /**
+     * Desglose de cargos extra de la habitación para una ocupación dada:
+     * línea automática por personas que exceden las incluidas en la tarifa
+     * ($X por persona extra, por unidad de tarifa) + los cargos opcionales
+     * elegidos por concepto (mascota, decoración… — una sola vez). El total
+     * de estas líneas se suma al hospedaje al crear walk-in o reserva.
+     *
+     * @param  array<int, string>  $selectedConcepts
+     * @return array<int, array{concept: string, amount: float, kind: string}>
+     */
+    public function extraChargeLines(int $people, int $units, array $selectedConcepts = []): array
+    {
+        $lines = [];
+
+        $included = $this->included_occupancy;
+        $fee = (float) ($this->extra_guest_fee ?? 0);
+
+        if ($included !== null && $included > 0 && $fee > 0 && $people > $included) {
+            $extra = $people - $included;
+            $lines[] = [
+                'concept' => 'Personas extra ('.$extra.')',
+                'amount' => round($extra * $fee * max(1, $units), 2),
+                'kind' => 'extra_guests',
+            ];
+        }
+
+        foreach ($this->optional_charges ?? [] as $charge) {
+            $concept = trim((string) ($charge['concept'] ?? ''));
+
+            if ($concept === '' || ! in_array($concept, $selectedConcepts, true)) {
+                continue;
+            }
+
+            $lines[] = [
+                'concept' => $concept,
+                'amount' => round((float) ($charge['amount'] ?? 0), 2),
+                'kind' => 'optional',
+            ];
+        }
+
+        return $lines;
     }
 
     /**
@@ -169,6 +218,46 @@ class Room extends Model
     /**
      * @return array<string, mixed>
      */
+    /**
+     * Siguiente número libre a partir de uno dado: numéricos incrementan
+     * (204 → 205, saltando ocupados); no numéricos agregan sufijo (A → A-2).
+     */
+    public static function nextAvailableNumber(string $after, int $propertyId): string
+    {
+        if (ctype_digit($after)) {
+            $candidate = (int) $after + 1;
+
+            while (static::query()->where('property_id', $propertyId)->where('number', (string) $candidate)->exists()) {
+                $candidate++;
+            }
+
+            return (string) $candidate;
+        }
+
+        $suffix = 2;
+
+        while (static::query()->where('property_id', $propertyId)->where('number', "{$after}-{$suffix}")->exists()) {
+            $suffix++;
+        }
+
+        return "{$after}-{$suffix}";
+    }
+
+    /**
+     * Duplica la habitación (misma zona/tipo/ficha) con el siguiente número
+     * libre; la copia nace disponible y ligeramente desplazada en el plano.
+     */
+    public function duplicateAsNew(): self
+    {
+        $copy = $this->replicate(['status', 'notes', 'maintenance_notes']);
+        $copy->number = static::nextAvailableNumber($this->number, $this->property_id);
+        $copy->pos_x = (int) $this->pos_x + 30;
+        $copy->pos_y = (int) $this->pos_y + 30;
+        $copy->save();
+
+        return $copy;
+    }
+
     public function toFloorPlanPayload(): array
     {
         /** @var Stay|null $activeStay */
@@ -195,8 +284,17 @@ class Room extends Model
             'smoking' => $this->smoking,
             'accessible' => $this->accessible,
             'amenities' => $this->effectiveAmenities(),
-            'base_price' => $this->roomType?->base_price,
+            'price_from' => $this->roomType?->priceFrom(),
             'price_modifier' => $this->price_modifier !== null ? (float) $this->price_modifier : null,
+            'included_occupancy' => $this->included_occupancy,
+            'extra_guest_fee' => $this->extra_guest_fee !== null ? (float) $this->extra_guest_fee : null,
+            'optional_charges' => collect($this->optional_charges ?? [])
+                ->map(fn (array $charge) => [
+                    'concept' => (string) ($charge['concept'] ?? ''),
+                    'amount' => round((float) ($charge['amount'] ?? 0), 2),
+                ])
+                ->values()
+                ->all(),
             'check_in_time' => $this->roomType?->check_in_time ? substr($this->roomType->check_in_time, 0, 5) : null,
             'check_out_time' => $this->roomType?->check_out_time ? substr($this->roomType->check_out_time, 0, 5) : null,
             'status' => $this->status->getMorphClass(),

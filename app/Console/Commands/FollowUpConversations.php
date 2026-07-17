@@ -172,9 +172,16 @@ class FollowUpConversations extends Command
         $conversation->markFollowup($key);
         $conversation->update(['last_message_at' => now()]);
 
-        // Canales Meta: el follow-up también llega al teléfono del huésped.
-        // OJO producción WhatsApp: fuera de la ventana de 24 h requerirá
-        // plantilla aprobada (por ahora los follow-ups caen dentro).
-        app(\App\Services\Meta\MetaApi::class)->pushToConversation($conversation, $body);
+        // El follow-up también llega al teléfono del huésped por el
+        // transporte del canal (Meta o Evolution). OJO producción WhatsApp
+        // Cloud: fuera de la ventana de 24 h requerirá plantilla aprobada
+        // (por ahora los follow-ups caen dentro). Evolution no tiene esa
+        // restricción de plantillas; ahí va con retraso humanizado (anti-ban:
+        // es el bot iniciando contacto, el caso más delicado).
+        app(\App\Services\Channels\OutboundMessenger::class)->pushToConversation(
+            $conversation,
+            $body,
+            \App\Services\Evolution\EvolutionApi::humanDelay($body),
+        );
     }
 }

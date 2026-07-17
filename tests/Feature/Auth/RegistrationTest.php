@@ -1,19 +1,13 @@
 <?php
 
-test('registration screen can be rendered', function () {
-    $response = $this->get(route('register'));
+// El registro público está deshabilitado a propósito: las cuentas las crea
+// la plataforma (admin central / owners por invitación). Estos tests
+// protegen esa decisión.
 
-    $response->assertOk();
+test('registration screen does not exist', function () {
+    $this->get('/register')->assertNotFound();
 });
 
-test('new users can register', function () {
-    $response = $this->post(route('register.store'), [
-        'name' => 'Test User',
-        'email' => 'test@example.com',
-        'password' => 'password',
-        'password_confirmation' => 'password',
-    ]);
-
-    $this->assertAuthenticated();
-    $response->assertRedirect(route('dashboard', absolute: false));
+test('registration route is not registered', function () {
+    expect(\Illuminate\Support\Facades\Route::has('register'))->toBeFalse();
 });
