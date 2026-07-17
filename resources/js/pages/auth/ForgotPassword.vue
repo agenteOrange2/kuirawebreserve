@@ -49,18 +49,23 @@ const submit = () => {
                 </div>
 
                 <div class="my-6 flex items-center justify-start">
-                    <Button
-                        class="w-full"
-                        :disabled="form.processing"
-                    >
-                        {{ form.processing ? 'Enviando...' : 'Enviar enlace de restablecimiento' }}
+                    <Button class="w-full" :disabled="form.processing">
+                        {{
+                            form.processing
+                                ? 'Enviando...'
+                                : 'Enviar enlace de restablecimiento'
+                        }}
                     </Button>
                 </div>
             </form>
 
-            <div class="space-x-1 text-center text-sm text-muted-foreground">
+            <div class="text-muted-foreground space-x-1 text-center text-sm">
                 <span>O volver a</span>
-                <Link :href="route('login')" class="underline underline-offset-4 hover:text-foreground">iniciar sesión</Link>
+                <Link
+                    :href="route('login')"
+                    class="hover:text-foreground underline underline-offset-4"
+                    >iniciar sesión</Link
+                >
             </div>
         </div>
     </AuthLayout>

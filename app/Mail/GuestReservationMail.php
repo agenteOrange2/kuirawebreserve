@@ -93,6 +93,6 @@ class GuestReservationMail extends Mailable
 
     protected function icsEscape(string $text): string
     {
-        return str_replace(["\\", ';', ',', "\n"], ["\\\\", '\\;', '\\,', '\\n'], $text);
+        return str_replace(['\\', ';', ',', "\n"], ['\\\\', '\\;', '\\,', '\\n'], $text);
     }
 }

@@ -7,7 +7,6 @@
  * License: GPL-2.0-or-later
  * Text Domain: kuirawebreserve-chat
  */
-
 if (! defined('ABSPATH')) {
     exit;
 }
@@ -168,6 +167,6 @@ final class KuiraWebReserveChat
         })();
         </script>
     <?php }
-}
+    }
 
 KuiraWebReserveChat::boot();

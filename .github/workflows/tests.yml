@@ -18,8 +18,11 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     strategy:
+      # 8.2 es el PHP real de producción (contenedor webserver-php-1); 8.4
+      # vigila compatibilidad hacia adelante. 8.5 no entra: phpspreadsheet
+      # 1.30.x exige php <8.5 y el composer install revienta.
       matrix:
-        php-version: ['8.4', '8.5']
+        php-version: ['8.2', '8.4']
 
     steps:
       - name: Checkout code

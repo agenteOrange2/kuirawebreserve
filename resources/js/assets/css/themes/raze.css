@@ -2,201 +2,215 @@
 
 /* --- Divider --- */
 .raze .side-menu__divider {
-  white-space: nowrap;
-  font-size: 0.75rem;
-  line-height: 1rem;
-  color: rgb(255 255 255 / 0.4);
-  margin-top: 1.25rem;
-  margin-bottom: 0.75rem;
+    white-space: nowrap;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    color: rgb(255 255 255 / 0.4);
+    margin-top: 1.25rem;
+    margin-bottom: 0.75rem;
 }
 
 /* --- Link --- */
 .raze .side-menu__link {
-  display: flex;
-  align-items: center;
-  margin-bottom: 0.25rem;
-  border-radius: 0.6rem;
-  border: 1px solid transparent;
-  padding: 0.75rem 0.875rem;
-  transition-property: all;
-  transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
-  transition-duration: 200ms;
+    display: flex;
+    align-items: center;
+    margin-bottom: 0.25rem;
+    border-radius: 0.6rem;
+    border: 1px solid transparent;
+    padding: 0.75rem 0.875rem;
+    transition-property: all;
+    transition-timing-function: cubic-bezier(0.4, 0, 1, 1);
+    transition-duration: 200ms;
 }
 
 .raze .side-menu__link--active .side-menu__link__icon {
-  opacity: 1;
+    opacity: 1;
 }
 
 .raze .side-menu__link--active .side-menu__link__title {
-  color: rgb(255 255 255);
-  font-weight: 500;
+    color: rgb(255 255 255);
+    font-weight: 500;
 }
 
 /* --- Link Icon --- */
 .raze .side-menu__link__icon {
-  flex: none;
-  width: 1.25rem;
-  height: 1.25rem;
-  opacity: 0.8;
-  stroke: rgb(255 255 255 / 0.7);
-  fill: rgb(255 255 255 / 0.1);
-  stroke-width: 1.5;
+    flex: none;
+    width: 1.25rem;
+    height: 1.25rem;
+    opacity: 0.8;
+    stroke: rgb(255 255 255 / 0.7);
+    fill: rgb(255 255 255 / 0.1);
+    stroke-width: 1.5;
 }
 
 /* --- Link Title --- */
 .raze .side-menu__link__title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: rgb(255 255 255 / 0.6);
-  margin-left: 0.75rem;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: rgb(255 255 255 / 0.6);
+    margin-left: 0.75rem;
 }
 
 /* --- Link Badge --- */
 .raze .side-menu__link__badge {
-  min-width: 1.15rem;
-  height: 1.2rem;
-  padding: 0 0.5rem;
-  border-radius: 9999px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 0.75rem;
-  line-height: 1rem;
-  margin-left: 0.625rem;
-  font-weight: 500;
-  color: rgb(255 255 255);
-  background-color: rgb(255 255 255 / 0.15);
+    min-width: 1.15rem;
+    height: 1.2rem;
+    padding: 0 0.5rem;
+    border-radius: 9999px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    line-height: 1rem;
+    margin-left: 0.625rem;
+    font-weight: 500;
+    color: rgb(255 255 255);
+    background-color: rgb(255 255 255 / 0.15);
 }
 
 /* --- Link Chevron --- */
 .raze .side-menu__link__chevron {
-  margin-left: auto;
-  color: rgb(255 255 255 / 0.5);
+    margin-left: auto;
+    color: rgb(255 255 255 / 0.5);
 }
 
 /* --- Scrollable List --- */
 .raze .side-menu ul.scrollable {
-  position: relative;
+    position: relative;
 }
 
 .raze .side-menu ul.scrollable > li > .side-menu__link--active {
-  background: rgb(255 255 255 / 0.1);
-  border-color: rgb(255 255 255 / 0.02);
-  box-shadow: 0px 2px 3px #0000000b;
+    background: rgb(255 255 255 / 0.1);
+    border-color: rgb(255 255 255 / 0.02);
+    box-shadow: 0px 2px 3px #0000000b;
 }
 
-.raze .side-menu ul.scrollable > li > .side-menu__link--active .side-menu__link__icon {
-  stroke: rgb(255 255 255);
-  fill: rgb(255 255 255 / 0.1);
+.raze
+    .side-menu
+    ul.scrollable
+    > li
+    > .side-menu__link--active
+    .side-menu__link__icon {
+    stroke: rgb(255 255 255);
+    fill: rgb(255 255 255 / 0.1);
 }
 
-.raze .side-menu ul.scrollable > li > .side-menu__link--active .side-menu__link__title {
-  color: rgb(255 255 255);
+.raze
+    .side-menu
+    ul.scrollable
+    > li
+    > .side-menu__link--active
+    .side-menu__link__title {
+    color: rgb(255 255 255);
 }
 
 .raze .side-menu ul.scrollable > li > .side-menu__link--active-dropdown {
-  margin-bottom: 0.375rem;
+    margin-bottom: 0.375rem;
 }
 
-.raze .side-menu ul.scrollable > li > .side-menu__link:hover:not(.side-menu__link--active) {
-  background: rgb(255 255 255 / 0.1);
-  border-color: rgb(255 255 255 / 0.02);
-  box-shadow: 0px 2px 3px #0000000b;
+.raze
+    .side-menu
+    ul.scrollable
+    > li
+    > .side-menu__link:hover:not(.side-menu__link--active) {
+    background: rgb(255 255 255 / 0.1);
+    border-color: rgb(255 255 255 / 0.02);
+    box-shadow: 0px 2px 3px #0000000b;
 }
 
 .raze .side-menu ul.scrollable > li ul {
-  padding: 0.25rem 0;
-  background: rgb(255 255 255 / 0.05);
-  border-radius: 0.6rem;
-  border: 1px solid rgb(255 255 255 / 0.01);
-  box-shadow: 0px 2px 3px #0000000b;
-  margin-bottom: 0.5rem;
+    padding: 0.25rem 0;
+    background: rgb(255 255 255 / 0.05);
+    border-radius: 0.6rem;
+    border: 1px solid rgb(255 255 255 / 0.01);
+    box-shadow: 0px 2px 3px #0000000b;
+    margin-bottom: 0.5rem;
 }
 
 .raze .side-menu ul.scrollable > li ul .side-menu__link {
-  margin-bottom: 0;
+    margin-bottom: 0;
 }
 
 /* Hover/activo de links anidados: el theme solo lo traía para el primer
    nivel; sin esto los submenus no marcan dónde estás. */
 .raze .side-menu ul.scrollable > li ul .side-menu__link:hover,
 .raze .side-menu ul.scrollable > li ul .side-menu__link--active {
-  background: rgb(255 255 255 / 0.08);
+    background: rgb(255 255 255 / 0.08);
 }
 
 .raze .side-menu ul.scrollable > li ul ul {
-  margin: 0px -1px;
-  box-shadow: none;
-  background: rgb(255 255 255 / 0.03);
+    margin: 0px -1px;
+    box-shadow: none;
+    background: rgb(255 255 255 / 0.03);
 }
 
 /* --- Collapsed State (xl) --- */
 @media (min-width: 1280px) {
-  .raze .side-menu--collapsed .side-menu__divider {
-    height: 1.25rem;
-    position: relative;
-    color: transparent;
-    transition-property: color;
-    transition-duration: 100ms;
-  }
+    .raze .side-menu--collapsed .side-menu__divider {
+        height: 1.25rem;
+        position: relative;
+        color: transparent;
+        transition-property: color;
+        transition-duration: 100ms;
+    }
 
-  .raze .side-menu--collapsed .side-menu__divider:before {
-    content: "...";
-    position: absolute;
-    text-align: center;
-    left: 0;
-    right: 0;
-    color: rgb(100 116 139 / 0.8);
-    transition-property: opacity;
-    transition-duration: 100ms;
-  }
+    .raze .side-menu--collapsed .side-menu__divider:before {
+        content: '...';
+        position: absolute;
+        text-align: center;
+        left: 0;
+        right: 0;
+        color: rgb(100 116 139 / 0.8);
+        transition-property: opacity;
+        transition-duration: 100ms;
+    }
 
-  .raze .side-menu--collapsed .side-menu__link {
-    overflow: hidden;
-  }
+    .raze .side-menu--collapsed .side-menu__link {
+        overflow: hidden;
+    }
 
-  .raze .side-menu--collapsed .side-menu__link__title {
-    white-space: nowrap;
-    opacity: 0;
-    transition-property: opacity;
-    transition-duration: 300ms;
-  }
+    .raze .side-menu--collapsed .side-menu__link__title {
+        white-space: nowrap;
+        opacity: 0;
+        transition-property: opacity;
+        transition-duration: 300ms;
+    }
 
-  .raze .side-menu--collapsed .side-menu__link__badge {
-    opacity: 0;
-    transition-property: opacity;
-    transition-duration: 300ms;
-  }
+    .raze .side-menu--collapsed .side-menu__link__badge {
+        opacity: 0;
+        transition-property: opacity;
+        transition-duration: 300ms;
+    }
 
-  .raze .side-menu--collapsed .side-menu__link__chevron {
-    opacity: 0;
-    transition-property: opacity;
-    transition-duration: 300ms;
-  }
+    .raze .side-menu--collapsed .side-menu__link__chevron {
+        opacity: 0;
+        transition-property: opacity;
+        transition-duration: 300ms;
+    }
 
-  /* On hover while collapsed */
-  .raze .side-menu--collapsed.side-menu--on-hover .side-menu__divider {
-    color: rgb(255 255 255 / 0.4);
-  }
+    /* On hover while collapsed */
+    .raze .side-menu--collapsed.side-menu--on-hover .side-menu__divider {
+        color: rgb(255 255 255 / 0.4);
+    }
 
-  .raze .side-menu--collapsed.side-menu--on-hover .side-menu__divider:before {
-    opacity: 0;
-  }
+    .raze .side-menu--collapsed.side-menu--on-hover .side-menu__divider:before {
+        opacity: 0;
+    }
 
-  .raze .side-menu--collapsed.side-menu--on-hover .side-menu__link {
-    justify-content: normal;
-  }
+    .raze .side-menu--collapsed.side-menu--on-hover .side-menu__link {
+        justify-content: normal;
+    }
 
-  .raze .side-menu--collapsed.side-menu--on-hover .side-menu__link__title {
-    opacity: 1;
-  }
+    .raze .side-menu--collapsed.side-menu--on-hover .side-menu__link__title {
+        opacity: 1;
+    }
 
-  .raze .side-menu--collapsed.side-menu--on-hover .side-menu__link__badge {
-    opacity: 1;
-  }
+    .raze .side-menu--collapsed.side-menu--on-hover .side-menu__link__badge {
+        opacity: 1;
+    }
 
-  .raze .side-menu--collapsed.side-menu--on-hover .side-menu__link__chevron {
-    opacity: 1;
-  }
+    .raze .side-menu--collapsed.side-menu--on-hover .side-menu__link__chevron {
+        opacity: 1;
+    }
 }

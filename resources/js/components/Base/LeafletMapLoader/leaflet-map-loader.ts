@@ -1,26 +1,26 @@
-import L, { type MapOptions, Map } from "leaflet";
-import "leaflet.markercluster";
+import L, { type MapOptions, Map } from 'leaflet';
+import 'leaflet.markercluster';
 
 export interface MapConfig {
-  config: MapOptions;
+    config: MapOptions;
 }
 
 export interface LeafletElement extends HTMLDivElement {
-  map: Map;
+    map: Map;
 }
 
 const initializeMap = async (mapRef: LeafletElement, mapConfig: MapConfig) => {
-  if (mapRef.map) {
-    mapRef.map.remove();
-  }
+    if (mapRef.map) {
+        mapRef.map.remove();
+    }
 
-  const map = L.map(mapRef, mapConfig.config);
-  mapRef.map = map;
+    const map = L.map(mapRef, mapConfig.config);
+    mapRef.map = map;
 
-  return {
-    map: map,
-    leaflet: L,
-  };
+    return {
+        map: map,
+        leaflet: L,
+    };
 };
 
 export { initializeMap };

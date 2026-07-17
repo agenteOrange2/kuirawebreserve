@@ -7,7 +7,6 @@
  * License: GPL-2.0-or-later
  * Text Domain: kuirawebreserve-rooms
  */
-
 if (! defined('ABSPATH')) {
     exit;
 }
@@ -87,9 +86,9 @@ final class KuiraWebReserveRooms
                (cache de <?php echo (int) self::CACHE_MINUTES; ?> minutos). Genera el token en tu panel:
                <strong>Integracion &rarr; Conectar sitio</strong>.</p>
 
-            <?php if (isset($_GET['kuira_cache_cleared'])): ?>
+            <?php if (isset($_GET['kuira_cache_cleared'])) { ?>
                 <div class="notice notice-success"><p>Cache del catalogo vaciada.</p></div>
-            <?php endif; ?>
+            <?php } ?>
 
             <form method="post" action="options.php">
                 <?php settings_fields('kuira_rooms'); ?>
@@ -134,9 +133,9 @@ final class KuiraWebReserveRooms
                         <th scope="row">Columnas</th>
                         <td>
                             <select name="<?php echo esc_attr(self::OPTION); ?>[columns]">
-                                <?php foreach (['2', '3', '4'] as $n): ?>
+                                <?php foreach (['2', '3', '4'] as $n) { ?>
                                     <option value="<?php echo esc_attr($n); ?>" <?php selected($s['columns'], $n); ?>><?php echo esc_html($n); ?></option>
-                                <?php endforeach; ?>
+                                <?php } ?>
                             </select>
                         </td>
                     </tr>
@@ -235,32 +234,32 @@ final class KuiraWebReserveRooms
 
         ob_start(); ?>
         <div class="kuira-rooms-grid" style="display:grid;gap:20px;grid-template-columns:repeat(<?php echo (int) $columns; ?>,minmax(0,1fr));">
-            <?php foreach ($rooms as $room): ?>
+            <?php foreach ($rooms as $room) { ?>
                 <div class="kuira-room-card" style="border:1px solid #e2e8f0;border-radius:14px;padding:20px;display:flex;flex-direction:column;gap:10px;">
                     <h3 style="margin:0;font-size:18px;"><?php echo esc_html($room['name']); ?></h3>
-                    <?php if (! empty($room['description'])): ?>
+                    <?php if (! empty($room['description'])) { ?>
                         <p style="margin:0;color:#475569;font-size:14px;line-height:1.5;"><?php echo esc_html($room['description']); ?></p>
-                    <?php endif; ?>
-                    <?php if (! empty($room['capacity'])): ?>
+                    <?php } ?>
+                    <?php if (! empty($room['capacity'])) { ?>
                         <p style="margin:0;color:#64748b;font-size:13px;">Hasta <?php echo (int) $room['capacity']; ?> personas</p>
-                    <?php endif; ?>
-                    <?php if (! empty($room['amenities'])): ?>
+                    <?php } ?>
+                    <?php if (! empty($room['amenities'])) { ?>
                         <div style="display:flex;flex-wrap:wrap;gap:6px;">
-                            <?php foreach (array_slice($room['amenities'], 0, 8) as $amenity): ?>
+                            <?php foreach (array_slice($room['amenities'], 0, 8) as $amenity) { ?>
                                 <span style="background:#f1f5f9;color:#475569;border-radius:999px;padding:3px 10px;font-size:12px;"><?php echo esc_html($amenity); ?></span>
-                            <?php endforeach; ?>
+                            <?php } ?>
                         </div>
-                    <?php endif; ?>
+                    <?php } ?>
                     <div style="margin-top:auto;padding-top:10px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
-                        <?php if (! empty($room['price_from'])): ?>
+                        <?php if (! empty($room['price_from'])) { ?>
                             <strong style="font-size:16px;">Desde $<?php echo esc_html(number_format((float) $room['price_from'], 0)); ?> <?php echo $currency; ?></strong>
-                        <?php endif; ?>
-                        <?php if ($reserveUrl): ?>
+                        <?php } ?>
+                        <?php if ($reserveUrl) { ?>
                             <a href="<?php echo esc_url($reserveUrl); ?>" style="background:#1e40af;color:#fff;border-radius:8px;padding:8px 16px;text-decoration:none;font-size:14px;white-space:nowrap;">Reservar</a>
-                        <?php endif; ?>
+                        <?php } ?>
                     </div>
                 </div>
-            <?php endforeach; ?>
+            <?php } ?>
         </div>
         <?php
         return (string) ob_get_clean();

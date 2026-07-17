@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import "@/assets/css/vendors/dropzone.css";
-import { type HTMLAttributes, ref, inject, onMounted } from "vue";
-import DropzoneJs, { type DropzoneOptions } from "dropzone";
-import { init } from "./dropzone";
+import '@/assets/css/vendors/dropzone.css';
+import { type HTMLAttributes, ref, inject, onMounted } from 'vue';
+import DropzoneJs, { type DropzoneOptions } from 'dropzone';
+import { init } from './dropzone';
 
 export type ProvideDropzone = (el: DropzoneElement) => void;
 
 export interface DropzoneElement extends HTMLDivElement {
-  dropzone: DropzoneJs;
+    dropzone: DropzoneJs;
 }
 
 interface DropzoneProps extends /* @vue-ignore */ HTMLAttributes {
-  options: DropzoneOptions;
-  refKey?: string;
+    options: DropzoneOptions;
+    refKey?: string;
 }
 
 const props = defineProps<DropzoneProps>();
@@ -20,35 +20,35 @@ const props = defineProps<DropzoneProps>();
 const fileUploadRef = ref<DropzoneElement>();
 
 const bindInstance = (el: DropzoneElement) => {
-  if (props.refKey) {
-    const bind = inject<ProvideDropzone>(`bind[${props.refKey}]`);
-    if (bind) {
-      bind(el);
+    if (props.refKey) {
+        const bind = inject<ProvideDropzone>(`bind[${props.refKey}]`);
+        if (bind) {
+            bind(el);
+        }
     }
-  }
 };
 
 const vFileUploadDirective = {
-  mounted(el: DropzoneElement) {
-    init(el, props);
-  },
+    mounted(el: DropzoneElement) {
+        init(el, props);
+    },
 };
 
 onMounted(() => {
-  if (fileUploadRef.value) {
-    bindInstance(fileUploadRef.value);
-  }
+    if (fileUploadRef.value) {
+        bindInstance(fileUploadRef.value);
+    }
 });
 </script>
 
 <template>
-  <div
-    ref="fileUploadRef"
-    v-file-upload-directive
-    class="[&.dropzone]:border-2 [&.dropzone]:border-dashed dropzone [&.dropzone]:border-slate-300/70 [&.dropzone]:bg-slate-50 [&.dropzone]:cursor-pointer [&.dropzone]:dark:bg-darkmode-600 [&.dropzone]:dark:border-white/5"
-  >
-    <div class="dz-message">
-      <slot></slot>
+    <div
+        ref="fileUploadRef"
+        v-file-upload-directive
+        class="dropzone [&.dropzone]:cursor-pointer [&.dropzone]:border-2 [&.dropzone]:border-dashed [&.dropzone]:border-slate-300/70 [&.dropzone]:bg-slate-50 [&.dropzone]:dark:border-white/5 [&.dropzone]:dark:bg-darkmode-600"
+    >
+        <div class="dz-message">
+            <slot></slot>
+        </div>
     </div>
-  </div>
 </template>

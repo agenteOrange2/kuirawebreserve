@@ -26,8 +26,10 @@ export function useToasts() {
     return {
         toasts,
         dismiss,
-        success: (title: string, message?: string) => push('success', title, message),
-        error: (title: string, message?: string) => push('error', title, message),
+        success: (title: string, message?: string) =>
+            push('success', title, message),
+        error: (title: string, message?: string) =>
+            push('error', title, message),
         info: (title: string, message?: string) => push('info', title, message),
     };
 }

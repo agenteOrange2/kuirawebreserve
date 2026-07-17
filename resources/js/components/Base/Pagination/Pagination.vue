@@ -1,7 +1,7 @@
 <template>
-  <nav>
-    <ul class="flex w-full mr-0 sm:w-auto sm:mr-auto">
-      <slot></slot>
-    </ul>
-  </nav>
+    <nav>
+        <ul class="mr-0 flex w-full sm:mr-auto sm:w-auto">
+            <slot></slot>
+        </ul>
+    </nav>
 </template>

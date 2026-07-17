@@ -182,12 +182,17 @@ const props = defineProps<{
 // Widget incrustado: reporta su alto al iframe padre.
 useEmbedResize();
 
-const adultsOnly = computed(() => props.property.guest_policy === 'adults_only');
+const adultsOnly = computed(
+    () => props.property.guest_policy === 'adults_only',
+);
 // Ambas modalidades activas → se puede elegir; si solo hay una, no hace
 // falta ni mostrar el selector, se usa esa directo.
-const bothModesAvailable = computed(() => props.hasNightRates && props.hasBlockRates);
+const bothModesAvailable = computed(
+    () => props.hasNightRates && props.hasBlockRates,
+);
 
-const money = (n: number) => `$${Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2 })} ${props.property.currency}`;
+const money = (n: number) =>
+    `$${Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2 })} ${props.property.currency}`;
 
 function localDateInput(date: Date): string {
     const y = date.getFullYear();
@@ -209,7 +214,11 @@ function roundedNowInput(): string {
 
 // ── Catálogo de extras (se carga una sola vez; decide si el paso existe):
 // products = POS con stock; addons = módulo extras (solo cargo) ──
-const extrasCatalog = ref<{ enabled: boolean; products: ExtraProduct[]; addons: AddonOption[] } | null>(null);
+const extrasCatalog = ref<{
+    enabled: boolean;
+    products: ExtraProduct[];
+    addons: AddonOption[];
+} | null>(null);
 
 onMounted(async () => {
     try {
@@ -234,22 +243,34 @@ const extrasByCategory = computed(() => {
 const selectedProducts = ref<Record<number, number>>({});
 
 function setProductQty(productId: number, qty: number) {
-    selectedProducts.value = { ...selectedProducts.value, [productId]: Math.max(0, Math.min(20, qty)) };
+    selectedProducts.value = {
+        ...selectedProducts.value,
+        [productId]: Math.max(0, Math.min(20, qty)),
+    };
 }
 
 // extra_id (add-on) → cantidad elegida.
 const selectedAddons = ref<Record<number, number>>({});
 
 function setAddonQty(addonId: number, qty: number) {
-    selectedAddons.value = { ...selectedAddons.value, [addonId]: Math.max(0, Math.min(20, qty)) };
+    selectedAddons.value = {
+        ...selectedAddons.value,
+        [addonId]: Math.max(0, Math.min(20, qty)),
+    };
 }
 
 const productsSubtotal = computed(() =>
-    (extrasCatalog.value?.products ?? []).reduce((sum, p) => sum + (selectedProducts.value[p.id] ?? 0) * p.price, 0),
+    (extrasCatalog.value?.products ?? []).reduce(
+        (sum, p) => sum + (selectedProducts.value[p.id] ?? 0) * p.price,
+        0,
+    ),
 );
 
 const addonsSubtotal = computed(() =>
-    (extrasCatalog.value?.addons ?? []).reduce((sum, a) => sum + (selectedAddons.value[a.id] ?? 0) * a.price, 0),
+    (extrasCatalog.value?.addons ?? []).reduce(
+        (sum, a) => sum + (selectedAddons.value[a.id] ?? 0) * a.price,
+        0,
+    ),
 );
 
 // Líneas de extras elegidos (para el resumen en "Tus datos" y el desglose
@@ -258,16 +279,29 @@ const addonsSubtotal = computed(() =>
 const selectedProductLines = computed(() => [
     ...(extrasCatalog.value?.addons ?? [])
         .filter((a) => (selectedAddons.value[a.id] ?? 0) > 0)
-        .map((a) => ({ id: `a-${a.id}`, name: a.name, qty: selectedAddons.value[a.id], total: selectedAddons.value[a.id] * a.price })),
+        .map((a) => ({
+            id: `a-${a.id}`,
+            name: a.name,
+            qty: selectedAddons.value[a.id],
+            total: selectedAddons.value[a.id] * a.price,
+        })),
     ...(extrasCatalog.value?.products ?? [])
         .filter((p) => (selectedProducts.value[p.id] ?? 0) > 0)
-        .map((p) => ({ id: `p-${p.id}`, name: p.name, qty: selectedProducts.value[p.id], total: selectedProducts.value[p.id] * p.price })),
+        .map((p) => ({
+            id: `p-${p.id}`,
+            name: p.name,
+            qty: selectedProducts.value[p.id],
+            total: selectedProducts.value[p.id] * p.price,
+        })),
 ]);
 
 // ── Experiencias (módulo `experiencias`): tours con sesiones durante la
 // estancia. Se cargan al elegir habitación (ya hay fechas firmes) y se
 // agregan en el paso Extras como plus que suma al total ──
-const experiencesCatalog = ref<{ enabled: boolean; experiences: ExperienceOption[] } | null>(null);
+const experiencesCatalog = ref<{
+    enabled: boolean;
+    experiences: ExperienceOption[];
+} | null>(null);
 
 interface ExperiencePick {
     session_id: number;
@@ -277,7 +311,9 @@ interface ExperiencePick {
 
 const experiencePicks = ref<ExperiencePick[]>([]);
 // Borrador por experiencia (sesión + personas) antes de "Agregar".
-const expDraft = ref<Record<number, { session_id: number | ''; people: number }>>({});
+const expDraft = ref<
+    Record<number, { session_id: number | ''; people: number }>
+>({});
 
 async function loadExperiences() {
     if (!props.hasExperiences || !selected.value) {
@@ -286,12 +322,21 @@ async function loadExperiences() {
     }
     try {
         const { data } = await axios.get('/api/booking/experiences', {
-            params: { start: selected.value.starts_at, end: selected.value.ends_at },
+            params: {
+                start: selected.value.starts_at,
+                end: selected.value.ends_at,
+            },
         });
         experiencesCatalog.value = data;
-        const drafts: Record<number, { session_id: number | ''; people: number }> = {};
+        const drafts: Record<
+            number,
+            { session_id: number | ''; people: number }
+        > = {};
         (data.experiences as ExperienceOption[]).forEach((exp) => {
-            drafts[exp.id] = { session_id: '', people: Math.max(1, exp.min_people) };
+            drafts[exp.id] = {
+                session_id: '',
+                people: Math.max(1, exp.min_people),
+            };
         });
         expDraft.value = drafts;
     } catch {
@@ -314,25 +359,35 @@ const experienceLines = computed(() =>
         const exp = experienceById(pick.experience_id);
         const session = exp?.sessions.find((s) => s.id === pick.session_id);
         if (!exp || !session) return [];
-        return [{
-            id: pickKey(pick),
-            session_id: pick.session_id,
-            name: exp.name,
-            starts_at: session.starts_at,
-            people: pick.people,
-            total: exp.pricing_mode === 'flat' ? exp.price : exp.price * pick.people,
-        }];
+        return [
+            {
+                id: pickKey(pick),
+                session_id: pick.session_id,
+                name: exp.name,
+                starts_at: session.starts_at,
+                people: pick.people,
+                total:
+                    exp.pricing_mode === 'flat'
+                        ? exp.price
+                        : exp.price * pick.people,
+            },
+        ];
     }),
 );
 
-const experiencesSubtotal = computed(() => experienceLines.value.reduce((sum, line) => sum + line.total, 0));
+const experiencesSubtotal = computed(() =>
+    experienceLines.value.reduce((sum, line) => sum + line.total, 0),
+);
 
 function addExperiencePick(exp: ExperienceOption) {
     const draft = expDraft.value[exp.id];
     if (!draft || draft.session_id === '') return;
     const session = exp.sessions.find((s) => s.id === Number(draft.session_id));
     if (!session) return;
-    const cap = Math.min(session.remaining, exp.max_people ?? session.remaining);
+    const cap = Math.min(
+        session.remaining,
+        exp.max_people ?? session.remaining,
+    );
     const people = Math.max(exp.min_people, Math.min(draft.people, cap));
     // Una línea por sesión: volver a agregar la misma sesión la reemplaza.
     experiencePicks.value = [
@@ -344,7 +399,9 @@ function addExperiencePick(exp: ExperienceOption) {
 }
 
 function removeExperiencePick(sessionId: number) {
-    experiencePicks.value = experiencePicks.value.filter((p) => p.session_id !== sessionId);
+    experiencePicks.value = experiencePicks.value.filter(
+        (p) => p.session_id !== sessionId,
+    );
 }
 
 // ── Orden de pasos (dinámico: "Extras" solo si aplica) ──
@@ -353,7 +410,9 @@ const step = ref<StepKey>('dates');
 const stepOrder = computed<StepKey[]>(() => [
     'dates',
     'room',
-    ...(extrasCatalog.value?.enabled || experiencesCatalog.value?.enabled ? (['extras'] as StepKey[]) : []),
+    ...(extrasCatalog.value?.enabled || experiencesCatalog.value?.enabled
+        ? (['extras'] as StepKey[])
+        : []),
     'guest',
     'confirm',
 ]);
@@ -364,7 +423,9 @@ function stepNumber(key: StepKey): number {
 // Modo inicial: el que de verdad tenga tarifas (si solo hay una modalidad,
 // arranca directo en esa; si hay ambas, bloque va primero por ser el caso
 // más común hoy — el hotelero puede tener las dos sin problema).
-const mode = ref<'block' | 'night'>(props.hasBlockRates || !props.hasNightRates ? 'block' : 'night');
+const mode = ref<'block' | 'night'>(
+    props.hasBlockRates || !props.hasNightRates ? 'block' : 'night',
+);
 const arriveDate = ref(localDateInput(new Date()));
 const departDate = ref(localDateInput(new Date(Date.now() + 86400000)));
 const arriveAt = ref(roundedNowInput());
@@ -404,12 +465,16 @@ async function searchAvailability() {
         } else {
             params.arrive_at = arriveAt.value;
         }
-        const { data } = await axios.get('/api/booking/availability', { params });
+        const { data } = await axios.get('/api/booking/availability', {
+            params,
+        });
         options.value = data.options;
         anyAvailable.value = data.any_available;
         searched.value = true;
     } catch (error: any) {
-        searchError.value = error.response?.data?.message ?? 'No se pudo consultar disponibilidad. Intenta de nuevo.';
+        searchError.value =
+            error.response?.data?.message ??
+            'No se pudo consultar disponibilidad. Intenta de nuevo.';
     } finally {
         searching.value = false;
     }
@@ -421,7 +486,13 @@ const selected = ref<Option | null>(null);
 // Total real de lo que se va a apartar: habitación + extras (POS y
 // add-ons) + experiencias. selected.total ya trae persona extra y ajustes
 // del cuarto.
-const grandTotal = computed(() => (selected.value?.total ?? 0) + productsSubtotal.value + addonsSubtotal.value + experiencesSubtotal.value);
+const grandTotal = computed(
+    () =>
+        (selected.value?.total ?? 0) +
+        productsSubtotal.value +
+        addonsSubtotal.value +
+        experiencesSubtotal.value,
+);
 const guestName = ref('');
 const guestPhone = ref('');
 const guestEmail = ref('');
@@ -483,12 +554,15 @@ async function refreshRoomQuote() {
         } else {
             params.arrive_at = arriveAt.value;
         }
-        const { data } = await axios.get('/api/booking/availability', { params });
+        const { data } = await axios.get('/api/booking/availability', {
+            params,
+        });
         if (data.options[0]) {
             selected.value = data.options[0];
         }
     } catch {
-        roomQuoteError.value = 'No se pudo actualizar el precio. Intenta de nuevo.';
+        roomQuoteError.value =
+            'No se pudo actualizar el precio. Intenta de nuevo.';
     } finally {
         roomQuoteLoading.value = false;
     }
@@ -510,7 +584,9 @@ const maxGuests = computed(() => selected.value?.effective_capacity ?? 20);
 // "2 adultos + 1 niño" para el resumen — mismo formato que el wizard de grupos.
 const occupancyLabel = computed(() => {
     const a = `${adults.value} ${adults.value === 1 ? 'adulto' : 'adultos'}`;
-    const c = children.value ? ` + ${children.value} ${children.value === 1 ? 'niño' : 'niños'}` : '';
+    const c = children.value
+        ? ` + ${children.value} ${children.value === 1 ? 'niño' : 'niños'}`
+        : '';
     return `${a}${c}`;
 });
 
@@ -560,11 +636,17 @@ async function submitHold() {
             rendered_at: renderedAt.value,
             products: Object.entries(selectedProducts.value)
                 .filter(([, qty]) => qty > 0)
-                .map(([productId, qty]) => ({ product_id: Number(productId), qty })),
+                .map(([productId, qty]) => ({
+                    product_id: Number(productId),
+                    qty,
+                })),
             extras: Object.entries(selectedAddons.value)
                 .filter(([, qty]) => qty > 0)
                 .map(([extraId, qty]) => ({ extra_id: Number(extraId), qty })),
-            experiences: experiencePicks.value.map((pick) => ({ session_id: pick.session_id, people: pick.people })),
+            experiences: experiencePicks.value.map((pick) => ({
+                session_id: pick.session_id,
+                people: pick.people,
+            })),
         };
         if (mode.value === 'night') {
             payload.arrive_date = arriveDate.value;
@@ -573,17 +655,25 @@ async function submitHold() {
             payload.arrive_at = arriveAt.value;
         }
 
-        const { data } = await axios.post<HoldResult>('/api/booking/holds', payload, {
-            headers: { 'Idempotency-Key': idempotencyKey },
-        });
+        const { data } = await axios.post<HoldResult>(
+            '/api/booking/holds',
+            payload,
+            {
+                headers: { 'Idempotency-Key': idempotencyKey },
+            },
+        );
         hold.value = data;
         step.value = 'confirm';
         if (data.requires_prepayment) {
             preparePayment();
         }
     } catch (error: any) {
-        const errors = error.response?.data?.errors as Record<string, string[]> | undefined;
-        submitError.value = error.response?.data?.message ?? (errors ? Object.values(errors)[0]?.[0] : null) ?? 'No se pudo crear tu apartado. Intenta de nuevo.';
+        const errors = error.response?.data?.errors as
+            Record<string, string[]> | undefined;
+        submitError.value =
+            error.response?.data?.message ??
+            (errors ? Object.values(errors)[0]?.[0] : null) ??
+            'No se pudo crear tu apartado. Intenta de nuevo.';
     } finally {
         submitting.value = false;
     }
@@ -602,8 +692,11 @@ async function preparePayment() {
     paymentLoading.value = true;
     paymentError.value = null;
     try {
-        const { data } = await axios.get<PaymentOptions>('/api/booking/payment-options');
-        const optionsCount = data.gateways.length + Number(data.transfer.available);
+        const { data } = await axios.get<PaymentOptions>(
+            '/api/booking/payment-options',
+        );
+        const optionsCount =
+            data.gateways.length + Number(data.transfer.available);
 
         if (optionsCount >= 2) {
             paymentChoice.value = data;
@@ -623,19 +716,27 @@ async function preparePayment() {
     }
 }
 
-async function requestPayment(method?: 'gateway' | 'transfer', provider?: GatewayOption['provider']) {
+async function requestPayment(
+    method?: 'gateway' | 'transfer',
+    provider?: GatewayOption['provider'],
+) {
     if (!hold.value) return;
     paymentLoading.value = true;
     paymentError.value = null;
     paymentChoice.value = null;
     try {
-        const { data } = await axios.post<PaymentResult>(`/api/booking/holds/${hold.value.code}/payment`, { method, provider });
+        const { data } = await axios.post<PaymentResult>(
+            `/api/booking/holds/${hold.value.code}/payment`,
+            { method, provider },
+        );
         payment.value = data;
         if (data.method === 'gateway' && data.checkout_url) {
             window.location.href = data.checkout_url;
         }
     } catch (error: any) {
-        paymentError.value = error.response?.data?.message ?? 'No se pudo generar el cobro. Tu apartado sigue vigente; contáctanos para completarlo.';
+        paymentError.value =
+            error.response?.data?.message ??
+            'No se pudo generar el cobro. Tu apartado sigue vigente; contáctanos para completarlo.';
     } finally {
         paymentLoading.value = false;
     }
@@ -661,7 +762,12 @@ const holdCountdown = computed(() => {
 });
 
 function formatDateTime(iso: string): string {
-    return new Date(iso).toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return new Date(iso).toLocaleString('es-MX', {
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
 }
 
 const codeCopied = ref(false);
@@ -681,53 +787,92 @@ async function copyCode() {
     <Head :title="`Reservar · ${property.name}`" />
     <!-- flex + m-auto: centrado vertical cuando el contenido es corto, scroll
          normal (sin recortar arriba) cuando es largo — justify-center recorta. -->
-    <div class="flex min-h-screen bg-linear-to-b from-theme-1 to-theme-2 px-3 py-8 sm:px-8">
+    <div
+        class="flex min-h-screen bg-linear-to-b from-theme-1 to-theme-2 px-3 py-8 sm:px-8"
+    >
         <div class="m-auto w-full max-w-4xl">
             <!-- Header -->
             <div class="mb-5 flex items-center gap-3 px-1 text-white">
-                <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10">
+                <div
+                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10"
+                >
                     <Lucide icon="Building2" class="h-5 w-5" />
                 </div>
                 <div class="min-w-0 flex-1">
-                    <div class="truncate text-lg font-medium">{{ property.name }}</div>
-                    <div class="text-xs text-white/70">Reserva en línea · precios y disponibilidad en vivo</div>
+                    <div class="truncate text-lg font-medium">
+                        {{ property.name }}
+                    </div>
+                    <div class="text-xs text-white/70">
+                        Reserva en línea · precios y disponibilidad en vivo
+                    </div>
                 </div>
-                <a v-if="property.phone" :href="`tel:${property.phone}`" class="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20">
+                <a
+                    v-if="property.phone"
+                    :href="`tel:${property.phone}`"
+                    class="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+                >
                     <Lucide icon="Phone" class="h-4 w-4" />
                 </a>
             </div>
 
             <!-- Pasos: la cantidad varía sola (2-4) según si el hotel activó Extras -->
-            <div class="mb-5 flex flex-wrap items-center gap-2 px-1 text-xs font-medium text-white/80">
+            <div
+                class="mb-5 flex flex-wrap items-center gap-2 px-1 text-xs font-medium text-white/80"
+            >
                 <template v-for="(key, i) in stepOrder" :key="key">
-                    <span class="flex items-center gap-1.5" :class="stepNumber(step) >= i + 1 && 'text-white'">
+                    <span
+                        class="flex items-center gap-1.5"
+                        :class="stepNumber(step) >= i + 1 && 'text-white'"
+                    >
                         <span
                             class="flex h-5 w-5 items-center justify-center rounded-full"
-                            :class="stepNumber(step) >= i + 1 ? 'bg-white text-theme-1' : 'bg-white/20'"
+                            :class="
+                                stepNumber(step) >= i + 1
+                                    ? 'bg-white text-theme-1'
+                                    : 'bg-white/20'
+                            "
                         >
                             {{ i + 1 }}
                         </span>
                         {{ STEP_LABELS[key] }}
                     </span>
-                    <span v-if="i < stepOrder.length - 1" class="h-px w-6 bg-white/30" />
+                    <span
+                        v-if="i < stepOrder.length - 1"
+                        class="h-px w-6 bg-white/30"
+                    />
                 </template>
             </div>
 
             <div class="overflow-hidden rounded-2xl bg-white shadow-2xl">
                 <!-- ═══ PASO: fechas y personas ═══ -->
                 <div v-if="step === 'dates'" class="p-5 sm:p-7">
-                    <h1 class="text-lg font-medium text-slate-800">¿Cuándo quieres reservar?</h1>
-                    <p class="mt-1 text-sm text-slate-500">El precio se calcula al momento — siempre el vigente.</p>
-                    <p v-if="adultsOnly" class="mt-2 flex items-center gap-1.5 text-xs font-medium text-warning">
-                        <Lucide icon="ShieldAlert" class="h-3.5 w-3.5" /> Establecimiento exclusivo para mayores de edad.
+                    <h1 class="text-lg font-medium text-slate-800">
+                        ¿Cuándo quieres reservar?
+                    </h1>
+                    <p class="mt-1 text-sm text-slate-500">
+                        El precio se calcula al momento — siempre el vigente.
+                    </p>
+                    <p
+                        v-if="adultsOnly"
+                        class="mt-2 flex items-center gap-1.5 text-xs font-medium text-warning"
+                    >
+                        <Lucide icon="ShieldAlert" class="h-3.5 w-3.5" />
+                        Establecimiento exclusivo para mayores de edad.
                     </p>
 
                     <!-- El selector solo aparece si el catálogo realmente vende en ambas modalidades -->
-                    <div v-if="bothModesAvailable" class="mt-5 inline-flex rounded-xl bg-slate-100 p-1 text-sm">
+                    <div
+                        v-if="bothModesAvailable"
+                        class="mt-5 inline-flex rounded-xl bg-slate-100 p-1 text-sm"
+                    >
                         <button
                             type="button"
                             class="rounded-lg px-4 py-2 font-medium transition"
-                            :class="mode === 'block' ? 'bg-white text-theme-1 shadow-sm' : 'text-slate-500'"
+                            :class="
+                                mode === 'block'
+                                    ? 'bg-white text-theme-1 shadow-sm'
+                                    : 'text-slate-500'
+                            "
                             @click="mode = 'block'"
                         >
                             {{ property.block_mode_label }}
@@ -735,62 +880,128 @@ async function copyCode() {
                         <button
                             type="button"
                             class="rounded-lg px-4 py-2 font-medium transition"
-                            :class="mode === 'night' ? 'bg-white text-theme-1 shadow-sm' : 'text-slate-500'"
+                            :class="
+                                mode === 'night'
+                                    ? 'bg-white text-theme-1 shadow-sm'
+                                    : 'text-slate-500'
+                            "
                             @click="mode = 'night'"
                         >
                             Por noche(s)
                         </button>
                     </div>
                     <div v-else class="mt-5 text-sm font-medium text-slate-600">
-                        {{ mode === 'night' ? 'Por noche(s)' : property.block_mode_label }}
+                        {{
+                            mode === 'night'
+                                ? 'Por noche(s)'
+                                : property.block_mode_label
+                        }}
                     </div>
 
                     <div class="mt-3 grid grid-cols-2 gap-4">
                         <template v-if="mode === 'night'">
                             <div>
                                 <FormLabel>Llegada</FormLabel>
-                                <FormInput v-model="arriveDate" type="date" :min="localDateInput(new Date())" />
+                                <FormInput
+                                    v-model="arriveDate"
+                                    type="date"
+                                    :min="localDateInput(new Date())"
+                                />
                             </div>
                             <div>
                                 <FormLabel>Salida</FormLabel>
-                                <FormInput v-model="departDate" type="date" :min="arriveDate" />
+                                <FormInput
+                                    v-model="departDate"
+                                    type="date"
+                                    :min="arriveDate"
+                                />
                             </div>
                         </template>
                         <div v-else class="col-span-2">
                             <FormLabel>Fecha y hora de llegada</FormLabel>
-                            <FormInput v-model="arriveAt" type="datetime-local" />
+                            <FormInput
+                                v-model="arriveAt"
+                                type="datetime-local"
+                            />
                         </div>
                     </div>
-                    <p class="mt-2 text-xs text-slate-400">Cuántos son se confirma al elegir la habitación — cada cuarto tiene su propio máximo.</p>
+                    <p class="mt-2 text-xs text-slate-400">
+                        Cuántos son se confirma al elegir la habitación — cada
+                        cuarto tiene su propio máximo.
+                    </p>
 
-                    <Button variant="primary" class="mt-5 w-full shadow-md shadow-primary/20" :disabled="searching" @click="searchAvailability">
-                        <Lucide :icon="searching ? 'RefreshCw' : 'CalendarCheck2'" class="mr-2 h-4 w-4" :class="searching && 'animate-spin'" />
+                    <Button
+                        variant="primary"
+                        class="mt-5 w-full shadow-md shadow-primary/20"
+                        :disabled="searching"
+                        @click="searchAvailability"
+                    >
+                        <Lucide
+                            :icon="searching ? 'RefreshCw' : 'CalendarCheck2'"
+                            class="mr-2 h-4 w-4"
+                            :class="searching && 'animate-spin'"
+                        />
                         {{ searching ? 'Buscando…' : 'Ver disponibilidad' }}
                     </Button>
 
-                    <p v-if="searchError" class="mt-3 text-sm text-danger">{{ searchError }}</p>
+                    <p v-if="searchError" class="mt-3 text-sm text-danger">
+                        {{ searchError }}
+                    </p>
 
                     <!-- Resultados -->
                     <div v-if="searched" class="mt-6 space-y-3">
-                        <div v-if="!anyAvailable" class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-slate-300 py-8 text-center">
-                            <Lucide icon="CircleAlert" class="h-8 w-8 text-slate-300" />
+                        <div
+                            v-if="!anyAvailable"
+                            class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-slate-300 py-8 text-center"
+                        >
+                            <Lucide
+                                icon="CircleAlert"
+                                class="h-8 w-8 text-slate-300"
+                            />
                             <div>
-                                <p class="text-sm font-medium text-slate-600">Sin disponibilidad para esas fechas</p>
-                                <p class="mt-0.5 text-xs text-slate-500">Prueba con otras fechas, o escríbenos y te ayudamos a encontrar una opción.</p>
+                                <p class="text-sm font-medium text-slate-600">
+                                    Sin disponibilidad para esas fechas
+                                </p>
+                                <p class="mt-0.5 text-xs text-slate-500">
+                                    Prueba con otras fechas, o escríbenos y te
+                                    ayudamos a encontrar una opción.
+                                </p>
                             </div>
-                            <a href="/chat" class="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
-                                <Lucide icon="MessageCircle" class="h-4 w-4" /> Hablar con el hotel
+                            <a
+                                href="/chat"
+                                class="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                            >
+                                <Lucide icon="MessageCircle" class="h-4 w-4" />
+                                Hablar con el hotel
                             </a>
                         </div>
 
                         <!-- Grupos: el alta multi-habitación la arma el hotel -->
-                        <div v-if="hasGroups && anyAvailable" class="flex items-start gap-2 rounded-xl border border-dashed border-slate-200 px-4 py-3 text-xs text-slate-500">
-                            <Lucide icon="UsersRound" class="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                        <div
+                            v-if="hasGroups && anyAvailable"
+                            class="flex items-start gap-2 rounded-xl border border-dashed border-slate-200 px-4 py-3 text-xs text-slate-500"
+                        >
+                            <Lucide
+                                icon="UsersRound"
+                                class="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                            />
                             <span>
-                                ¿Vienen en grupo y necesitan varias habitaciones?
-                                <a v-if="property.phone" :href="`tel:${property.phone}`" class="font-medium text-primary hover:underline">Llámanos</a>
-                                <a v-else href="/chat" class="font-medium text-primary hover:underline">Escríbenos</a>
-                                y te armamos la reserva completa con folio de grupo.
+                                ¿Vienen en grupo y necesitan varias
+                                habitaciones?
+                                <a
+                                    v-if="property.phone"
+                                    :href="`tel:${property.phone}`"
+                                    class="font-medium text-primary hover:underline"
+                                    >Llámanos</a
+                                >
+                                <a
+                                    v-else
+                                    href="/chat"
+                                    class="font-medium text-primary hover:underline"
+                                    >Escríbenos</a
+                                >
+                                y te armamos la reserva completa con folio de
+                                grupo.
                             </span>
                         </div>
 
@@ -798,57 +1009,126 @@ async function copyCode() {
                             v-for="option in options"
                             :key="option.room_type_id"
                             class="overflow-hidden rounded-xl border transition"
-                            :class="option.available ? 'border-slate-200 hover:border-primary/40 hover:shadow-lg hover:shadow-slate-200/60' : 'border-slate-100 opacity-60'"
+                            :class="
+                                option.available
+                                    ? 'border-slate-200 hover:border-primary/40 hover:shadow-lg hover:shadow-slate-200/60'
+                                    : 'border-slate-100 opacity-60'
+                            "
                         >
                             <!-- Portada: la primera foto de la galería del tipo -->
-                            <div v-if="option.photos.length" class="relative h-44 w-full bg-slate-100 sm:h-52">
+                            <div
+                                v-if="option.photos.length"
+                                class="relative h-44 w-full bg-slate-100 sm:h-52"
+                            >
                                 <img
                                     :src="option.photos[0].thumb_url"
                                     :alt="option.name"
                                     class="h-full w-full cursor-pointer object-cover"
                                     loading="lazy"
-                                    @click="option.available && chooseOption(option)"
+                                    @click="
+                                        option.available && chooseOption(option)
+                                    "
                                 />
                                 <span
                                     v-if="option.photos.length > 1"
-                                    class="absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5 text-[11px] font-medium text-white"
+                                    class="absolute right-2 bottom-2 flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5 text-[11px] font-medium text-white"
                                 >
-                                    <Lucide icon="Image" class="h-3 w-3" /> {{ option.photos.length }}
+                                    <Lucide icon="Image" class="h-3 w-3" />
+                                    {{ option.photos.length }}
                                 </span>
                             </div>
-                            <div class="flex flex-wrap items-start justify-between gap-3 p-4">
+                            <div
+                                class="flex flex-wrap items-start justify-between gap-3 p-4"
+                            >
                                 <div class="min-w-0 flex-1">
                                     <div class="flex items-center gap-2">
-                                        <span class="font-medium text-slate-800">{{ option.name }}</span>
-                                        <span v-if="!option.available" class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                                        <span
+                                            class="font-medium text-slate-800"
+                                            >{{ option.name }}</span
+                                        >
+                                        <span
+                                            v-if="!option.available"
+                                            class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500"
+                                        >
                                             Sin disponibilidad
                                         </span>
                                     </div>
-                                    <p v-if="option.description" class="mt-1 text-xs text-slate-500">{{ option.description }}</p>
-                                    <div class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
+                                    <p
+                                        v-if="option.description"
+                                        class="mt-1 text-xs text-slate-500"
+                                    >
+                                        {{ option.description }}
+                                    </p>
+                                    <div
+                                        class="mt-1.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500"
+                                    >
                                         <span class="flex items-center gap-1">
-                                            <Lucide icon="Users" class="h-3.5 w-3.5" />
+                                            <Lucide
+                                                icon="Users"
+                                                class="h-3.5 w-3.5"
+                                            />
                                             Hasta {{ option.capacity }}
-                                            <template v-if="option.effective_capacity > option.capacity">
-                                                (hasta {{ option.effective_capacity }} con cargo extra)
+                                            <template
+                                                v-if="
+                                                    option.effective_capacity >
+                                                    option.capacity
+                                                "
+                                            >
+                                                (hasta
+                                                {{ option.effective_capacity }}
+                                                con cargo extra)
                                             </template>
                                         </span>
-                                        <span class="flex items-center gap-1"><Lucide icon="Clock" class="h-3.5 w-3.5" /> {{ option.duration_label }}</span>
+                                        <span class="flex items-center gap-1"
+                                            ><Lucide
+                                                icon="Clock"
+                                                class="h-3.5 w-3.5"
+                                            />
+                                            {{ option.duration_label }}</span
+                                        >
                                     </div>
-                                    <div v-if="option.amenities.length" class="mt-2 flex flex-wrap gap-1">
-                                        <span v-for="a in option.amenities.slice(0, 5)" :key="a" class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">{{ a }}</span>
+                                    <div
+                                        v-if="option.amenities.length"
+                                        class="mt-2 flex flex-wrap gap-1"
+                                    >
+                                        <span
+                                            v-for="a in option.amenities.slice(
+                                                0,
+                                                5,
+                                            )"
+                                            :key="a"
+                                            class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500"
+                                            >{{ a }}</span
+                                        >
                                     </div>
-                                    <p v-if="option.advance_error" class="mt-1.5 text-[11px] text-warning">{{ option.advance_error }}</p>
+                                    <p
+                                        v-if="option.advance_error"
+                                        class="mt-1.5 text-[11px] text-warning"
+                                    >
+                                        {{ option.advance_error }}
+                                    </p>
                                 </div>
                                 <div class="shrink-0 text-right">
-                                    <div class="text-base font-semibold text-slate-800">{{ money(option.total) }}</div>
+                                    <div
+                                        class="text-base font-semibold text-slate-800"
+                                    >
+                                        {{ money(option.total) }}
+                                    </div>
                                     <button
                                         v-if="option.price_breakdown.length > 1"
                                         type="button"
                                         class="mt-0.5 text-[11px] font-medium text-primary hover:underline"
-                                        @click="toggleBreakdown(option.room_type_id)"
+                                        @click="
+                                            toggleBreakdown(option.room_type_id)
+                                        "
                                     >
-                                        {{ expandedBreakdown.has(option.room_type_id) ? 'Ocultar detalle' : '¿Por qué este precio?' }}
+                                        {{
+                                            expandedBreakdown.has(
+                                                option.room_type_id,
+                                            )
+                                                ? 'Ocultar detalle'
+                                                : '¿Por qué este precio?'
+                                        }}
                                     </button>
                                     <Button
                                         v-if="option.available"
@@ -862,11 +1142,20 @@ async function copyCode() {
                                 </div>
                             </div>
                             <div
-                                v-if="expandedBreakdown.has(option.room_type_id) && option.price_breakdown.length > 1"
+                                v-if="
+                                    expandedBreakdown.has(
+                                        option.room_type_id,
+                                    ) && option.price_breakdown.length > 1
+                                "
                                 class="space-y-1 border-t border-slate-100 px-4 py-3 text-xs text-slate-500"
                             >
-                                <div v-for="line in option.price_breakdown" :key="line.concept" class="flex justify-between">
-                                    <span>{{ line.concept }}</span><span>{{ money(line.amount) }}</span>
+                                <div
+                                    v-for="line in option.price_breakdown"
+                                    :key="line.concept"
+                                    class="flex justify-between"
+                                >
+                                    <span>{{ line.concept }}</span
+                                    ><span>{{ money(line.amount) }}</span>
                                 </div>
                             </div>
                         </div>
@@ -875,44 +1164,101 @@ async function copyCode() {
 
                 <!-- ═══ PASO: confirmar habitación (cuántos son, con el tope real de ESTE cuarto) ═══ -->
                 <div v-else-if="step === 'room' && selected" class="p-5 sm:p-7">
-                    <button type="button" class="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700" @click="goBack">
-                        <Lucide icon="ArrowLeft" class="h-4 w-4" /> Cambiar fechas
+                    <button
+                        type="button"
+                        class="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
+                        @click="goBack"
+                    >
+                        <Lucide icon="ArrowLeft" class="h-4 w-4" /> Cambiar
+                        fechas
                     </button>
 
                     <!-- Galería: foto grande + miniaturas para cambiarla -->
                     <div v-if="selected.photos.length" class="mb-4">
-                        <div class="relative h-56 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-72">
-                            <img :src="selected.photos[Math.min(galleryIndex, selected.photos.length - 1)].url" :alt="selected.name" class="h-full w-full object-cover" />
+                        <div
+                            class="relative h-56 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-72"
+                        >
+                            <img
+                                :src="
+                                    selected.photos[
+                                        Math.min(
+                                            galleryIndex,
+                                            selected.photos.length - 1,
+                                        )
+                                    ].url
+                                "
+                                :alt="selected.name"
+                                class="h-full w-full object-cover"
+                            />
                         </div>
-                        <div v-if="selected.photos.length > 1" class="mt-2 flex gap-2 overflow-x-auto pb-1">
+                        <div
+                            v-if="selected.photos.length > 1"
+                            class="mt-2 flex gap-2 overflow-x-auto pb-1"
+                        >
                             <button
                                 v-for="(photo, index) in selected.photos"
                                 :key="photo.id"
                                 type="button"
                                 class="h-14 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition"
-                                :class="index === galleryIndex ? 'border-primary' : 'border-transparent opacity-70 hover:opacity-100'"
+                                :class="
+                                    index === galleryIndex
+                                        ? 'border-primary'
+                                        : 'border-transparent opacity-70 hover:opacity-100'
+                                "
                                 @click="galleryIndex = index"
                             >
-                                <img :src="photo.thumb_url" alt="" class="h-full w-full object-cover" loading="lazy" />
+                                <img
+                                    :src="photo.thumb_url"
+                                    alt=""
+                                    class="h-full w-full object-cover"
+                                    loading="lazy"
+                                />
                             </button>
                         </div>
                     </div>
 
-                    <h2 class="text-lg font-medium text-slate-800">{{ selected.name }}</h2>
-                    <p v-if="selected.description" class="mt-1 text-sm text-slate-500">{{ selected.description }}</p>
-                    <div class="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-500">
-                        <span class="flex items-center gap-1"><Lucide icon="Clock" class="h-3.5 w-3.5" /> {{ selected.duration_label }}</span>
+                    <h2 class="text-lg font-medium text-slate-800">
+                        {{ selected.name }}
+                    </h2>
+                    <p
+                        v-if="selected.description"
+                        class="mt-1 text-sm text-slate-500"
+                    >
+                        {{ selected.description }}
+                    </p>
+                    <div
+                        class="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-slate-500"
+                    >
+                        <span class="flex items-center gap-1"
+                            ><Lucide icon="Clock" class="h-3.5 w-3.5" />
+                            {{ selected.duration_label }}</span
+                        >
                         <span class="flex items-center gap-1">
-                            <Lucide icon="Calendar" class="h-3.5 w-3.5" /> {{ formatDateTime(selected.starts_at) }} → {{ formatDateTime(selected.ends_at) }}
+                            <Lucide icon="Calendar" class="h-3.5 w-3.5" />
+                            {{ formatDateTime(selected.starts_at) }} →
+                            {{ formatDateTime(selected.ends_at) }}
                         </span>
                     </div>
-                    <div v-if="selected.amenities.length" class="mt-2 flex flex-wrap gap-1">
-                        <span v-for="a in selected.amenities" :key="a" class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500">{{ a }}</span>
+                    <div
+                        v-if="selected.amenities.length"
+                        class="mt-2 flex flex-wrap gap-1"
+                    >
+                        <span
+                            v-for="a in selected.amenities"
+                            :key="a"
+                            class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500"
+                            >{{ a }}</span
+                        >
                     </div>
 
-                    <h3 class="mt-6 text-sm font-medium text-slate-800">¿Cuántos son?</h3>
+                    <h3 class="mt-6 text-sm font-medium text-slate-800">
+                        ¿Cuántos son?
+                    </h3>
                     <p class="mt-0.5 text-xs text-slate-500">
-                        Esta habitación admite hasta {{ maxGuests }} persona{{ maxGuests === 1 ? '' : 's' }} en total.
+                        Esta habitación admite hasta {{ maxGuests }} persona{{
+                            maxGuests === 1 ? '' : 's'
+                        }}
+                        en total.
                     </p>
                     <div class="mt-3 flex flex-wrap gap-4">
                         <div>
@@ -926,7 +1272,10 @@ async function copyCode() {
                                 >
                                     <Lucide icon="Minus" class="h-3.5 w-3.5" />
                                 </button>
-                                <span class="w-6 text-center text-sm font-medium">{{ adults }}</span>
+                                <span
+                                    class="w-6 text-center text-sm font-medium"
+                                    >{{ adults }}</span
+                                >
                                 <button
                                     type="button"
                                     class="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
@@ -948,7 +1297,10 @@ async function copyCode() {
                                 >
                                     <Lucide icon="Minus" class="h-3.5 w-3.5" />
                                 </button>
-                                <span class="w-6 text-center text-sm font-medium">{{ children }}</span>
+                                <span
+                                    class="w-6 text-center text-sm font-medium"
+                                    >{{ children }}</span
+                                >
                                 <button
                                     type="button"
                                     class="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
@@ -960,30 +1312,61 @@ async function copyCode() {
                             </div>
                         </div>
                     </div>
-                    <p v-if="adultsOnly" class="mt-1 flex items-center gap-1.5 text-xs font-medium text-warning">
-                        <Lucide icon="ShieldAlert" class="h-3.5 w-3.5" /> Establecimiento exclusivo para mayores de edad.
+                    <p
+                        v-if="adultsOnly"
+                        class="mt-1 flex items-center gap-1.5 text-xs font-medium text-warning"
+                    >
+                        <Lucide icon="ShieldAlert" class="h-3.5 w-3.5" />
+                        Establecimiento exclusivo para mayores de edad.
                     </p>
 
                     <div class="mt-5 rounded-xl bg-slate-50 p-4">
-                        <div v-if="roomQuoteLoading" class="flex items-center gap-2 text-sm text-slate-500">
-                            <Lucide icon="RefreshCw" class="h-4 w-4 animate-spin" /> Recalculando…
+                        <div
+                            v-if="roomQuoteLoading"
+                            class="flex items-center gap-2 text-sm text-slate-500"
+                        >
+                            <Lucide
+                                icon="RefreshCw"
+                                class="h-4 w-4 animate-spin"
+                            />
+                            Recalculando…
                         </div>
                         <template v-else>
-                            <div v-if="!selected.available" class="flex items-center gap-2 text-sm text-warning">
-                                <Lucide icon="TriangleAlert" class="h-4 w-4 shrink-0" />
-                                Esta habitación no tiene cupo disponible para {{ adults + children }} persona{{ adults + children === 1 ? '' : 's' }} en ese horario.
+                            <div
+                                v-if="!selected.available"
+                                class="flex items-center gap-2 text-sm text-warning"
+                            >
+                                <Lucide
+                                    icon="TriangleAlert"
+                                    class="h-4 w-4 shrink-0"
+                                />
+                                Esta habitación no tiene cupo disponible para
+                                {{ adults + children }} persona{{
+                                    adults + children === 1 ? '' : 's'
+                                }}
+                                en ese horario.
                             </div>
                             <template v-else>
-                                <div v-for="line in selected.price_breakdown" :key="line.concept" class="flex justify-between text-xs text-slate-500">
-                                    <span>{{ line.concept }}</span><span>{{ money(line.amount) }}</span>
+                                <div
+                                    v-for="line in selected.price_breakdown"
+                                    :key="line.concept"
+                                    class="flex justify-between text-xs text-slate-500"
+                                >
+                                    <span>{{ line.concept }}</span
+                                    ><span>{{ money(line.amount) }}</span>
                                 </div>
-                                <div class="mt-1.5 flex items-center justify-between border-t border-slate-200 pt-1.5 text-base font-semibold text-slate-800">
-                                    <span>Total</span><span>{{ money(selected.total) }}</span>
+                                <div
+                                    class="mt-1.5 flex items-center justify-between border-t border-slate-200 pt-1.5 text-base font-semibold text-slate-800"
+                                >
+                                    <span>Total</span
+                                    ><span>{{ money(selected.total) }}</span>
                                 </div>
                             </template>
                         </template>
                     </div>
-                    <p v-if="roomQuoteError" class="mt-2 text-xs text-danger">{{ roomQuoteError }}</p>
+                    <p v-if="roomQuoteError" class="mt-2 text-xs text-danger">
+                        {{ roomQuoteError }}
+                    </p>
 
                     <Button
                         variant="primary"
@@ -991,13 +1374,21 @@ async function copyCode() {
                         :disabled="roomQuoteLoading || !selected.available"
                         @click="continueFromRoom"
                     >
-                        <Lucide icon="ArrowRight" class="mr-2 h-4 w-4" /> Continuar
+                        <Lucide icon="ArrowRight" class="mr-2 h-4 w-4" />
+                        Continuar
                     </Button>
                 </div>
 
                 <!-- ═══ PASO: datos del huésped ═══ -->
-                <div v-else-if="step === 'guest' && selected" class="p-5 sm:p-7">
-                    <button type="button" class="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700" @click="goBack">
+                <div
+                    v-else-if="step === 'guest' && selected"
+                    class="p-5 sm:p-7"
+                >
+                    <button
+                        type="button"
+                        class="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
+                        @click="goBack"
+                    >
                         <Lucide icon="ArrowLeft" class="h-4 w-4" /> Atrás
                     </button>
 
@@ -1005,19 +1396,32 @@ async function copyCode() {
                          wizard grupal: encabezado con chips, renglones con
                          cantidad + subtítulo, total al pie. -->
                     <div class="rounded-xl bg-slate-50 p-4 sm:p-5">
-                        <div class="flex flex-wrap items-center justify-between gap-2">
-                            <div class="text-sm font-medium text-slate-800">Tu reserva</div>
+                        <div
+                            class="flex flex-wrap items-center justify-between gap-2"
+                        >
+                            <div class="text-sm font-medium text-slate-800">
+                                Tu reserva
+                            </div>
                             <div class="flex flex-wrap items-center gap-1.5">
-                                <span v-if="selected.duration_label" class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600 shadow-sm">
+                                <span
+                                    v-if="selected.duration_label"
+                                    class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600 shadow-sm"
+                                >
                                     {{ selected.duration_label }}
                                 </span>
-                                <span class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600 shadow-sm">
-                                    {{ adults + children }} persona{{ adults + children === 1 ? '' : 's' }}
+                                <span
+                                    class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600 shadow-sm"
+                                >
+                                    {{ adults + children }} persona{{
+                                        adults + children === 1 ? '' : 's'
+                                    }}
                                 </span>
                             </div>
                         </div>
                         <div class="mt-2 divide-y divide-slate-200/80">
-                            <div class="flex items-center justify-between gap-3 py-2.5">
+                            <div
+                                class="flex items-center justify-between gap-3 py-2.5"
+                            >
                                 <div class="flex min-w-0 items-center gap-3">
                                     <img
                                         v-if="selected.photos.length"
@@ -1026,108 +1430,221 @@ async function copyCode() {
                                         class="h-12 w-16 shrink-0 rounded-lg object-cover"
                                     />
                                     <div class="min-w-0">
-                                        <div class="truncate text-sm text-slate-700">
-                                            <span class="font-medium text-slate-800">1×</span> {{ selected.name }}
+                                        <div
+                                            class="truncate text-sm text-slate-700"
+                                        >
+                                            <span
+                                                class="font-medium text-slate-800"
+                                                >1×</span
+                                            >
+                                            {{ selected.name }}
                                         </div>
-                                        <div class="mt-0.5 text-xs text-slate-400">
-                                            {{ formatDateTime(selected.starts_at) }} → {{ formatDateTime(selected.ends_at) }} · {{ occupancyLabel }}
+                                        <div
+                                            class="mt-0.5 text-xs text-slate-400"
+                                        >
+                                            {{
+                                                formatDateTime(
+                                                    selected.starts_at,
+                                                )
+                                            }}
+                                            →
+                                            {{
+                                                formatDateTime(selected.ends_at)
+                                            }}
+                                            · {{ occupancyLabel }}
                                         </div>
                                     </div>
                                 </div>
-                                <div class="shrink-0 text-sm text-slate-600">{{ money(selected.total) }}</div>
+                                <div class="shrink-0 text-sm text-slate-600">
+                                    {{ money(selected.total) }}
+                                </div>
                             </div>
-                            <div v-for="line in experienceLines" :key="line.id" class="flex items-center justify-between gap-3 py-2.5">
+                            <div
+                                v-for="line in experienceLines"
+                                :key="line.id"
+                                class="flex items-center justify-between gap-3 py-2.5"
+                            >
                                 <div class="min-w-0">
-                                    <div class="truncate text-sm text-slate-700">
-                                        <span class="font-medium text-slate-800">{{ line.people }}×</span> {{ line.name }}
+                                    <div
+                                        class="truncate text-sm text-slate-700"
+                                    >
+                                        <span class="font-medium text-slate-800"
+                                            >{{ line.people }}×</span
+                                        >
+                                        {{ line.name }}
                                     </div>
-                                    <div class="mt-0.5 text-xs text-slate-400">{{ formatDateTime(line.starts_at) }}</div>
+                                    <div class="mt-0.5 text-xs text-slate-400">
+                                        {{ formatDateTime(line.starts_at) }}
+                                    </div>
                                 </div>
                                 <div class="flex shrink-0 items-center gap-2">
-                                    <span class="text-sm text-slate-600">{{ money(line.total) }}</span>
+                                    <span class="text-sm text-slate-600">{{
+                                        money(line.total)
+                                    }}</span>
                                     <button
                                         type="button"
                                         class="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                        @click="removeExperiencePick(line.session_id)"
+                                        @click="
+                                            removeExperiencePick(
+                                                line.session_id,
+                                            )
+                                        "
                                     >
                                         <Lucide icon="X" class="h-3.5 w-3.5" />
                                     </button>
                                 </div>
                             </div>
-                            <div v-for="line in selectedProductLines" :key="line.id" class="flex items-center justify-between gap-3 py-2.5">
+                            <div
+                                v-for="line in selectedProductLines"
+                                :key="line.id"
+                                class="flex items-center justify-between gap-3 py-2.5"
+                            >
                                 <div class="min-w-0">
-                                    <div class="truncate text-sm text-slate-700">
-                                        <span class="font-medium text-slate-800">{{ line.qty }}×</span> {{ line.name }}
+                                    <div
+                                        class="truncate text-sm text-slate-700"
+                                    >
+                                        <span class="font-medium text-slate-800"
+                                            >{{ line.qty }}×</span
+                                        >
+                                        {{ line.name }}
                                     </div>
                                 </div>
-                                <div class="shrink-0 text-sm text-slate-600">{{ money(line.total) }}</div>
+                                <div class="shrink-0 text-sm text-slate-600">
+                                    {{ money(line.total) }}
+                                </div>
                             </div>
                         </div>
-                        <div class="flex items-center justify-between border-t border-slate-200 pt-3">
+                        <div
+                            class="flex items-center justify-between border-t border-slate-200 pt-3"
+                        >
                             <span class="text-sm text-slate-500">Total</span>
-                            <span class="text-base font-semibold text-slate-800">{{ money(grandTotal) }}</span>
+                            <span
+                                class="text-base font-semibold text-slate-800"
+                                >{{ money(grandTotal) }}</span
+                            >
                         </div>
                     </div>
 
-                    <h2 class="mt-5 text-base font-medium text-slate-800">Tus datos</h2>
+                    <h2 class="mt-5 text-base font-medium text-slate-800">
+                        Tus datos
+                    </h2>
                     <div class="mt-3 space-y-4">
                         <div>
                             <FormLabel>Nombre completo *</FormLabel>
-                            <FormInput v-model="guestName" type="text" placeholder="Como aparece en tu identificación" />
+                            <FormInput
+                                v-model="guestName"
+                                type="text"
+                                placeholder="Como aparece en tu identificación"
+                            />
                         </div>
                         <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div>
                                 <FormLabel>Teléfono *</FormLabel>
-                                <FormInput v-model="guestPhone" type="tel" placeholder="10 dígitos" />
+                                <FormInput
+                                    v-model="guestPhone"
+                                    type="tel"
+                                    placeholder="10 dígitos"
+                                />
                             </div>
                             <div>
                                 <FormLabel>Email (opcional)</FormLabel>
-                                <FormInput v-model="guestEmail" type="email" placeholder="tu@correo.com" />
+                                <FormInput
+                                    v-model="guestEmail"
+                                    type="email"
+                                    placeholder="tu@correo.com"
+                                />
                             </div>
                         </div>
                         <div>
                             <FormLabel>Notas (opcional)</FormLabel>
-                            <FormTextarea v-model="notes" rows="2" placeholder="Hora aproximada de llegada, alguna petición…" />
+                            <FormTextarea
+                                v-model="notes"
+                                rows="2"
+                                placeholder="Hora aproximada de llegada, alguna petición…"
+                            />
                         </div>
                         <!-- Campo trampa: invisible para personas, los bots lo rellenan solo -->
-                        <div class="h-px w-px overflow-hidden opacity-0" style="clip: rect(0, 0, 0, 0)" aria-hidden="true">
+                        <div
+                            class="h-px w-px overflow-hidden opacity-0"
+                            style="clip: rect(0, 0, 0, 0)"
+                            aria-hidden="true"
+                        >
                             <label for="website">No llenar</label>
-                            <input id="website" v-model="honeypot" type="text" tabindex="-1" autocomplete="off" />
+                            <input
+                                id="website"
+                                v-model="honeypot"
+                                type="text"
+                                tabindex="-1"
+                                autocomplete="off"
+                            />
                         </div>
                     </div>
 
-                    <p v-if="submitError" class="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{{ submitError }}</p>
+                    <p
+                        v-if="submitError"
+                        class="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                    >
+                        {{ submitError }}
+                    </p>
 
                     <Button
                         variant="primary"
                         class="mt-5 w-full shadow-md shadow-primary/20"
-                        :disabled="submitting || !guestName.trim() || !guestPhone.trim()"
+                        :disabled="
+                            submitting ||
+                            !guestName.trim() ||
+                            !guestPhone.trim()
+                        "
                         @click="submitHold"
                     >
-                        <Lucide :icon="submitting ? 'RefreshCw' : 'ShieldCheck'" class="mr-2 h-4 w-4" :class="submitting && 'animate-spin'" />
-                        {{ submitting ? 'Apartando…' : 'Apartar esta habitación' }}
+                        <Lucide
+                            :icon="submitting ? 'RefreshCw' : 'ShieldCheck'"
+                            class="mr-2 h-4 w-4"
+                            :class="submitting && 'animate-spin'"
+                        />
+                        {{
+                            submitting
+                                ? 'Apartando…'
+                                : 'Apartar esta habitación'
+                        }}
                     </Button>
                     <!-- holdMinutes del servidor: antes se mostraba por error la
                          duración de la ESTANCIA ("720 minutos" en bloques de 12h). -->
                     <p class="mt-2.5 text-center text-[11px] text-slate-400">
-                        Se aparta por {{ holdMinutes }} minutos mientras confirmas.
-                        No se pide ningún dato de tarjeta en este paso.
+                        Se aparta por {{ holdMinutes }} minutos mientras
+                        confirmas. No se pide ningún dato de tarjeta en este
+                        paso.
                     </p>
                 </div>
 
                 <!-- ═══ PASO: extras (opcional, solo si el hotel lo activó) ═══ -->
-                <div v-else-if="step === 'extras' && selected" class="p-5 sm:p-7">
-                    <button type="button" class="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700" @click="goBack">
+                <div
+                    v-else-if="step === 'extras' && selected"
+                    class="p-5 sm:p-7"
+                >
+                    <button
+                        type="button"
+                        class="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
+                        @click="goBack"
+                    >
                         <Lucide icon="ArrowLeft" class="h-4 w-4" /> Volver
                     </button>
 
-                    <h2 class="text-lg font-medium text-slate-800">¿Algo más para tu llegada?</h2>
-                    <p class="mt-1 text-sm text-slate-500">Opcional — se prepara y te espera, se suma a tu total.</p>
+                    <h2 class="text-lg font-medium text-slate-800">
+                        ¿Algo más para tu llegada?
+                    </h2>
+                    <p class="mt-1 text-sm text-slate-500">
+                        Opcional — se prepara y te espera, se suma a tu total.
+                    </p>
 
                     <!-- Experiencias: tours con sesiones durante la estancia,
                          se agregan como plus con su propio cupo -->
                     <div v-if="experiencesCatalog?.enabled" class="mt-5">
-                        <div class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Recorridos y experiencias</div>
+                        <div
+                            class="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            Recorridos y experiencias
+                        </div>
                         <div class="space-y-3">
                             <div
                                 v-for="exp in experiencesCatalog.experiences"
@@ -1143,48 +1660,120 @@ async function copyCode() {
                                         loading="lazy"
                                     />
                                     <div class="min-w-0 flex-1">
-                                        <div class="text-sm font-medium text-slate-800">{{ exp.name }}</div>
-                                        <div class="text-xs text-slate-500">
-                                            {{ exp.price_label }}<template v-if="exp.duration_label"> · {{ exp.duration_label }}</template>
+                                        <div
+                                            class="text-sm font-medium text-slate-800"
+                                        >
+                                            {{ exp.name }}
                                         </div>
-                                        <p v-if="exp.description" class="mt-1 line-clamp-2 text-xs text-slate-500">{{ exp.description }}</p>
+                                        <div class="text-xs text-slate-500">
+                                            {{ exp.price_label
+                                            }}<template
+                                                v-if="exp.duration_label"
+                                            >
+                                                ·
+                                                {{
+                                                    exp.duration_label
+                                                }}</template
+                                            >
+                                        </div>
+                                        <p
+                                            v-if="exp.description"
+                                            class="mt-1 line-clamp-2 text-xs text-slate-500"
+                                        >
+                                            {{ exp.description }}
+                                        </p>
                                     </div>
                                 </div>
-                                <div class="mt-3 grid grid-cols-12 items-end gap-2">
+                                <div
+                                    class="mt-3 grid grid-cols-12 items-end gap-2"
+                                >
                                     <div class="col-span-12 sm:col-span-6">
-                                        <label class="mb-1 block text-xs text-slate-500">Fecha y horario</label>
+                                        <label
+                                            class="mb-1 block text-xs text-slate-500"
+                                            >Fecha y horario</label
+                                        >
                                         <select
-                                            v-model="expDraft[exp.id].session_id"
+                                            v-model="
+                                                expDraft[exp.id].session_id
+                                            "
                                             class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary/40 focus:outline-none"
                                         >
-                                            <option value="" disabled>Elige una sesión</option>
+                                            <option value="" disabled>
+                                                Elige una sesión
+                                            </option>
                                             <option
-                                                v-for="session in exp.sessions.filter((s) => !experiencePicks.some((p) => p.session_id === s.id))"
+                                                v-for="session in exp.sessions.filter(
+                                                    (s) =>
+                                                        !experiencePicks.some(
+                                                            (p) =>
+                                                                p.session_id ===
+                                                                s.id,
+                                                        ),
+                                                )"
                                                 :key="session.id"
                                                 :value="session.id"
                                             >
-                                                {{ formatDateTime(session.starts_at) }} · {{ session.remaining }} lugar(es)
+                                                {{
+                                                    formatDateTime(
+                                                        session.starts_at,
+                                                    )
+                                                }}
+                                                ·
+                                                {{ session.remaining }}
+                                                lugar(es)
                                             </option>
                                         </select>
                                     </div>
                                     <div class="col-span-6 sm:col-span-3">
-                                        <label class="mb-1 block text-xs text-slate-500">Personas</label>
+                                        <label
+                                            class="mb-1 block text-xs text-slate-500"
+                                            >Personas</label
+                                        >
                                         <div class="flex items-center gap-2">
                                             <button
                                                 type="button"
                                                 class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
-                                                :disabled="expDraft[exp.id].people <= exp.min_people"
-                                                @click="expDraft[exp.id].people = Math.max(exp.min_people, expDraft[exp.id].people - 1)"
+                                                :disabled="
+                                                    expDraft[exp.id].people <=
+                                                    exp.min_people
+                                                "
+                                                @click="
+                                                    expDraft[exp.id].people =
+                                                        Math.max(
+                                                            exp.min_people,
+                                                            expDraft[exp.id]
+                                                                .people - 1,
+                                                        )
+                                                "
                                             >
-                                                <Lucide icon="Minus" class="h-3.5 w-3.5" />
+                                                <Lucide
+                                                    icon="Minus"
+                                                    class="h-3.5 w-3.5"
+                                                />
                                             </button>
-                                            <span class="w-5 text-center text-sm font-medium">{{ expDraft[exp.id].people }}</span>
+                                            <span
+                                                class="w-5 text-center text-sm font-medium"
+                                                >{{
+                                                    expDraft[exp.id].people
+                                                }}</span
+                                            >
                                             <button
                                                 type="button"
                                                 class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
-                                                @click="expDraft[exp.id].people = Math.min(exp.max_people ?? 100, expDraft[exp.id].people + 1)"
+                                                @click="
+                                                    expDraft[exp.id].people =
+                                                        Math.min(
+                                                            exp.max_people ??
+                                                                100,
+                                                            expDraft[exp.id]
+                                                                .people + 1,
+                                                        )
+                                                "
                                             >
-                                                <Lucide icon="Plus" class="h-3.5 w-3.5" />
+                                                <Lucide
+                                                    icon="Plus"
+                                                    class="h-3.5 w-3.5"
+                                                />
                                             </button>
                                         </div>
                                     </div>
@@ -1193,7 +1782,10 @@ async function copyCode() {
                                             type="button"
                                             variant="outline-primary"
                                             class="w-full"
-                                            :disabled="expDraft[exp.id].session_id === ''"
+                                            :disabled="
+                                                expDraft[exp.id].session_id ===
+                                                ''
+                                            "
                                             @click="addExperiencePick(exp)"
                                         >
                                             Agregar
@@ -1204,22 +1796,38 @@ async function copyCode() {
                         </div>
 
                         <!-- Tours ya agregados -->
-                        <div v-if="experienceLines.length" class="mt-3 space-y-2">
+                        <div
+                            v-if="experienceLines.length"
+                            class="mt-3 space-y-2"
+                        >
                             <div
                                 v-for="line in experienceLines"
                                 :key="line.id"
                                 class="flex items-center justify-between gap-3 rounded-lg bg-primary/5 px-3 py-2.5 text-sm"
                             >
                                 <div class="min-w-0">
-                                    <div class="truncate font-medium text-slate-800">{{ line.people }}× {{ line.name }}</div>
-                                    <div class="text-xs text-slate-500">{{ formatDateTime(line.starts_at) }}</div>
+                                    <div
+                                        class="truncate font-medium text-slate-800"
+                                    >
+                                        {{ line.people }}× {{ line.name }}
+                                    </div>
+                                    <div class="text-xs text-slate-500">
+                                        {{ formatDateTime(line.starts_at) }}
+                                    </div>
                                 </div>
                                 <div class="flex shrink-0 items-center gap-2">
-                                    <span class="text-sm font-medium text-slate-800">{{ money(line.total) }}</span>
+                                    <span
+                                        class="text-sm font-medium text-slate-800"
+                                        >{{ money(line.total) }}</span
+                                    >
                                     <button
                                         type="button"
                                         class="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                        @click="removeExperiencePick(line.session_id)"
+                                        @click="
+                                            removeExperiencePick(
+                                                line.session_id,
+                                            )
+                                        "
                                     >
                                         <Lucide icon="X" class="h-3.5 w-3.5" />
                                     </button>
@@ -1230,7 +1838,11 @@ async function copyCode() {
 
                     <!-- Add-ons (módulo extras): decoración, desayuno, late checkout -->
                     <div v-if="extrasCatalog?.addons.length" class="mt-5">
-                        <div class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">Para tu estancia</div>
+                        <div
+                            class="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            Para tu estancia
+                        </div>
                         <div class="space-y-2">
                             <div
                                 v-for="addon in extrasCatalog.addons"
@@ -1238,26 +1850,60 @@ async function copyCode() {
                                 class="flex items-center justify-between gap-3 rounded-lg border border-slate-200/70 p-3"
                             >
                                 <div class="min-w-0">
-                                    <div class="truncate text-sm font-medium text-slate-800">{{ addon.name }}</div>
-                                    <div v-if="addon.description" class="truncate text-xs text-slate-500">{{ addon.description }}</div>
-                                    <div class="text-xs text-slate-500">{{ money(addon.price) }}</div>
+                                    <div
+                                        class="truncate text-sm font-medium text-slate-800"
+                                    >
+                                        {{ addon.name }}
+                                    </div>
+                                    <div
+                                        v-if="addon.description"
+                                        class="truncate text-xs text-slate-500"
+                                    >
+                                        {{ addon.description }}
+                                    </div>
+                                    <div class="text-xs text-slate-500">
+                                        {{ money(addon.price) }}
+                                    </div>
                                 </div>
                                 <div class="flex shrink-0 items-center gap-2">
                                     <button
                                         type="button"
                                         class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
                                         :disabled="!selectedAddons[addon.id]"
-                                        @click="setAddonQty(addon.id, (selectedAddons[addon.id] ?? 0) - 1)"
+                                        @click="
+                                            setAddonQty(
+                                                addon.id,
+                                                (selectedAddons[addon.id] ??
+                                                    0) - 1,
+                                            )
+                                        "
                                     >
-                                        <Lucide icon="Minus" class="h-3.5 w-3.5" />
+                                        <Lucide
+                                            icon="Minus"
+                                            class="h-3.5 w-3.5"
+                                        />
                                     </button>
-                                    <span class="w-5 text-center text-sm font-medium">{{ selectedAddons[addon.id] ?? 0 }}</span>
+                                    <span
+                                        class="w-5 text-center text-sm font-medium"
+                                        >{{
+                                            selectedAddons[addon.id] ?? 0
+                                        }}</span
+                                    >
                                     <button
                                         type="button"
                                         class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
-                                        @click="setAddonQty(addon.id, (selectedAddons[addon.id] ?? 0) + 1)"
+                                        @click="
+                                            setAddonQty(
+                                                addon.id,
+                                                (selectedAddons[addon.id] ??
+                                                    0) + 1,
+                                            )
+                                        "
                                     >
-                                        <Lucide icon="Plus" class="h-3.5 w-3.5" />
+                                        <Lucide
+                                            icon="Plus"
+                                            class="h-3.5 w-3.5"
+                                        />
                                     </button>
                                 </div>
                             </div>
@@ -1265,8 +1911,15 @@ async function copyCode() {
                     </div>
 
                     <div class="mt-5 space-y-5">
-                        <div v-for="[category, items] in extrasByCategory" :key="category">
-                            <div class="mb-2 text-xs font-medium uppercase tracking-wide text-slate-400">{{ category }}</div>
+                        <div
+                            v-for="[category, items] in extrasByCategory"
+                            :key="category"
+                        >
+                            <div
+                                class="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                {{ category }}
+                            </div>
                             <div class="space-y-2">
                                 <div
                                     v-for="p in items"
@@ -1274,25 +1927,56 @@ async function copyCode() {
                                     class="flex items-center justify-between gap-3 rounded-lg border border-slate-200/70 p-3"
                                 >
                                     <div class="min-w-0">
-                                        <div class="truncate text-sm font-medium text-slate-800">{{ p.name }}</div>
-                                        <div class="text-xs text-slate-500">{{ money(p.price) }} / {{ p.unit }}</div>
+                                        <div
+                                            class="truncate text-sm font-medium text-slate-800"
+                                        >
+                                            {{ p.name }}
+                                        </div>
+                                        <div class="text-xs text-slate-500">
+                                            {{ money(p.price) }} / {{ p.unit }}
+                                        </div>
                                     </div>
-                                    <div class="flex shrink-0 items-center gap-2">
+                                    <div
+                                        class="flex shrink-0 items-center gap-2"
+                                    >
                                         <button
                                             type="button"
                                             class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
                                             :disabled="!selectedProducts[p.id]"
-                                            @click="setProductQty(p.id, (selectedProducts[p.id] ?? 0) - 1)"
+                                            @click="
+                                                setProductQty(
+                                                    p.id,
+                                                    (selectedProducts[p.id] ??
+                                                        0) - 1,
+                                                )
+                                            "
                                         >
-                                            <Lucide icon="Minus" class="h-3.5 w-3.5" />
+                                            <Lucide
+                                                icon="Minus"
+                                                class="h-3.5 w-3.5"
+                                            />
                                         </button>
-                                        <span class="w-5 text-center text-sm font-medium">{{ selectedProducts[p.id] ?? 0 }}</span>
+                                        <span
+                                            class="w-5 text-center text-sm font-medium"
+                                            >{{
+                                                selectedProducts[p.id] ?? 0
+                                            }}</span
+                                        >
                                         <button
                                             type="button"
                                             class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
-                                            @click="setProductQty(p.id, (selectedProducts[p.id] ?? 0) + 1)"
+                                            @click="
+                                                setProductQty(
+                                                    p.id,
+                                                    (selectedProducts[p.id] ??
+                                                        0) + 1,
+                                                )
+                                            "
                                         >
-                                            <Lucide icon="Plus" class="h-3.5 w-3.5" />
+                                            <Lucide
+                                                icon="Plus"
+                                                class="h-3.5 w-3.5"
+                                            />
                                         </button>
                                     </div>
                                 </div>
@@ -1303,118 +1987,252 @@ async function copyCode() {
                     <!-- Resumen vivo: habitación + extras + experiencias + total,
                          no solo el subtotal de extras suelto (feedback 2026-07-14). -->
                     <div class="mt-5 rounded-lg bg-slate-50 px-4 py-3 text-sm">
-                        <div class="flex items-center justify-between text-slate-500">
+                        <div
+                            class="flex items-center justify-between text-slate-500"
+                        >
                             <span>{{ selected.name }}</span>
                             <span>{{ money(selected.total) }}</span>
                         </div>
-                        <div v-for="line in experienceLines" :key="line.id" class="mt-1 flex items-center justify-between text-slate-500">
+                        <div
+                            v-for="line in experienceLines"
+                            :key="line.id"
+                            class="mt-1 flex items-center justify-between text-slate-500"
+                        >
                             <span>{{ line.people }}× {{ line.name }}</span>
                             <span>{{ money(line.total) }}</span>
                         </div>
-                        <div v-for="line in selectedProductLines" :key="line.id" class="mt-1 flex items-center justify-between text-slate-500">
+                        <div
+                            v-for="line in selectedProductLines"
+                            :key="line.id"
+                            class="mt-1 flex items-center justify-between text-slate-500"
+                        >
                             <span>{{ line.qty }}× {{ line.name }}</span>
                             <span>{{ money(line.total) }}</span>
                         </div>
-                        <div class="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-base font-semibold text-slate-800">
+                        <div
+                            class="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-base font-semibold text-slate-800"
+                        >
                             <span>Total</span>
                             <span>{{ money(grandTotal) }}</span>
                         </div>
                     </div>
 
-                    <Button variant="primary" class="mt-5 w-full shadow-md shadow-primary/20" @click="step = 'guest'">
-                        <Lucide icon="ArrowRight" class="mr-2 h-4 w-4" /> Continuar
+                    <Button
+                        variant="primary"
+                        class="mt-5 w-full shadow-md shadow-primary/20"
+                        @click="step = 'guest'"
+                    >
+                        <Lucide icon="ArrowRight" class="mr-2 h-4 w-4" />
+                        Continuar
                     </Button>
                 </div>
 
                 <!-- ═══ PASO: confirmación / pago ═══ -->
-                <div v-else-if="step === 'confirm' && hold" class="p-5 text-center sm:p-7">
+                <div
+                    v-else-if="step === 'confirm' && hold"
+                    class="p-5 text-center sm:p-7"
+                >
                     <!-- Sin prepago: confirmación directa -->
                     <template v-if="!hold.requires_prepayment">
-                        <div class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-success/10 text-success">
+                        <div
+                            class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-success/10 text-success"
+                        >
                             <Lucide icon="Check" class="h-7 w-7" />
                         </div>
-                        <h2 class="text-lg font-medium text-slate-800">¡Tu apartado quedó listo!</h2>
+                        <h2 class="text-lg font-medium text-slate-800">
+                            ¡Tu apartado quedó listo!
+                        </h2>
                         <p class="mt-1.5 text-sm text-slate-500">
-                            El hotel confirmará directamente. Guarda tu código — te lo pueden pedir en recepción.
+                            El hotel confirmará directamente. Guarda tu código —
+                            te lo pueden pedir en recepción.
                         </p>
-                        <div class="mx-auto mt-4 max-w-xs rounded-xl bg-slate-50 p-4 text-left">
-                            <div class="flex items-center justify-between gap-2">
-                                <div class="text-2xl font-semibold tracking-wide text-slate-800">{{ hold.code }}</div>
+                        <div
+                            class="mx-auto mt-4 max-w-xs rounded-xl bg-slate-50 p-4 text-left"
+                        >
+                            <div
+                                class="flex items-center justify-between gap-2"
+                            >
+                                <div
+                                    class="text-2xl font-semibold tracking-wide text-slate-800"
+                                >
+                                    {{ hold.code }}
+                                </div>
                                 <button
                                     type="button"
                                     class="flex shrink-0 items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-500 transition hover:bg-white"
                                     @click="copyCode"
                                 >
-                                    <Lucide :icon="codeCopied ? 'Check' : 'Copy'" class="h-3 w-3" />
+                                    <Lucide
+                                        :icon="codeCopied ? 'Check' : 'Copy'"
+                                        class="h-3 w-3"
+                                    />
                                     {{ codeCopied ? 'Copiado' : 'Copiar' }}
                                 </button>
                             </div>
-                            <div class="mt-1 text-xs text-slate-500">{{ hold.room_type }}</div>
-                            <div class="mt-1 text-xs text-slate-500">{{ formatDateTime(hold.starts_at) }} → {{ formatDateTime(hold.ends_at) }}</div>
-                            <div class="mt-3 space-y-1 border-t border-slate-200 pt-3 text-xs text-slate-500">
+                            <div class="mt-1 text-xs text-slate-500">
+                                {{ hold.room_type }}
+                            </div>
+                            <div class="mt-1 text-xs text-slate-500">
+                                {{ formatDateTime(hold.starts_at) }} →
+                                {{ formatDateTime(hold.ends_at) }}
+                            </div>
+                            <div
+                                class="mt-3 space-y-1 border-t border-slate-200 pt-3 text-xs text-slate-500"
+                            >
                                 <template v-if="hold.price_breakdown.length">
-                                    <div v-for="line in hold.price_breakdown" :key="line.concept" class="flex justify-between">
-                                        <span>{{ line.concept }}</span><span>{{ money(line.amount) }}</span>
+                                    <div
+                                        v-for="line in hold.price_breakdown"
+                                        :key="line.concept"
+                                        class="flex justify-between"
+                                    >
+                                        <span>{{ line.concept }}</span
+                                        ><span>{{ money(line.amount) }}</span>
                                     </div>
                                 </template>
-                                <div v-else class="flex justify-between"><span>Habitación</span><span>{{ money(hold.room_total) }}</span></div>
-                                <div v-for="line in hold.experiences ?? []" :key="`e-${line.experience_booking_id}`" class="flex justify-between">
-                                    <span>{{ line.people }}× {{ line.name }}</span><span>{{ money(line.total) }}</span>
+                                <div v-else class="flex justify-between">
+                                    <span>Habitación</span
+                                    ><span>{{ money(hold.room_total) }}</span>
                                 </div>
-                                <div v-for="line in hold.extras" :key="`a-${line.extra_id}`" class="flex justify-between">
-                                    <span>{{ line.qty }}× {{ line.name }}</span><span>{{ money(line.total) }}</span>
+                                <div
+                                    v-for="line in hold.experiences ?? []"
+                                    :key="`e-${line.experience_booking_id}`"
+                                    class="flex justify-between"
+                                >
+                                    <span
+                                        >{{ line.people }}×
+                                        {{ line.name }}</span
+                                    ><span>{{ money(line.total) }}</span>
                                 </div>
-                                <div v-for="line in hold.products" :key="line.product_id" class="flex justify-between">
-                                    <span>{{ line.qty }}× {{ line.name }}</span><span>{{ money(line.total) }}</span>
+                                <div
+                                    v-for="line in hold.extras"
+                                    :key="`a-${line.extra_id}`"
+                                    class="flex justify-between"
+                                >
+                                    <span>{{ line.qty }}× {{ line.name }}</span
+                                    ><span>{{ money(line.total) }}</span>
+                                </div>
+                                <div
+                                    v-for="line in hold.products"
+                                    :key="line.product_id"
+                                    class="flex justify-between"
+                                >
+                                    <span>{{ line.qty }}× {{ line.name }}</span
+                                    ><span>{{ money(line.total) }}</span>
                                 </div>
                             </div>
-                            <div class="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-base font-medium text-slate-800">
-                                <span>Total</span><span>{{ money(hold.total) }}</span>
+                            <div
+                                class="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-base font-medium text-slate-800"
+                            >
+                                <span>Total</span
+                                ><span>{{ money(hold.total) }}</span>
                             </div>
                         </div>
-                        <p v-if="holdCountdown" class="mt-3 text-xs text-warning">Se libera sola en {{ holdCountdown }} si el hotel no confirma antes.</p>
+                        <p
+                            v-if="holdCountdown"
+                            class="mt-3 text-xs text-warning"
+                        >
+                            Se libera sola en {{ holdCountdown }} si el hotel no
+                            confirma antes.
+                        </p>
                     </template>
 
                     <!-- Con prepago: elegir método, pasarela o transferencia -->
                     <template v-else>
                         <div v-if="paymentLoading" class="py-6">
-                            <Lucide icon="RefreshCw" class="mx-auto h-8 w-8 animate-spin text-primary" />
-                            <p class="mt-3 text-sm text-slate-500">Preparando tu cobro…</p>
+                            <Lucide
+                                icon="RefreshCw"
+                                class="mx-auto h-8 w-8 animate-spin text-primary"
+                            />
+                            <p class="mt-3 text-sm text-slate-500">
+                                Preparando tu cobro…
+                            </p>
                         </div>
 
                         <!-- Ambos métodos disponibles: se le pregunta al huésped, ya no se decide en silencio -->
                         <template v-else-if="paymentChoice && !payment">
-                            <div class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary">
+                            <div
+                                class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            >
                                 <Lucide icon="Wallet" class="h-7 w-7" />
                             </div>
-                            <h2 class="text-lg font-medium text-slate-800">¿Cómo prefieres pagar?</h2>
+                            <h2 class="text-lg font-medium text-slate-800">
+                                ¿Cómo prefieres pagar?
+                            </h2>
                             <p class="mt-1.5 text-sm text-slate-500">
-                                Código <span class="font-medium">{{ hold.code }}</span>
+                                Código
+                                <span class="font-medium">{{ hold.code }}</span>
                             </p>
                             <!-- Desglose antes de pagar: qué compone el total que se
                                  va a cobrar, igual que en la confirmación sin prepago. -->
-                            <div class="mx-auto mt-4 max-w-sm rounded-xl bg-slate-50 p-4 text-left">
-                                <div class="text-xs text-slate-500">{{ hold.room_type }}</div>
-                                <div class="mt-0.5 text-xs text-slate-500">{{ formatDateTime(hold.starts_at) }} → {{ formatDateTime(hold.ends_at) }}</div>
-                                <div class="mt-3 space-y-1 border-t border-slate-200 pt-3 text-xs text-slate-500">
-                                    <template v-if="hold.price_breakdown.length">
-                                        <div v-for="line in hold.price_breakdown" :key="line.concept" class="flex justify-between">
-                                            <span>{{ line.concept }}</span><span>{{ money(line.amount) }}</span>
+                            <div
+                                class="mx-auto mt-4 max-w-sm rounded-xl bg-slate-50 p-4 text-left"
+                            >
+                                <div class="text-xs text-slate-500">
+                                    {{ hold.room_type }}
+                                </div>
+                                <div class="mt-0.5 text-xs text-slate-500">
+                                    {{ formatDateTime(hold.starts_at) }} →
+                                    {{ formatDateTime(hold.ends_at) }}
+                                </div>
+                                <div
+                                    class="mt-3 space-y-1 border-t border-slate-200 pt-3 text-xs text-slate-500"
+                                >
+                                    <template
+                                        v-if="hold.price_breakdown.length"
+                                    >
+                                        <div
+                                            v-for="line in hold.price_breakdown"
+                                            :key="line.concept"
+                                            class="flex justify-between"
+                                        >
+                                            <span>{{ line.concept }}</span
+                                            ><span>{{
+                                                money(line.amount)
+                                            }}</span>
                                         </div>
                                     </template>
-                                    <div v-else class="flex justify-between"><span>Habitación</span><span>{{ money(hold.room_total) }}</span></div>
-                                    <div v-for="line in hold.experiences ?? []" :key="`e-${line.experience_booking_id}`" class="flex justify-between">
-                                        <span>{{ line.people }}× {{ line.name }}</span><span>{{ money(line.total) }}</span>
+                                    <div v-else class="flex justify-between">
+                                        <span>Habitación</span
+                                        ><span>{{
+                                            money(hold.room_total)
+                                        }}</span>
                                     </div>
-                                    <div v-for="line in hold.extras" :key="`a-${line.extra_id}`" class="flex justify-between">
-                                        <span>{{ line.qty }}× {{ line.name }}</span><span>{{ money(line.total) }}</span>
+                                    <div
+                                        v-for="line in hold.experiences ?? []"
+                                        :key="`e-${line.experience_booking_id}`"
+                                        class="flex justify-between"
+                                    >
+                                        <span
+                                            >{{ line.people }}×
+                                            {{ line.name }}</span
+                                        ><span>{{ money(line.total) }}</span>
                                     </div>
-                                    <div v-for="line in hold.products" :key="line.product_id" class="flex justify-between">
-                                        <span>{{ line.qty }}× {{ line.name }}</span><span>{{ money(line.total) }}</span>
+                                    <div
+                                        v-for="line in hold.extras"
+                                        :key="`a-${line.extra_id}`"
+                                        class="flex justify-between"
+                                    >
+                                        <span
+                                            >{{ line.qty }}×
+                                            {{ line.name }}</span
+                                        ><span>{{ money(line.total) }}</span>
+                                    </div>
+                                    <div
+                                        v-for="line in hold.products"
+                                        :key="line.product_id"
+                                        class="flex justify-between"
+                                    >
+                                        <span
+                                            >{{ line.qty }}×
+                                            {{ line.name }}</span
+                                        ><span>{{ money(line.total) }}</span>
                                     </div>
                                 </div>
-                                <div class="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-base font-medium text-slate-800">
-                                    <span>Total</span><span>{{ money(hold.total) }}</span>
+                                <div
+                                    class="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-base font-medium text-slate-800"
+                                >
+                                    <span>Total</span
+                                    ><span>{{ money(hold.total) }}</span>
                                 </div>
                             </div>
                             <div class="mx-auto mt-5 max-w-sm space-y-2.5">
@@ -1423,14 +2241,27 @@ async function copyCode() {
                                     :key="gw.provider"
                                     type="button"
                                     class="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
-                                    @click="requestPayment('gateway', gw.provider)"
+                                    @click="
+                                        requestPayment('gateway', gw.provider)
+                                    "
                                 >
-                                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
-                                        <Lucide icon="CreditCard" class="h-5 w-5" />
+                                    <div
+                                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                                    >
+                                        <Lucide
+                                            icon="CreditCard"
+                                            class="h-5 w-5"
+                                        />
                                     </div>
                                     <div class="min-w-0">
-                                        <div class="text-sm font-medium text-slate-800">Pagar con {{ gw.label }}</div>
-                                        <div class="text-xs text-slate-500">Confirmación inmediata</div>
+                                        <div
+                                            class="text-sm font-medium text-slate-800"
+                                        >
+                                            Pagar con {{ gw.label }}
+                                        </div>
+                                        <div class="text-xs text-slate-500">
+                                            Confirmación inmediata
+                                        </div>
                                     </div>
                                 </button>
                                 <button
@@ -1439,111 +2270,221 @@ async function copyCode() {
                                     class="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
                                     @click="requestPayment('transfer')"
                                 >
-                                    <div class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-info/10 text-info">
-                                        <Lucide icon="Landmark" class="h-5 w-5" />
+                                    <div
+                                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
+                                    >
+                                        <Lucide
+                                            icon="Landmark"
+                                            class="h-5 w-5"
+                                        />
                                     </div>
                                     <div class="min-w-0">
-                                        <div class="text-sm font-medium text-slate-800">Transferencia bancaria</div>
+                                        <div
+                                            class="text-sm font-medium text-slate-800"
+                                        >
+                                            Transferencia bancaria
+                                        </div>
                                         <div class="text-xs text-slate-500">
-                                            {{ paymentChoice.transfer.accounts_count }} cuenta{{ paymentChoice.transfer.accounts_count === 1 ? '' : 's' }} disponible{{
-                                                paymentChoice.transfer.accounts_count === 1 ? '' : 's'
+                                            {{
+                                                paymentChoice.transfer
+                                                    .accounts_count
+                                            }}
+                                            cuenta{{
+                                                paymentChoice.transfer
+                                                    .accounts_count === 1
+                                                    ? ''
+                                                    : 's'
+                                            }}
+                                            disponible{{
+                                                paymentChoice.transfer
+                                                    .accounts_count === 1
+                                                    ? ''
+                                                    : 's'
                                             }}
                                         </div>
                                     </div>
                                 </button>
                             </div>
-                            <p v-if="holdCountdown" class="mt-4 text-xs text-warning">
-                                Tu apartado se libera solo en {{ holdCountdown }} si no se completa el pago.
+                            <p
+                                v-if="holdCountdown"
+                                class="mt-4 text-xs text-warning"
+                            >
+                                Tu apartado se libera solo en
+                                {{ holdCountdown }} si no se completa el pago.
                             </p>
                         </template>
 
                         <template v-else-if="payment?.method === 'transfer'">
-                            <div class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-info/10 text-info">
+                            <div
+                                class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-info/10 text-info"
+                            >
                                 <Lucide icon="Landmark" class="h-7 w-7" />
                             </div>
-                            <h2 class="text-lg font-medium text-slate-800">Completa tu apartado por transferencia</h2>
+                            <h2 class="text-lg font-medium text-slate-800">
+                                Completa tu apartado por transferencia
+                            </h2>
                             <p class="mt-1.5 text-sm text-slate-500">
                                 Código
-                                <span class="inline-flex items-center gap-1 font-medium">
+                                <span
+                                    class="inline-flex items-center gap-1 font-medium"
+                                >
                                     {{ hold.code }}
-                                    <button type="button" class="text-slate-400 transition hover:text-slate-600" @click="copyCode">
-                                        <Lucide :icon="codeCopied ? 'Check' : 'Copy'" class="h-3.5 w-3.5" />
+                                    <button
+                                        type="button"
+                                        class="text-slate-400 transition hover:text-slate-600"
+                                        @click="copyCode"
+                                    >
+                                        <Lucide
+                                            :icon="
+                                                codeCopied ? 'Check' : 'Copy'
+                                            "
+                                            class="h-3.5 w-3.5"
+                                        />
                                     </button>
                                 </span>
-                                · Transfiere <span class="font-medium">{{ payment.amount_label }}</span> y envía tu comprobante al hotel.
+                                · Transfiere
+                                <span class="font-medium">{{
+                                    payment.amount_label
+                                }}</span>
+                                y envía tu comprobante al hotel.
                             </p>
-                            <div class="mx-auto mt-4 max-w-sm space-y-2 text-left">
-                                <div v-for="acc in payment.bank_accounts" :key="acc.cuenta" class="rounded-xl border border-slate-200 p-3.5 text-sm">
-                                    <div class="font-medium text-slate-700">{{ acc.banco }}</div>
-                                    <div class="text-slate-500">{{ acc.titular }}</div>
-                                    <div class="mt-1 font-mono text-slate-700">{{ acc.cuenta }}</div>
+                            <div
+                                class="mx-auto mt-4 max-w-sm space-y-2 text-left"
+                            >
+                                <div
+                                    v-for="acc in payment.bank_accounts"
+                                    :key="acc.cuenta"
+                                    class="rounded-xl border border-slate-200 p-3.5 text-sm"
+                                >
+                                    <div class="font-medium text-slate-700">
+                                        {{ acc.banco }}
+                                    </div>
+                                    <div class="text-slate-500">
+                                        {{ acc.titular }}
+                                    </div>
+                                    <div class="mt-1 font-mono text-slate-700">
+                                        {{ acc.cuenta }}
+                                    </div>
                                 </div>
                             </div>
-                            <p class="mt-3 text-xs text-slate-400">Vigente por {{ payment.valid_hours }} horas.</p>
-                            <a :href="payment.return_url" class="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
-                                Ver estado de tu reserva <Lucide icon="ArrowRight" class="h-4 w-4" />
+                            <p class="mt-3 text-xs text-slate-400">
+                                Vigente por {{ payment.valid_hours }} horas.
+                            </p>
+                            <a
+                                :href="payment.return_url"
+                                class="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                            >
+                                Ver estado de tu reserva
+                                <Lucide icon="ArrowRight" class="h-4 w-4" />
                             </a>
                         </template>
 
                         <template v-else-if="paymentError">
-                            <Lucide icon="CircleAlert" class="mx-auto h-10 w-10 text-warning" />
-                            <h2 class="mt-3 text-lg font-medium text-slate-800">Tu apartado quedó guardado</h2>
-                            <p class="mt-1.5 text-sm text-slate-500">{{ paymentError }}</p>
-                            <div class="mx-auto mt-4 max-w-xs rounded-xl bg-slate-50 p-4">
-                                <div class="text-2xl font-semibold tracking-wide text-slate-800">{{ hold.code }}</div>
-                                <div class="mt-1 text-base font-medium text-slate-800">{{ money(hold.total) }}</div>
+                            <Lucide
+                                icon="CircleAlert"
+                                class="mx-auto h-10 w-10 text-warning"
+                            />
+                            <h2 class="mt-3 text-lg font-medium text-slate-800">
+                                Tu apartado quedó guardado
+                            </h2>
+                            <p class="mt-1.5 text-sm text-slate-500">
+                                {{ paymentError }}
+                            </p>
+                            <div
+                                class="mx-auto mt-4 max-w-xs rounded-xl bg-slate-50 p-4"
+                            >
+                                <div
+                                    class="text-2xl font-semibold tracking-wide text-slate-800"
+                                >
+                                    {{ hold.code }}
+                                </div>
+                                <div
+                                    class="mt-1 text-base font-medium text-slate-800"
+                                >
+                                    {{ money(hold.total) }}
+                                </div>
                             </div>
                             <!-- Honestidad sobre el estado: sin pago, el apartado se
                                  libera solo — no queda "reservado" en silencio. -->
-                            <p v-if="holdCountdown" class="mt-3 text-xs text-warning">
-                                Sin el pago, el apartado se libera solo en {{ holdCountdown }}.
+                            <p
+                                v-if="holdCountdown"
+                                class="mt-3 text-xs text-warning"
+                            >
+                                Sin el pago, el apartado se libera solo en
+                                {{ holdCountdown }}.
                             </p>
                             <!-- El apartado sigue vivo: reintentar vuelve a consultar los
                                  métodos (por si el hotel corrigió algo) en vez de dejar
                                  al huésped sin salida. -->
                             <div class="mt-4 flex flex-col items-center gap-2">
-                                <Button variant="primary" class="shadow-md shadow-primary/20" @click="preparePayment">
-                                    <Lucide icon="RefreshCw" class="mr-2 h-4 w-4" /> Intentar el pago de nuevo
+                                <Button
+                                    variant="primary"
+                                    class="shadow-md shadow-primary/20"
+                                    @click="preparePayment"
+                                >
+                                    <Lucide
+                                        icon="RefreshCw"
+                                        class="mr-2 h-4 w-4"
+                                    />
+                                    Intentar el pago de nuevo
                                 </Button>
-                                <a v-if="property.phone" :href="`tel:${property.phone}`" class="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline">
-                                    <Lucide icon="Phone" class="h-4 w-4" /> Llamar al hotel
+                                <a
+                                    v-if="property.phone"
+                                    :href="`tel:${property.phone}`"
+                                    class="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                                >
+                                    <Lucide icon="Phone" class="h-4 w-4" />
+                                    Llamar al hotel
                                 </a>
                             </div>
                         </template>
 
                         <!-- method === 'gateway': la página ya está redirigiendo -->
                         <template v-else>
-                            <Lucide icon="RefreshCw" class="mx-auto h-8 w-8 animate-spin text-primary" />
-                            <p class="mt-3 text-sm text-slate-500">Te estamos llevando a la página de pago segura…</p>
+                            <Lucide
+                                icon="RefreshCw"
+                                class="mx-auto h-8 w-8 animate-spin text-primary"
+                            />
+                            <p class="mt-3 text-sm text-slate-500">
+                                Te estamos llevando a la página de pago segura…
+                            </p>
                         </template>
                     </template>
                 </div>
             </div>
 
             <!-- Accesos relacionados: legibles sobre el fondo oscuro -->
-            <div class="mt-5 flex flex-wrap items-center justify-center gap-2.5">
+            <div
+                class="mt-5 flex flex-wrap items-center justify-center gap-2.5"
+            >
                 <a
                     href="/reserva"
                     class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
                 >
-                    <Lucide icon="TicketCheck" class="h-4 w-4" /> ¿Ya tienes una reserva? Consulta su estado
+                    <Lucide icon="TicketCheck" class="h-4 w-4" /> ¿Ya tienes una
+                    reserva? Consulta su estado
                 </a>
                 <a
                     v-if="hasGroups"
                     href="/reservar/grupos"
                     class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
                 >
-                    <Lucide icon="Users" class="h-4 w-4" /> ¿Vienen en grupo? Aparta varias habitaciones
+                    <Lucide icon="Users" class="h-4 w-4" /> ¿Vienen en grupo?
+                    Aparta varias habitaciones
                 </a>
                 <a
                     v-if="hasExperiences"
                     href="/reservar/experiencias"
                     class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
                 >
-                    <Lucide icon="Compass" class="h-4 w-4" /> Conoce nuestras experiencias
+                    <Lucide icon="Compass" class="h-4 w-4" /> Conoce nuestras
+                    experiencias
                 </a>
             </div>
-            <p class="mt-3 text-center text-xs text-white/70">Impulsado por KuiraWebReserve · tus datos de pago nunca pasan por este sitio</p>
+            <p class="mt-3 text-center text-xs text-white/70">
+                Impulsado por KuiraWebReserve · tus datos de pago nunca pasan
+                por este sitio
+            </p>
         </div>
     </div>
 </template>

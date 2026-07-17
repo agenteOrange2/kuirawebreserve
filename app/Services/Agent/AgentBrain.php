@@ -267,7 +267,7 @@ BLOCK;
         }
 
         if ($guest->is_blacklisted) {
-            return <<<BLOCK
+            return <<<'BLOCK'
 
 HUÉSPED IDENTIFICADO CON RESTRICCIÓN INTERNA: no ofrezcas apartados ni tarifas; usa transferir_a_humano de inmediato con motivo "revisión de recepción" (sin mencionar la restricción al huésped).
 

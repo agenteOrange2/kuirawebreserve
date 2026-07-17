@@ -10,8 +10,8 @@ import { Button } from '@/components/ui/button';
 import { useTwoFactorAuth } from '@/composables/useTwoFactorAuth';
 import AppLayout from '@/layouts/AppLayout.vue';
 import SettingsLayout from '@/layouts/settings/Layout.vue';
-import { disable, enable } from '@/routes/two-factor';
 import { show } from '@/routes/admin/settings/two-factor';
+import { disable, enable } from '@/routes/two-factor';
 import type { BreadcrumbItem } from '@/types';
 
 type Props = {

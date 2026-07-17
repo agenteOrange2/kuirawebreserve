@@ -13,7 +13,13 @@ export function useEmbedResize() {
         if (window.self === window.top) return;
 
         const post = () => {
-            window.parent.postMessage({ type: 'kuira:height', height: document.documentElement.scrollHeight }, '*');
+            window.parent.postMessage(
+                {
+                    type: 'kuira:height',
+                    height: document.documentElement.scrollHeight,
+                },
+                '*',
+            );
         };
 
         observer = new ResizeObserver(post);

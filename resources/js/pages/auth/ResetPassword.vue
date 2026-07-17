@@ -83,7 +83,11 @@ const submit = () => {
                     class="mt-4 w-full"
                     :disabled="form.processing"
                 >
-                    {{ form.processing ? 'Restableciendo...' : 'Restablecer contraseña' }}
+                    {{
+                        form.processing
+                            ? 'Restableciendo...'
+                            : 'Restablecer contraseña'
+                    }}
                 </Button>
             </div>
         </form>

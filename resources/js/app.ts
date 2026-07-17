@@ -1,12 +1,12 @@
 import { createInertiaApp } from '@inertiajs/vue3';
+import { configureEcho } from '@laravel/echo-vue';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
+import { createPinia } from 'pinia';
 import type { DefineComponent } from 'vue';
 import { createApp, h } from 'vue';
-import { createPinia } from 'pinia';
+import { initializeTheme } from '@/composables/useAppearance';
 import { ZiggyVue } from '../../vendor/tightenco/ziggy';
 import '../css/app.css';
-import { initializeTheme } from '@/composables/useAppearance';
-import { configureEcho } from '@laravel/echo-vue';
 
 // El websocket entra por el proxy /app de nginx en el mismo dominio de la
 // página, así el semáforo en vivo funciona igual en el panel central y en

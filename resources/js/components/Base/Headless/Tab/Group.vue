@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import { TabGroup as HeadlessTabGroup } from "@headlessui/vue";
+import { TabGroup as HeadlessTabGroup } from '@headlessui/vue';
 
-export interface GroupProps
-  extends /* @vue-ignore */ ExtractProps<typeof HeadlessTabGroup> {}
+export interface GroupProps extends /* @vue-ignore */ ExtractProps<
+    typeof HeadlessTabGroup
+> {}
 
 defineProps<GroupProps>();
 </script>
 
 <template>
-  <HeadlessTabGroup as="div">
-    <slot></slot>
-  </HeadlessTabGroup>
+    <HeadlessTabGroup as="div">
+        <slot></slot>
+    </HeadlessTabGroup>
 </template>

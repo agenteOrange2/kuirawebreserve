@@ -5,7 +5,7 @@ html {
         line-height: 1.25rem;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
-        font-family: "Public Sans", sans-serif;
+        font-family: 'Public Sans', sans-serif;
         color: rgb(71 85 105);
     }
     &.dark body {

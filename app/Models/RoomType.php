@@ -14,6 +14,7 @@ class RoomType extends Model implements HasMedia
 {
     /** @use HasFactory<\Database\Factories\RoomTypeFactory> */
     use HasFactory;
+
     use InteractsWithMedia;
 
     protected $fillable = [

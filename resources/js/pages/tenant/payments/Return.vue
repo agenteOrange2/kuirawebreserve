@@ -33,43 +33,72 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-    <div class="flex min-h-screen items-center justify-center bg-slate-100 px-4 dark:bg-darkmode-800">
+    <div
+        class="flex min-h-screen items-center justify-center bg-slate-100 px-4 dark:bg-darkmode-800"
+    >
         <div class="box box--stacked w-full max-w-md p-8 text-center">
             <template v-if="payment.status === 'paid'">
-                <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-success/10 bg-success/10">
+                <div
+                    class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-success/10 bg-success/10"
+                >
                     <Lucide icon="CircleCheck" class="h-7 w-7 text-success" />
                 </div>
                 <h1 class="mt-4 text-lg font-medium">Pago recibido</h1>
                 <p class="mt-2 text-sm text-slate-500">
-                    Recibimos tu {{ payment.concept.toLowerCase() }} de {{ payment.amount_label }}.
+                    Recibimos tu {{ payment.concept.toLowerCase() }} de
+                    {{ payment.amount_label }}.
                     <template v-if="payment.reservation_confirmed">
-                        Tu reserva {{ payment.reservation_code }} está confirmada. Te esperamos en {{ hotel }}.
+                        Tu reserva {{ payment.reservation_code }} está
+                        confirmada. Te esperamos en {{ hotel }}.
                     </template>
-                    <template v-else> Quedó registrado en tu reserva {{ payment.reservation_code }}. </template>
+                    <template v-else>
+                        Quedó registrado en tu reserva
+                        {{ payment.reservation_code }}.
+                    </template>
                 </p>
             </template>
 
             <template v-else-if="payment.status === 'pending'">
-                <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-primary/10 bg-primary/10">
-                    <Lucide icon="RefreshCw" class="h-7 w-7 animate-spin text-primary" />
+                <div
+                    class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                >
+                    <Lucide
+                        icon="RefreshCw"
+                        class="h-7 w-7 animate-spin text-primary"
+                    />
                 </div>
                 <h1 class="mt-4 text-lg font-medium">Confirmando tu pago…</h1>
                 <p class="mt-2 text-sm text-slate-500">
-                    En cuanto el banco lo confirme, tu reserva {{ payment.reservation_code }} quedará lista y te avisaremos por el chat.
-                    Esta página se actualiza sola; puedes cerrarla sin problema.
+                    En cuanto el banco lo confirme, tu reserva
+                    {{ payment.reservation_code }} quedará lista y te avisaremos
+                    por el chat. Esta página se actualiza sola; puedes cerrarla
+                    sin problema.
                 </p>
-                <Button v-if="payment.checkout_url" as="a" :href="payment.checkout_url" variant="primary" class="mt-5 rounded-[0.5rem]">
-                    <Lucide icon="CreditCard" class="mr-2 h-4 w-4" /> Volver al pago
+                <Button
+                    v-if="payment.checkout_url"
+                    as="a"
+                    :href="payment.checkout_url"
+                    variant="primary"
+                    class="mt-5 rounded-[0.5rem]"
+                >
+                    <Lucide icon="CreditCard" class="mr-2 h-4 w-4" /> Volver al
+                    pago
                 </Button>
             </template>
 
             <template v-else>
-                <div class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-warning/10 bg-warning/10">
+                <div
+                    class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
+                >
                     <Lucide icon="Clock" class="h-7 w-7 text-warning" />
                 </div>
-                <h1 class="mt-4 text-lg font-medium">Este cobro ya no está disponible</h1>
+                <h1 class="mt-4 text-lg font-medium">
+                    Este cobro ya no está disponible
+                </h1>
                 <p class="mt-2 text-sm text-slate-500">
-                    La solicitud de pago está {{ payment.status_label.toLowerCase() }}. Escríbenos por el chat de {{ hotel }} y te generamos una nueva al momento.
+                    La solicitud de pago está
+                    {{ payment.status_label.toLowerCase() }}. Escríbenos por el
+                    chat de {{ hotel }} y te generamos una nueva al momento.
                 </p>
             </template>
 

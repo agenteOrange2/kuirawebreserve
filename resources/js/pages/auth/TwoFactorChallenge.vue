@@ -50,7 +50,9 @@ const submit = () => {
     } else {
         form.transform(() => ({ code: code.value }));
         form.post(route('two-factor.login'), {
-            onError: () => { code.value = ''; },
+            onError: () => {
+                code.value = '';
+            },
         });
     }
 };
@@ -88,10 +90,13 @@ const submit = () => {
                         </div>
                         <InputError :message="form.errors.code" />
                     </div>
-                    <Button type="submit" class="w-full" :disabled="form.processing"
+                    <Button
+                        type="submit"
+                        class="w-full"
+                        :disabled="form.processing"
                         >Continuar</Button
                     >
-                    <div class="text-center text-sm text-muted-foreground">
+                    <div class="text-muted-foreground text-center text-sm">
                         <span>o puedes </span>
                         <button
                             type="button"
@@ -114,11 +119,14 @@ const submit = () => {
                         required
                     />
                     <InputError :message="form.errors.recovery_code" />
-                    <Button type="submit" class="w-full" :disabled="form.processing"
+                    <Button
+                        type="submit"
+                        class="w-full"
+                        :disabled="form.processing"
                         >Continuar</Button
                     >
 
-                    <div class="text-center text-sm text-muted-foreground">
+                    <div class="text-muted-foreground text-center text-sm">
                         <span>o puedes </span>
                         <button
                             type="button"

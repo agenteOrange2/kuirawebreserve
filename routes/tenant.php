@@ -18,11 +18,10 @@ use App\Http\Controllers\Tenant\GuestController;
 use App\Http\Controllers\Tenant\GuestsPageController;
 use App\Http\Controllers\Tenant\HotelSettingsPageController;
 use App\Http\Controllers\Tenant\InboxController;
-use App\Http\Controllers\Tenant\PaymentRequestController;
-use App\Http\Controllers\Tenant\WebchatController;
 use App\Http\Controllers\Tenant\IngredientController;
 use App\Http\Controllers\Tenant\InventoryPageController;
 use App\Http\Controllers\Tenant\OrderController;
+use App\Http\Controllers\Tenant\PaymentRequestController;
 use App\Http\Controllers\Tenant\PosPageController;
 use App\Http\Controllers\Tenant\ProductController;
 use App\Http\Controllers\Tenant\PropertyController;
@@ -34,15 +33,16 @@ use App\Http\Controllers\Tenant\ReservationsPageController;
 use App\Http\Controllers\Tenant\RoomController;
 use App\Http\Controllers\Tenant\RoomHistoryController;
 use App\Http\Controllers\Tenant\RoomShowController;
-use App\Http\Controllers\Tenant\ShiftController;
-use App\Http\Controllers\Tenant\ShiftAssignmentController;
-use App\Http\Controllers\Tenant\ShiftsPageController;
-use App\Http\Controllers\Tenant\ShiftTypeController;
-use App\Http\Controllers\Tenant\UserController as TenantUserController;
-use App\Http\Controllers\Tenant\UsersPageController;
 use App\Http\Controllers\Tenant\RoomsPageController;
 use App\Http\Controllers\Tenant\RoomTypeController;
+use App\Http\Controllers\Tenant\ShiftAssignmentController;
+use App\Http\Controllers\Tenant\ShiftController;
+use App\Http\Controllers\Tenant\ShiftsPageController;
+use App\Http\Controllers\Tenant\ShiftTypeController;
 use App\Http\Controllers\Tenant\StayController;
+use App\Http\Controllers\Tenant\UserController as TenantUserController;
+use App\Http\Controllers\Tenant\UsersPageController;
+use App\Http\Controllers\Tenant\WebchatController;
 use App\Http\Controllers\Tenant\ZoneController;
 use Illuminate\Support\Facades\Route;
 use Stancl\Tenancy\Middleware\InitializeTenancyByDomain;
@@ -454,14 +454,13 @@ Route::middleware([
                 Route::post('payment-gateways/{linkId}/test', [\App\Http\Controllers\Tenant\PaymentGatewayController::class, 'test'])->name('payment-gateways.test');
             });
 
-        // Aprendizajes del asistente: el staff que atiende la bandeja
-        // captura correcciones y el bot las recibe como reglas del prompt.
-        Route::middleware('can:reservations.manage')->group(function () {
-            Route::post('agent-guidelines', [\App\Http\Controllers\Tenant\AgentGuidelineController::class, 'store'])->name('agent-guidelines.store');
-            Route::patch('agent-guidelines/{guideline}', [\App\Http\Controllers\Tenant\AgentGuidelineController::class, 'update'])->name('agent-guidelines.update');
-            Route::delete('agent-guidelines/{guideline}', [\App\Http\Controllers\Tenant\AgentGuidelineController::class, 'destroy'])->name('agent-guidelines.destroy');
-        });
-
+            // Aprendizajes del asistente: el staff que atiende la bandeja
+            // captura correcciones y el bot las recibe como reglas del prompt.
+            Route::middleware('can:reservations.manage')->group(function () {
+                Route::post('agent-guidelines', [\App\Http\Controllers\Tenant\AgentGuidelineController::class, 'store'])->name('agent-guidelines.store');
+                Route::patch('agent-guidelines/{guideline}', [\App\Http\Controllers\Tenant\AgentGuidelineController::class, 'update'])->name('agent-guidelines.update');
+                Route::delete('agent-guidelines/{guideline}', [\App\Http\Controllers\Tenant\AgentGuidelineController::class, 'destroy'])->name('agent-guidelines.destroy');
+            });
 
             // WhatsApp vía Evolution API (instancias self-hosted del hotel).
             Route::post('evolution-channels', [EvolutionChannelController::class, 'store'])->name('evolution-channels.store');

@@ -44,11 +44,12 @@ const submit = () => {
                 </div>
 
                 <div class="flex items-center">
-                    <Button
-                        class="w-full"
-                        :disabled="form.processing"
-                    >
-                        {{ form.processing ? 'Confirmando...' : 'Confirmar contraseña' }}
+                    <Button class="w-full" :disabled="form.processing">
+                        {{
+                            form.processing
+                                ? 'Confirmando...'
+                                : 'Confirmar contraseña'
+                        }}
                     </Button>
                 </div>
             </div>

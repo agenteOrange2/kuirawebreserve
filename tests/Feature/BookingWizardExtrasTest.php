@@ -5,15 +5,13 @@ use App\Actions\Reservations\TransitionReservation;
 use App\Http\Controllers\Tenant\BookingController;
 use App\Http\Controllers\Tenant\BookingExtrasController;
 use App\Models\Central\PaymentGatewayLink;
+use App\Models\Central\TenantModule;
 use App\Models\Order;
 use App\Models\Product;
 use App\Models\Property;
 use App\Models\RatePlan;
-use App\Models\Reservation;
 use App\Models\Room;
 use App\Models\RoomType;
-use App\Models\Central\TenantModule;
-use App\Models\Stay;
 use App\Models\Tenant;
 use Illuminate\Http\Request;
 

@@ -43,7 +43,10 @@ watch([q, blacklisted], () => {
     timer = setTimeout(() => {
         router.get(
             route('tenant.guests'),
-            { q: q.value || undefined, blacklisted: blacklisted.value || undefined },
+            {
+                q: q.value || undefined,
+                blacklisted: blacklisted.value || undefined,
+            },
             { preserveState: true, replace: true, only: ['guests', 'filters'] },
         );
     }, 350);
@@ -75,14 +78,20 @@ async function submitDelete() {
         deleting.value = null;
         router.reload({ only: ['guests'] });
     } catch (error: any) {
-        deleteError.value = error.response?.data?.message ?? 'No se pudo eliminar el huésped.';
+        deleteError.value =
+            error.response?.data?.message ?? 'No se pudo eliminar el huésped.';
     } finally {
         deleteBusy.value = false;
     }
 }
 
 const initials = (name: string) =>
-    name.trim().split(/\s+/).slice(0, 2).map((p) => p.charAt(0).toUpperCase()).join('') || '?';
+    name
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((p) => p.charAt(0).toUpperCase())
+        .join('') || '?';
 
 const cellClass =
     'box shadow-[5px_3px_5px_#00000005] first:border-l last:border-r first:rounded-l-[0.6rem] last:rounded-r-[0.6rem] rounded-l-none rounded-r-none border-x-0 dark:bg-darkmode-600';
@@ -94,102 +103,260 @@ const cellClass =
             <div class="flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h1 class="text-lg font-medium">Huéspedes</h1>
-                    <p class="text-sm text-slate-500">{{ guests.total }} registrado(s) en el directorio</p>
+                    <p class="text-sm text-slate-500">
+                        {{ guests.total }} registrado(s) en el directorio
+                    </p>
                 </div>
-                <Button v-if="canManage" variant="primary" class="rounded-[0.5rem] shadow-md shadow-primary/20" @click="showCreate = true">
-                    <Lucide icon="UserPlus" class="mr-2 h-4 w-4 stroke-[1.3]" /> Nuevo huésped
+                <Button
+                    v-if="canManage"
+                    variant="primary"
+                    class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                    @click="showCreate = true"
+                >
+                    <Lucide icon="UserPlus" class="mr-2 h-4 w-4 stroke-[1.3]" />
+                    Nuevo huésped
                 </Button>
             </div>
 
             <!-- Toolbar -->
-            <div class="mt-5 box box--stacked flex flex-wrap items-center gap-3 p-3">
+            <div
+                class="box box--stacked mt-5 flex flex-wrap items-center gap-3 p-3"
+            >
                 <div class="relative flex-1 sm:max-w-xs">
-                    <Lucide icon="Search" class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400" />
-                    <FormInput v-model="q" type="text" placeholder="Buscar por nombre, teléfono o email…" class="pl-9" />
+                    <Lucide
+                        icon="Search"
+                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                    />
+                    <FormInput
+                        v-model="q"
+                        type="text"
+                        placeholder="Buscar por nombre, teléfono o email…"
+                        class="pl-9"
+                    />
                 </div>
                 <label
                     class="flex cursor-pointer items-center gap-2 rounded-[0.5rem] border px-3 py-2 text-sm transition"
-                    :class="blacklisted ? 'border-danger/30 bg-danger/5 text-danger' : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'"
+                    :class="
+                        blacklisted
+                            ? 'border-danger/30 bg-danger/5 text-danger'
+                            : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
+                    "
                 >
-                    <FormCheck.Input id="f-blacklist" v-model="blacklisted" type="checkbox" class="!mt-0" />
-                    <Lucide icon="ShieldAlert" class="h-4 w-4" /> Solo lista negra
+                    <FormCheck.Input
+                        id="f-blacklist"
+                        v-model="blacklisted"
+                        type="checkbox"
+                        class="!mt-0"
+                    />
+                    <Lucide icon="ShieldAlert" class="h-4 w-4" /> Solo lista
+                    negra
                 </label>
             </div>
 
             <div class="mt-5">
                 <div class="overflow-auto lg:overflow-visible">
-                    <Table v-if="guests.data.length" class="border-separate border-spacing-y-[8px]">
+                    <Table
+                        v-if="guests.data.length"
+                        class="border-separate border-spacing-y-[8px]"
+                    >
                         <Table.Thead>
                             <Table.Tr>
-                                <Table.Th class="border-b-0 !bg-transparent">Huésped</Table.Th>
-                                <Table.Th class="border-b-0 !bg-transparent">Contacto</Table.Th>
-                                <Table.Th class="border-b-0 !bg-transparent">Visitas</Table.Th>
-                                <Table.Th class="border-b-0 !bg-transparent">Alta</Table.Th>
-                                <Table.Th class="border-b-0 !bg-transparent text-right">Acciones</Table.Th>
+                                <Table.Th class="border-b-0 !bg-transparent"
+                                    >Huésped</Table.Th
+                                >
+                                <Table.Th class="border-b-0 !bg-transparent"
+                                    >Contacto</Table.Th
+                                >
+                                <Table.Th class="border-b-0 !bg-transparent"
+                                    >Visitas</Table.Th
+                                >
+                                <Table.Th class="border-b-0 !bg-transparent"
+                                    >Alta</Table.Th
+                                >
+                                <Table.Th
+                                    class="border-b-0 !bg-transparent text-right"
+                                    >Acciones</Table.Th
+                                >
                             </Table.Tr>
                         </Table.Thead>
                         <Table.Tbody>
                             <Table.Tr v-for="g in guests.data" :key="g.id">
                                 <Table.Td :class="cellClass">
                                     <div class="flex items-center gap-3">
-                                        <div class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white">
+                                        <div
+                                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
+                                        >
                                             {{ initials(g.full_name) }}
                                         </div>
                                         <div class="min-w-0">
-                                            <Link :href="route('tenant.guests.show', g.id)" class="font-medium text-primary hover:underline">{{ g.full_name }}</Link>
-                                            <span v-if="g.is_blacklisted" class="ml-1.5 rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger">Lista negra</span>
+                                            <Link
+                                                :href="
+                                                    route(
+                                                        'tenant.guests.show',
+                                                        g.id,
+                                                    )
+                                                "
+                                                class="font-medium text-primary hover:underline"
+                                                >{{ g.full_name }}</Link
+                                            >
+                                            <span
+                                                v-if="g.is_blacklisted"
+                                                class="ml-1.5 rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger"
+                                                >Lista negra</span
+                                            >
                                         </div>
                                     </div>
                                 </Table.Td>
-                                <Table.Td :class="cellClass" class="text-sm text-slate-500">
-                                    <div v-if="g.phone" class="flex items-center gap-1.5 whitespace-nowrap"><Lucide icon="Phone" class="h-3.5 w-3.5" /> {{ g.phone }}</div>
-                                    <div v-if="g.email" class="flex items-center gap-1.5 whitespace-nowrap"><Lucide icon="Mail" class="h-3.5 w-3.5" /> {{ g.email }}</div>
-                                    <span v-if="!g.phone && !g.email" class="text-slate-400">—</span>
+                                <Table.Td
+                                    :class="cellClass"
+                                    class="text-sm text-slate-500"
+                                >
+                                    <div
+                                        v-if="g.phone"
+                                        class="flex items-center gap-1.5 whitespace-nowrap"
+                                    >
+                                        <Lucide
+                                            icon="Phone"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        {{ g.phone }}
+                                    </div>
+                                    <div
+                                        v-if="g.email"
+                                        class="flex items-center gap-1.5 whitespace-nowrap"
+                                    >
+                                        <Lucide
+                                            icon="Mail"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        {{ g.email }}
+                                    </div>
+                                    <span
+                                        v-if="!g.phone && !g.email"
+                                        class="text-slate-400"
+                                        >—</span
+                                    >
                                 </Table.Td>
                                 <Table.Td :class="cellClass">
-                                    <span class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium" :class="g.visits > 0 ? 'bg-success/10 text-success' : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'">
-                                        <Lucide icon="BedDouble" class="h-3.5 w-3.5" /> {{ g.visits }}
+                                    <span
+                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+                                        :class="
+                                            g.visits > 0
+                                                ? 'bg-success/10 text-success'
+                                                : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                        "
+                                    >
+                                        <Lucide
+                                            icon="BedDouble"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        {{ g.visits }}
                                     </span>
                                 </Table.Td>
-                                <Table.Td :class="cellClass" class="whitespace-nowrap text-sm text-slate-500">{{ g.created_at }}</Table.Td>
+                                <Table.Td
+                                    :class="cellClass"
+                                    class="text-sm whitespace-nowrap text-slate-500"
+                                    >{{ g.created_at }}</Table.Td
+                                >
                                 <Table.Td :class="cellClass" class="text-right">
-                                    <div class="flex items-center justify-end gap-2">
-                                        <Link :href="route('tenant.guests.show', g.id)" title="Ver perfil" class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400">
-                                            <Lucide icon="Eye" class="h-4 w-4" />
+                                    <div
+                                        class="flex items-center justify-end gap-2"
+                                    >
+                                        <Link
+                                            :href="
+                                                route(
+                                                    'tenant.guests.show',
+                                                    g.id,
+                                                )
+                                            "
+                                            title="Ver perfil"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
+                                        >
+                                            <Lucide
+                                                icon="Eye"
+                                                class="h-4 w-4"
+                                            />
                                         </Link>
-                                        <Link v-if="canManage" :href="`${route('tenant.guests.show', g.id)}?edit=1`" title="Editar" class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary">
-                                            <Lucide icon="Pencil" class="h-4 w-4" />
+                                        <Link
+                                            v-if="canManage"
+                                            :href="`${route('tenant.guests.show', g.id)}?edit=1`"
+                                            title="Editar"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                        >
+                                            <Lucide
+                                                icon="Pencil"
+                                                class="h-4 w-4"
+                                            />
                                         </Link>
-                                        <button v-if="canManage" type="button" title="Eliminar" class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger" @click="askDelete(g)">
-                                            <Lucide icon="Trash2" class="h-4 w-4" />
+                                        <button
+                                            v-if="canManage"
+                                            type="button"
+                                            title="Eliminar"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                            @click="askDelete(g)"
+                                        >
+                                            <Lucide
+                                                icon="Trash2"
+                                                class="h-4 w-4"
+                                            />
                                         </button>
                                     </div>
                                 </Table.Td>
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
-                    <div v-else class="box box--stacked flex flex-col items-center gap-3 py-12 text-center">
-                        <div class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"><Lucide icon="Users" class="h-6 w-6" /></div>
+                    <div
+                        v-else
+                        class="box box--stacked flex flex-col items-center gap-3 py-12 text-center"
+                    >
+                        <div
+                            class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="Users" class="h-6 w-6" />
+                        </div>
                         <p class="text-sm text-slate-500">
-                            {{ filters.q ? 'Sin resultados para tu búsqueda.' : 'Aún no hay huéspedes; se crean solos al reservar, o da de alta uno.' }}
+                            {{
+                                filters.q
+                                    ? 'Sin resultados para tu búsqueda.'
+                                    : 'Aún no hay huéspedes; se crean solos al reservar, o da de alta uno.'
+                            }}
                         </p>
-                        <Button v-if="canManage && !filters.q" variant="outline-primary" size="sm" class="rounded-[0.5rem]" @click="showCreate = true">
-                            <Lucide icon="UserPlus" class="mr-1.5 h-4 w-4" /> Nuevo huésped
+                        <Button
+                            v-if="canManage && !filters.q"
+                            variant="outline-primary"
+                            size="sm"
+                            class="rounded-[0.5rem]"
+                            @click="showCreate = true"
+                        >
+                            <Lucide icon="UserPlus" class="mr-1.5 h-4 w-4" />
+                            Nuevo huésped
                         </Button>
                     </div>
 
                     <!-- Paginación -->
-                    <div v-if="guests.links.length > 3" class="mt-4 flex flex-wrap justify-center gap-1">
+                    <div
+                        v-if="guests.links.length > 3"
+                        class="mt-4 flex flex-wrap justify-center gap-1"
+                    >
                         <template v-for="(link, i) in guests.links" :key="i">
                             <Link
                                 v-if="link.url"
                                 :href="link.url"
                                 preserve-state
                                 class="rounded-md px-3 py-1.5 text-sm"
-                                :class="link.active ? 'bg-primary text-white' : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'"
+                                :class="
+                                    link.active
+                                        ? 'bg-primary text-white'
+                                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                                "
+                            >
+                                <span v-html="link.label" />
+                            </Link>
+                            <span
+                                v-else
+                                class="px-3 py-1.5 text-sm text-slate-400"
                                 v-html="link.label"
                             />
-                            <span v-else class="px-3 py-1.5 text-sm text-slate-400" v-html="link.label" />
                         </template>
                     </div>
                 </div>
@@ -210,22 +377,47 @@ const cellClass =
             <Dialog.Panel>
                 <div v-if="deleting" class="p-6">
                     <div class="flex items-start gap-3.5">
-                        <div class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger">
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                        >
                             <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">¿Eliminar a {{ deleting.full_name }}?</h2>
-                            <p class="mt-0.5 text-sm text-slate-500">Se borran su ficha, fotos de INE y vehículo. Esta acción no se puede deshacer.</p>
+                            <h2 class="text-base font-medium">
+                                ¿Eliminar a {{ deleting.full_name }}?
+                            </h2>
+                            <p class="mt-0.5 text-sm text-slate-500">
+                                Se borran su ficha, fotos de INE y vehículo.
+                                Esta acción no se puede deshacer.
+                            </p>
                         </div>
                     </div>
-                    <div class="mt-4 flex items-center gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700">
-                        <Lucide icon="Info" class="h-4 w-4 shrink-0" /> Si el huésped tiene reservas o estancias, no podrá eliminarse (se conserva su historial).
+                    <div
+                        class="mt-4 flex items-center gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
+                    >
+                        <Lucide icon="Info" class="h-4 w-4 shrink-0" /> Si el
+                        huésped tiene reservas o estancias, no podrá eliminarse
+                        (se conserva su historial).
                     </div>
-                    <p v-if="deleteError" class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger">{{ deleteError }}</p>
+                    <p
+                        v-if="deleteError"
+                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                    >
+                        {{ deleteError }}
+                    </p>
                     <div class="mt-6 flex justify-end gap-2">
-                        <Button variant="outline-secondary" @click="deleting = null">Cancelar</Button>
-                        <Button variant="danger" :disabled="deleteBusy" @click="submitDelete">
-                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" /> {{ deleteBusy ? 'Eliminando…' : 'Sí, eliminar' }}
+                        <Button
+                            variant="outline-secondary"
+                            @click="deleting = null"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            :disabled="deleteBusy"
+                            @click="submitDelete"
+                        >
+                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            {{ deleteBusy ? 'Eliminando…' : 'Sí, eliminar' }}
                         </Button>
                     </div>
                 </div>

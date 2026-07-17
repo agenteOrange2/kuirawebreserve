@@ -7,17 +7,12 @@ import type { Node, NodeDragEvent } from '@vue-flow/core';
 import { VueFlow } from '@vue-flow/core';
 import { MiniMap } from '@vue-flow/minimap';
 import axios from 'axios';
-import {
-    computed,
-    onBeforeUnmount,
-    onMounted,
-    ref,
-    type Ref,
-    watch,
-} from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import type { Ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { Slideover } from '@/components/Base/Headless';
-import Lucide, { type Icon } from '@/components/Base/Lucide';
+import Lucide from '@/components/Base/Lucide';
+import type { Icon } from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
@@ -715,7 +710,10 @@ useEcho<RoomStatusChangedPayload>(
                     "
                     @click="editMode = !editMode"
                 >
-                    <Lucide :icon="editMode ? 'LockOpen' : 'Lock'" class="mr-2 h-4 w-4" />
+                    <Lucide
+                        :icon="editMode ? 'LockOpen' : 'Lock'"
+                        class="mr-2 h-4 w-4"
+                    />
                     {{ editMode ? 'Terminar edición' : 'Editar plano' }}
                 </Button>
             </div>
@@ -726,8 +724,9 @@ useEcho<RoomStatusChangedPayload>(
             class="mt-3 flex items-center gap-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-slate-600 dark:text-slate-300"
         >
             <Lucide icon="Move" class="h-4 w-4 shrink-0 text-warning" />
-            Modo edición: arrastra los cuartos para acomodarlos; la posición se guarda sola. El refresco automático queda pausado
-            hasta que presiones "Terminar edición".
+            Modo edición: arrastra los cuartos para acomodarlos; la posición se
+            guarda sola. El refresco automático queda pausado hasta que
+            presiones "Terminar edición".
         </div>
 
         <div
@@ -870,7 +869,9 @@ useEcho<RoomStatusChangedPayload>(
                                         class="text-slate-300 dark:text-slate-600"
                                         >·</span
                                     >
-                                    <span class="inline-flex items-center gap-1.5">
+                                    <span
+                                        class="inline-flex items-center gap-1.5"
+                                    >
                                         <span
                                             v-if="selectedRoom.zone_color"
                                             class="h-2 w-2 shrink-0 rounded-full"
@@ -1190,8 +1191,7 @@ useEcho<RoomStatusChangedPayload>(
                                         icon="Car"
                                         class="h-4 w-4 shrink-0 text-slate-400"
                                     />
-                                    {{
-                                        selectedRoom.active_stay.vehicle_plate
+                                    {{ selectedRoom.active_stay.vehicle_plate
                                     }}<template
                                         v-if="
                                             selectedRoom.active_stay

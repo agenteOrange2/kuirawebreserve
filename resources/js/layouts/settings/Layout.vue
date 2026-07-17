@@ -6,9 +6,9 @@ import { Separator } from '@/components/ui/separator';
 import { useCurrentUrl } from '@/composables/useCurrentUrl';
 import { toUrl } from '@/lib/utils';
 import { edit as editAppearance } from '@/routes/admin/settings/appearance';
+import { edit as editPassword } from '@/routes/admin/settings/password';
 import { edit as editProfile } from '@/routes/admin/settings/profile';
 import { show } from '@/routes/admin/settings/two-factor';
-import { edit as editPassword } from '@/routes/admin/settings/password';
 import type { NavItem } from '@/types';
 
 const sidebarNavItems: NavItem[] = [
