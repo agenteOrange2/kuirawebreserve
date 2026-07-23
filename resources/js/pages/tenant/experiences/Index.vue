@@ -4,6 +4,7 @@ import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
+    FormCheck,
     FormHelp,
     FormInput,
     FormSelect,
@@ -771,6 +772,60 @@ const bookingStatusClass: Record<string, string> = {
     cancelled: 'bg-danger/10 text-danger',
     completed: 'bg-slate-100 text-slate-500 dark:bg-darkmode-400',
 };
+
+// ── Selección múltiple para depurar el historial (canceladas/completadas) ──
+const selectedIds = ref<number[]>([]);
+const bulkDeleteOpen = ref(false);
+const bulkDeleting = ref(false);
+
+// Solo las muertas se pueden borrar; las vivas se cancelan primero.
+const deletableBookings = computed(() =>
+    bookings.value.filter(
+        (b) => b.status === 'cancelled' || b.status === 'completed',
+    ),
+);
+const allSelected = computed(
+    () =>
+        deletableBookings.value.length > 0 &&
+        selectedIds.value.length === deletableBookings.value.length,
+);
+const selectedRows = computed(() =>
+    bookings.value.filter((b) => selectedIds.value.includes(b.id)),
+);
+
+function toggleRow(id: number) {
+    selectedIds.value = selectedIds.value.includes(id)
+        ? selectedIds.value.filter((x) => x !== id)
+        : [...selectedIds.value, id];
+}
+function toggleAll() {
+    selectedIds.value = allSelected.value
+        ? []
+        : deletableBookings.value.map((b) => b.id);
+}
+
+async function bulkDelete() {
+    bulkDeleting.value = true;
+    try {
+        const { data } = await axios.delete('/api/experience-bookings', {
+            data: { ids: selectedIds.value },
+        });
+        toast.success(
+            'Historial depurado',
+            `Se eliminaron ${data.deleted} reserva(s) de experiencia.`,
+        );
+        selectedIds.value = [];
+        bulkDeleteOpen.value = false;
+        reload();
+    } catch (e: any) {
+        toast.error(
+            'No se pudo eliminar',
+            e.response?.data?.message ?? 'Ocurrió un error inesperado.',
+        );
+    } finally {
+        bulkDeleting.value = false;
+    }
+}
 </script>
 
 <template>
@@ -995,15 +1050,40 @@ const bookingStatusClass: Record<string, string> = {
                             huésped pague o llegue.
                         </p>
                     </div>
-                    <Button
-                        v-if="experiences.length"
-                        variant="primary"
-                        class="rounded-[0.5rem]"
-                        @click="openBookingForm"
-                    >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Registrar
-                        reserva
-                    </Button>
+                    <div class="flex items-center gap-3">
+                        <template v-if="canManage && selectedIds.length">
+                            <span class="text-xs text-slate-500"
+                                >{{ selectedIds.length }} seleccionada(s)</span
+                            >
+                            <button
+                                type="button"
+                                class="text-xs font-medium text-primary hover:underline"
+                                @click="selectedIds = []"
+                            >
+                                Quitar selección
+                            </button>
+                            <Button
+                                variant="danger"
+                                class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                                @click="bulkDeleteOpen = true"
+                            >
+                                <Lucide
+                                    icon="Trash2"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Eliminar seleccionadas
+                            </Button>
+                        </template>
+                        <Button
+                            v-if="experiences.length"
+                            variant="primary"
+                            class="rounded-[0.5rem]"
+                            @click="openBookingForm"
+                        >
+                            <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Registrar
+                            reserva
+                        </Button>
+                    </div>
                 </div>
                 <div
                     v-if="bookings.length"
@@ -1012,6 +1092,18 @@ const bookingStatusClass: Record<string, string> = {
                     <Table>
                         <Table.Thead>
                             <Table.Tr>
+                                <Table.Th
+                                    v-if="canManage"
+                                    class="w-10"
+                                >
+                                    <FormCheck.Input
+                                        type="checkbox"
+                                        :checked="allSelected"
+                                        title="Seleccionar canceladas/completadas"
+                                        :disabled="!deletableBookings.length"
+                                        @change="toggleAll"
+                                    />
+                                </Table.Th>
                                 <Table.Th class="whitespace-nowrap"
                                     >Folio</Table.Th
                                 >
@@ -1040,6 +1132,17 @@ const bookingStatusClass: Record<string, string> = {
                                 v-for="booking in bookings"
                                 :key="booking.id"
                             >
+                                <Table.Td v-if="canManage" class="w-10">
+                                    <FormCheck.Input
+                                        v-if="
+                                            booking.status === 'cancelled' ||
+                                            booking.status === 'completed'
+                                        "
+                                        type="checkbox"
+                                        :checked="selectedIds.includes(booking.id)"
+                                        @change="toggleRow(booking.id)"
+                                    />
+                                </Table.Td>
                                 <Table.Td class="font-medium">
                                     {{ booking.code }}
                                     <div
@@ -1079,8 +1182,17 @@ const bookingStatusClass: Record<string, string> = {
                                     <div class="font-medium">
                                         {{ money(booking.total) }}
                                     </div>
+                                    <!-- Plus de una reserva/grupo: su dinero
+                                         va en el cobro del padre, no se cobra
+                                         ni se muestra estado propio aquí. -->
                                     <span
-                                        v-if="booking.paid"
+                                        v-if="booking.linked_to"
+                                        class="mt-0.5 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-darkmode-400"
+                                    >
+                                        Incluida en {{ booking.linked_to }}
+                                    </span>
+                                    <span
+                                        v-else-if="booking.paid"
                                         class="mt-0.5 inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[10px] font-medium text-success"
                                     >
                                         <Lucide
@@ -1128,6 +1240,7 @@ const bookingStatusClass: Record<string, string> = {
                                         <Button
                                             v-if="
                                                 !booking.paid &&
+                                                !booking.linked_to &&
                                                 (booking.status === 'pending' ||
                                                     booking.status ===
                                                         'confirmed')
@@ -2310,6 +2423,58 @@ const bookingStatusClass: Record<string, string> = {
                         <Button variant="danger" @click="destroy"
                             >Sí, eliminar</Button
                         >
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Confirmar borrado masivo del historial -->
+        <Dialog :open="bulkDeleteOpen" @close="bulkDeleteOpen = false">
+            <Dialog.Panel>
+                <div class="p-5">
+                    <div class="mb-3 flex items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
+                        >
+                            <Lucide icon="Trash2" class="h-5 w-5 text-danger" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                Eliminar {{ selectedRows.length }} reserva(s)
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Se borran del historial definitivamente; el
+                                rastro de sus pagos se conserva aparte.
+                            </p>
+                        </div>
+                    </div>
+                    <div
+                        class="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-dashed border-slate-300/70 p-2 text-sm dark:border-darkmode-400"
+                    >
+                        <div
+                            v-for="row in selectedRows"
+                            :key="row.id"
+                            class="flex items-center justify-between gap-2 px-1"
+                        >
+                            <span class="font-medium">{{ row.code }}</span>
+                            <span class="text-xs text-slate-500">{{
+                                row.status_label
+                            }}</span>
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            @click="bulkDeleteOpen = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            :disabled="bulkDeleting"
+                            @click="bulkDelete"
+                        >
+                            {{ bulkDeleting ? 'Eliminando…' : 'Sí, eliminar' }}
+                        </Button>
                     </div>
                 </div>
             </Dialog.Panel>

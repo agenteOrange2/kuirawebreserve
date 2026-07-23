@@ -41,10 +41,14 @@ const props = defineProps<{
         balance_request_days: number;
         cancel_on_balance_overdue: boolean;
         payment_mode: 'automatic' | 'always' | 'never';
+        cash_payment_enabled: boolean;
+        transfer_whatsapps: { code: string; number: string }[];
         hold_value: number;
         hold_unit: string;
         transfer_valid_value: number;
         transfer_valid_unit: string;
+        cash_deadline_value: number;
+        cash_deadline_unit: string;
         balance_due_enabled: boolean;
         balance_due_value: number;
         balance_due_unit: string;
@@ -240,7 +244,7 @@ const paymentMode = ref(props.settings.payment_mode);
 const paymentModeLabels: Record<string, string> = {
     automatic: 'Automático (lo decide cada tarifa con su anticipo)',
     always: 'Siempre pedir pago en línea',
-    never: 'Nunca pedir pago en línea',
+    never: 'Nunca: se paga al llegar',
 };
 
 async function savePaymentMode() {
@@ -271,6 +275,40 @@ const wizardWillCharge = computed(() => {
     return props.ratePlansWithDeposit > 0;
 });
 
+// ---- Pago en el hotel (efectivo): el huésped aparta sin pagar en línea ----
+// El interruptor de plataforma (/admin/payments) manda: apagado ahí, esto
+// se muestra deshabilitado sin importar lo que el hotel haya guardado.
+const cashAllowedByPlatform = computed(
+    () => props.enabledMethods.cash !== false,
+);
+const savingCash = ref(false);
+const cashEnabled = ref(props.settings.cash_payment_enabled);
+
+async function toggleCashEnabled() {
+    const next = !cashEnabled.value;
+    cashEnabled.value = next;
+    savingCash.value = true;
+    try {
+        await axios.patch(`/api/properties/${props.property.id}`, {
+            settings: { cash_payment_enabled: next },
+        });
+        toast.success(
+            'Guardado',
+            next
+                ? 'El wizard ofrecerá pagar en el hotel.'
+                : 'El wizard ya no ofrecerá pagar en el hotel.',
+        );
+    } catch (e: any) {
+        cashEnabled.value = !next;
+        toast.error(
+            'No se pudo guardar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        savingCash.value = false;
+    }
+}
+
 // ---- Cuentas bancarias, confirmación automática y saldos ----
 const saving = ref(false);
 const errors = reactive<Record<string, string>>({});
@@ -279,6 +317,9 @@ const form = reactive({
     bank_accounts: props.settings.bank_accounts.map((a) => ({
         ...a,
     })) as BankAccount[],
+    transfer_whatsapps: props.settings.transfer_whatsapps.map((w) => ({
+        ...w,
+    })),
     auto_confirm_on_payment: props.settings.auto_confirm_on_payment,
     balance_request_days: props.settings.balance_request_days,
     cancel_on_balance_overdue: props.settings.cancel_on_balance_overdue,
@@ -286,6 +327,8 @@ const form = reactive({
     hold_unit: props.settings.hold_unit,
     transfer_valid_value: props.settings.transfer_valid_value,
     transfer_valid_unit: props.settings.transfer_valid_unit,
+    cash_deadline_value: props.settings.cash_deadline_value,
+    cash_deadline_unit: props.settings.cash_deadline_unit,
     balance_due_enabled: props.settings.balance_due_enabled,
     balance_due_value: props.settings.balance_due_value,
     balance_due_unit: props.settings.balance_due_unit,
@@ -332,6 +375,9 @@ async function submit() {
         await axios.patch(`/api/properties/${props.property.id}`, {
             settings: {
                 bank_accounts: form.bank_accounts,
+                transfer_whatsapps: form.transfer_whatsapps.filter(
+                    (w) => w.number.trim() !== '',
+                ),
                 auto_confirm_on_payment: form.auto_confirm_on_payment,
                 balance_request_days: form.balance_request_days,
                 cancel_on_balance_overdue: form.cancel_on_balance_overdue,
@@ -339,6 +385,8 @@ async function submit() {
                 hold_unit: form.hold_unit,
                 transfer_valid_value: form.transfer_valid_value,
                 transfer_valid_unit: form.transfer_valid_unit,
+                cash_deadline_value: form.cash_deadline_value,
+                cash_deadline_unit: form.cash_deadline_unit,
                 balance_due_enabled: form.balance_due_enabled,
                 balance_due_value: form.balance_due_value,
                 balance_due_unit: form.balance_due_unit,
@@ -567,10 +615,14 @@ async function submit() {
                                     </option>
                                 </FormSelect>
                                 <FormHelp>
-                                    "Automático" es el default: cada tarifa
-                                    decide según su propio anticipo configurado.
-                                    "Siempre"/"Nunca" lo fuerzan para todas las
-                                    reservas, sin importar la tarifa.
+                                    "Automático": cada tarifa decide con su
+                                    casilla "Exigir cobro anticipado" (Catálogo
+                                    → tarifas). "Siempre" obliga a pagar en
+                                    línea. "Nunca": todo se paga al llegar. Con
+                                    "Pago en el hotel" activo (abajo), el
+                                    huésped además puede elegir no pagar en
+                                    línea. Si la tarifa tiene anticipo, también
+                                    elige entre pagar el anticipo o el total.
                                 </FormHelp>
                             </div>
                             <div class="col-span-12 xl:col-span-6">
@@ -584,6 +636,62 @@ async function submit() {
                                         class="h-3.5 w-3.5"
                                     />
                                 </Link>
+                            </div>
+                        </div>
+
+                        <!-- Pago en el hotel (efectivo): apartar sin pagar en línea -->
+                        <div
+                            class="mt-5 border-t border-dashed border-slate-300/70 pt-4 dark:border-darkmode-400"
+                        >
+                            <div class="flex items-start justify-between gap-4">
+                                <div class="flex items-start gap-3">
+                                    <div
+                                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                                    >
+                                        <Lucide
+                                            icon="Banknote"
+                                            class="h-4 w-4"
+                                        />
+                                    </div>
+                                    <div>
+                                        <div
+                                            class="flex flex-wrap items-center gap-2 text-sm font-medium"
+                                        >
+                                            Pago en el hotel (efectivo)
+                                            <span
+                                                v-if="!cashAllowedByPlatform"
+                                                class="rounded-full bg-danger/10 px-2 py-0.5 text-[10px] font-medium text-danger"
+                                                >Deshabilitado por
+                                                plataforma</span
+                                            >
+                                        </div>
+                                        <FormHelp>
+                                            El huésped puede apartar sin pagar
+                                            en línea y pagar al llegar, en
+                                            recepción; tú confirmas el
+                                            apartado. Aparece como opción en el
+                                            paso de pago del wizard.
+                                            <template
+                                                v-if="paymentMode === 'never'"
+                                            >
+                                                Con el modo "Nunca" el wizard
+                                                no muestra paso de pago: todo
+                                                se paga al llegar de por sí.
+                                            </template>
+                                        </FormHelp>
+                                    </div>
+                                </div>
+                                <FormSwitch
+                                    v-if="cashAllowedByPlatform"
+                                    class="mt-1"
+                                >
+                                    <FormSwitch.Input
+                                        :checked="cashEnabled"
+                                        :disabled="savingCash"
+                                        type="checkbox"
+                                        @change="toggleCashEnabled"
+                                    />
+                                </FormSwitch>
                             </div>
                         </div>
                     </div>
@@ -799,6 +907,13 @@ async function submit() {
                                                 Producción
                                             </option>
                                         </FormSelect>
+                                        <FormHelp>
+                                            El entorno real lo dicta la llave:
+                                            sk_test_ = sandbox (tarjeta 4242),
+                                            sk_live_ = producción con cobros
+                                            reales. Este selector se corrige
+                                            solo al guardar.
+                                        </FormHelp>
                                     </div>
 
                                     <div
@@ -1077,7 +1192,76 @@ async function submit() {
                             </Button>
                         </div>
 
-                        <!-- Plazos: cuánto vive un apartado y un cobro por transferencia -->
+                        <!-- A dónde manda el huésped su comprobante -->
+                        <div
+                            v-if="enabledMethods.transfer !== false"
+                            class="mt-4 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        >
+                            <div class="text-sm font-medium">
+                                WhatsApp para comprobantes
+                            </div>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Los wizards le dicen al huésped que mande su
+                                comprobante de transferencia a estos WhatsApp,
+                                con link directo. Puedes tener varios (línea de
+                                México, de Estados Unidos...). Sin números:
+                                solo se le dice que el hotel lo contactará.
+                            </p>
+                            <div class="mt-2 space-y-2">
+                                <div
+                                    v-for="(entry, index) in form.transfer_whatsapps"
+                                    :key="index"
+                                    class="flex items-center gap-2"
+                                >
+                                    <FormSelect
+                                        v-model="entry.code"
+                                        class="!w-44"
+                                    >
+                                        <option value="52">+52 México</option>
+                                        <option value="1">
+                                            +1 EE. UU. / Canadá
+                                        </option>
+                                    </FormSelect>
+                                    <FormInput
+                                        v-model="entry.number"
+                                        type="tel"
+                                        placeholder="10 dígitos"
+                                        class="sm:!w-56"
+                                    />
+                                    <button
+                                        type="button"
+                                        class="rounded p-1.5 text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                        title="Quitar este número"
+                                        @click="
+                                            form.transfer_whatsapps.splice(
+                                                index,
+                                                1,
+                                            )
+                                        "
+                                    >
+                                        <Lucide icon="Trash2" class="h-4 w-4" />
+                                    </button>
+                                </div>
+                            </div>
+                            <Button
+                                v-if="form.transfer_whatsapps.length < 5"
+                                type="button"
+                                variant="outline-secondary"
+                                size="sm"
+                                class="mt-2 rounded-[0.5rem] bg-white"
+                                @click="
+                                    form.transfer_whatsapps.push({
+                                        code: '52',
+                                        number: '',
+                                    })
+                                "
+                            >
+                                <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                                Agregar número
+                            </Button>
+                        </div>
+
+                        <!-- Plazos: apartado, transferencia y pago en el hotel — cada método su reloj -->
                         <div
                             class="mt-6 mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
                         >
@@ -1162,6 +1346,52 @@ async function submit() {
                                     >{{
                                         errors.transfer_valid_value ??
                                         errors.transfer_valid_unit
+                                    }}</FormHelp
+                                >
+                            </div>
+                            <div
+                                v-if="cashAllowedByPlatform && cashEnabled"
+                                class="col-span-12 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 xl:col-span-6 dark:border-darkmode-400 dark:bg-darkmode-700"
+                            >
+                                <div class="text-sm font-medium">
+                                    Plazo para pagar en el hotel
+                                </div>
+                                <p class="mt-0.5 text-xs text-slate-500">
+                                    Cuánto tiempo tiene el huésped para venir a
+                                    pagar cuando eligió "Pago en el hotel". El
+                                    apartado se extiende hasta ese plazo y se
+                                    libera solo si nadie paga ni confirma.
+                                    Nunca pasa de la hora de llegada.
+                                </p>
+                                <div class="mt-2 flex items-center gap-2">
+                                    <FormInput
+                                        v-model.number="
+                                            form.cash_deadline_value
+                                        "
+                                        type="number"
+                                        min="1"
+                                        max="999"
+                                        class="!w-24 text-center"
+                                    />
+                                    <FormSelect
+                                        v-model="form.cash_deadline_unit"
+                                        class="!w-40"
+                                    >
+                                        <option value="minute">Minutos</option>
+                                        <option value="hour">Horas</option>
+                                        <option value="day">Días</option>
+                                        <option value="week">Semanas</option>
+                                    </FormSelect>
+                                </div>
+                                <FormHelp
+                                    v-if="
+                                        errors.cash_deadline_value ||
+                                        errors.cash_deadline_unit
+                                    "
+                                    class="text-danger"
+                                    >{{
+                                        errors.cash_deadline_value ??
+                                        errors.cash_deadline_unit
                                     }}</FormHelp
                                 >
                             </div>

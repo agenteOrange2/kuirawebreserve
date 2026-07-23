@@ -62,8 +62,27 @@ class PropertyController extends Controller
             'settings.check_in_time' => ['nullable', 'date_format:H:i'],
             'settings.check_out_time' => ['nullable', 'date_format:H:i'],
             'settings.currency' => ['nullable', 'string', 'size:3'],
+            // Doble moneda opcional (Datos generales → Horarios y moneda): una
+            // segunda moneda + tipo de cambio para mostrar el "aprox" al
+            // huésped. currency_secondary null = una sola moneda.
+            'settings.currency_secondary' => ['sometimes', 'nullable', 'string', 'size:3'],
+            'settings.exchange_rate' => ['sometimes', 'nullable', 'numeric', 'min:0.0001', 'max:1000000'],
             'settings.phone' => ['nullable', 'string', 'max:30'],
             'settings.email' => ['nullable', 'email', 'max:255'],
+            // Contacto enriquecido (Datos Generales): varios teléfonos con
+            // lada, varios emails, sitio web, link de Google Maps y redes.
+            // El teléfono/email principal se DERIVA de estas listas para los
+            // 7 lectores legacy que los leen como string.
+            'settings.phones' => ['sometimes', 'nullable', 'array', 'max:5'],
+            'settings.phones.*.code' => ['required_with:settings.phones', 'string', 'max:4'],
+            'settings.phones.*.number' => ['required_with:settings.phones', 'string', 'max:15'],
+            'settings.emails' => ['sometimes', 'nullable', 'array', 'max:5'],
+            'settings.emails.*' => ['email', 'max:255'],
+            'settings.website' => ['sometimes', 'nullable', 'url', 'max:255'],
+            'settings.maps_url' => ['sometimes', 'nullable', 'url', 'max:500'],
+            'settings.socials' => ['sometimes', 'nullable', 'array', 'max:10'],
+            'settings.socials.*.type' => ['required_with:settings.socials', \Illuminate\Validation\Rule::in(['facebook', 'instagram', 'tiktok', 'youtube', 'x', 'whatsapp', 'other'])],
+            'settings.socials.*.url' => ['required_with:settings.socials', 'url', 'max:255'],
             // Wizard público (spec-motor-reservas-web E0): hotel vs motel
             // decide si se piden/permiten niños; el nombre de la modalidad
             // por bloque es libre (rato, periodo, horas… cada quien le
@@ -73,10 +92,23 @@ class PropertyController extends Controller
             // Paso opcional de extras (POS/inventario) dentro del wizard —
             // se administra en el área aislada /ajustes/wizard.
             'settings.wizard_extras_enabled' => ['sometimes', 'boolean'],
+            // Apariencia del wizard público (/reservas/ajustes): colores en
+            // hex completo y modo de la tarjeta; null = default del theme.
+            'settings.wizard_bg_from' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'settings.wizard_bg_to' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'settings.wizard_accent' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'settings.wizard_theme' => ['sometimes', \Illuminate\Validation\Rule::in(['light', 'dark', 'auto'])],
             // Control explícito de si el wizard pide pago en línea al
             // reservar (spec-wizard-precios-y-pasos §5.2): por default lo
             // decide cada tarifa; el hotel puede forzarlo en ambos sentidos.
-            'settings.payment_mode' => ['nullable', \Illuminate\Validation\Rule::in(['automatic', 'always', 'never'])],
+            // 'optional' (viejo modo "ambos") se sigue aceptando por
+            // compatibilidad, pero la UI ya no lo ofrece: hoy ese caso es
+            // 'always' + método efectivo activo (cash_payment_enabled).
+            'settings.payment_mode' => ['nullable', \Illuminate\Validation\Rule::in(['automatic', 'always', 'optional', 'never'])],
+            // "Pago en el hotel (efectivo)": el huésped puede apartar sin
+            // pagar en línea y pagar al llegar. Solo surte efecto si la
+            // plataforma permite el método (PaymentMethodGate).
+            'settings.cash_payment_enabled' => ['sometimes', 'boolean'],
             'settings.policies' => ['nullable', 'string', 'max:5000'],
             // Instrucciones libres para el asistente IA (tono, reglas propias,
             // contexto del negocio) — se inyectan en su system prompt.
@@ -97,10 +129,20 @@ class PropertyController extends Controller
             // apartado, vigencia de transferencias y fecha límite de pago
             // total con su interruptor. Valor + unidad; ReservationPolicy
             // los traduce y aplica los defaults de siempre si faltan.
+            // WhatsApps a los que el huésped manda el comprobante de su
+            // transferencia — varios números, cada uno con su lada (hay
+            // hoteles con línea de México y de EE. UU.).
+            'settings.transfer_whatsapps' => ['sometimes', 'nullable', 'array', 'max:5'],
+            'settings.transfer_whatsapps.*.code' => ['required_with:settings.transfer_whatsapps', 'string', 'max:4'],
+            'settings.transfer_whatsapps.*.number' => ['required_with:settings.transfer_whatsapps', 'string', 'max:15'],
             'settings.hold_value' => ['sometimes', 'integer', 'min:1', 'max:999'],
             'settings.hold_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['minute', 'hour', 'day', 'week'])],
             'settings.transfer_valid_value' => ['sometimes', 'integer', 'min:1', 'max:999'],
             'settings.transfer_valid_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['hour', 'day', 'week'])],
+            // Plazo para pagar en el hotel (efectivo): reloj propio,
+            // independiente del hold y de la transferencia (default 24 h).
+            'settings.cash_deadline_value' => ['sometimes', 'integer', 'min:1', 'max:999'],
+            'settings.cash_deadline_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['minute', 'hour', 'day', 'week'])],
             'settings.balance_due_enabled' => ['sometimes', 'boolean'],
             'settings.balance_due_value' => ['sometimes', 'integer', 'min:1', 'max:365'],
             'settings.balance_due_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['day', 'week'])],
@@ -130,6 +172,21 @@ class PropertyController extends Controller
             } else {
                 $data['settings']['smtp_password'] = \Illuminate\Support\Facades\Crypt::encryptString($data['settings']['smtp_password']);
             }
+        }
+
+        // El teléfono/email principal (los leen 7 puntos como string) se
+        // DERIVA de las listas nuevas: el primero manda. Así el hotelero
+        // gestiona una sola lista limpia y nada legacy se rompe.
+        if (isset($data['settings']) && array_key_exists('phones', $data['settings'])) {
+            $first = collect($data['settings']['phones'] ?? [])->first();
+            $code = preg_replace('/\D+/', '', (string) ($first['code'] ?? ''));
+            $number = preg_replace('/\D+/', '', (string) ($first['number'] ?? ''));
+            $data['settings']['phone'] = $number !== '' ? '+'.$code.$number : null;
+            $data['settings']['phone_country_code'] = $code !== '' ? $code : ($property->settings['phone_country_code'] ?? '52');
+        }
+        if (isset($data['settings']) && array_key_exists('emails', $data['settings'])) {
+            $data['settings']['email'] = collect($data['settings']['emails'] ?? [])
+                ->filter()->first() ?: null;
         }
 
         // Merge para no pisar llaves de settings que esta pantalla no maneja.

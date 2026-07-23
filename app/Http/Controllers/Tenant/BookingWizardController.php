@@ -37,11 +37,20 @@ class BookingWizardController extends Controller
             ->where('active', true)
             ->whereHas('roomType', fn ($q) => $q->where('active', true));
 
+        // Apariencia personalizada (/reservas/ajustes): colores, logo y
+        // modo claro/oscuro elegidos por el hotel (o defaults del theme).
+        $appearance = $property->wizardAppearance();
+
         return Inertia::render('tenant/reservar/Wizard', [
+            'appearance' => $appearance,
             'property' => [
                 'name' => $property->name,
+                'logo_url' => $appearance['logo_url'],
                 'phone' => $settings['phone'] ?? null,
                 'currency' => $settings['currency'] ?? 'MXN',
+                // Doble moneda: se muestra el "aprox" en la otra divisa.
+                'currency_secondary' => $settings['currency_secondary'] ?? null,
+                'exchange_rate' => $settings['exchange_rate'] ?? null,
                 'check_in_time' => $settings['check_in_time'] ?? '15:00',
                 'check_out_time' => $settings['check_out_time'] ?? '12:00',
                 'guest_policy' => $settings['guest_policy'] ?? 'family',

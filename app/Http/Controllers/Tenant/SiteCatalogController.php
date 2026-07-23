@@ -45,7 +45,7 @@ class SiteCatalogController extends Controller
             'generated_at' => now()->toIso8601String(),
             'room_types' => RoomType::query()
                 ->where('active', true)
-                ->with(['ratePlans' => fn ($q) => $q->where('active', true)->orderBy('price')])
+                ->with(['media', 'ratePlans' => fn ($q) => $q->where('active', true)->orderBy('price')])
                 ->withMin(['ratePlans as price_from' => fn ($q) => $q->where('active', true)], 'price')
                 ->orderBy('sort_order')
                 ->orderBy('name')
@@ -58,6 +58,9 @@ class SiteCatalogController extends Controller
                     'max_adults' => $type->max_adults,
                     'max_children' => $type->max_children,
                     'amenities' => $type->amenities ?? [],
+                    // URLs absolutas de la ruta pública (sin login): el
+                    // plugin WP las pone tal cual en las tarjetas.
+                    'photos' => $type->photosPayload(),
                     'price_from' => $type->priceFrom(),
                     'reservable' => $type->hasActiveRate(),
                     'rate_plans' => $type->ratePlans->map(fn ($plan) => [

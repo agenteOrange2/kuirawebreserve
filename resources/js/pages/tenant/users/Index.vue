@@ -3,7 +3,7 @@ import { router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormHelp, FormInput } from '@/components/Base/Form';
+import { FormCheck, FormHelp, FormInput } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
@@ -14,6 +14,7 @@ interface UserRow {
     id: number;
     name: string;
     email: string;
+    phone: string | null;
     roles: string[];
     role_labels: string[];
     is_self: boolean;
@@ -71,9 +72,78 @@ const showPassword = ref(false);
 const form = reactive({
     name: '',
     email: '',
+    phone: '',
     password: '',
     role: 'front-desk',
 });
+
+// ── Buscador reactivo (cliente) por nombre, correo o teléfono ──
+const search = ref('');
+const filteredUsers = computed(() => {
+    const q = search.value.trim().toLowerCase();
+    if (!q) return props.users;
+    return props.users.filter(
+        (u) =>
+            u.name.toLowerCase().includes(q) ||
+            u.email.toLowerCase().includes(q) ||
+            (u.phone ?? '').toLowerCase().includes(q),
+    );
+});
+
+// ── Selección múltiple para borrado en masa ──
+const selectedIds = ref<number[]>([]);
+const bulkDeleteOpen = ref(false);
+const bulkDeleting = ref(false);
+
+// El propio usuario no se puede borrar: no entra en la selección.
+const selectableUsers = computed(() =>
+    filteredUsers.value.filter((u) => !u.is_self),
+);
+const allSelected = computed(
+    () =>
+        selectableUsers.value.length > 0 &&
+        selectableUsers.value.every((u) => selectedIds.value.includes(u.id)),
+);
+const selectedRows = computed(() =>
+    props.users.filter((u) => selectedIds.value.includes(u.id)),
+);
+
+function toggleRow(id: number) {
+    selectedIds.value = selectedIds.value.includes(id)
+        ? selectedIds.value.filter((x) => x !== id)
+        : [...selectedIds.value, id];
+}
+function toggleAll() {
+    selectedIds.value = allSelected.value
+        ? []
+        : selectableUsers.value.map((u) => u.id);
+}
+
+async function bulkDelete() {
+    bulkDeleting.value = true;
+    try {
+        const { data } = await axios.delete('/api/users', {
+            data: { ids: selectedIds.value },
+        });
+        toast.success(
+            'Usuarios eliminados',
+            `${data.deleted} eliminado(s)` +
+                (data.skipped
+                    ? ` · ${data.skipped} conservado(s) por actividad o rol`
+                    : ''),
+        );
+        selectedIds.value = [];
+        bulkDeleteOpen.value = false;
+        router.reload({ only: ['users'] });
+    } catch (error: any) {
+        toast.error(
+            'No se pudo eliminar',
+            error.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        bulkDeleting.value = false;
+    }
+}
 
 function clearErrors() {
     Object.keys(errors).forEach((k) => delete errors[k]);
@@ -84,6 +154,7 @@ function openCreate() {
     editing.value = null;
     form.name = '';
     form.email = '';
+    form.phone = '';
     form.password = '';
     form.role = 'front-desk';
     showPassword.value = false;
@@ -95,6 +166,7 @@ function openEdit(user: UserRow) {
     editing.value = user;
     form.name = user.name;
     form.email = user.email;
+    form.phone = user.phone ?? '';
     form.password = '';
     form.role = user.roles[0] ?? 'front-desk';
     showPassword.value = false;
@@ -119,6 +191,7 @@ async function submit() {
             await axios.patch(`/api/users/${editing.value.id}`, {
                 name: form.name,
                 email: form.email,
+                phone: form.phone || null,
                 password: form.password || null,
                 role: form.role,
             });
@@ -193,6 +266,39 @@ async function submitDelete() {
                 </Button>
             </div>
 
+            <!-- Buscador + acción masiva -->
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+                <div class="relative w-full sm:w-80">
+                    <Lucide icon="Search" :class="iconInput" />
+                    <FormInput
+                        v-model="search"
+                        type="text"
+                        class="pl-9"
+                        placeholder="Buscar por nombre, correo o teléfono…"
+                    />
+                </div>
+                <template v-if="canManage && selectedIds.length">
+                    <span class="text-xs text-slate-500"
+                        >{{ selectedIds.length }} seleccionado(s)</span
+                    >
+                    <button
+                        type="button"
+                        class="text-xs font-medium text-primary hover:underline"
+                        @click="selectedIds = []"
+                    >
+                        Quitar selección
+                    </button>
+                    <Button
+                        variant="danger"
+                        class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                        @click="bulkDeleteOpen = true"
+                    >
+                        <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
+                        Eliminar seleccionados
+                    </Button>
+                </template>
+            </div>
+
             <div
                 v-if="atLimit"
                 class="mt-4 flex items-center gap-2 rounded-lg border-l-4 border-l-warning bg-warning/5 px-4 py-3 text-sm"
@@ -209,6 +315,18 @@ async function submitDelete() {
                 <Table class="border-separate border-spacing-y-[8px]">
                     <Table.Thead>
                         <Table.Tr>
+                            <Table.Th
+                                v-if="canManage"
+                                class="w-10 border-b-0 !bg-transparent"
+                            >
+                                <FormCheck.Input
+                                    type="checkbox"
+                                    :checked="allSelected"
+                                    title="Seleccionar todos"
+                                    :disabled="!selectableUsers.length"
+                                    @change="toggleAll"
+                                />
+                            </Table.Th>
                             <Table.Th class="border-b-0 !bg-transparent"
                                 >Usuario</Table.Th
                             >
@@ -228,7 +346,15 @@ async function submitDelete() {
                         </Table.Tr>
                     </Table.Thead>
                     <Table.Tbody>
-                        <Table.Tr v-for="u in users" :key="u.id">
+                        <Table.Tr v-for="u in filteredUsers" :key="u.id">
+                            <Table.Td v-if="canManage" :class="cellClass" class="w-10">
+                                <FormCheck.Input
+                                    v-if="!u.is_self"
+                                    type="checkbox"
+                                    :checked="selectedIds.includes(u.id)"
+                                    @change="toggleRow(u.id)"
+                                />
+                            </Table.Td>
                             <Table.Td :class="cellClass">
                                 <div class="flex items-center gap-3">
                                     <div
@@ -248,13 +374,27 @@ async function submitDelete() {
                                             >
                                         </div>
                                         <div
-                                            class="flex items-center gap-1.5 text-xs text-slate-500"
+                                            class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500"
                                         >
-                                            <Lucide
-                                                icon="Mail"
-                                                class="h-3 w-3"
-                                            />
-                                            {{ u.email }}
+                                            <span
+                                                class="flex items-center gap-1.5"
+                                            >
+                                                <Lucide
+                                                    icon="Mail"
+                                                    class="h-3 w-3"
+                                                />
+                                                {{ u.email }}
+                                            </span>
+                                            <span
+                                                v-if="u.phone"
+                                                class="flex items-center gap-1.5"
+                                            >
+                                                <Lucide
+                                                    icon="Phone"
+                                                    class="h-3 w-3"
+                                                />
+                                                {{ u.phone }}
+                                            </span>
                                         </div>
                                     </div>
                                 </div>
@@ -417,6 +557,24 @@ async function submitDelete() {
                                     >{{ errors.email }}</FormHelp
                                 >
                             </div>
+                        </div>
+
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Teléfono (opcional)</label
+                            >
+                            <div class="relative">
+                                <Lucide icon="Phone" :class="iconInput" />
+                                <FormInput
+                                    v-model="form.phone"
+                                    type="tel"
+                                    class="pl-9"
+                                    placeholder="Para el directorio interno"
+                                />
+                            </div>
+                            <FormHelp v-if="errors.phone" class="text-danger">{{
+                                errors.phone
+                            }}</FormHelp>
                         </div>
 
                         <div>
@@ -604,6 +762,58 @@ async function submitDelete() {
                         >
                             <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
                             {{ saving ? 'Eliminando…' : 'Sí, eliminar' }}
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Confirmar borrado masivo -->
+        <Dialog :open="bulkDeleteOpen" @close="bulkDeleteOpen = false">
+            <Dialog.Panel>
+                <div class="p-5">
+                    <div class="mb-3 flex items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
+                        >
+                            <Lucide icon="Trash2" class="h-5 w-5 text-danger" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                Eliminar {{ selectedRows.length }} usuario(s)
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Los que tengan ventas, turnos o cortes, o sean
+                                el único dueño, se conservan por auditoría.
+                            </p>
+                        </div>
+                    </div>
+                    <div
+                        class="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-dashed border-slate-300/70 p-2 text-sm dark:border-darkmode-400"
+                    >
+                        <div
+                            v-for="row in selectedRows"
+                            :key="row.id"
+                            class="flex items-center justify-between gap-2 px-1"
+                        >
+                            <span class="font-medium">{{ row.name }}</span>
+                            <span class="text-xs text-slate-500">{{
+                                row.email
+                            }}</span>
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            @click="bulkDeleteOpen = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            :disabled="bulkDeleting"
+                            @click="bulkDelete"
+                        >
+                            {{ bulkDeleting ? 'Eliminando…' : 'Sí, eliminar' }}
                         </Button>
                     </div>
                 </div>

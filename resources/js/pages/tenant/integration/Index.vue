@@ -478,8 +478,9 @@ async function discardSuggestion(row: SuggestionRow) {
                         </h2>
                     </div>
                     <p class="mt-1 text-xs text-slate-500">
-                        Pega el wizard en tu página con el shortcode (plugin
-                        kuira-reservas de WordPress) o con el script (cualquier
+                        Pega el wizard en tu página con el shortcode (WordPress
+                        con el plugin KuiraWebReserve Habitaciones, descargable
+                        en "Sitios conectados") o con el script (cualquier
                         sitio). Los precios, cupos y fotos SIEMPRE están en
                         vivo: lo que cambies aquí se refleja al instante en tu
                         página, sin re-publicar nada.
@@ -572,7 +573,7 @@ async function discardSuggestion(row: SuggestionRow) {
                                     <span
                                         class="text-xs font-medium tracking-wide text-slate-400 uppercase"
                                         >Shortcode (WordPress con el plugin
-                                        kuira-reservas)</span
+                                        KuiraWebReserve Habitaciones)</span
                                     >
                                     <button
                                         type="button"
@@ -815,9 +816,39 @@ async function discardSuggestion(row: SuggestionRow) {
                                 El sitio manda el token en el header
                                 Authorization (Bearer) DESDE SU SERVIDOR y
                                 cachea unos minutos. El token nunca va en el
-                                navegador del visitante. Devuelve tipos,
-                                amenidades y precio "desde" en vivo; no crea
-                                reservas ni expone huéspedes.
+                                navegador del visitante. Devuelve tipos con
+                                fotos, amenidades y precio "desde" en vivo; no
+                                crea reservas ni expone huéspedes.
+                            </p>
+                            <div
+                                class="mt-3 flex flex-wrap items-center gap-2 border-t border-dashed border-slate-300/70 pt-3"
+                            >
+                                <span
+                                    class="font-medium text-slate-600 dark:text-slate-300"
+                                    >Plugin para WordPress:</span
+                                >
+                                <a
+                                    href="/downloads/kuirawebreserve-rooms.zip"
+                                    download
+                                    class="flex items-center gap-1 font-medium text-primary hover:underline"
+                                >
+                                    <Lucide
+                                        icon="Download"
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    Descargar kuirawebreserve-rooms.zip
+                                </a>
+                            </div>
+                            <p class="mt-1.5">
+                                Instálalo en Plugins → Añadir nuevo → Subir,
+                                pega tu dominio y el token, y usa
+                                <code
+                                    class="rounded bg-slate-100 px-1.5 py-0.5 font-mono dark:bg-darkmode-400"
+                                    >[kuirawebreserve_rooms]</code
+                                >
+                                para las tarjetas de habitaciones con foto y
+                                precio vivo. Trae botón "Probar conexión" para
+                                corroborar que todo quedó.
                             </p>
                         </div>
                     </div>

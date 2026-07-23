@@ -282,6 +282,64 @@ const groupIsLive = (group: GroupRow) =>
     group.reservations.some(
         (r) => r.status === 'pending' || r.status === 'confirmed',
     );
+
+// ── Editar grupo (responsable y notas; los cuartos se operan en /reservas) ──
+const editingGroup = ref<GroupRow | null>(null);
+const editForm = reactive({ guest_name: '', notes: '' });
+const editBusy = ref(false);
+
+function openEdit(group: GroupRow) {
+    editingGroup.value = group;
+    editForm.guest_name = group.guest_name ?? '';
+    editForm.notes = group.notes ?? '';
+}
+
+async function submitEdit() {
+    if (!editingGroup.value) return;
+    editBusy.value = true;
+    try {
+        await axios.patch(`/api/group-reservations/${editingGroup.value.id}`, {
+            guest_name: editForm.guest_name,
+            notes: editForm.notes || null,
+        });
+        toast.success('Grupo actualizado');
+        editingGroup.value = null;
+        router.reload({ only: ['groups'] });
+    } catch (e: any) {
+        toast.error(
+            'Error',
+            e.response?.data?.message ?? 'No se pudo actualizar el grupo.',
+        );
+    } finally {
+        editBusy.value = false;
+    }
+}
+
+// ── Eliminar grupo muerto (sin reservas vivas ni pagos): limpieza del
+// listado; sus reservas canceladas siguen visibles en /reservas ──
+const deletingGroup = ref<GroupRow | null>(null);
+const deleteBusy = ref(false);
+
+async function deleteGroup() {
+    if (!deletingGroup.value) return;
+    deleteBusy.value = true;
+    try {
+        await axios.delete(`/api/group-reservations/${deletingGroup.value.id}`);
+        toast.success(
+            'Grupo eliminado',
+            'Sus reservas canceladas siguen visibles en Reservas.',
+        );
+        deletingGroup.value = null;
+        router.reload({ only: ['groups'] });
+    } catch (e: any) {
+        toast.error(
+            'No se pudo eliminar',
+            e.response?.data?.message ?? 'Cancela el grupo primero.',
+        );
+    } finally {
+        deleteBusy.value = false;
+    }
+}
 </script>
 
 <template>
@@ -479,10 +537,36 @@ const groupIsLive = (group: GroupRow) =>
                             Notas: {{ group.notes }}
                         </div>
                         <div
-                            v-if="canManage && groupIsLive(group)"
-                            class="mt-4 flex justify-end"
+                            v-if="canManage"
+                            class="mt-4 flex flex-wrap justify-end gap-2"
                         >
                             <Button
+                                as="a"
+                                :href="`/grupos/${group.id}`"
+                                variant="outline-primary"
+                                size="sm"
+                                class="rounded-[0.5rem] bg-white"
+                            >
+                                <Lucide
+                                    icon="Eye"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Ver detalle
+                            </Button>
+                            <Button
+                                variant="outline-secondary"
+                                size="sm"
+                                class="rounded-[0.5rem] bg-white"
+                                @click="openEdit(group)"
+                            >
+                                <Lucide
+                                    icon="Pencil"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Editar
+                            </Button>
+                            <Button
+                                v-if="groupIsLive(group)"
                                 variant="outline-secondary"
                                 size="sm"
                                 class="rounded-[0.5rem] bg-white text-danger"
@@ -490,6 +574,19 @@ const groupIsLive = (group: GroupRow) =>
                             >
                                 <Lucide icon="Ban" class="mr-1.5 h-3.5 w-3.5" />
                                 Cancelar grupo completo
+                            </Button>
+                            <Button
+                                v-else
+                                variant="outline-secondary"
+                                size="sm"
+                                class="rounded-[0.5rem] bg-white text-danger"
+                                @click="deletingGroup = group"
+                            >
+                                <Lucide
+                                    icon="Trash2"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Eliminar grupo
                             </Button>
                         </div>
                     </div>
@@ -1050,6 +1147,99 @@ const groupIsLive = (group: GroupRow) =>
                                 cancelBusy ? 'Cancelando…' : 'Sí, cancelar todo'
                             }}</Button
                         >
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Editar grupo (responsable y notas) -->
+        <Dialog :open="editingGroup !== null" @close="editingGroup = null">
+            <Dialog.Panel>
+                <form class="p-5" @submit.prevent="submitEdit">
+                    <div class="mb-4 flex items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                        >
+                            <Lucide icon="Pencil" class="h-5 w-5 text-primary" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                Editar grupo {{ editingGroup?.code }}
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Responsable y notas. Las habitaciones se operan
+                                una por una en Reservas.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Responsable del grupo</label
+                            >
+                            <FormInput
+                                v-model="editForm.guest_name"
+                                type="text"
+                                placeholder="Quien responde por el grupo"
+                            />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm">Notas</label>
+                            <FormTextarea
+                                v-model="editForm.notes"
+                                rows="2"
+                                placeholder="Boda, evento, hora de llegada del grupo…"
+                            />
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            @click="editingGroup = null"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            :disabled="editBusy || !editForm.guest_name.trim()"
+                        >
+                            {{ editBusy ? 'Guardando…' : 'Guardar cambios' }}
+                        </Button>
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Confirmar eliminación de grupo muerto -->
+        <Dialog :open="deletingGroup !== null" @close="deletingGroup = null">
+            <Dialog.Panel>
+                <div class="p-5 text-center">
+                    <Lucide
+                        icon="AlertTriangle"
+                        class="mx-auto mb-3 h-12 w-12 text-danger"
+                    />
+                    <h2 class="text-base font-medium">
+                        ¿Eliminar el grupo {{ deletingGroup?.code }}?
+                    </h2>
+                    <p class="mt-2 text-sm text-slate-500">
+                        Solo desaparece el folio del grupo de esta lista; sus
+                        reservas canceladas siguen visibles en Reservas. Si
+                        tiene pagos registrados no se puede eliminar.
+                    </p>
+                    <div class="mt-5 flex justify-center gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            @click="deletingGroup = null"
+                            >Conservar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            :disabled="deleteBusy"
+                            @click="deleteGroup"
+                        >
+                            {{ deleteBusy ? 'Eliminando…' : 'Sí, eliminar' }}
+                        </Button>
                     </div>
                 </div>
             </Dialog.Panel>

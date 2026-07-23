@@ -55,6 +55,27 @@ interface EvolutionChannelRow {
     created_at: string | null;
 }
 
+interface MetaChannelRow {
+    id: number;
+    name: string | null;
+    external_id: string;
+    waba_id: string | null;
+    masked_token: string;
+    active: boolean;
+    last_event_at: string | null;
+    created_at: string | null;
+}
+
+interface MetaDiagnose {
+    token_ok: boolean;
+    phone: string | null;
+    quality: string | null;
+    callback_url: string | null;
+    callback_ok: boolean | null;
+    subscribed: unknown;
+    last_event_at: string | null;
+}
+
 const props = defineProps<{
     property: { id: number; name: string };
     tokens: TokenRow[];
@@ -81,6 +102,13 @@ const props = defineProps<{
     baseUrl: string;
     ratePlansCount: number;
     evolutionChannels: EvolutionChannelRow[];
+    metaChannels: MetaChannelRow[];
+    metaConfig: {
+        mode: string;
+        webhook_url: string;
+        verify_token: string;
+        app_configured: boolean;
+    };
     channelLimit: { max: number | null; used: number };
     contextEditable: boolean;
     guidelinesEditable: boolean;
@@ -650,6 +678,146 @@ async function copyWebhook(ch: EvolutionChannelRow) {
     copiedWebhookId.value = ch.id;
     setTimeout(() => {
         if (copiedWebhookId.value === ch.id) copiedWebhookId.value = null;
+    }, 2000);
+}
+
+// ── Canales WhatsApp (Cloud API oficial de Meta) ──
+const showMetaForm = ref(false);
+const editingMeta = ref<MetaChannelRow | null>(null);
+const metaForm = reactive({
+    name: '',
+    external_id: '',
+    waba_id: '',
+    access_token: '',
+    active: true,
+});
+const metaError = ref<string | null>(null);
+const metaSaving = ref(false);
+const metaTests = reactive<Record<number, MetaDiagnose>>({});
+const testingMeta = ref<number | null>(null);
+const deletingMeta = ref<MetaChannelRow | null>(null);
+
+function openMetaCreate() {
+    if (channelLimitReached.value) return;
+    editingMeta.value = null;
+    metaForm.name = '';
+    metaForm.external_id = '';
+    metaForm.waba_id = '';
+    metaForm.access_token = '';
+    metaForm.active = true;
+    metaError.value = null;
+    showMetaForm.value = true;
+}
+
+function openMetaEdit(ch: MetaChannelRow) {
+    editingMeta.value = ch;
+    metaForm.name = ch.name ?? '';
+    metaForm.external_id = ch.external_id;
+    metaForm.waba_id = ch.waba_id ?? '';
+    metaForm.access_token = '';
+    metaForm.active = ch.active;
+    metaError.value = null;
+    showMetaForm.value = true;
+}
+
+async function submitMeta() {
+    metaSaving.value = true;
+    metaError.value = null;
+    try {
+        if (editingMeta.value) {
+            await axios.patch(
+                route('tenant.meta-channels.update', editingMeta.value.id),
+                {
+                    name: metaForm.name || null,
+                    external_id: metaForm.external_id,
+                    waba_id: metaForm.waba_id || null,
+                    access_token: metaForm.access_token || null,
+                    active: metaForm.active,
+                },
+            );
+            toast.success('WhatsApp actualizado');
+        } else {
+            await axios.post(route('tenant.meta-channels.store'), {
+                name: metaForm.name || null,
+                external_id: metaForm.external_id,
+                waba_id: metaForm.waba_id || null,
+                access_token: metaForm.access_token,
+            });
+            toast.success(
+                'WhatsApp conectado',
+                'Prueba la conexión para validar el número y el webhook.',
+            );
+        }
+        showMetaForm.value = false;
+        router.reload({ only: ['metaChannels', 'channelLimit'] });
+    } catch (e: any) {
+        const data = e.response?.data;
+        const firstError = data?.errors
+            ? (Object.values(data.errors)[0] as string[])?.[0]
+            : null;
+        metaError.value = data?.message ?? firstError ?? 'No se pudo guardar.';
+    } finally {
+        metaSaving.value = false;
+    }
+}
+
+async function submitDeleteMeta() {
+    if (!deletingMeta.value) return;
+    metaSaving.value = true;
+    try {
+        await axios.delete(
+            route('tenant.meta-channels.destroy', deletingMeta.value.id),
+        );
+        toast.success('WhatsApp desconectado');
+        deletingMeta.value = null;
+        router.reload({ only: ['metaChannels', 'channelLimit'] });
+    } catch (e: any) {
+        toast.error(
+            'No se pudo desconectar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        metaSaving.value = false;
+    }
+}
+
+async function testMeta(ch: MetaChannelRow) {
+    testingMeta.value = ch.id;
+    try {
+        const { data } = await axios.post(
+            route('tenant.meta-channels.test', ch.id),
+        );
+        metaTests[ch.id] = data.diagnose;
+        if (data.diagnose.token_ok) {
+            toast.success(
+                'Conexión válida',
+                `Número: ${data.diagnose.phone ?? 'sin nombre'}` +
+                    (data.diagnose.callback_ok === false
+                        ? ' · el webhook en Meta apunta a otra URL'
+                        : ''),
+            );
+        } else {
+            toast.error(
+                'Token inválido o expirado',
+                'Revisa el access token en tu app de Meta.',
+            );
+        }
+    } catch (e: any) {
+        toast.error(
+            'No se pudo probar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        testingMeta.value = null;
+    }
+}
+
+const copiedMeta = ref<string | null>(null);
+async function copyMeta(key: string, value: string) {
+    await navigator.clipboard.writeText(value);
+    copiedMeta.value = key;
+    setTimeout(() => {
+        if (copiedMeta.value === key) copiedMeta.value = null;
     }, 2000);
 }
 </script>
@@ -1500,6 +1668,254 @@ async function copyWebhook(ch: EvolutionChannelRow) {
                                 guardan con su huésped y reserva ligados.</span
                             >
                         </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- WhatsApp (Cloud API oficial de Meta) -->
+            <div class="col-span-12">
+                <div class="box box--stacked">
+                    <div
+                        class="flex flex-wrap items-center gap-4 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                        >
+                            <Lucide icon="BadgeCheck" class="h-5 w-5" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                WhatsApp (Cloud API de Meta)
+                            </h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                El WhatsApp oficial: conecta tu número con su
+                                phone_number_id y token de Meta. Más estable que
+                                Evolution — no se cae solo.
+                            </p>
+                        </div>
+                        <div class="flex shrink-0 items-center gap-3">
+                            <span
+                                class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-500 dark:bg-darkmode-400"
+                                >{{ channelCountLabel }}</span
+                            >
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                                :disabled="channelLimitReached"
+                                :title="
+                                    channelLimitReached
+                                        ? 'Alcanzaste el límite de canales de mensajería de tu plan.'
+                                        : undefined
+                                "
+                                @click="openMetaCreate"
+                            >
+                                <Lucide
+                                    icon="Plus"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Conectar número
+                            </Button>
+                        </div>
+                    </div>
+
+                    <div class="p-5">
+                        <!-- Datos para configurar el webhook en la app de Meta -->
+                        <div
+                            class="grid grid-cols-1 gap-3 rounded-xl border border-dashed border-slate-300/70 bg-slate-50 p-4 sm:grid-cols-2 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        >
+                            <div>
+                                <div
+                                    class="text-xs font-medium text-slate-500"
+                                >
+                                    URL del webhook (Callback URL)
+                                </div>
+                                <button
+                                    type="button"
+                                    class="mt-1 flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left font-mono text-xs text-slate-600 transition hover:border-primary/40 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                    @click="
+                                        copyMeta('url', metaConfig.webhook_url)
+                                    "
+                                >
+                                    <span class="min-w-0 flex-1 truncate">{{
+                                        metaConfig.webhook_url
+                                    }}</span>
+                                    <Lucide
+                                        :icon="
+                                            copiedMeta === 'url'
+                                                ? 'Check'
+                                                : 'Copy'
+                                        "
+                                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                                    />
+                                </button>
+                            </div>
+                            <div>
+                                <div
+                                    class="text-xs font-medium text-slate-500"
+                                >
+                                    Token de verificación
+                                </div>
+                                <button
+                                    type="button"
+                                    class="mt-1 flex w-full items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-left font-mono text-xs text-slate-600 transition hover:border-primary/40 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                    @click="
+                                        copyMeta(
+                                            'token',
+                                            metaConfig.verify_token,
+                                        )
+                                    "
+                                >
+                                    <span class="min-w-0 flex-1 truncate">{{
+                                        metaConfig.verify_token
+                                    }}</span>
+                                    <Lucide
+                                        :icon="
+                                            copiedMeta === 'token'
+                                                ? 'Check'
+                                                : 'Copy'
+                                        "
+                                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                                    />
+                                </button>
+                            </div>
+                            <p
+                                class="flex items-start gap-1.5 text-xs text-slate-400 sm:col-span-2"
+                            >
+                                <Lucide
+                                    icon="Info"
+                                    class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                                />
+                                <span
+                                    >Pega ambos en tu app de Meta (Webhooks de
+                                    WhatsApp) y suscribe el campo
+                                    <span class="font-medium">messages</span>.
+                                    Luego conecta tu número aquí.</span
+                                >
+                            </p>
+                        </div>
+
+                        <!-- Números conectados -->
+                        <div
+                            v-if="metaChannels.length"
+                            class="mt-4 overflow-auto lg:overflow-visible"
+                        >
+                            <Table>
+                                <Table.Thead>
+                                    <Table.Tr>
+                                        <Table.Th>Nombre</Table.Th>
+                                        <Table.Th>phone_number_id</Table.Th>
+                                        <Table.Th>Token</Table.Th>
+                                        <Table.Th>Estado</Table.Th>
+                                        <Table.Th class="text-right"
+                                            >Acciones</Table.Th
+                                        >
+                                    </Table.Tr>
+                                </Table.Thead>
+                                <Table.Tbody>
+                                    <Table.Tr
+                                        v-for="ch in metaChannels"
+                                        :key="ch.id"
+                                    >
+                                        <Table.Td class="font-medium">{{
+                                            ch.name || 'WhatsApp'
+                                        }}</Table.Td>
+                                        <Table.Td
+                                            class="font-mono text-xs text-slate-500"
+                                            >{{ ch.external_id }}</Table.Td
+                                        >
+                                        <Table.Td
+                                            class="font-mono text-xs text-slate-400"
+                                            >{{ ch.masked_token }}</Table.Td
+                                        >
+                                        <Table.Td>
+                                            <div
+                                                class="flex flex-wrap items-center gap-1.5"
+                                            >
+                                                <span
+                                                    class="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                                    :class="
+                                                        ch.active
+                                                            ? 'bg-success/10 text-success'
+                                                            : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                                    "
+                                                    >{{
+                                                        ch.active
+                                                            ? 'Activo'
+                                                            : 'Inactivo'
+                                                    }}</span
+                                                >
+                                                <span
+                                                    v-if="metaTests[ch.id]"
+                                                    class="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                                    :class="
+                                                        metaTests[ch.id]
+                                                            .token_ok
+                                                            ? 'bg-success/10 text-success'
+                                                            : 'bg-danger/10 text-danger'
+                                                    "
+                                                    >{{
+                                                        metaTests[ch.id].token_ok
+                                                            ? metaTests[ch.id]
+                                                                  .phone ||
+                                                              'token OK'
+                                                            : 'token inválido'
+                                                    }}</span
+                                                >
+                                            </div>
+                                        </Table.Td>
+                                        <Table.Td class="text-right">
+                                            <div
+                                                class="flex items-center justify-end gap-1.5"
+                                            >
+                                                <button
+                                                    type="button"
+                                                    title="Probar conexión"
+                                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary disabled:opacity-40"
+                                                    :disabled="
+                                                        testingMeta === ch.id
+                                                    "
+                                                    @click="testMeta(ch)"
+                                                >
+                                                    <Lucide
+                                                        icon="PlugZap"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="Editar"
+                                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                                    @click="openMetaEdit(ch)"
+                                                >
+                                                    <Lucide
+                                                        icon="Pencil"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    title="Desconectar"
+                                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                                    @click="deletingMeta = ch"
+                                                >
+                                                    <Lucide
+                                                        icon="Trash2"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </button>
+                                            </div>
+                                        </Table.Td>
+                                    </Table.Tr>
+                                </Table.Tbody>
+                            </Table>
+                        </div>
+                        <div
+                            v-else
+                            class="mt-4 rounded-xl border border-dashed border-slate-300/70 px-4 py-8 text-center text-sm text-slate-500 dark:border-darkmode-400"
+                        >
+                            Aún no conectas ningún número de WhatsApp por Meta.
+                        </div>
                     </div>
                 </div>
             </div>
@@ -2417,6 +2833,172 @@ async function copyWebhook(ch: EvolutionChannelRow) {
                         >
                             <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
                             {{ saving ? 'Desconectando…' : 'Sí, desconectar' }}
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Modal conectar/editar WhatsApp Meta -->
+        <Dialog :open="showMetaForm" @close="showMetaForm = false">
+            <Dialog.Panel>
+                <form class="p-6" @submit.prevent="submitMeta">
+                    <div class="mb-4 flex items-center gap-3.5">
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
+                        >
+                            <Lucide icon="BadgeCheck" class="h-5 w-5" />
+                        </div>
+                        <h2 class="text-base font-medium">
+                            {{
+                                editingMeta
+                                    ? 'Editar número de WhatsApp'
+                                    : 'Conectar número por Meta'
+                            }}
+                        </h2>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Nombre (opcional)</label
+                            >
+                            <FormInput
+                                v-model="metaForm.name"
+                                type="text"
+                                placeholder="WhatsApp del hotel"
+                            />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >phone_number_id</label
+                            >
+                            <FormInput
+                                v-model="metaForm.external_id"
+                                type="text"
+                                placeholder="1055XXXXXXXXXXX"
+                            />
+                            <FormHelp
+                                >El ID del número, en tu app de Meta →
+                                WhatsApp → Configuración de la API.</FormHelp
+                            >
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >WhatsApp Business Account ID (opcional)</label
+                            >
+                            <FormInput
+                                v-model="metaForm.waba_id"
+                                type="text"
+                                placeholder="WABA ID"
+                            />
+                            <FormHelp
+                                >Recomendado: sin él no se puede reparar la
+                                suscripción del webhook.</FormHelp
+                            >
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Access token</label
+                            >
+                            <FormInput
+                                v-model="metaForm.access_token"
+                                type="password"
+                                :placeholder="
+                                    editingMeta
+                                        ? 'Déjalo vacío para conservar el actual'
+                                        : 'EAAG…'
+                                "
+                            />
+                            <FormHelp
+                                >Se guarda cifrado. En pruebas sirve el token
+                                temporal (24 h) del panel de Meta.</FormHelp
+                            >
+                        </div>
+                        <div
+                            v-if="editingMeta"
+                            class="flex items-center justify-between rounded-lg border border-dashed border-slate-300/70 px-3 py-2.5 dark:border-darkmode-400"
+                        >
+                            <span class="text-sm">Canal activo</span>
+                            <FormSwitch>
+                                <FormSwitch.Input
+                                    :checked="metaForm.active"
+                                    type="checkbox"
+                                    @change="metaForm.active = !metaForm.active"
+                                />
+                            </FormSwitch>
+                        </div>
+                        <p
+                            v-if="metaError"
+                            class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                        >
+                            {{ metaError }}
+                        </p>
+                    </div>
+                    <div class="mt-6 flex justify-end gap-2">
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            @click="showMetaForm = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            :disabled="
+                                metaSaving ||
+                                !metaForm.external_id ||
+                                (!editingMeta && !metaForm.access_token)
+                            "
+                        >
+                            {{
+                                metaSaving
+                                    ? 'Guardando…'
+                                    : editingMeta
+                                      ? 'Guardar'
+                                      : 'Conectar'
+                            }}
+                        </Button>
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Modal desconectar WhatsApp Meta -->
+        <Dialog :open="deletingMeta !== null" @close="deletingMeta = null">
+            <Dialog.Panel>
+                <div v-if="deletingMeta" class="p-6">
+                    <div class="flex items-start gap-3.5">
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                        >
+                            <Lucide icon="Trash2" class="h-5 w-5" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                ¿Desconectar
+                                {{ deletingMeta.name || 'este WhatsApp' }}?
+                            </h2>
+                            <p class="mt-0.5 text-sm text-slate-500">
+                                El número deja de recibir y enviar por el bot;
+                                el historial de conversaciones se conserva.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-6 flex justify-end gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            @click="deletingMeta = null"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            :disabled="metaSaving"
+                            @click="submitDeleteMeta"
+                        >
+                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            {{
+                                metaSaving ? 'Desconectando…' : 'Sí, desconectar'
+                            }}
                         </Button>
                     </div>
                 </div>

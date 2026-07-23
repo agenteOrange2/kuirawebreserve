@@ -9,7 +9,7 @@ it('habilita todo por default (sin filas)', function () {
     expect($gate->platformEnabled('transfer'))->toBeTrue()
         ->and($gate->enabledFor('demo', 'stripe'))->toBeTrue()
         ->and($gate->methodsFor('demo'))->toBe([
-            'transfer' => true, 'stripe' => true, 'mercadopago' => true, 'paypal' => true,
+            'transfer' => true, 'stripe' => true, 'mercadopago' => true, 'paypal' => true, 'cash' => true,
         ]);
 });
 

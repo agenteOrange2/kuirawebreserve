@@ -33,12 +33,29 @@ class ExperienceWizardController extends Controller
         abort_unless((bool) (($property->settings['widget_experiencias_enabled'] ?? true)), 404);
         $settings = $property->settings ?? [];
 
+        // Misma apariencia que el wizard de habitaciones (/reservas/ajustes):
+        // una sola configuración para todas las páginas públicas.
+        $appearance = $property->wizardAppearance();
+
         return Inertia::render('tenant/reservar/Experiences', [
+            'appearance' => $appearance,
             'property' => [
                 'name' => $property->name,
+                'logo_url' => $appearance['logo_url'],
                 'phone' => $settings['phone'] ?? null,
                 'currency' => $settings['currency'] ?? 'MXN',
+                // Doble moneda: se muestra el "aprox" en la otra divisa.
+                'currency_secondary' => $settings['currency_secondary'] ?? null,
+                'exchange_rate' => $settings['exchange_rate'] ?? null,
             ],
+            // Accesos cruzados (misma botonera que /reservar): solo a páginas
+            // que existen de verdad para este hotel — módulo activo y, en las
+            // que tienen toggle de widget, con la página pública prendida.
+            'hasWizard' => (bool) tenant()?->hasModule('motor-web')
+                && (bool) ($settings['widget_reservas_enabled'] ?? true),
+            'hasLookup' => (bool) tenant()?->hasModule('motor-web'),
+            'hasGroups' => (bool) tenant()?->hasModule('grupos')
+                && (bool) ($settings['widget_grupos_enabled'] ?? true),
         ]);
     }
 
@@ -281,6 +298,7 @@ class ExperienceWizardController extends Controller
             'amount' => (float) $paymentRequest->amount,
             'amount_label' => $paymentRequest->amountLabel(),
             'bank_accounts' => $accounts,
+            'whatsapps' => app(\App\Services\ReservationPolicy::class)->transferWhatsapps(),
             'valid_hours' => (int) now()->diffInHours($paymentRequest->expires_at ?? now()),
             'return_url' => route('tenant.payment.return', $paymentRequest->uuid),
         ], 201);

@@ -119,6 +119,30 @@ class AgentPageController extends Controller
                     'active' => $link->active,
                     'created_at' => $link->created_at?->format('d/m/Y'),
                 ]),
+            // WhatsApp vía Cloud API oficial de Meta: números conectados.
+            'metaChannels' => \App\Models\Central\MetaChannelLink::query()
+                ->where('tenant_id', tenant('id'))
+                ->where('type', 'whatsapp')
+                ->orderBy('id')
+                ->get()
+                ->map(fn ($link) => [
+                    'id' => $link->id,
+                    'name' => $link->name,
+                    'external_id' => $link->external_id,
+                    'waba_id' => $link->waba_id,
+                    'masked_token' => $link->maskedToken(),
+                    'active' => $link->active,
+                    'last_event_at' => $link->last_event_at?->diffForHumans(),
+                    'created_at' => $link->created_at?->format('d/m/Y'),
+                ]),
+            // La app de Meta es global de la plataforma: el hotel pega esta
+            // URL de webhook y el verify token en su app y suscribe "messages".
+            'metaConfig' => [
+                'mode' => config('meta.mode'),
+                'webhook_url' => rtrim(config('app.url'), '/').'/webhooks/meta',
+                'verify_token' => config('meta.verify_token'),
+                'app_configured' => filled(config('meta.app_id')),
+            ],
             'channelLimit' => [
                 'max' => tenant()->planLimit('max_channels'),
                 'used' => \App\Models\Central\EvolutionChannelLink::query()->where('tenant_id', tenant('id'))->count()

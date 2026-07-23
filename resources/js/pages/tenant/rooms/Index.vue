@@ -4,6 +4,7 @@ import axios from 'axios';
 import { computed, onMounted, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
+    FormCheck,
     FormHelp,
     FormInput,
     FormLabel,
@@ -130,6 +131,58 @@ const filtersActive = computed(
         filters.type !== '' ||
         filters.status !== '',
 );
+
+// ── Selección múltiple: opera sobre las filas VISIBLES (filteredRooms).
+// El backend conserva las ocupadas o con reservas próximas. ──
+const selectedIds = ref<number[]>([]);
+const bulkDeleteOpen = ref(false);
+const bulkDeleting = ref(false);
+
+const allSelected = computed(
+    () =>
+        filteredRooms.value.length > 0 &&
+        filteredRooms.value.every((r) => selectedIds.value.includes(r.id)),
+);
+const selectedRows = computed(() =>
+    props.rooms.filter((r) => selectedIds.value.includes(r.id)),
+);
+
+function toggleRow(id: number) {
+    selectedIds.value = selectedIds.value.includes(id)
+        ? selectedIds.value.filter((x) => x !== id)
+        : [...selectedIds.value, id];
+}
+function toggleAllRooms() {
+    selectedIds.value = allSelected.value
+        ? []
+        : filteredRooms.value.map((r) => r.id);
+}
+
+async function bulkDeleteRooms() {
+    bulkDeleting.value = true;
+    try {
+        const { data } = await axios.delete('/api/rooms/bulk', {
+            data: { ids: selectedIds.value },
+        });
+        toast.success(
+            'Habitaciones eliminadas',
+            `${data.deleted} eliminada(s)` +
+                (data.skipped
+                    ? ` · ${data.skipped} conservada(s) por estar ocupadas o con reservas`
+                    : ''),
+        );
+        selectedIds.value = [];
+        bulkDeleteOpen.value = false;
+        router.reload({ only: ['rooms'] });
+    } catch (error: any) {
+        toast.error(
+            'No se pudo eliminar',
+            error.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        bulkDeleting.value = false;
+    }
+}
 
 function clearFilters() {
     filters.search = '';
@@ -765,12 +818,40 @@ async function submitDelete() {
                             Limpiar
                         </button>
                     </div>
+                    <template v-if="canManage && selectedIds.length">
+                        <span class="ml-auto text-xs text-slate-500"
+                            >{{ selectedIds.length }} seleccionada(s)</span
+                        >
+                        <button
+                            type="button"
+                            class="text-xs font-medium text-primary hover:underline"
+                            @click="selectedIds = []"
+                        >
+                            Quitar selección
+                        </button>
+                        <Button
+                            variant="danger"
+                            class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                            @click="bulkDeleteOpen = true"
+                        >
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
+                            Eliminar seleccionadas
+                        </Button>
+                    </template>
                 </div>
 
                 <div class="overflow-x-auto p-5">
                     <Table v-if="filteredRooms.length" striped>
                         <Table.Thead>
                             <Table.Tr>
+                                <Table.Th v-if="canManage" class="w-10">
+                                    <FormCheck.Input
+                                        type="checkbox"
+                                        :checked="allSelected"
+                                        title="Seleccionar las visibles"
+                                        @change="toggleAllRooms"
+                                    />
+                                </Table.Th>
                                 <Table.Th>Número</Table.Th>
                                 <Table.Th>Tipo</Table.Th>
                                 <Table.Th>Camas / Capacidad</Table.Th>
@@ -787,6 +868,13 @@ async function submitDelete() {
                                 v-for="room in filteredRooms"
                                 :key="room.id"
                             >
+                                <Table.Td v-if="canManage" class="w-10">
+                                    <FormCheck.Input
+                                        type="checkbox"
+                                        :checked="selectedIds.includes(room.id)"
+                                        @change="toggleRow(room.id)"
+                                    />
+                                </Table.Td>
                                 <Table.Td>
                                     <Link
                                         :href="
@@ -2319,6 +2407,58 @@ async function submitDelete() {
                             @click="submitDelete"
                             >Sí, eliminar</Button
                         >
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Confirmar borrado masivo -->
+        <Dialog :open="bulkDeleteOpen" @close="bulkDeleteOpen = false">
+            <Dialog.Panel>
+                <div class="p-5">
+                    <div class="mb-3 flex items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
+                        >
+                            <Lucide icon="Trash2" class="h-5 w-5 text-danger" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                Eliminar {{ selectedRows.length }} habitación(es)
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Las que tengan una estancia activa o reservas
+                                próximas se conservan y se te informa.
+                            </p>
+                        </div>
+                    </div>
+                    <div
+                        class="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-dashed border-slate-300/70 p-2 text-sm dark:border-darkmode-400"
+                    >
+                        <div
+                            v-for="row in selectedRows"
+                            :key="row.id"
+                            class="flex items-center justify-between gap-2 px-1"
+                        >
+                            <span class="font-medium">{{ row.number }}</span>
+                            <span class="text-xs text-slate-500">{{
+                                row.room_type
+                            }}</span>
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            @click="bulkDeleteOpen = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            :disabled="bulkDeleting"
+                            @click="bulkDeleteRooms"
+                        >
+                            {{ bulkDeleting ? 'Eliminando…' : 'Sí, eliminar' }}
+                        </Button>
                     </div>
                 </div>
             </Dialog.Panel>

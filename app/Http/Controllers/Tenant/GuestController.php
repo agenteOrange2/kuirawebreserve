@@ -76,6 +76,36 @@ class GuestController extends Controller
     }
 
     /**
+     * Borrado en masa: elimina los huéspedes SIN historial; los que tienen
+     * reservas/estancias se conservan (rastro) y se reportan como omitidos.
+     */
+    public function destroyBulk(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:200'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $deleted = 0;
+        $skipped = 0;
+
+        foreach (Guest::query()->whereIn('id', $data['ids'])->get() as $guest) {
+            if ($guest->reservations()->exists() || $guest->stays()->exists()) {
+                $skipped++;
+
+                continue;
+            }
+
+            $guest->clearMediaCollection('documents');
+            $guest->clearMediaCollection('vehicle');
+            $guest->delete();
+            $deleted++;
+        }
+
+        return response()->json(['deleted' => $deleted, 'skipped' => $skipped]);
+    }
+
+    /**
      * Sube una foto (INE frente/reverso o vehículo) al disco privado.
      */
     public function storeDocument(Request $request, Guest $guest): JsonResponse

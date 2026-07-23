@@ -1,0 +1,159 @@
+/* Pantalla de ajustes del plugin: tarjetas limpias sobre el admin de WP. */
+.kuira-admin {
+    max-width: 1100px;
+}
+
+.kuira-admin .kuira-intro {
+    max-width: 720px;
+    font-size: 13px;
+    color: #50575e;
+    margin: 12px 0 18px;
+}
+
+.kuira-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.55fr) minmax(0, 1fr);
+    gap: 0 20px;
+    align-items: start;
+}
+
+@media (max-width: 960px) {
+    .kuira-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.kuira-card {
+    background: #fff;
+    border: 1px solid #dcdcde;
+    border-radius: 10px;
+    padding: 20px 22px;
+    margin-bottom: 18px;
+    box-shadow: 0 1px 1px rgba(0, 0, 0, 0.04);
+}
+
+.kuira-card h2 {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 14px;
+    margin: 0 0 16px;
+    padding: 0 0 12px;
+    border-bottom: 1px dashed #dcdcde;
+}
+
+.kuira-card h2 .dashicons {
+    color: #2271b1;
+}
+
+.kuira-field {
+    margin-bottom: 18px;
+}
+
+.kuira-field:last-child {
+    margin-bottom: 4px;
+}
+
+.kuira-field > label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.kuira-field input[type='text'],
+.kuira-field input[type='url'],
+.kuira-field input[type='password'],
+.kuira-field select {
+    width: 100%;
+    max-width: 460px;
+}
+
+.kuira-field .description {
+    margin-top: 6px;
+}
+
+.kuira-tag {
+    display: inline-block;
+    border-radius: 999px;
+    padding: 1px 9px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1.7;
+}
+
+.kuira-tag--ok {
+    background: #edfaef;
+    color: #0a7c2f;
+}
+
+.kuira-tag--bad {
+    background: #fcf0f1;
+    color: #a94442;
+}
+
+.kuira-status {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    border-radius: 999px;
+    padding: 4px 14px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.kuira-status::before {
+    content: '';
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: currentColor;
+}
+
+.kuira-status--ok {
+    background: #edfaef;
+    color: #0a7c2f;
+}
+
+.kuira-status--bad {
+    background: #fcf0f1;
+    color: #a94442;
+}
+
+.kuira-status--none {
+    background: #f0f0f1;
+    color: #646970;
+}
+
+.kuira-detail {
+    color: #50575e;
+    font-size: 13px;
+    margin: 8px 0;
+}
+
+.kuira-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px dashed #dcdcde;
+}
+
+.kuira-card code {
+    display: inline-block;
+    background: #f0f0f1;
+    border-radius: 5px;
+    padding: 4px 9px;
+    font-size: 12px;
+    margin: 0 4px 6px 0;
+}
+
+.kuira-version {
+    margin: 14px 0 0;
+    padding-top: 12px;
+    border-top: 1px dashed #dcdcde;
+    color: #8c8f94;
+    font-size: 12px;
+}

@@ -6,6 +6,8 @@ import Button from '@/components/Base/Button';
 import { FormInput, FormLabel, FormTextarea } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import { useEmbedResize } from '@/composables/useEmbedResize';
+import type { WizardAppearance } from '@/composables/useWizardAppearance';
+import { useWizardAppearance } from '@/composables/useWizardAppearance';
 
 interface TypePhoto {
     id: number;
@@ -62,7 +64,10 @@ interface GroupHold {
     starts_at: string | null;
     ends_at: string | null;
     total: number;
+    deposit: number;
     requires_prepayment: boolean;
+    // Modo "ambos": pagar en línea es oferta, no obligación.
+    payment_optional: boolean;
     hold_expires_at: string | null;
     hold_minutes: number;
 }
@@ -83,25 +88,36 @@ interface PaymentResult {
     amount_label: string;
     checkout_url?: string;
     bank_accounts?: { banco: string; titular: string; cuenta: string }[];
+    whatsapps?: string[];
     valid_hours?: number;
     return_url: string;
 }
 
 const props = defineProps<{
+    // Misma apariencia que el wizard (/reservas/ajustes): una sola
+    // configuración para todas las páginas públicas.
+    appearance: WizardAppearance;
     property: {
         name: string;
+        logo_url: string | null;
         phone: string | null;
         currency: string;
+        currency_secondary: string | null;
+        exchange_rate: number | null;
         guest_policy: 'family' | 'adults_only';
         block_mode_label: string;
     };
     hasNightRates: boolean;
     hasBlockRates: boolean;
     holdMinutes: number;
+    hasWizard: boolean;
+    hasLookup: boolean;
+    hasExperiences: boolean;
 }>();
 
 // Widget incrustado: reporta su alto al iframe padre.
 useEmbedResize();
+const { isDark, rootStyle } = useWizardAppearance(props.appearance);
 
 const adultsOnly = computed(
     () => props.property.guest_policy === 'adults_only',
@@ -111,6 +127,15 @@ const bothModesAvailable = computed(
 );
 const money = (n: number) =>
     `$${Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2 })} ${props.property.currency}`;
+
+// Doble moneda: referencia "aprox" en la segunda divisa (cobro en la primaria).
+const secondaryMoney = (n: number): string => {
+    const rate = props.property.exchange_rate;
+    const sec = props.property.currency_secondary;
+    if (!sec || !rate || rate <= 0) return '';
+    const converted = n / rate;
+    return `≈ $${converted.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${sec}`;
+};
 
 function localDateInput(date: Date): string {
     const y = date.getFullYear();
@@ -410,11 +435,40 @@ const payment = ref<PaymentResult | null>(null);
 const paymentLoading = ref(false);
 const paymentError = ref<string | null>(null);
 
+// Con anticipos configurados el responsable elige: pagar lo mínimo para
+// apartar (anticipos + tours) o liquidar todo el grupo de una vez.
+const payAmountChoice = ref<'deposit' | 'full'>('deposit');
+const depositApplies = computed(
+    () => !!hold.value && hold.value.deposit > 0 && hold.value.deposit < hold.value.total,
+);
+// Modo "ambos": el responsable eligió pagar al llegar.
+const payLater = ref(false);
+
+// Avisa al backend para que el apartado del grupo pase del hold corto al
+// plazo de efectivo del hotel (default 24 h, tope: la llegada de cada
+// reserva). Si falla, la confirmación se muestra igual con el plazo corto.
+async function choosePayLater() {
+    payLater.value = true;
+    if (!hold.value) return;
+    try {
+        const { data } = await axios.post<{ hold_expires_at: string | null }>(
+            `/api/grupos/holds/${hold.value.code}/pay-later`,
+        );
+        if (data.hold_expires_at) {
+            hold.value.hold_expires_at = data.hold_expires_at;
+        }
+    } catch {
+        // Sin extensión: el plazo corto del hold sigue mandando.
+    }
+}
+
 async function preparePayment() {
     paymentLoading.value = true;
     paymentError.value = null;
     payment.value = null;
     paymentChoice.value = null;
+    payAmountChoice.value = 'deposit';
+    payLater.value = false;
     try {
         const { data } = await axios.get<PaymentOptions>(
             '/api/grupos/payment-options',
@@ -422,7 +476,20 @@ async function preparePayment() {
         const optionsCount =
             data.gateways.length + Number(data.transfer.available);
 
-        if (optionsCount >= 2) {
+        // Efectivo activo sin ningún método en línea listo: nada que
+        // elegir — se confirma directo y se paga en el hotel.
+        if (hold.value?.payment_optional && optionsCount === 0) {
+            await choosePayLater();
+            return;
+        }
+
+        // Con anticipo o con efectivo activo SIEMPRE se muestra la
+        // elección, aunque solo haya un método disponible.
+        if (
+            optionsCount >= 2 ||
+            ((depositApplies.value || hold.value?.payment_optional) &&
+                optionsCount >= 1)
+        ) {
             paymentChoice.value = data;
         } else if (data.gateways.length === 1) {
             await requestPayment('gateway', data.gateways[0].provider);
@@ -447,7 +514,11 @@ async function requestPayment(
     try {
         const { data } = await axios.post<PaymentResult>(
             `/api/grupos/holds/${hold.value.code}/payment`,
-            { method, provider },
+            {
+                method,
+                provider,
+                pay: depositApplies.value ? payAmountChoice.value : undefined,
+            },
         );
         payment.value = data;
         if (data.method === 'gateway' && data.checkout_url) {
@@ -493,10 +564,18 @@ const formatDateTime = (iso: string) =>
     <Head :title="`Reserva grupal · ${property.name}`" />
     <div
         class="flex min-h-screen bg-linear-to-b from-theme-1 to-theme-2 px-3 py-8 sm:px-8"
+        :style="rootStyle"
     >
         <div class="m-auto w-full max-w-4xl">
             <div class="mb-5 flex items-center gap-3 px-1 text-white">
+                <img
+                    v-if="property.logo_url"
+                    :src="property.logo_url"
+                    :alt="`Logo de ${property.name}`"
+                    class="h-11 w-11 shrink-0 rounded-full bg-white object-contain p-1"
+                />
                 <div
+                    v-else
                     class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10"
                 >
                     <Lucide icon="UsersRound" class="h-5 w-5" />
@@ -518,7 +597,10 @@ const formatDateTime = (iso: string) =>
                 </a>
             </div>
 
-            <div class="overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div
+                class="overflow-hidden rounded-2xl bg-white shadow-2xl"
+                :class="isDark && 'booking-dark'"
+            >
                 <!-- ═══ Confirmación / pago ═══ -->
                 <div
                     v-if="step === 'confirm' && hold"
@@ -586,9 +668,15 @@ const formatDateTime = (iso: string) =>
                             <span>Total del grupo</span
                             ><span>{{ money(hold.total) }}</span>
                         </div>
+                        <div
+                            v-if="secondaryMoney(hold.total)"
+                            class="mt-0.5 text-right text-xs text-slate-400"
+                        >
+                            {{ secondaryMoney(hold.total) }}
+                        </div>
                     </div>
 
-                    <template v-if="hold.requires_prepayment">
+                    <template v-if="hold.requires_prepayment && !payLater">
                         <div v-if="paymentLoading" class="mt-5">
                             <Lucide
                                 icon="RefreshCw"
@@ -606,6 +694,79 @@ const formatDateTime = (iso: string) =>
                                 ¿Cómo prefieres pagar? Un solo pago por todo el
                                 grupo.
                             </h3>
+
+                            <!-- Con anticipo: cuánto pagar hoy lo decide el
+                                 responsable, no el sistema -->
+                            <div
+                                v-if="depositApplies && hold"
+                                class="mx-auto mt-4 max-w-sm text-left"
+                            >
+                                <div
+                                    class="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                >
+                                    ¿Cuánto pagan hoy?
+                                </div>
+                                <!-- Apiladas en celular: lado a lado quedan
+                                     angostas y con el texto amontonado -->
+                                <div
+                                    class="grid grid-cols-1 gap-2.5 sm:grid-cols-2"
+                                >
+                                    <button
+                                        type="button"
+                                        class="rounded-xl border p-3.5 text-left transition"
+                                        :class="
+                                            payAmountChoice === 'deposit'
+                                                ? 'border-primary bg-primary/5'
+                                                : 'border-slate-200 hover:border-primary/40'
+                                        "
+                                        @click="payAmountChoice = 'deposit'"
+                                    >
+                                        <div
+                                            class="text-sm font-medium text-slate-800"
+                                        >
+                                            Solo el anticipo
+                                        </div>
+                                        <div
+                                            class="mt-0.5 text-base font-semibold text-slate-800"
+                                        >
+                                            {{ money(hold.deposit) }}
+                                        </div>
+                                        <div
+                                            class="mt-1 text-xs text-slate-500"
+                                        >
+                                            El resto se paga después, por link o
+                                            transferencia.
+                                        </div>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        class="rounded-xl border p-3.5 text-left transition"
+                                        :class="
+                                            payAmountChoice === 'full'
+                                                ? 'border-primary bg-primary/5'
+                                                : 'border-slate-200 hover:border-primary/40'
+                                        "
+                                        @click="payAmountChoice = 'full'"
+                                    >
+                                        <div
+                                            class="text-sm font-medium text-slate-800"
+                                        >
+                                            Todo de una vez
+                                        </div>
+                                        <div
+                                            class="mt-0.5 text-base font-semibold text-slate-800"
+                                        >
+                                            {{ money(hold.total) }}
+                                        </div>
+                                        <div
+                                            class="mt-1 text-xs text-slate-500"
+                                        >
+                                            Liquidan hoy y se olvidan de saldos.
+                                        </div>
+                                    </button>
+                                </div>
+                            </div>
+
                             <div class="mx-auto mt-3 max-w-sm space-y-2.5">
                                 <button
                                     v-for="gw in paymentChoice.gateways"
@@ -660,6 +821,33 @@ const formatDateTime = (iso: string) =>
                                         </div>
                                     </div>
                                 </button>
+                                <!-- Efectivo activo: pagar en el hotel también es opción -->
+                                <button
+                                    v-if="hold.payment_optional"
+                                    type="button"
+                                    class="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
+                                    @click="choosePayLater()"
+                                >
+                                    <div
+                                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
+                                    >
+                                        <Lucide
+                                            icon="Banknote"
+                                            class="h-5 w-5"
+                                        />
+                                    </div>
+                                    <div class="min-w-0">
+                                        <div
+                                            class="text-sm font-medium text-slate-800"
+                                        >
+                                            Preferimos pagar en el hotel
+                                        </div>
+                                        <div class="text-xs text-slate-500">
+                                            Pagan al llegar, en recepción; el
+                                            hotel confirma el grupo.
+                                        </div>
+                                    </div>
+                                </button>
                             </div>
                             <p
                                 v-if="holdCountdown"
@@ -671,34 +859,112 @@ const formatDateTime = (iso: string) =>
                         </template>
 
                         <template v-else-if="payment?.method === 'transfer'">
-                            <p class="mt-5 text-sm text-slate-600">
-                                Transfiere
-                                <span class="font-medium">{{
-                                    payment.amount_label
-                                }}</span>
-                                (un solo pago por el grupo) y envía tu
-                                comprobante al hotel:
-                            </p>
                             <div
-                                class="mx-auto mt-3 max-w-sm space-y-2 text-left"
+                                class="mx-auto mt-5 max-w-sm space-y-3 text-left"
                             >
-                                <div
-                                    v-for="acc in payment.bank_accounts"
-                                    :key="acc.cuenta"
-                                    class="rounded-xl border border-slate-200 p-3.5 text-sm"
-                                >
-                                    <div class="font-medium text-slate-700">
-                                        {{ acc.banco }}
-                                    </div>
-                                    <div class="text-slate-500">
-                                        {{ acc.titular }}
-                                    </div>
-                                    <div class="mt-1 font-mono text-slate-700">
-                                        {{ acc.cuenta }}
+                                <div class="flex items-start gap-3">
+                                    <span
+                                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+                                        >1</span
+                                    >
+                                    <div class="min-w-0 flex-1">
+                                        <p class="text-sm text-slate-700">
+                                            Transfiere
+                                            <span class="font-medium">{{
+                                                payment.amount_label
+                                            }}</span>
+                                            (un solo pago por el grupo) a una de
+                                            estas cuentas:
+                                        </p>
+                                        <div class="mt-2 space-y-2">
+                                            <div
+                                                v-for="acc in payment.bank_accounts"
+                                                :key="acc.cuenta"
+                                                class="rounded-xl border border-slate-200 p-3.5 text-sm"
+                                            >
+                                                <div
+                                                    class="font-medium text-slate-700"
+                                                >
+                                                    {{ acc.banco }}
+                                                </div>
+                                                <div class="text-slate-500">
+                                                    {{ acc.titular }}
+                                                </div>
+                                                <div
+                                                    class="mt-1 font-mono text-slate-700"
+                                                >
+                                                    {{ acc.cuenta }}
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
+                                <div class="flex items-start gap-3">
+                                    <span
+                                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+                                        >2</span
+                                    >
+                                    <div class="min-w-0 flex-1">
+                                        <p class="text-sm text-slate-700">
+                                            Manda tu comprobante con el folio
+                                            <span class="font-medium">{{
+                                                hold?.code
+                                            }}</span
+                                            >:
+                                        </p>
+                                        <template
+                                            v-if="payment.whatsapps?.length"
+                                        >
+                                            <a
+                                                v-for="wa in payment.whatsapps"
+                                                :key="wa"
+                                                :href="`https://wa.me/${wa}?text=${encodeURIComponent(`Hola, envío el comprobante de mi grupo ${hold?.code}`)}`"
+                                                target="_blank"
+                                                class="mt-2 flex items-center gap-3 rounded-xl border border-success/30 bg-success/5 p-3.5 text-left transition hover:bg-success/10"
+                                            >
+                                                <div
+                                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                                                >
+                                                    <Lucide
+                                                        icon="MessageCircle"
+                                                        class="h-5 w-5"
+                                                    />
+                                                </div>
+                                                <div class="min-w-0">
+                                                    <div
+                                                        class="text-sm font-medium text-slate-800"
+                                                    >
+                                                        Enviar por WhatsApp
+                                                    </div>
+                                                    <div
+                                                        class="text-xs text-slate-500"
+                                                    >
+                                                        +{{ wa }}
+                                                    </div>
+                                                </div>
+                                            </a>
+                                        </template>
+                                        <p
+                                            v-else
+                                            class="mt-1 text-xs text-slate-500"
+                                        >
+                                            El hotel te contactará para recibir
+                                            tu comprobante.
+                                        </p>
+                                    </div>
+                                </div>
+                                <div class="flex items-start gap-3">
+                                    <span
+                                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+                                        >3</span
+                                    >
+                                    <p class="text-sm text-slate-700">
+                                        En cuanto el hotel verifique el pago, el
+                                        grupo queda confirmado y les avisamos.
+                                    </p>
+                                </div>
                             </div>
-                            <p class="mt-2 text-xs text-slate-400">
+                            <p class="mt-3 text-xs text-slate-400">
                                 Vigente por {{ payment.valid_hours }} horas.
                             </p>
                         </template>
@@ -735,7 +1001,15 @@ const formatDateTime = (iso: string) =>
                             folio.
                         </p>
                         <p
-                            v-if="holdCountdown"
+                            v-if="payLater && hold.hold_expires_at"
+                            class="mt-2 text-xs text-warning"
+                        >
+                            Tienen hasta
+                            {{ formatDateTime(hold.hold_expires_at) }} para
+                            pagar en recepción; si no, el grupo se libera.
+                        </p>
+                        <p
+                            v-else-if="holdCountdown"
                             class="mt-2 text-xs text-warning"
                         >
                             Se libera solo en {{ holdCountdown }} si el hotel no
@@ -860,6 +1134,12 @@ const formatDateTime = (iso: string) =>
                                 >{{ money(estimatedTotal) }}</span
                             >
                         </div>
+                        <p
+                            v-if="secondaryMoney(estimatedTotal)"
+                            class="text-right text-[11px] text-slate-400"
+                        >
+                            {{ secondaryMoney(estimatedTotal) }}
+                        </p>
                         <p class="mt-2 text-[11px] text-slate-400">
                             El total final lo calcula el sistema al apartar
                             (incluye cargos por persona extra si aplican).
@@ -1155,7 +1435,9 @@ const formatDateTime = (iso: string) =>
                         </button>
                     </div>
 
-                    <div class="mt-3 grid grid-cols-2 gap-4">
+                    <!-- En celular las fechas se apilan: dos columnas dejan
+                         los date pickers al ras y se ve amontonado -->
+                    <div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
                         <template v-if="mode === 'night'">
                             <div>
                                 <FormLabel>Llegada</FormLabel>
@@ -1174,7 +1456,7 @@ const formatDateTime = (iso: string) =>
                                 />
                             </div>
                         </template>
-                        <div v-else class="col-span-2">
+                        <div v-else class="sm:col-span-2">
                             <FormLabel>Fecha y hora de llegada</FormLabel>
                             <FormInput
                                 v-model="arriveAt"
@@ -1518,15 +1800,36 @@ const formatDateTime = (iso: string) =>
                 </div>
             </div>
 
-            <p class="mt-4 text-center text-xs text-white/80">
-                ¿Solo necesitas una habitación?
+            <!-- Accesos relacionados: misma botonera que /reservar -->
+            <div
+                class="mt-5 flex flex-wrap items-center justify-center gap-2.5"
+            >
                 <a
+                    v-if="hasWizard"
                     href="/reservar"
-                    class="font-medium text-white underline-offset-2 hover:underline"
-                    >Reserva individual aquí</a
+                    class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
                 >
-            </p>
-            <p class="mt-2 text-center text-[11px] text-white/60">
+                    <Lucide icon="BedDouble" class="h-4 w-4" /> ¿Solo una
+                    habitación? Reserva individual
+                </a>
+                <a
+                    v-if="hasLookup"
+                    href="/reserva"
+                    class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                >
+                    <Lucide icon="TicketCheck" class="h-4 w-4" /> ¿Ya tienes una
+                    reserva? Consulta su estado
+                </a>
+                <a
+                    v-if="hasExperiences"
+                    href="/reservar/experiencias"
+                    class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                >
+                    <Lucide icon="Compass" class="h-4 w-4" /> Conoce nuestras
+                    experiencias
+                </a>
+            </div>
+            <p class="mt-3 text-center text-[11px] text-white/60">
                 Impulsado por KuiraWebReserve · tus datos de pago nunca pasan
                 por este sitio
             </p>

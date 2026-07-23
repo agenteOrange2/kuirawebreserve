@@ -23,17 +23,24 @@ use Throwable;
  */
 class IssuePaymentRequest
 {
+    /**
+     * @param  bool  $preferFull  El huésped eligió pagar TODO de una vez
+     *                            aunque haya anticipo configurado — el
+     *                            anticipo es el mínimo para apartar, no un
+     *                            tope (feedback 2026-07-17).
+     */
     public function handle(
         Reservation $reservation,
         string $method = PaymentRequest::METHOD_TRANSFER,
         ?User $user = null,
         ?PaymentGatewayLink $link = null,
+        bool $preferFull = false,
     ): PaymentRequest {
         if ($link !== null) {
             $method = PaymentRequest::METHOD_GATEWAY;
         }
 
-        $request = DB::transaction(function () use ($reservation, $method, $user, $link) {
+        $request = DB::transaction(function () use ($reservation, $method, $user, $link, $preferFull) {
             $reservation = Reservation::whereKey($reservation->id)->lockForUpdate()->firstOrFail();
 
             if (! in_array($reservation->status, [ReservationStatus::Pending, ReservationStatus::Confirmed, ReservationStatus::CheckedIn], true)) {
@@ -42,7 +49,7 @@ class IssuePaymentRequest
                 );
             }
 
-            [$concept, $amount] = $this->resolveConcept($reservation);
+            [$concept, $amount] = $this->resolveConcept($reservation, $preferFull);
 
             if ($amount <= 0) {
                 throw new InvalidArgumentException('La reserva no tiene saldo pendiente.');
@@ -129,11 +136,12 @@ class IssuePaymentRequest
 
     /**
      * Qué toca cobrar: pago total (tarifas con anticipo del 100% o sin
-     * anticipo definido), el anticipo si aún no se cubre, o el saldo.
+     * anticipo definido), el anticipo si aún no se cubre, o el saldo. Con
+     * $preferFull el huésped brinca el anticipo y liquida todo de una vez.
      *
      * @return array{0: string, 1: float}
      */
-    protected function resolveConcept(Reservation $reservation): array
+    protected function resolveConcept(Reservation $reservation, bool $preferFull = false): array
     {
         $pending = $reservation->pendingBalance();
         $deposit = (float) $reservation->deposit_amount;
@@ -143,8 +151,14 @@ class IssuePaymentRequest
             return [PaymentRequest::CONCEPT_FULL, $pending];
         }
 
-        if ($reservation->payment_status === PaymentStatus::Unpaid && $paid < $deposit) {
+        if (! $preferFull && $reservation->payment_status === PaymentStatus::Unpaid && $paid < $deposit) {
             return [PaymentRequest::CONCEPT_DEPOSIT, round($deposit - $paid, 2)];
+        }
+
+        // Todo de una vez sin nada pagado = pago total; con abonos previos
+        // lo pendiente es el saldo.
+        if ($preferFull && $paid <= 0) {
+            return [PaymentRequest::CONCEPT_FULL, $pending];
         }
 
         return [PaymentRequest::CONCEPT_BALANCE, $pending];

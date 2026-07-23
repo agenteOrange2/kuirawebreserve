@@ -24,6 +24,19 @@ class PaymentRequestController extends Controller
         return response()->json(['requests' => $this->queue()]);
     }
 
+    /**
+     * Cancela un cobro vivo desde el centro de pagos — aplica a cualquier
+     * sujeto (reserva, grupo o experiencia); el link deja de aceptar pagos.
+     */
+    public function cancel(PaymentRequest $paymentRequest): JsonResponse
+    {
+        if ($paymentRequest->status === PaymentRequest::STATUS_PENDING) {
+            $paymentRequest->update(['status' => PaymentRequest::STATUS_CANCELED]);
+        }
+
+        return response()->json(['status' => $paymentRequest->status]);
+    }
+
     public function approve(Request $request, PaymentRequest $paymentRequest, RegisterGatewayPayment $action): JsonResponse
     {
         $data = $request->validate([

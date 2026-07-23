@@ -178,10 +178,12 @@ const props = defineProps<{
     property: { id: number; name: string };
     reservations: ReservationRow[];
     history: ReservationRow[];
+    historyTotal: number;
     inHouse: ReservationRow[];
     stays: StayRow[];
     ratePlans: RatePlanOption[];
     canManage: boolean;
+    canCustomizeWizard: boolean;
     focusReservationId: number | null;
     prefill: {
         intent: 'walkin' | 'reserve' | null;
@@ -1427,6 +1429,20 @@ const modalTitle = computed(() => {
                         />
                         Reportes
                     </Button>
+                    <Button
+                        v-if="canCustomizeWizard"
+                        :as="Link"
+                        :href="route('tenant.reservations.settings')"
+                        variant="outline-secondary"
+                        class="rounded-[0.5rem] bg-white"
+                        title="Logo, colores y modo oscuro del wizard público"
+                    >
+                        <Lucide
+                            icon="Palette"
+                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                        />
+                        Apariencia
+                    </Button>
                     <template v-if="canManage">
                         <Button
                             variant="outline-primary"
@@ -2066,7 +2082,8 @@ const modalTitle = computed(() => {
                         Historial
                         <span
                             class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
-                            >{{ history.length }}</span
+                            >últimas {{ history.length }} de
+                            {{ historyTotal }}</span
                         >
                     </div>
                     <div
@@ -2095,13 +2112,28 @@ const modalTitle = computed(() => {
                             Eliminar seleccionadas
                         </Button>
                     </div>
-                    <span
+                    <div
                         v-else
-                        class="ml-auto text-xs font-normal text-slate-500"
+                        class="ml-auto flex flex-wrap items-center gap-3"
                     >
-                        Completadas, canceladas y no-shows; los no-shows cuentan
-                        en la confiabilidad del huésped.
-                    </span>
+                        <span
+                            class="hidden text-xs font-normal text-slate-500 lg:inline"
+                        >
+                            Completadas, canceladas y no-shows.
+                        </span>
+                        <Button
+                            :as="Link"
+                            :href="route('tenant.reservations.history')"
+                            variant="outline-secondary"
+                            class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                        >
+                            <Lucide
+                                icon="ChevronRight"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Ver historial completo
+                        </Button>
+                    </div>
                 </div>
                 <div class="overflow-auto p-5 lg:overflow-visible">
                     <Table v-if="history.length" striped>

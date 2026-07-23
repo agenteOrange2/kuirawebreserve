@@ -37,16 +37,19 @@ class ReservationsPageController extends Controller
             ->get();
 
         // Historial: lo que ya salió del flujo (en casa vive en "stays").
-        // Sin esto, un no-show/cancelación "desaparece" de la UI.
+        // Sin esto, un no-show/cancelación "desaparece" de la UI. Solo las
+        // últimas 20 — el resto vive en /reservas/historial con buscador.
+        $historyStatuses = [
+            ReservationStatus::Completed,
+            ReservationStatus::Cancelled,
+            ReservationStatus::NoShow,
+        ];
+        $historyTotal = Reservation::query()->whereIn('status', $historyStatuses)->count();
         $historyModels = Reservation::query()
             ->with($relations)
-            ->whereIn('status', [
-                ReservationStatus::Completed,
-                ReservationStatus::Cancelled,
-                ReservationStatus::NoShow,
-            ])
+            ->whereIn('status', $historyStatuses)
             ->latest('updated_at')
-            ->limit(50)
+            ->limit(20)
             ->get();
 
         // En casa: reservas con check-in. No van en la lista de próximas ni
@@ -130,6 +133,7 @@ class ReservationsPageController extends Controller
             'property' => $property->only(['id', 'name']),
             'reservations' => $reservations,
             'history' => $history,
+            'historyTotal' => $historyTotal,
             'inHouse' => $inHouse,
             'stays' => $stays,
             'ratePlans' => RatePlan::query()
@@ -150,6 +154,10 @@ class ReservationsPageController extends Controller
                     'min_advance_label' => $plan->minAdvanceLabel(),
                 ]),
             'canManage' => $request->user()->can('reservations.manage'),
+            // Botón "Apariencia" (→ /reservas/ajustes): solo si puede
+            // configurar el hotel Y el wizard público existe (motor-web).
+            'canCustomizeWizard' => $request->user()->can('properties.manage')
+                && (bool) tenant()?->hasModule('motor-web'),
             'prefill' => [
                 'intent' => $prefillIntent,
                 'room' => $prefillRoom ? [

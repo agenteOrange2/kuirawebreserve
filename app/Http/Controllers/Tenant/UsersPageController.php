@@ -41,6 +41,7 @@ class UsersPageController extends Controller
                 'id' => $user->id,
                 'name' => $user->name,
                 'email' => $user->email,
+                'phone' => $user->phone,
                 'roles' => $user->roles->pluck('name')->values(),
                 'role_labels' => $user->roles->map(fn ($r) => self::ROLE_META[$r->name]['label'] ?? $r->name)->values(),
                 'is_self' => $user->id === $request->user()?->id,

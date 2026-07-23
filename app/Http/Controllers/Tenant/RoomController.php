@@ -274,6 +274,38 @@ class RoomController extends Controller
     }
 
     /**
+     * Borrado en masa: elimina las habitaciones LIBRES (sin estancia activa
+     * ni reservas próximas); las ocupadas/comprometidas se conservan y se
+     * reportan como omitidas.
+     */
+    public function destroyBulk(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:200'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $deleted = 0;
+        $skipped = 0;
+
+        foreach (Room::query()->whereIn('id', $data['ids'])->get() as $room) {
+            $blocked = $room->activeStay()->exists()
+                || $room->reservations()->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])->exists();
+
+            if ($blocked) {
+                $skipped++;
+
+                continue;
+            }
+
+            $room->delete();
+            $deleted++;
+        }
+
+        return response()->json(['deleted' => $deleted, 'skipped' => $skipped]);
+    }
+
+    /**
      * Ficha comercial/operativa de la habitación (spec-profundidad §2.1),
      * compartida entre store y update.
      *

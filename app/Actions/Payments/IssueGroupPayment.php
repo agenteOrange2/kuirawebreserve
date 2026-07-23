@@ -25,17 +25,22 @@ use Throwable;
  */
 class IssueGroupPayment
 {
+    /**
+     * @param  bool  $preferFull  El huésped eligió liquidar TODO el grupo de
+     *                            una vez en lugar de solo los anticipos.
+     */
     public function handle(
         ReservationGroup $group,
         string $method = PaymentRequest::METHOD_TRANSFER,
         ?User $user = null,
         ?PaymentGatewayLink $link = null,
+        bool $preferFull = false,
     ): PaymentRequest {
         if ($link !== null) {
             $method = PaymentRequest::METHOD_GATEWAY;
         }
 
-        $request = DB::transaction(function () use ($group, $method, $user) {
+        $request = DB::transaction(function () use ($group, $method, $user, $preferFull) {
             $reservations = $group->reservations()
                 ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
                 ->lockForUpdate()
@@ -48,7 +53,7 @@ class IssueGroupPayment
             $breakdown = [];
 
             foreach ($reservations as $reservation) {
-                $charge = $this->chargeFor($reservation);
+                $charge = $this->chargeFor($reservation, $preferFull);
 
                 if ($charge > 0) {
                     $breakdown[(string) $reservation->id] = $charge;
@@ -139,14 +144,15 @@ class IssueGroupPayment
     /**
      * Lo que ESTA reserva cobraría por su cuenta: anticipo configurado y
      * aún no cubierto, o su pendiente total — misma regla que
-     * IssuePaymentRequest::resolveConcept.
+     * IssuePaymentRequest::resolveConcept. Con $preferFull se brinca el
+     * anticipo y va por el pendiente completo.
      */
-    protected function chargeFor(Reservation $reservation): float
+    protected function chargeFor(Reservation $reservation, bool $preferFull = false): float
     {
         $pending = $reservation->pendingBalance();
         $deposit = (float) $reservation->deposit_amount;
 
-        if ($deposit > 0 && $deposit < (float) $reservation->total_amount && $reservation->payment_status === PaymentStatus::Unpaid) {
+        if (! $preferFull && $deposit > 0 && $deposit < (float) $reservation->total_amount && $reservation->payment_status === PaymentStatus::Unpaid) {
             return round(min($deposit, $pending), 2);
         }
 

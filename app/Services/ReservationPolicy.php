@@ -50,6 +50,44 @@ class ReservationPolicy
     }
 
     /**
+     * WhatsApps a los que el huésped manda su comprobante de transferencia
+     * — cada uno con su lada explícita (México, EE. UU...), listos para
+     * link wa.me. Lista vacía = el wizard dice "el hotel te contactará".
+     *
+     * @return array<int, string>
+     */
+    public function transferWhatsapps(): array
+    {
+        $entries = $this->settings()['transfer_whatsapps'] ?? null;
+
+        // Compatibilidad: el campo viejo de un solo número sin lada propia.
+        if (! is_array($entries)) {
+            $legacy = preg_replace('/\D+/', '', (string) ($this->settings()['transfer_whatsapp'] ?? ''));
+
+            if ($legacy === '') {
+                return [];
+            }
+
+            $entries = [[
+                'code' => $this->settings()['phone_country_code'] ?? '52',
+                'number' => $legacy,
+            ]];
+        }
+
+        return collect($entries)
+            ->map(function ($entry) {
+                $code = preg_replace('/\D+/', '', (string) ($entry['code'] ?? '52')) ?: '52';
+                $number = preg_replace('/\D+/', '', (string) ($entry['number'] ?? ''));
+
+                return $number === '' ? null : $code.$number;
+            })
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+    }
+
+    /**
      * Fecha límite de pago total para una reserva: la tarifa manda si
      * define su propia anticipación (comportamiento de siempre); si no, el
      * default del hotel (5 días). El default solo aplica cuando queda al
@@ -78,6 +116,35 @@ class ReservationPolicy
         $due = $unit->subtractFrom($start, $value);
 
         return $due->gt(now()->addDay()) ? $due : null;
+    }
+
+    /**
+     * Plazo para pagar en el hotel: cuánto vive el apartado cuando el
+     * huésped eligió "pagar en el hotel" (efectivo). Reloj PROPIO — no
+     * comparte perilla con el hold corto ni con la transferencia, porque ir
+     * físicamente a pagar es otro esfuerzo (un motel querrá 3 h, un hotel
+     * de destino 48). Default: 24 h.
+     */
+    public function cashDeadlineMinutes(): int
+    {
+        return $this->minutesFrom('cash_deadline_value', 'cash_deadline_unit') ?? 24 * 60;
+    }
+
+    /**
+     * ¿El hotel ofrece "pagar en el hotel" (efectivo) al reservar? Doble
+     * llave: la plataforma permite el método (PaymentMethodGate, con toggle
+     * global y override por hotel en /admin/payments) Y el hotel lo activó
+     * en /ajustes/metodos-pago. Compatibilidad: los hoteles que ya usaban el
+     * modo "ambos" (payment_mode=optional) lo tienen prendido por default —
+     * ese modo ERA pagar al llegar antes de existir este interruptor.
+     */
+    public function cashPaymentEnabled(): bool
+    {
+        $optIn = $this->settings()['cash_payment_enabled']
+            ?? (($this->settings()['payment_mode'] ?? 'automatic') === 'optional');
+
+        return (bool) $optIn
+            && app(\App\Services\Payments\PaymentMethodGate::class)->enabledFor((string) tenant('id'), 'cash');
     }
 
     /** Valor+unidad de settings traducido a minutos; null si no está configurado. */

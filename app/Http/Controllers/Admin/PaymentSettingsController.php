@@ -13,10 +13,12 @@ use Inertia\Inertia;
 use Inertia\Response;
 
 /**
- * Control de plataforma sobre los métodos de cobro en línea: interruptores
- * globales (un método apagado aquí desaparece para TODOS los hoteles) y
- * radiografía de las pasarelas conectadas por hotel. El override por hotel
- * vive en el detalle del tenant (updateTenant).
+ * Control de plataforma sobre los métodos de cobro: interruptores globales
+ * (un método apagado aquí desaparece para TODOS los hoteles) y radiografía
+ * de las pasarelas conectadas por hotel. El override por hotel vive en el
+ * detalle del tenant (updateTenant). Incluye "cash" (pago en el hotel):
+ * apagarlo aquí quita la opción de apartar sin pagar en línea en todos los
+ * wizards, aunque el hotel la tenga activada.
  */
 class PaymentSettingsController extends Controller
 {

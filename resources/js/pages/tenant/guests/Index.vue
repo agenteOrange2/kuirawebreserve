@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormCheck, FormInput } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
+import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 import GuestFormModal from './GuestFormModal.vue';
 
@@ -34,6 +35,7 @@ const props = defineProps<{
     documentTypes: string[];
 }>();
 
+const toast = useToasts();
 const q = ref(props.filters.q);
 const blacklisted = ref(props.filters.blacklisted);
 
@@ -82,6 +84,58 @@ async function submitDelete() {
             error.response?.data?.message ?? 'No se pudo eliminar el huésped.';
     } finally {
         deleteBusy.value = false;
+    }
+}
+
+// ── Selección múltiple (opera sobre la página visible; el backend
+// conserva los que tienen historial de reservas) ──
+const selectedIds = ref<number[]>([]);
+const bulkDeleteOpen = ref(false);
+const bulkDeleting = ref(false);
+
+const allSelected = computed(
+    () =>
+        props.guests.data.length > 0 &&
+        props.guests.data.every((g) => selectedIds.value.includes(g.id)),
+);
+const selectedRows = computed(() =>
+    props.guests.data.filter((g) => selectedIds.value.includes(g.id)),
+);
+
+function toggleRow(id: number) {
+    selectedIds.value = selectedIds.value.includes(id)
+        ? selectedIds.value.filter((x) => x !== id)
+        : [...selectedIds.value, id];
+}
+function toggleAll() {
+    selectedIds.value = allSelected.value
+        ? []
+        : props.guests.data.map((g) => g.id);
+}
+
+async function bulkDelete() {
+    bulkDeleting.value = true;
+    try {
+        const { data } = await axios.delete('/api/guests', {
+            data: { ids: selectedIds.value },
+        });
+        toast.success(
+            'Huéspedes eliminados',
+            `${data.deleted} eliminado(s)` +
+                (data.skipped
+                    ? ` · ${data.skipped} conservado(s) por historial de reservas`
+                    : ''),
+        );
+        selectedIds.value = [];
+        bulkDeleteOpen.value = false;
+        router.reload({ only: ['guests'] });
+    } catch (error: any) {
+        toast.error(
+            'No se pudo eliminar',
+            error.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        bulkDeleting.value = false;
     }
 }
 
@@ -151,6 +205,26 @@ const cellClass =
                     <Lucide icon="ShieldAlert" class="h-4 w-4" /> Solo lista
                     negra
                 </label>
+                <template v-if="canManage && selectedIds.length">
+                    <span class="ml-auto text-xs text-slate-500"
+                        >{{ selectedIds.length }} seleccionado(s)</span
+                    >
+                    <button
+                        type="button"
+                        class="text-xs font-medium text-primary hover:underline"
+                        @click="selectedIds = []"
+                    >
+                        Quitar selección
+                    </button>
+                    <Button
+                        variant="danger"
+                        class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                        @click="bulkDeleteOpen = true"
+                    >
+                        <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
+                        Eliminar seleccionados
+                    </Button>
+                </template>
             </div>
 
             <div class="mt-5">
@@ -161,6 +235,17 @@ const cellClass =
                     >
                         <Table.Thead>
                             <Table.Tr>
+                                <Table.Th
+                                    v-if="canManage"
+                                    class="w-10 border-b-0 !bg-transparent"
+                                >
+                                    <FormCheck.Input
+                                        type="checkbox"
+                                        :checked="allSelected"
+                                        title="Seleccionar esta página"
+                                        @change="toggleAll"
+                                    />
+                                </Table.Th>
                                 <Table.Th class="border-b-0 !bg-transparent"
                                     >Huésped</Table.Th
                                 >
@@ -181,6 +266,17 @@ const cellClass =
                         </Table.Thead>
                         <Table.Tbody>
                             <Table.Tr v-for="g in guests.data" :key="g.id">
+                                <Table.Td
+                                    v-if="canManage"
+                                    :class="cellClass"
+                                    class="w-10"
+                                >
+                                    <FormCheck.Input
+                                        type="checkbox"
+                                        :checked="selectedIds.includes(g.id)"
+                                        @change="toggleRow(g.id)"
+                                    />
+                                </Table.Td>
                                 <Table.Td :class="cellClass">
                                     <div class="flex items-center gap-3">
                                         <div
@@ -418,6 +514,58 @@ const cellClass =
                         >
                             <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
                             {{ deleteBusy ? 'Eliminando…' : 'Sí, eliminar' }}
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Confirmar borrado masivo -->
+        <Dialog :open="bulkDeleteOpen" @close="bulkDeleteOpen = false">
+            <Dialog.Panel>
+                <div class="p-5">
+                    <div class="mb-3 flex items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
+                        >
+                            <Lucide icon="Trash2" class="h-5 w-5 text-danger" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                Eliminar {{ selectedRows.length }} huésped(es)
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Los que tengan historial de reservas o estancias
+                                se conservan (rastro) y se te informa.
+                            </p>
+                        </div>
+                    </div>
+                    <div
+                        class="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-dashed border-slate-300/70 p-2 text-sm dark:border-darkmode-400"
+                    >
+                        <div
+                            v-for="row in selectedRows"
+                            :key="row.id"
+                            class="flex items-center justify-between gap-2 px-1"
+                        >
+                            <span class="font-medium">{{ row.full_name }}</span>
+                            <span class="text-xs text-slate-500">{{
+                                row.phone ?? row.email ?? ''
+                            }}</span>
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            @click="bulkDeleteOpen = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            :disabled="bulkDeleting"
+                            @click="bulkDelete"
+                        >
+                            {{ bulkDeleting ? 'Eliminando…' : 'Sí, eliminar' }}
                         </Button>
                     </div>
                 </div>

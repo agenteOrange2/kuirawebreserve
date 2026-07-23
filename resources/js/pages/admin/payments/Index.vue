@@ -65,6 +65,12 @@ const methodMeta: Record<
         tone: 'border-success/10 bg-success/10 text-success',
         description: 'Checkout hospedado; se confirma solo por webhook',
     },
+    cash: {
+        icon: 'Banknote',
+        tone: 'border-warning/10 bg-warning/10 text-warning',
+        description:
+            'El huésped aparta sin pagar en línea y paga al llegar; cada hotel lo activa en sus ajustes',
+    },
 };
 
 async function toggleMethod(m: MethodRow) {
@@ -93,8 +99,8 @@ async function toggleMethod(m: MethodRow) {
                 <div>
                     <h1 class="text-lg font-medium">Pagos</h1>
                     <p class="text-sm text-slate-500">
-                        Métodos de cobro en línea de la plataforma y pasarelas
-                        conectadas por hotel
+                        Métodos de cobro de la plataforma y pasarelas conectadas
+                        por hotel
                     </p>
                 </div>
             </div>

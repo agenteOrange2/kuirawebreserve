@@ -6,6 +6,8 @@ import Button from '@/components/Base/Button';
 import { FormInput, FormLabel, FormTextarea } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import { useEmbedResize } from '@/composables/useEmbedResize';
+import type { WizardAppearance } from '@/composables/useWizardAppearance';
+import { useWizardAppearance } from '@/composables/useWizardAppearance';
 
 interface Photo {
     id: number;
@@ -61,19 +63,42 @@ interface PaymentResult {
     amount_label: string;
     checkout_url?: string;
     bank_accounts?: { banco: string; titular: string; cuenta: string }[];
+    whatsapps?: string[];
     valid_hours?: number;
     return_url: string;
 }
 
 const props = defineProps<{
-    property: { name: string; phone: string | null; currency: string };
+    // Misma apariencia que el wizard (/reservas/ajustes): una sola
+    // configuración para todas las páginas públicas.
+    appearance: WizardAppearance;
+    property: {
+        name: string;
+        logo_url: string | null;
+        phone: string | null;
+        currency: string;
+        currency_secondary: string | null;
+        exchange_rate: number | null;
+    };
+    hasWizard: boolean;
+    hasLookup: boolean;
+    hasGroups: boolean;
 }>();
 
 // Widget incrustado: reporta su alto al iframe padre.
 useEmbedResize();
+const { isDark, rootStyle } = useWizardAppearance(props.appearance);
 
 const money = (n: number) =>
     `$${Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2 })} ${props.property.currency}`;
+// Doble moneda: referencia "aprox" en la segunda divisa (cobro en la primaria).
+const secondaryMoney = (n: number): string => {
+    const rate = props.property.exchange_rate;
+    const sec = props.property.currency_secondary;
+    if (!sec || !rate || rate <= 0) return '';
+    const converted = n / rate;
+    return `≈ $${converted.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${sec}`;
+};
 const formatDateTime = (iso: string) =>
     new Date(iso).toLocaleString('es-MX', {
         weekday: 'long',
@@ -343,10 +368,18 @@ async function requestPayment(
     <Head :title="`Experiencias · ${property.name}`" />
     <div
         class="flex min-h-screen bg-linear-to-b from-theme-1 to-theme-2 px-3 py-8 sm:px-8"
+        :style="rootStyle"
     >
         <div class="m-auto w-full max-w-4xl">
             <div class="mb-5 flex items-center gap-3 px-1 text-white">
+                <img
+                    v-if="property.logo_url"
+                    :src="property.logo_url"
+                    :alt="`Logo de ${property.name}`"
+                    class="h-11 w-11 shrink-0 rounded-full bg-white object-contain p-1"
+                />
                 <div
+                    v-else
                     class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10"
                 >
                     <Lucide icon="Compass" class="h-5 w-5" />
@@ -368,7 +401,10 @@ async function requestPayment(
                 </a>
             </div>
 
-            <div class="overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div
+                class="overflow-hidden rounded-2xl bg-white shadow-2xl"
+                :class="isDark && 'booking-dark'"
+            >
                 <!-- ═══ Confirmación / pago ═══ -->
                 <div v-if="result" class="p-5 text-center sm:p-7">
                     <div
@@ -474,31 +510,107 @@ async function requestPayment(
                     </template>
 
                     <template v-else-if="payment?.method === 'transfer'">
-                        <p class="mt-5 text-sm text-slate-600">
-                            Transfiere
-                            <span class="font-medium">{{
-                                payment.amount_label
-                            }}</span>
-                            y envía tu comprobante al hotel:
-                        </p>
-                        <div class="mx-auto mt-3 max-w-sm space-y-2 text-left">
-                            <div
-                                v-for="acc in payment.bank_accounts"
-                                :key="acc.cuenta"
-                                class="rounded-xl border border-slate-200 p-3.5 text-sm"
-                            >
-                                <div class="font-medium text-slate-700">
-                                    {{ acc.banco }}
-                                </div>
-                                <div class="text-slate-500">
-                                    {{ acc.titular }}
-                                </div>
-                                <div class="mt-1 font-mono text-slate-700">
-                                    {{ acc.cuenta }}
+                        <div class="mx-auto mt-5 max-w-sm space-y-3 text-left">
+                            <div class="flex items-start gap-3">
+                                <span
+                                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+                                    >1</span
+                                >
+                                <div class="min-w-0 flex-1">
+                                    <p class="text-sm text-slate-700">
+                                        Transfiere
+                                        <span class="font-medium">{{
+                                            payment.amount_label
+                                        }}</span>
+                                        a una de estas cuentas:
+                                    </p>
+                                    <div class="mt-2 space-y-2">
+                                        <div
+                                            v-for="acc in payment.bank_accounts"
+                                            :key="acc.cuenta"
+                                            class="rounded-xl border border-slate-200 p-3.5 text-sm"
+                                        >
+                                            <div
+                                                class="font-medium text-slate-700"
+                                            >
+                                                {{ acc.banco }}
+                                            </div>
+                                            <div class="text-slate-500">
+                                                {{ acc.titular }}
+                                            </div>
+                                            <div
+                                                class="mt-1 font-mono text-slate-700"
+                                            >
+                                                {{ acc.cuenta }}
+                                            </div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
+                            <div class="flex items-start gap-3">
+                                <span
+                                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+                                    >2</span
+                                >
+                                <div class="min-w-0 flex-1">
+                                    <p class="text-sm text-slate-700">
+                                        Manda tu comprobante con tu folio
+                                        <span class="font-medium">{{
+                                            result?.code
+                                        }}</span
+                                        >:
+                                    </p>
+                                    <template v-if="payment.whatsapps?.length">
+                                        <a
+                                            v-for="wa in payment.whatsapps"
+                                            :key="wa"
+                                            :href="`https://wa.me/${wa}?text=${encodeURIComponent(`Hola, envío el comprobante de mi experiencia ${result?.code}`)}`"
+                                            target="_blank"
+                                            class="mt-2 flex items-center gap-3 rounded-xl border border-success/30 bg-success/5 p-3.5 text-left transition hover:bg-success/10"
+                                        >
+                                            <div
+                                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                                            >
+                                                <Lucide
+                                                    icon="MessageCircle"
+                                                    class="h-5 w-5"
+                                                />
+                                            </div>
+                                            <div class="min-w-0">
+                                                <div
+                                                    class="text-sm font-medium text-slate-800"
+                                                >
+                                                    Enviar por WhatsApp
+                                                </div>
+                                                <div
+                                                    class="text-xs text-slate-500"
+                                                >
+                                                    +{{ wa }}
+                                                </div>
+                                            </div>
+                                        </a>
+                                    </template>
+                                    <p
+                                        v-else
+                                        class="mt-1 text-xs text-slate-500"
+                                    >
+                                        El hotel te contactará para recibir tu
+                                        comprobante.
+                                    </p>
+                                </div>
+                            </div>
+                            <div class="flex items-start gap-3">
+                                <span
+                                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+                                    >3</span
+                                >
+                                <p class="text-sm text-slate-700">
+                                    En cuanto el hotel verifique tu pago, tu
+                                    lugar queda confirmado y te avisamos.
+                                </p>
+                            </div>
                         </div>
-                        <p class="mt-2 text-xs text-slate-400">
+                        <p class="mt-3 text-xs text-slate-400">
                             Vigente por {{ payment.valid_hours }} horas.
                         </p>
                     </template>
@@ -846,12 +958,21 @@ async function requestPayment(
                     </div>
 
                     <div
-                        class="mt-5 flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3"
+                        class="mt-5 rounded-xl bg-slate-50 px-4 py-3"
                     >
-                        <span class="text-sm text-slate-500">Total</span>
-                        <span class="text-lg font-semibold text-slate-800">{{
-                            money(total)
-                        }}</span>
+                        <div class="flex items-center justify-between">
+                            <span class="text-sm text-slate-500">Total</span>
+                            <span
+                                class="text-lg font-semibold text-slate-800"
+                                >{{ money(total) }}</span
+                            >
+                        </div>
+                        <div
+                            v-if="secondaryMoney(total)"
+                            class="mt-0.5 text-right text-xs text-slate-400"
+                        >
+                            {{ secondaryMoney(total) }}
+                        </div>
                     </div>
 
                     <p
@@ -987,18 +1108,39 @@ async function requestPayment(
                         </div>
                     </div>
 
-                    <p class="mt-6 text-center text-xs text-slate-400">
-                        ¿Buscas habitación?
-                        <a
-                            href="/reservar"
-                            class="font-medium text-primary hover:underline"
-                            >Reserva tu estancia aquí</a
-                        >
-                    </p>
                 </div>
             </div>
 
-            <p class="mt-4 text-center text-[11px] text-white/60">
+            <!-- Accesos relacionados: misma botonera que /reservar -->
+            <div
+                class="mt-5 flex flex-wrap items-center justify-center gap-2.5"
+            >
+                <a
+                    v-if="hasWizard"
+                    href="/reservar"
+                    class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                >
+                    <Lucide icon="BedDouble" class="h-4 w-4" /> ¿Buscas
+                    habitación? Reserva tu estancia
+                </a>
+                <a
+                    v-if="hasLookup"
+                    href="/reserva"
+                    class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                >
+                    <Lucide icon="TicketCheck" class="h-4 w-4" /> ¿Ya tienes una
+                    reserva? Consulta su estado
+                </a>
+                <a
+                    v-if="hasGroups"
+                    href="/reservar/grupos"
+                    class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
+                >
+                    <Lucide icon="Users" class="h-4 w-4" /> ¿Vienen en grupo?
+                    Aparta varias habitaciones
+                </a>
+            </div>
+            <p class="mt-3 text-center text-[11px] text-white/60">
                 Impulsado por KuiraWebReserve · tus datos de pago nunca pasan
                 por este sitio
             </p>

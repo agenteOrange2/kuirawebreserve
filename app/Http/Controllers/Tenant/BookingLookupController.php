@@ -25,9 +25,15 @@ class BookingLookupController extends Controller
         $property = Property::firstOrFail();
         $settings = $property->settings ?? [];
 
+        // Misma apariencia que el wizard de habitaciones (/reservas/ajustes):
+        // una sola configuración para todas las páginas públicas.
+        $appearance = $property->wizardAppearance();
+
         return Inertia::render('tenant/reservar/Lookup', [
+            'appearance' => $appearance,
             'property' => [
                 'name' => $property->name,
+                'logo_url' => $appearance['logo_url'],
                 'phone' => $settings['phone'] ?? null,
                 'currency' => $settings['currency'] ?? 'MXN',
             ],

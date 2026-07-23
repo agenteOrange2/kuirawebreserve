@@ -157,6 +157,11 @@ const tenantMenu: Array<MenuItem | string> = [
                 module: 'pos',
             },
             {
+                icon: 'Wallet',
+                pageName: 'tenant.payments',
+                title: 'Pagos',
+            },
+            {
                 icon: 'Landmark',
                 pageName: 'tenant.online-payments',
                 title: 'Cobros en línea',

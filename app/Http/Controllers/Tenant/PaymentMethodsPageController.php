@@ -41,13 +41,29 @@ class PaymentMethodsPageController extends Controller
                 'auto_confirm_on_payment' => (bool) ($settings['auto_confirm_on_payment'] ?? true),
                 'balance_request_days' => (int) ($settings['balance_request_days'] ?? 3),
                 'cancel_on_balance_overdue' => (bool) ($settings['cancel_on_balance_overdue'] ?? false),
-                'payment_mode' => $settings['payment_mode'] ?? 'automatic',
+                // 'optional' (viejo modo "ambos") se descompuso en dos
+                // piezas: modo 'always' + método efectivo prendido. Aquí se
+                // normaliza para la UI; el valor guardado se respeta hasta
+                // que el hotel vuelva a guardar.
+                'payment_mode' => ($settings['payment_mode'] ?? 'automatic') === 'optional'
+                    ? 'always'
+                    : ($settings['payment_mode'] ?? 'automatic'),
+                'cash_payment_enabled' => (bool) ($settings['cash_payment_enabled']
+                    ?? (($settings['payment_mode'] ?? 'automatic') === 'optional')),
+                // Varios números con su lada; el campo viejo de uno solo se
+                // migra al vuelo para no perder lo capturado.
+                'transfer_whatsapps' => $settings['transfer_whatsapps']
+                    ?? (! empty($settings['transfer_whatsapp'])
+                        ? [['code' => $settings['phone_country_code'] ?? '52', 'number' => $settings['transfer_whatsapp']]]
+                        : []),
                 // Plazos (ReservationPolicy): defaults idénticos al
                 // comportamiento previo cuando no hay nada guardado.
                 'hold_value' => (int) ($settings['hold_value'] ?? 30),
                 'hold_unit' => $settings['hold_unit'] ?? 'minute',
                 'transfer_valid_value' => (int) ($settings['transfer_valid_value'] ?? 24),
                 'transfer_valid_unit' => $settings['transfer_valid_unit'] ?? 'hour',
+                'cash_deadline_value' => (int) ($settings['cash_deadline_value'] ?? 24),
+                'cash_deadline_unit' => $settings['cash_deadline_unit'] ?? 'hour',
                 'balance_due_enabled' => (bool) ($settings['balance_due_enabled'] ?? true),
                 'balance_due_value' => (int) ($settings['balance_due_value'] ?? 5),
                 'balance_due_unit' => $settings['balance_due_unit'] ?? 'day',

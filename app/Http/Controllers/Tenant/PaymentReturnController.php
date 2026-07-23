@@ -23,7 +23,11 @@ class PaymentReturnController extends Controller
     public function __invoke(HttpRequest $httpRequest, string $uuid): Response
     {
         $request = PaymentRequest::query()
-            ->with(['reservation:id,code,status,created_at', 'experienceBooking:id,experience_session_id,status,code,created_at'])
+            ->with([
+                'reservation:id,code,status,created_at,guest_id', 'reservation.guest:id,email,phone',
+                'experienceBooking:id,experience_session_id,status,code,created_at,guest_id', 'experienceBooking.guest:id,email,phone',
+                'group:id,code,guest_id', 'group.guest:id,email,phone',
+            ])
             ->where('uuid', $uuid)
             ->firstOrFail();
 
@@ -39,8 +43,33 @@ class PaymentReturnController extends Controller
             $request->refresh()->load(['reservation:id,code,status,created_at', 'experienceBooking:id,experience_session_id,status,code,created_at']);
         }
 
+        $property = Property::query()->first();
+
+        // Por qué canales se avisó al huésped (para que la página lo diga):
+        // correo si dejó email; WhatsApp si dejó teléfono Y el hotel tiene
+        // un canal conectado.
+        $guest = $request->reservation?->guest ?? $request->experienceBooking?->guest ?? $request->group?->guest;
+        $hasWhatsappChannel = \App\Models\Central\MetaChannelLink::query()
+            ->where('tenant_id', (string) tenant('id'))->where('type', 'whatsapp')->where('active', true)->exists()
+            || \App\Models\Central\EvolutionChannelLink::query()
+                ->where('tenant_id', (string) tenant('id'))->where('active', true)->exists();
+
         return Inertia::render('tenant/payments/Return', [
-            'hotel' => Property::query()->first()?->name ?? 'Hotel',
+            // Contacto público para el pie: nombre, sitio para "volver" y
+            // redes para seguir al hotel por todos sus canales.
+            'hotel' => $property
+                ? $property->publicContact()
+                : ['name' => 'Hotel', 'website' => null, 'maps_url' => null, 'socials' => []],
+            // Consulta pública de la reserva (código + teléfono).
+            'lookupUrl' => route('tenant.booking.lookup'),
+            'notified' => [
+                'email' => (bool) $guest?->email,
+                'whatsapp' => (bool) $guest?->phone && $hasWhatsappChannel,
+            ],
+            // Doble moneda: referencia "aprox" bajo el monto pagado.
+            'secondary' => ($sec = ($property->settings['currency_secondary'] ?? null)) && ($rate = ($property->settings['exchange_rate'] ?? null)) > 0
+                ? ['code' => $sec, 'label' => '≈ $'.number_format((float) $request->amount / (float) $rate, 2).' '.$sec]
+                : null,
             'payment' => [
                 'status' => $request->status,
                 'status_label' => $request->statusLabel(),

@@ -45,6 +45,9 @@ class PaymentGatewayController extends Controller
             ], 422);
         }
 
+        // El modo REAL lo dictan las llaves, no el selector.
+        $data['mode'] = $this->inferMode($data['provider'], $data['secret_key']) ?? $data['mode'];
+
         $link = PaymentGatewayLink::create([
             ...$data,
             'tenant_id' => tenant('id'),
@@ -77,6 +80,15 @@ class PaymentGatewayController extends Controller
             }
         }
 
+        // Llave nueva con prefijo reconocible: su entorno manda sobre el
+        // selector — y si no mandan llave, el modo elegido debe coincidir
+        // con la llave GUARDADA (elegir "Prueba" con sk_live guardada no
+        // convierte nada en sandbox, solo engaña la etiqueta).
+        $inferred = $this->inferMode($link->provider, $data['secret_key'] ?? $link->secret_key);
+        if ($inferred !== null) {
+            $data['mode'] = $inferred;
+        }
+
         $link->update($data);
 
         // Desactivar la pasarela mata sus cobros vivos (spec-pagos §6.5):
@@ -92,6 +104,26 @@ class PaymentGatewayController extends Controller
         }
 
         return response()->json($this->serialize($link));
+    }
+
+    /**
+     * El entorno real según el prefijo de la llave secreta. Pegar sk_live
+     * con "Prueba" seleccionado hacía creer al hotel que estaba en sandbox
+     * mientras Stripe cobraba de verdad (incidente 2026-07-17): cuando el
+     * prefijo es reconocible, manda. Null = no se puede saber (PayPal).
+     */
+    protected function inferMode(string $provider, ?string $secretKey): ?string
+    {
+        $key = (string) $secretKey;
+
+        return match (true) {
+            $provider === 'stripe' && (str_starts_with($key, 'sk_live_') || str_starts_with($key, 'rk_live_')) => 'live',
+            $provider === 'stripe' && (str_starts_with($key, 'sk_test_') || str_starts_with($key, 'rk_test_')) => 'test',
+            // Mercado Pago: las credenciales de prueba empiezan con TEST-.
+            $provider === 'mercadopago' && str_starts_with($key, 'TEST-') => 'test',
+            $provider === 'mercadopago' && str_starts_with($key, 'APP_USR-') => 'live',
+            default => null,
+        };
     }
 
     public function destroy(int $linkId): JsonResponse

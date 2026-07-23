@@ -3,12 +3,27 @@ import { router } from '@inertiajs/vue3';
 import { onBeforeUnmount, onMounted } from 'vue';
 import Button from '@/components/Base/Button';
 import Lucide from '@/components/Base/Lucide';
+import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 
 // Página pública (como el webchat): el huésped aterriza aquí al volver del
 // checkout. Mientras el pago siga pendiente, se refresca sola — la verdad
 // del estado la pone el webhook, no esta vista.
+interface Social {
+    type: string;
+    url: string;
+    icon: Icon;
+}
+
 const props = defineProps<{
-    hotel: string;
+    hotel: {
+        name: string;
+        website: string | null;
+        maps_url: string | null;
+        socials: Social[];
+    };
+    lookupUrl: string;
+    notified: { email: boolean; whatsapp: boolean };
+    secondary: { code: string; label: string } | null;
     payment: {
         status: string;
         status_label: string;
@@ -46,16 +61,51 @@ onBeforeUnmount(() => {
                 <h1 class="mt-4 text-lg font-medium">Pago recibido</h1>
                 <p class="mt-2 text-sm text-slate-500">
                     Recibimos tu {{ payment.concept.toLowerCase() }} de
-                    {{ payment.amount_label }}.
+                    {{ payment.amount_label
+                    }}<template v-if="secondary"> ({{ secondary.label }})</template>.
                     <template v-if="payment.reservation_confirmed">
                         Tu reserva {{ payment.reservation_code }} está
-                        confirmada. Te esperamos en {{ hotel }}.
+                        confirmada. Te esperamos en {{ hotel.name }}.
                     </template>
                     <template v-else>
                         Quedó registrado en tu reserva
                         {{ payment.reservation_code }}.
                     </template>
                 </p>
+                <p
+                    v-if="notified.email || notified.whatsapp"
+                    class="mt-2 text-xs text-slate-400"
+                >
+                    Te enviamos los detalles
+                    <template v-if="notified.email && notified.whatsapp"
+                        >por correo y WhatsApp</template
+                    >
+                    <template v-else-if="notified.email">a tu correo</template>
+                    <template v-else>por WhatsApp</template>.
+                </p>
+                <div class="mt-5 flex flex-col gap-2">
+                    <Button
+                        v-if="hotel.website"
+                        as="a"
+                        :href="hotel.website"
+                        target="_blank"
+                        variant="primary"
+                        class="rounded-[0.5rem]"
+                    >
+                        <Lucide icon="Globe" class="mr-2 h-4 w-4" /> Volver al
+                        sitio de {{ hotel.name }}
+                    </Button>
+                    <Button
+                        as="a"
+                        :href="lookupUrl"
+                        :variant="hotel.website ? 'outline-secondary' : 'primary'"
+                        class="rounded-[0.5rem]"
+                        :class="hotel.website ? 'bg-white' : ''"
+                    >
+                        <Lucide icon="CalendarCheck" class="mr-2 h-4 w-4" />
+                        Consultar mi reserva
+                    </Button>
+                </div>
             </template>
 
             <template v-else-if="payment.status === 'pending'">
@@ -98,11 +148,31 @@ onBeforeUnmount(() => {
                 <p class="mt-2 text-sm text-slate-500">
                     La solicitud de pago está
                     {{ payment.status_label.toLowerCase() }}. Escríbenos por el
-                    chat de {{ hotel }} y te generamos una nueva al momento.
+                    chat de {{ hotel.name }} y te generamos una nueva al momento.
                 </p>
             </template>
 
-            <p class="mt-6 text-xs text-slate-400">{{ hotel }}</p>
+            <!-- Síguenos: los canales del hotel para todos los medios -->
+            <div
+                v-if="hotel.socials.length"
+                class="mt-6 border-t border-slate-200/70 pt-4 dark:border-darkmode-400"
+            >
+                <p class="text-xs text-slate-400">Síguenos</p>
+                <div class="mt-2 flex flex-wrap items-center justify-center gap-2">
+                    <a
+                        v-for="social in hotel.socials"
+                        :key="social.url"
+                        :href="social.url"
+                        target="_blank"
+                        class="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-primary/40 hover:text-primary dark:border-darkmode-400"
+                        :title="social.type"
+                    >
+                        <Lucide :icon="social.icon" class="h-4 w-4" />
+                    </a>
+                </div>
+            </div>
+
+            <p class="mt-6 text-xs text-slate-400">{{ hotel.name }}</p>
         </div>
     </div>
 </template>

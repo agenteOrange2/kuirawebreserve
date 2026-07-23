@@ -5,6 +5,8 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormInput, FormLabel } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
+import type { WizardAppearance } from '@/composables/useWizardAppearance';
+import { useWizardAppearance } from '@/composables/useWizardAppearance';
 
 interface PendingRequest {
     method: 'gateway' | 'transfer';
@@ -36,8 +38,18 @@ interface LookupResult {
 }
 
 const props = defineProps<{
-    property: { name: string; phone: string | null; currency: string };
+    // Misma apariencia que el wizard (/reservas/ajustes): una sola
+    // configuración para todas las páginas públicas.
+    appearance: WizardAppearance;
+    property: {
+        name: string;
+        logo_url: string | null;
+        phone: string | null;
+        currency: string;
+    };
 }>();
+
+const { isDark, rootStyle } = useWizardAppearance(props.appearance);
 
 const money = (n: number) =>
     `$${Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2 })} ${props.property.currency}`;
@@ -153,10 +165,18 @@ const holdCountdown = computed(() => {
     <Head :title="`Mi reserva · ${property.name}`" />
     <div
         class="flex min-h-screen bg-linear-to-b from-theme-1 to-theme-2 px-3 py-8 sm:px-8"
+        :style="rootStyle"
     >
         <div class="m-auto w-full max-w-2xl">
             <div class="mb-5 flex items-center gap-3 px-1 text-white">
+                <img
+                    v-if="property.logo_url"
+                    :src="property.logo_url"
+                    :alt="`Logo de ${property.name}`"
+                    class="h-11 w-11 shrink-0 rounded-full bg-white object-contain p-1"
+                />
                 <div
+                    v-else
                     class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10"
                 >
                     <Lucide icon="Building2" class="h-5 w-5" />
@@ -178,7 +198,10 @@ const holdCountdown = computed(() => {
                 </a>
             </div>
 
-            <div class="overflow-hidden rounded-2xl bg-white shadow-2xl">
+            <div
+                class="overflow-hidden rounded-2xl bg-white shadow-2xl"
+                :class="isDark && 'booking-dark'"
+            >
                 <div class="p-5 sm:p-7">
                     <h1 class="text-lg font-medium text-slate-800">
                         Encuentra tu reserva

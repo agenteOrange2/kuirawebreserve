@@ -63,12 +63,57 @@ class ExperienceBookingController extends Controller
     }
 
     /**
+     * Depura el historial: borra en masa reservas de experiencia ya
+     * MUERTAS (canceladas o completadas) — mismo patrón que el historial de
+     * /reservas. Las vivas (pendientes/confirmadas) no se tocan: para esas
+     * está cancelar. Un pago registrado no bloquea aquí porque la
+     * experiencia ya terminó su ciclo; el rastro del pago vive en payments.
+     */
+    public function destroyBulk(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:100'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $bookings = ExperienceBooking::query()
+            ->whereIn('id', $data['ids'])
+            ->whereIn('status', [ExperienceBooking::STATUS_CANCELLED, ExperienceBooking::STATUS_COMPLETED])
+            ->get();
+
+        if ($bookings->count() !== count($data['ids'])) {
+            return response()->json([
+                'message' => 'Solo se pueden eliminar reservas canceladas o completadas; las vivas se cancelan primero.',
+            ], 422);
+        }
+
+        $deleted = 0;
+        foreach ($bookings as $booking) {
+            $booking->delete();
+            $deleted++;
+        }
+
+        return response()->json(['deleted' => $deleted]);
+    }
+
+    /**
      * Genera el cobro de la reserva (link de pasarela si hay una activa;
      * transferencia si no) — el staff se lo comparte al huésped por el
      * canal que sea. El webhook o la verificación humana lo cierran.
      */
     public function issuePayment(Request $request, ExperienceBooking $booking, \App\Actions\Experiences\IssueExperiencePayment $issuer): JsonResponse
     {
+        // Un tour comprado como PLUS de una reserva o grupo ya viaja en el
+        // cobro del padre: cobrarlo por separado duplicaría el dinero. Su
+        // pago se cierra con el de la reserva/grupo.
+        if ($booking->reservation_id !== null || $booking->reservation_group_id !== null) {
+            $code = $booking->reservation?->displayCode() ?? $booking->group?->displayCode();
+
+            return response()->json([
+                'message' => "Este recorrido es un extra de {$code}; se cobra junto con esa reserva, no por separado.",
+            ], 422);
+        }
+
         $gate = app(\App\Services\Payments\PaymentMethodGate::class);
         $enabled = $gate->methodsFor((string) tenant('id'));
 

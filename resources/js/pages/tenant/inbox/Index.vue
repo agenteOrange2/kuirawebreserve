@@ -45,28 +45,6 @@ interface ChannelRow {
     name: string;
     mode: string;
 }
-interface PaymentQueueItem {
-    id: number;
-    reservation_id: number;
-    reservation_code: string | null;
-    guest_name: string;
-    concept: string;
-    amount_label: string;
-    requested_at: string;
-    expires_at: string | null;
-    requested_by: string;
-    conversation_id: number | null;
-}
-interface OverdueBalance {
-    id: number;
-    code: string;
-    guest_name: string;
-    pending_label: string;
-    due_label: string;
-    starts_label: string;
-    conversation_id: number | null;
-}
-
 const props = defineProps<{
     property: { id: number; name: string };
     conversations: ConversationRow[];
@@ -75,8 +53,6 @@ const props = defineProps<{
     canManage: boolean;
     canTeach: boolean;
     llmReady: boolean;
-    paymentQueue: PaymentQueueItem[];
-    overdueBalances: OverdueBalance[];
 }>();
 
 function openConversationById(conversationId: number | null) {
@@ -146,69 +122,6 @@ const paymentMeta: Record<string, { tone: string }> = {
     deposit_paid: { tone: 'bg-info/10 text-info' },
     paid: { tone: 'bg-success/10 text-success' },
 };
-
-// ── Verificación de transferencias (cola de pagos) ──
-const verifying = ref<PaymentQueueItem | null>(null);
-const rejecting = ref<PaymentQueueItem | null>(null);
-const paymentBusy = ref(false);
-const verifyReference = ref('');
-const rejectReason = ref('');
-
-async function approvePayment() {
-    if (!verifying.value || paymentBusy.value) return;
-    paymentBusy.value = true;
-    try {
-        const { data } = await axios.post(
-            `/api/payment-requests/${verifying.value.id}/approve`,
-            {
-                reference: verifyReference.value.trim() || null,
-            },
-        );
-        toast.success(
-            'Pago verificado',
-            data.requires_attention
-                ? 'El pago quedó registrado pero la reserva requiere atención (revisa disponibilidad).'
-                : 'Se registró el pago y se avisó al huésped.',
-        );
-        verifying.value = null;
-        verifyReference.value = '';
-        router.reload({ only: ['paymentQueue', 'conversations'] });
-        await refreshThread();
-    } catch (e: any) {
-        toast.error(
-            'No se pudo aprobar',
-            e.response?.data?.message ?? 'Ocurrió un error.',
-        );
-    } finally {
-        paymentBusy.value = false;
-    }
-}
-
-async function rejectPayment() {
-    if (!rejecting.value || paymentBusy.value || !rejectReason.value.trim())
-        return;
-    paymentBusy.value = true;
-    try {
-        await axios.post(`/api/payment-requests/${rejecting.value.id}/reject`, {
-            reason: rejectReason.value.trim(),
-        });
-        toast.success('Pago rechazado', 'Se avisó al huésped con el motivo.');
-        rejecting.value = null;
-        rejectReason.value = '';
-        router.reload({ only: ['paymentQueue', 'conversations'] });
-    } catch (e: any) {
-        toast.error(
-            'No se pudo rechazar',
-            e.response?.data?.message ?? 'Ocurrió un error.',
-        );
-    } finally {
-        paymentBusy.value = false;
-    }
-}
-
-function openQueueConversation(item: PaymentQueueItem) {
-    openConversationById(item.conversation_id);
-}
 
 const filter = ref<'all' | 'pending' | 'open' | 'resolved'>('all');
 const leadFilter = ref('all');
@@ -451,9 +364,7 @@ function maybeAutoSuggest() {
 
 onMounted(() => {
     poller = setInterval(async () => {
-        router.reload({
-            only: ['conversations', 'paymentQueue', 'overdueBalances'],
-        });
+        router.reload({ only: ['conversations'] });
         await refreshThread();
     }, 10000);
 });
@@ -541,191 +452,6 @@ onBeforeUnmount(() => {
                     >
                         {{ modeMeta[ch.mode]?.label ?? ch.mode }}
                     </span>
-                </div>
-            </div>
-
-            <!-- Pagos por verificar (transferencias reportadas) -->
-            <div
-                v-if="canManage && paymentQueue.length"
-                class="box box--stacked mt-5"
-            >
-                <div
-                    class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-3.5"
-                >
-                    <div
-                        class="flex h-8 w-8 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
-                    >
-                        <Lucide icon="Landmark" class="h-4 w-4 text-pending" />
-                    </div>
-                    <div>
-                        <div class="text-sm font-medium">
-                            Pagos por verificar
-                        </div>
-                        <p class="text-xs text-slate-500">
-                            Transferencias reportadas por huéspedes; al aprobar
-                            se registra el pago y se avisa por su canal.
-                        </p>
-                    </div>
-                    <span
-                        class="ml-auto rounded-full bg-pending/10 px-2 py-0.5 text-xs font-medium text-pending"
-                        >{{ paymentQueue.length }}</span
-                    >
-                </div>
-                <div class="divide-y divide-dashed divide-slate-300/70">
-                    <div
-                        v-for="item in paymentQueue"
-                        :key="item.id"
-                        class="flex flex-wrap items-center gap-3 px-5 py-3"
-                    >
-                        <div class="min-w-0 flex-1">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="truncate text-sm font-medium">{{
-                                    item.guest_name
-                                }}</span>
-                                <span
-                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
-                                    >{{ item.reservation_code }}</span
-                                >
-                                <span
-                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
-                                    >{{ item.concept }} ·
-                                    {{ item.amount_label }}</span
-                                >
-                            </div>
-                            <p class="mt-0.5 text-xs text-slate-500">
-                                Solicitado por {{ item.requested_by }}
-                                {{ item.requested_at
-                                }}<template v-if="item.expires_at">
-                                    · vence {{ item.expires_at }}</template
-                                >
-                            </p>
-                        </div>
-                        <div class="flex shrink-0 items-center gap-1.5">
-                            <Button
-                                v-if="item.conversation_id"
-                                variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
-                                title="Ver la conversación y el comprobante"
-                                @click="openQueueConversation(item)"
-                            >
-                                <Lucide
-                                    icon="MessagesSquare"
-                                    class="h-3.5 w-3.5"
-                                />
-                            </Button>
-                            <Button
-                                variant="primary"
-                                size="sm"
-                                class="rounded-[0.5rem]"
-                                @click="verifying = item"
-                            >
-                                <Lucide
-                                    icon="Check"
-                                    class="mr-1.5 h-3.5 w-3.5"
-                                />
-                                Aprobar
-                            </Button>
-                            <Button
-                                variant="outline-danger"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
-                                @click="rejecting = item"
-                            >
-                                <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
-                                Rechazar
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Saldos vencidos: alerta, la decisión es humana -->
-            <div
-                v-if="canManage && overdueBalances.length"
-                class="box box--stacked mt-5"
-            >
-                <div
-                    class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-3.5"
-                >
-                    <div
-                        class="flex h-8 w-8 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
-                    >
-                        <Lucide
-                            icon="TriangleAlert"
-                            class="h-4 w-4 text-warning"
-                        />
-                    </div>
-                    <div>
-                        <div class="text-sm font-medium">Saldos vencidos</div>
-                        <p class="text-xs text-slate-500">
-                            Reservas confirmadas cuya fecha límite de pago ya
-                            pasó; decide si contactar, extender o cancelar.
-                        </p>
-                    </div>
-                    <span
-                        class="ml-auto rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
-                        >{{ overdueBalances.length }}</span
-                    >
-                </div>
-                <div class="divide-y divide-dashed divide-slate-300/70">
-                    <div
-                        v-for="item in overdueBalances"
-                        :key="item.id"
-                        class="flex flex-wrap items-center gap-3 px-5 py-3"
-                    >
-                        <div class="min-w-0 flex-1">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="truncate text-sm font-medium">{{
-                                    item.guest_name
-                                }}</span>
-                                <span
-                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
-                                    >{{ item.code }}</span
-                                >
-                                <span
-                                    class="rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning"
-                                    >Debe {{ item.pending_label }}</span
-                                >
-                            </div>
-                            <p class="mt-0.5 text-xs text-slate-500">
-                                Venció {{ item.due_label }} · llega el
-                                {{ item.starts_label }}
-                            </p>
-                        </div>
-                        <div class="flex shrink-0 items-center gap-1.5">
-                            <Button
-                                v-if="item.conversation_id"
-                                variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
-                                title="Abrir la conversación para dar seguimiento"
-                                @click="
-                                    openConversationById(item.conversation_id)
-                                "
-                            >
-                                <Lucide
-                                    icon="MessagesSquare"
-                                    class="mr-1.5 h-3.5 w-3.5"
-                                />
-                                Conversación
-                            </Button>
-                            <Button
-                                as="a"
-                                :href="route('tenant.reservations')"
-                                variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
-                                title="Gestionar la reserva en el módulo de reservas"
-                            >
-                                <Lucide
-                                    icon="CalendarDays"
-                                    class="mr-1.5 h-3.5 w-3.5"
-                                />
-                                Reserva
-                            </Button>
-                        </div>
-                    </div>
                 </div>
             </div>
 
@@ -1432,112 +1158,6 @@ onBeforeUnmount(() => {
                         </Button>
                     </div>
                 </form>
-            </Dialog.Panel>
-        </Dialog>
-
-        <Dialog :open="verifying !== null" @close="verifying = null">
-            <Dialog.Panel>
-                <div v-if="verifying" class="p-6">
-                    <div class="flex items-start gap-3.5">
-                        <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
-                        >
-                            <Lucide icon="Landmark" class="h-5 w-5" />
-                        </div>
-                        <div>
-                            <h2 class="text-base font-medium">
-                                Aprobar pago de {{ verifying.guest_name }}
-                            </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
-                                {{ verifying.concept }} de
-                                {{ verifying.amount_label }} · reserva
-                                {{ verifying.reservation_code }}. Confirma que
-                                la transferencia ya está en la cuenta del hotel.
-                            </p>
-                        </div>
-                    </div>
-                    <div class="mt-4">
-                        <label class="mb-1 block text-sm"
-                            >Referencia del banco (opcional)</label
-                        >
-                        <FormInput
-                            v-model="verifyReference"
-                            type="text"
-                            placeholder="Clave de rastreo / folio SPEI"
-                        />
-                    </div>
-                    <div
-                        class="mt-4 flex items-center gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
-                    >
-                        <Lucide icon="Info" class="h-4 w-4 shrink-0" /> Se
-                        registra el pago, la reserva se confirma si cubre el
-                        anticipo y se avisa al huésped por su canal.
-                    </div>
-                    <div class="mt-6 flex justify-end gap-2">
-                        <Button
-                            variant="outline-secondary"
-                            @click="verifying = null"
-                            >Cancelar</Button
-                        >
-                        <Button
-                            variant="primary"
-                            :disabled="paymentBusy"
-                            @click="approvePayment"
-                        >
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
-                            {{ paymentBusy ? 'Registrando…' : 'Aprobar pago' }}
-                        </Button>
-                    </div>
-                </div>
-            </Dialog.Panel>
-        </Dialog>
-
-        <!-- Modal rechazar pago -->
-        <Dialog :open="rejecting !== null" @close="rejecting = null">
-            <Dialog.Panel>
-                <div v-if="rejecting" class="p-6">
-                    <div class="flex items-start gap-3.5">
-                        <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
-                        >
-                            <Lucide icon="X" class="h-5 w-5" />
-                        </div>
-                        <div>
-                            <h2 class="text-base font-medium">
-                                Rechazar pago de {{ rejecting.guest_name }}
-                            </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
-                                {{ rejecting.concept }} de
-                                {{ rejecting.amount_label }} · reserva
-                                {{ rejecting.reservation_code }}. El motivo se
-                                envía al huésped por su canal.
-                            </p>
-                        </div>
-                    </div>
-                    <div class="mt-4">
-                        <label class="mb-1 block text-sm">Motivo</label>
-                        <FormInput
-                            v-model="rejectReason"
-                            type="text"
-                            placeholder="No se localizó el depósito / monto distinto…"
-                        />
-                    </div>
-                    <div class="mt-6 flex justify-end gap-2">
-                        <Button
-                            variant="outline-secondary"
-                            @click="rejecting = null"
-                            >Cancelar</Button
-                        >
-                        <Button
-                            variant="danger"
-                            :disabled="paymentBusy || !rejectReason.trim()"
-                            @click="rejectPayment"
-                        >
-                            <Lucide icon="X" class="mr-2 h-4 w-4" />
-                            {{ paymentBusy ? 'Enviando…' : 'Rechazar' }}
-                        </Button>
-                    </div>
-                </div>
             </Dialog.Panel>
         </Dialog>
 

@@ -30,6 +30,7 @@ class UserController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'email' => ['required', 'email', 'max:255', 'unique:users,email'],
+            'phone' => ['nullable', 'string', 'max:30'],
             'password' => ['required', 'string', 'min:8'],
             'role' => ['required', Rule::in(self::assignableRoles())],
         ]);
@@ -45,11 +46,12 @@ class UserController extends Controller
         $user = User::create([
             'name' => $data['name'],
             'email' => $data['email'],
+            'phone' => $data['phone'] ?? null,
             'password' => $data['password'],
         ]);
         $user->assignRole($data['role']);
 
-        return response()->json($user->only(['id', 'name', 'email']), 201);
+        return response()->json($user->only(['id', 'name', 'email', 'phone']), 201);
     }
 
     public function update(Request $request, User $user): JsonResponse
@@ -57,6 +59,7 @@ class UserController extends Controller
         $data = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:255'],
             'email' => ['sometimes', 'required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
+            'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
             'password' => ['nullable', 'string', 'min:8'],
             'role' => ['sometimes', 'required', Rule::in(self::assignableRoles())],
         ]);
@@ -68,7 +71,7 @@ class UserController extends Controller
             ], 422);
         }
 
-        $user->fill(collect($data)->only(['name', 'email'])->all());
+        $user->fill(collect($data)->only(['name', 'email', 'phone'])->all());
         if (! empty($data['password'])) {
             $user->password = $data['password'];
         }
@@ -78,7 +81,7 @@ class UserController extends Controller
             $user->syncRoles([$data['role']]);
         }
 
-        return response()->json($user->only(['id', 'name', 'email']));
+        return response()->json($user->only(['id', 'name', 'email', 'phone']));
     }
 
     public function destroy(Request $request, User $user): JsonResponse
@@ -109,6 +112,40 @@ class UserController extends Controller
         $user->delete();
 
         return response()->json(status: 204);
+    }
+
+    /**
+     * Borrado en masa: elimina los usuarios eliminables; se conservan (y se
+     * reportan omitidos) el propio usuario, el último propietario y los que
+     * tienen actividad registrada (auditoría).
+     */
+    public function destroyBulk(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:200'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $deleted = 0;
+        $skipped = 0;
+
+        foreach (User::query()->whereIn('id', $data['ids'])->get() as $user) {
+            $hasActivity = Order::query()->where('created_by', $user->id)->exists()
+                || Payment::query()->where('received_by', $user->id)->exists()
+                || Shift::query()->where('user_id', $user->id)->exists()
+                || CashCut::query()->where('user_id', $user->id)->exists();
+
+            if ($user->id === $request->user()?->id || $this->isLastOwner($user) || $hasActivity) {
+                $skipped++;
+
+                continue;
+            }
+
+            $user->delete();
+            $deleted++;
+        }
+
+        return response()->json(['deleted' => $deleted, 'skipped' => $skipped]);
     }
 
     protected function isLastOwner(User $user): bool

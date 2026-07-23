@@ -14,9 +14,8 @@ export interface ChartElement extends HTMLCanvasElement {
 
 export type ProvideChart = (el: ChartElement) => void;
 
-interface ChartProps
-    /* @vue-ignore */
-    extends CanvasHTMLAttributes, /* @vue-ignore */ ChartConfiguration {
+// prettier-ignore
+interface ChartProps extends /* @vue-ignore */ CanvasHTMLAttributes, /* @vue-ignore */ ChartConfiguration {
     width?: number;
     height?: number;
     type: ChartConfiguration['type'];

@@ -1,0 +1,150 @@
+/* KuiraWebReserve Habitaciones: tarjetas del catalogo. Colores neutros y
+   tipografia heredada del theme del sitio. Las columnas de escritorio las
+   fija --kuira-cols (ajustes del plugin); en pantallas chicas manda el
+   media query. */
+.kuira-rooms-grid {
+    display: grid;
+    gap: 24px;
+    grid-template-columns: repeat(var(--kuira-cols, 3), minmax(0, 1fr));
+    margin: 0 0 24px;
+}
+
+@media (max-width: 1024px) {
+    .kuira-rooms-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 640px) {
+    .kuira-rooms-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.kuira-room-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 16px;
+    overflow: hidden;
+    background: #fff;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+
+.kuira-room-card:hover {
+    box-shadow: 0 10px 24px rgba(15, 23, 42, 0.1);
+    transform: translateY(-2px);
+}
+
+.kuira-room-photo {
+    aspect-ratio: 4 / 3;
+    background: #f1f5f9;
+    overflow: hidden;
+}
+
+.kuira-room-photo img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.kuira-room-photo--empty {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 44px;
+    font-weight: 600;
+    color: #94a3b8;
+    background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+}
+
+.kuira-room-body {
+    padding: 18px 20px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    flex: 1;
+}
+
+.kuira-room-name {
+    margin: 0;
+    font-size: 19px;
+    line-height: 1.3;
+}
+
+.kuira-room-desc {
+    margin: 0;
+    color: #475569;
+    font-size: 14px;
+    line-height: 1.55;
+}
+
+.kuira-room-capacity {
+    margin: 0;
+    color: #64748b;
+    font-size: 13px;
+}
+
+.kuira-room-amenities {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.kuira-chip {
+    background: #f1f5f9;
+    color: #475569;
+    border-radius: 999px;
+    padding: 3px 10px;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.kuira-room-footer {
+    margin-top: auto;
+    padding-top: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border-top: 1px dashed #e2e8f0;
+}
+
+.kuira-room-price {
+    font-size: 16px;
+    color: #0f172a;
+}
+
+.kuira-room-price small {
+    display: block;
+    color: #64748b;
+    font-size: 12px;
+    font-weight: 400;
+}
+
+.kuira-room-btn {
+    background: #1e40af;
+    color: #fff !important;
+    border-radius: 10px;
+    padding: 9px 18px;
+    text-decoration: none;
+    font-size: 14px;
+    white-space: nowrap;
+}
+
+.kuira-room-btn:hover {
+    background: #1c3aa0;
+    color: #fff;
+}
+
+.kuira-rooms-admin-note {
+    border: 1px dashed #f59e0b;
+    background: #fffbeb;
+    color: #92400e;
+    border-radius: 10px;
+    padding: 10px 14px;
+    font-size: 13px;
+    margin: 0 0 16px;
+}

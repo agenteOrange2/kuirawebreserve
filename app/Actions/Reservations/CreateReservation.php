@@ -126,8 +126,9 @@ class CreateReservation
                 'extra_charges' => $extraCharges ?: null,
                 'products' => $productLines ?: null,
                 'extras' => $extraLines ?: null,
-                // Cobro anticipado (spec §2.6.3): la tarifa manda; el monto
-                // manual solo aplica en tarifas sin anticipo configurado.
+                // Cobro anticipado (spec §2.6.3): la tarifa manda ("Exigir
+                // cobro anticipado" en Catálogo); el monto manual solo
+                // aplica en tarifas sin anticipo configurado.
                 'deposit_amount' => $ratePlan->depositAmountFor($total) ?? $data['deposit_amount'] ?? 0,
                 'payment_status' => \App\Enums\PaymentStatus::Unpaid,
                 // La tarifa manda; sin anticipación propia aplica el default

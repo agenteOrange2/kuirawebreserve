@@ -40,17 +40,35 @@ class GroupWizardController extends Controller
             ->where('active', true)
             ->whereHas('roomType', fn ($q) => $q->where('active', true));
 
+        // Misma apariencia que el wizard de habitaciones (/reservas/ajustes):
+        // una sola configuración para todas las páginas públicas.
+        $appearance = $property->wizardAppearance();
+
         return Inertia::render('tenant/reservar/Groups', [
+            'appearance' => $appearance,
             'property' => [
                 'name' => $property->name,
+                'logo_url' => $appearance['logo_url'],
                 'phone' => $settings['phone'] ?? null,
                 'currency' => $settings['currency'] ?? 'MXN',
+                // Doble moneda: se muestra el "aprox" en la otra divisa.
+                'currency_secondary' => $settings['currency_secondary'] ?? null,
+                'exchange_rate' => $settings['exchange_rate'] ?? null,
                 'guest_policy' => $settings['guest_policy'] ?? 'family',
                 'block_mode_label' => $settings['block_mode_label'] ?? 'Por rato/periodo',
             ],
             'hasNightRates' => (clone $activeRatePlans)->where('type', 'night')->exists(),
             'hasBlockRates' => (clone $activeRatePlans)->where('type', 'block')->exists(),
             'holdMinutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
+            // Accesos cruzados (misma botonera que /reservar): solo a páginas
+            // que existen de verdad para este hotel — módulo activo y, en las
+            // que tienen toggle de widget, con la página pública prendida.
+            'hasWizard' => (bool) tenant()?->hasModule('motor-web')
+                && (bool) ($settings['widget_reservas_enabled'] ?? true),
+            'hasLookup' => (bool) tenant()?->hasModule('motor-web'),
+            'hasExperiences' => (bool) tenant()?->hasModule('experiencias')
+                && (bool) ($settings['widget_experiencias_enabled'] ?? true)
+                && \App\Models\Experience::query()->where('active', true)->exists(),
         ]);
     }
 
@@ -125,7 +143,19 @@ class GroupWizardController extends Controller
             'starts_at' => $reservations->min('starts_at')?->toIso8601String(),
             'ends_at' => $reservations->max('ends_at')?->toIso8601String(),
             'total' => round((float) $reservations->sum('total_amount') + (float) $experienceBookings->sum('total'), 2),
+            // Lo mínimo para apartar (anticipos de los cuartos + tours
+            // completos) — el huésped puede elegir pagar esto o el total.
+            'deposit' => round(
+                $reservations->sum(function ($r) {
+                    $deposit = (float) $r->deposit_amount;
+                    $total = (float) $r->total_amount;
+
+                    return $deposit > 0 && $deposit < $total ? $deposit : $total;
+                }) + (float) $experienceBookings->sum('total'),
+                2,
+            ),
             'requires_prepayment' => $this->groupRequiresPrepayment($data['mode'], $data['lines']),
+            'payment_optional' => app(\App\Services\ReservationPolicy::class)->cashPaymentEnabled(),
             'hold_expires_at' => $reservations->min('hold_expires_at')?->toIso8601String(),
             'hold_minutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
         ], 201);
@@ -137,11 +167,59 @@ class GroupWizardController extends Controller
         return app(ExperienceWizardController::class)->paymentOptions();
     }
 
+    /**
+     * Igual que el wizard de habitaciones (BookingController::payLater):
+     * elegir "pagar en el hotel" extiende el hold de TODO el grupo al plazo
+     * de efectivo, cada reserva con tope en su propia llegada. Solo
+     * extiende, nunca recorta; libera el scheduler de siempre.
+     */
+    public function payLater(string $code): JsonResponse
+    {
+        $policy = app(\App\Services\ReservationPolicy::class);
+
+        if (! $policy->cashPaymentEnabled()) {
+            return response()->json(['message' => 'El hotel no ofrece pagar en el hotel; elige un método de pago en línea.'], 422);
+        }
+
+        $group = ReservationGroup::query()->where('code', strtoupper(trim($code)))->first();
+
+        if (! $group) {
+            return response()->json(['message' => 'No encontramos un grupo con ese folio.'], 404);
+        }
+
+        $deadline = now()->addMinutes($policy->cashDeadlineMinutes());
+
+        $group->reservations()
+            ->where('status', \App\Enums\ReservationStatus::Pending)
+            ->whereNotNull('hold_expires_at')
+            ->get()
+            ->each(function ($reservation) use ($deadline) {
+                $target = $reservation->starts_at !== null && $reservation->starts_at->lt($deadline)
+                    ? $reservation->starts_at
+                    : $deadline;
+
+                if ($reservation->hold_expires_at->lt($target)) {
+                    $reservation->update(['hold_expires_at' => $target]);
+                }
+            });
+
+        $min = $group->reservations()
+            ->where('status', \App\Enums\ReservationStatus::Pending)
+            ->min('hold_expires_at');
+
+        return response()->json([
+            'hold_expires_at' => $min ? Carbon::parse($min)->toIso8601String() : null,
+        ]);
+    }
+
     /** Cobro consolidado: un solo link por todo el grupo. */
     public function payment(Request $request, string $code, IssueGroupPayment $action): JsonResponse
     {
         $preferred = $request->string('method')->toString();
         $preferred = in_array($preferred, ['gateway', 'transfer'], true) ? $preferred : null;
+
+        // Anticipos (default) o liquidar todo de una vez — elección del huésped.
+        $preferFull = $request->string('pay')->toString() === 'full';
 
         $requestedProvider = $request->string('provider')->toString();
         $requestedProvider = in_array($requestedProvider, ['stripe', 'mercadopago', 'paypal'], true) ? $requestedProvider : null;
@@ -198,7 +276,7 @@ class GroupWizardController extends Controller
         try {
             if ($link && $preferred !== 'transfer') {
                 try {
-                    $paymentRequest = $action->handle($group, PaymentRequest::METHOD_GATEWAY, null, $link);
+                    $paymentRequest = $action->handle($group, PaymentRequest::METHOD_GATEWAY, null, $link, $preferFull);
 
                     return response()->json([
                         'method' => 'gateway',
@@ -215,7 +293,7 @@ class GroupWizardController extends Controller
                 }
             }
 
-            $paymentRequest = $action->handle($group, PaymentRequest::METHOD_TRANSFER);
+            $paymentRequest = $action->handle($group, PaymentRequest::METHOD_TRANSFER, preferFull: $preferFull);
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
@@ -225,6 +303,7 @@ class GroupWizardController extends Controller
             'amount' => (float) $paymentRequest->amount,
             'amount_label' => $paymentRequest->amountLabel(),
             'bank_accounts' => $accounts,
+            'whatsapps' => app(\App\Services\ReservationPolicy::class)->transferWhatsapps(),
             'valid_hours' => (int) now()->diffInHours($paymentRequest->expires_at ?? now()),
             'return_url' => route('tenant.payment.return', $paymentRequest->uuid),
         ], 201);
@@ -242,7 +321,9 @@ class GroupWizardController extends Controller
         $paymentMode = Property::firstOrFail()->settings['payment_mode'] ?? 'automatic';
 
         if ($paymentMode !== 'automatic') {
-            return $paymentMode === 'always';
+            // 'optional' ("ambos") también muestra el paso de pago; el
+            // responsable puede elegir pagar al llegar.
+            return in_array($paymentMode, ['always', 'optional'], true);
         }
 
         foreach ($lines as $line) {

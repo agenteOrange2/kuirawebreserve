@@ -52,44 +52,10 @@ class InboxController extends Controller
             'canTeach' => $request->user()->can('reservations.manage')
                 && (bool) \App\Models\Central\TenantAgentSetting::for((string) tenant('id'))->guidelines_editable,
             'llmReady' => app(AgentBrain::class)->isConfigured(),
-            // Transferencias reportadas que esperan verificación humana
-            // (spec-pagos §7.4): aprobar registra el pago y confirma.
-            'paymentQueue' => $request->user()->can('reservations.manage')
-                ? PaymentRequestController::queue()
-                : [],
-            // Saldos vencidos (spec-pagos §7.2): el impago NO cancela solo
-            // por default — alerta aquí y el equipo decide.
-            'overdueBalances' => $request->user()->can('reservations.manage')
-                ? $this->overdueBalances()
-                : [],
+            // Los pagos (transferencias por verificar, saldos vencidos)
+            // viven en su propia página /pagos — la bandeja es solo
+            // conversaciones (feedback 2026-07-17).
         ]);
-    }
-
-    /**
-     * @return array<int, array<string, mixed>>
-     */
-    protected function overdueBalances(): array
-    {
-        return \App\Models\Reservation::query()
-            ->where('status', \App\Enums\ReservationStatus::Confirmed)
-            ->where('payment_status', '!=', \App\Enums\PaymentStatus::Paid)
-            ->whereNotNull('payment_due_at')
-            ->where('payment_due_at', '<', now())
-            ->orderBy('payment_due_at')
-            ->get()
-            ->filter(fn ($r) => $r->pendingBalance() > 0)
-            ->map(fn ($r) => [
-                'id' => $r->id,
-                'code' => $r->displayCode(),
-                'guest_name' => $r->guest_name ?? 'Huésped',
-                'pending_label' => '$'.number_format($r->pendingBalance(), 2),
-                'due_label' => $r->payment_due_at->diffForHumans(),
-                'starts_label' => $r->starts_at->format('d/m'),
-                'conversation_id' => Conversation::query()
-                    ->where('reservation_id', $r->id)->latest('id')->value('id'),
-            ])
-            ->values()
-            ->all();
     }
 
     /** Hilo completo (y marca como leído). */

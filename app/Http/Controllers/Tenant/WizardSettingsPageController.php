@@ -60,7 +60,11 @@ class WizardSettingsPageController extends Controller
                 'guest_policy' => $settings['guest_policy'] ?? 'family',
                 'block_mode_label' => $settings['block_mode_label'] ?? 'Por rato/periodo',
                 'wizard_extras_enabled' => (bool) ($settings['wizard_extras_enabled'] ?? false),
-                'payment_mode' => $settings['payment_mode'] ?? 'automatic',
+                // 'optional' es legacy del viejo modo "ambos": para el
+                // diagnóstico equivale a 'always' (siempre hay paso de pago).
+                'payment_mode' => ($settings['payment_mode'] ?? 'automatic') === 'optional'
+                    ? 'always'
+                    : ($settings['payment_mode'] ?? 'automatic'),
             ],
             'hasPosModule' => $hasPos,
             'products' => $products,

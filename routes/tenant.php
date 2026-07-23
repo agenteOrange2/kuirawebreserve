@@ -92,6 +92,11 @@ Route::middleware([
         ->whereNumber('mediaId')
         ->name('room-type-photo');
 
+    // Logo del hotel para el wizard (público, sin login): solo entrega la
+    // colección wizard_logo de Property.
+    Route::get('/fotos/logo', [\App\Http\Controllers\Tenant\PropertyLogoController::class, 'show'])
+        ->name('property-logo');
+
     // Wizard público de experiencias (tours con horario y cupo propios) y
     // sus fotos — módulo `experiencias`, independiente del motor-web.
     Route::get('/reservar/experiencias', [\App\Http\Controllers\Tenant\ExperienceWizardController::class, 'page'])
@@ -145,6 +150,19 @@ Route::middleware([
             ->name('reservations.calendar');
         Route::redirect('/reservas/calendar', '/reservas/calendario');
 
+        // Historial COMPLETO de reservas: /reservas solo muestra las
+        // últimas 20; aquí vive todo con buscador, filtro y paginación.
+        Route::get('/reservas/historial', \App\Http\Controllers\Tenant\ReservationHistoryPageController::class)
+            ->middleware('can:reservations.view')
+            ->name('reservations.history');
+
+        // Apariencia del wizard público (logo, colores, modo oscuro de
+        // /reservar) — área aislada bajo /reservas, separada a propósito
+        // del comportamiento que vive en /ajustes/wizard.
+        Route::get('/reservas/ajustes', \App\Http\Controllers\Tenant\WizardAppearancePageController::class)
+            ->middleware(['can:properties.manage', 'module:motor-web'])
+            ->name('reservations.settings');
+
         // Reportes de reservas (resumen por periodo + PDF).
         Route::middleware('can:reservations.view')->group(function () {
             Route::get('/reservas/reportes', ReservationReportsController::class)
@@ -172,6 +190,12 @@ Route::middleware([
         Route::get('/grupos', \App\Http\Controllers\Tenant\GroupsPageController::class)
             ->middleware(['can:reservations.view', 'module:grupos'])
             ->name('groups');
+        // Detalle del grupo: edición real (habitaciones, personas,
+        // recorridos) y su dinero (cobros, pagado, pendiente).
+        Route::get('/grupos/{group}', \App\Http\Controllers\Tenant\GroupShowController::class)
+            ->middleware(['can:reservations.view', 'module:grupos'])
+            ->whereNumber('group')
+            ->name('groups.show');
 
         // CRM de huéspedes.
         Route::middleware('can:guests.view')->group(function () {
@@ -201,6 +225,13 @@ Route::middleware([
         Route::get('/ajustes', HotelSettingsPageController::class)
             ->middleware('can:properties.manage')
             ->name('hotel-settings');
+
+        // Área aislada de datos generales: contacto, redes, horarios y
+        // moneda, políticas y preguntas frecuentes — misma regla de superficie
+        // propia que wizard/pagos/mails (feedback isolated-settings-areas).
+        Route::get('/ajustes/general', \App\Http\Controllers\Tenant\GeneralSettingsPageController::class)
+            ->middleware('can:properties.manage')
+            ->name('general-settings');
 
         // Área aislada del wizard público (modalidad/huéspedes, extras del
         // POS, resumen de pago) — separada de Ajustes general a propósito.
@@ -248,6 +279,11 @@ Route::middleware([
             ->name('inbox');
 
         // Conciliación de pasarelas y transferencias (spec-pagos §9.4).
+        // Centro de pagos: transferencias por verificar, saldos vencidos,
+        // links vivos y últimos pagos — todo el dinero en un solo lugar.
+        Route::get('/pagos', \App\Http\Controllers\Tenant\PaymentsPageController::class)
+            ->middleware('can:reservations.view')
+            ->name('payments');
         Route::get('/cobros-en-linea', \App\Http\Controllers\Tenant\OnlinePaymentsPageController::class)
             ->middleware('can:reservations.view')
             ->name('online-payments');
@@ -256,6 +292,14 @@ Route::middleware([
     Route::middleware('auth')->prefix('api')->group(function () {
         Route::apiResource('properties', PropertyController::class)
             ->middleware('can:properties.manage');
+
+        // Logo del wizard público (/reservas/ajustes → Apariencia).
+        Route::post('property-logo', [\App\Http\Controllers\Tenant\PropertyLogoController::class, 'store'])
+            ->middleware('can:properties.manage')
+            ->name('property-logo.store');
+        Route::delete('property-logo', [\App\Http\Controllers\Tenant\PropertyLogoController::class, 'destroy'])
+            ->middleware('can:properties.manage')
+            ->name('property-logo.destroy');
 
         // FAQs del hotel (se administran en /ajustes; alimentan al bot).
         Route::apiResource('faqs', \App\Http\Controllers\Tenant\FaqController::class)
@@ -331,6 +375,8 @@ Route::middleware([
             });
             Route::middleware('can:reservations.manage')->group(function () {
                 Route::post('experience-bookings', [\App\Http\Controllers\Tenant\ExperienceBookingController::class, 'store'])->name('experience-bookings.store');
+                // Borrado en masa del historial (canceladas/completadas).
+                Route::delete('experience-bookings', [\App\Http\Controllers\Tenant\ExperienceBookingController::class, 'destroyBulk'])->name('experience-bookings.destroy-bulk');
                 Route::patch('experience-bookings/{booking}/status', [\App\Http\Controllers\Tenant\ExperienceBookingController::class, 'updateStatus'])->name('experience-bookings.status');
                 Route::post('experience-bookings/{booking}/payment-request', [\App\Http\Controllers\Tenant\ExperienceBookingController::class, 'issuePayment'])->name('experience-bookings.payment-request');
             });
@@ -340,6 +386,13 @@ Route::middleware([
         Route::middleware(['can:reservations.manage', 'module:grupos'])->group(function () {
             Route::post('group-reservations', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'store'])->name('group-reservations.store');
             Route::post('group-reservations/{group}/cancel', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'cancel'])->name('group-reservations.cancel');
+            Route::patch('group-reservations/{group}', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'update'])->name('group-reservations.update');
+            Route::delete('group-reservations/{group}', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'destroy'])->name('group-reservations.destroy');
+            // Edición real del grupo: agregar habitaciones/recorridos y
+            // emitir el cobro consolidado desde el panel.
+            Route::post('group-reservations/{group}/rooms', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'addRooms'])->name('group-reservations.rooms');
+            Route::post('group-reservations/{group}/experiences', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'addExperience'])->name('group-reservations.experiences');
+            Route::post('group-reservations/{group}/payment-request', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'issuePayment'])->name('group-reservations.payment-request');
         });
 
         Route::apiResource('rooms', RoomController::class)
@@ -351,6 +404,8 @@ Route::middleware([
         // Alta guiada (spec-plan-maestro E3): rango masivo, habitación única
         // (tipo + tarifa + habitación) y duplicado.
         Route::middleware('can:rooms.manage')->group(function () {
+            // Borrado en masa (path propio para no chocar con DELETE rooms/{room}).
+            Route::delete('rooms/bulk', [RoomController::class, 'destroyBulk'])->name('rooms.destroy-bulk');
             Route::post('rooms/bulk', [RoomController::class, 'storeBulk'])->name('rooms.bulk');
             Route::post('rooms/single-unit', [RoomController::class, 'storeSingleUnit'])->name('rooms.single-unit');
             Route::post('rooms/{room}/duplicate', [RoomController::class, 'duplicate'])->name('rooms.duplicate');
@@ -428,6 +483,7 @@ Route::middleware([
 
         Route::middleware('can:users.manage')->group(function () {
             Route::post('users', [TenantUserController::class, 'store'])->name('users.store');
+            Route::delete('users', [TenantUserController::class, 'destroyBulk'])->name('users.destroy-bulk');
             Route::patch('users/{user}', [TenantUserController::class, 'update'])->name('users.update');
             Route::delete('users/{user}', [TenantUserController::class, 'destroy'])->name('users.destroy');
         });
@@ -467,6 +523,13 @@ Route::middleware([
             Route::patch('evolution-channels/{linkId}', [EvolutionChannelController::class, 'update'])->name('evolution-channels.update');
             Route::delete('evolution-channels/{linkId}', [EvolutionChannelController::class, 'destroy'])->name('evolution-channels.destroy');
             Route::post('evolution-channels/{linkId}/test', [EvolutionChannelController::class, 'test'])->name('evolution-channels.test');
+
+            // WhatsApp vía Cloud API oficial de Meta (número propio del hotel).
+            Route::post('meta-channels', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'store'])->name('meta-channels.store');
+            Route::patch('meta-channels/{linkId}', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'update'])->name('meta-channels.update');
+            Route::delete('meta-channels/{linkId}', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'destroy'])->name('meta-channels.destroy');
+            Route::post('meta-channels/{linkId}/test', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'test'])->name('meta-channels.test');
+            Route::post('meta-channels/{linkId}/resubscribe', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'resubscribe'])->name('meta-channels.resubscribe');
         });
 
         // Bandeja unificada de conversaciones.
@@ -484,6 +547,9 @@ Route::middleware([
             Route::get('payment-requests', [PaymentRequestController::class, 'index'])->name('payment-requests.index');
             Route::post('payment-requests/{paymentRequest}/approve', [PaymentRequestController::class, 'approve'])->name('payment-requests.approve');
             Route::post('payment-requests/{paymentRequest}/reject', [PaymentRequestController::class, 'reject'])->name('payment-requests.reject');
+            // Cancelar cualquier cobro vivo desde el centro de pagos
+            // (reserva, grupo o experiencia).
+            Route::delete('payment-requests/{paymentRequest}', [PaymentRequestController::class, 'cancel'])->name('payment-requests.cancel');
         });
 
         // CRM de huéspedes.
@@ -492,6 +558,7 @@ Route::middleware([
             ->name('guests.search');
         Route::middleware('can:guests.manage')->group(function () {
             Route::post('guests', [GuestController::class, 'store'])->name('guests.store');
+            Route::delete('guests', [GuestController::class, 'destroyBulk'])->name('guests.destroy-bulk');
             Route::patch('guests/{guest}', [GuestController::class, 'update'])->name('guests.update');
             Route::delete('guests/{guest}', [GuestController::class, 'destroy'])->name('guests.destroy');
             Route::post('guests/{guest}/documents', [GuestController::class, 'storeDocument'])->name('guests.documents.store');
@@ -532,6 +599,7 @@ Route::middleware([
     InitializeTenancyByDomain::class,
     PreventAccessFromCentralDomains::class,
     App\Http\Middleware\EnsureTenantIsActive::class,
+    App\Http\Middleware\ForceJsonResponse::class,
     'throttle:60,1',
 ])->prefix('api/site')->name('tenant.site.')->group(function () {
     Route::get('catalog', \App\Http\Controllers\Tenant\SiteCatalogController::class)->name('catalog');
@@ -568,6 +636,11 @@ Route::middleware([
     Route::post('holds/{code}/payment', [\App\Http\Controllers\Tenant\BookingController::class, 'payment'])
         ->middleware('throttle:20,1')
         ->name('holds.payment');
+    // "Pagar en el hotel" (efectivo): extiende el apartado al plazo de
+    // efectivo del hotel en vez de emitir un cobro.
+    Route::post('holds/{code}/pay-later', [\App\Http\Controllers\Tenant\BookingController::class, 'payLater'])
+        ->middleware('throttle:20,1')
+        ->name('holds.pay-later');
     // Catálogo de extras (POS) y opciones de pago — /ajustes/wizard.
     Route::get('products', [\App\Http\Controllers\Tenant\BookingExtrasController::class, 'products'])
         ->middleware('throttle:60,1')
@@ -646,4 +719,7 @@ Route::middleware([
     Route::post('holds/{code}/payment', [\App\Http\Controllers\Tenant\GroupWizardController::class, 'payment'])
         ->middleware('throttle:20,1')
         ->name('payment');
+    Route::post('holds/{code}/pay-later', [\App\Http\Controllers\Tenant\GroupWizardController::class, 'payLater'])
+        ->middleware('throttle:20,1')
+        ->name('pay-later');
 });

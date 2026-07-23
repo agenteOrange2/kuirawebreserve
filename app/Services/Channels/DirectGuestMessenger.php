@@ -39,12 +39,47 @@ class DirectGuestMessenger
 
     /**
      * WhatsApp directo a un huésped del CRM sin reserva de habitación de
-     * por medio (experiencias, avisos sueltos). Solo WhatsApp: el correo
-     * con resumen es específico de reservas de habitación.
+     * por medio (experiencias, avisos sueltos). Solo WhatsApp.
      */
     public function sendToGuest(?\App\Models\Guest $guest, string $body): bool
     {
         return $this->whatsAppTo((string) $guest?->phone, $body);
+    }
+
+    /**
+     * WhatsApp + correo a un huésped sin reserva de habitación de por medio
+     * (experiencias, grupos): mismo doble canal que send() pero con un
+     * correo genérico (GuestNoticeMail), no el de reserva de habitación.
+     * El WhatsApp sale si hay canal conectado; el correo si el huésped dejó
+     * email y hay SMTP. Ninguno rompe el flujo.
+     *
+     * @param  array<int, array{label: string, value: string}>  $details
+     */
+    public function sendToGuestFull(?\App\Models\Guest $guest, string $subject, string $body, string $code = '', array $details = []): bool
+    {
+        $sent = $this->whatsAppTo((string) $guest?->phone, $body);
+
+        return $this->noticeEmailTo($guest?->email, $subject, $body, $code, $details) || $sent;
+    }
+
+    protected function noticeEmailTo(?string $email, string $subject, string $body, string $code, array $details): bool
+    {
+        if (! $email) {
+            return false;
+        }
+
+        try {
+            $mailer = app(\App\Services\TenantMailer::class)->mailer();
+
+            ($mailer ?? Mail::mailer())->to($email)
+                ->send(new \App\Mail\GuestNoticeMail($subject, $body, $code, $details));
+
+            return true;
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
     }
 
     protected function sendWhatsApp(Reservation $reservation, string $body): bool

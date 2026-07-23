@@ -301,6 +301,8 @@ class BookingController extends Controller
             'experiences_total' => $experiencesTotal,
             'total' => (float) $reservation->total_amount,
             'requires_prepayment' => $requiresPrepayment,
+            // Efectivo activo: el paso de pago ofrece también "pagar en el hotel".
+            'payment_optional' => $this->paymentIsOptional(),
             'deposit' => (float) $reservation->deposit_amount,
             'hold_expires_at' => $reservation->hold_expires_at?->toIso8601String(),
             'hold_minutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
@@ -342,6 +344,11 @@ class BookingController extends Controller
         // id" sin importar cuál eligiera el huésped en pantalla.
         $requestedProvider = $request->string('provider')->toString();
         $requestedProvider = in_array($requestedProvider, ['stripe', 'mercadopago', 'paypal'], true) ? $requestedProvider : null;
+
+        // El huésped elige cuánto pagar: solo el anticipo (default cuando
+        // hay uno) o todo de una vez — el anticipo es el mínimo para
+        // apartar, no un tope.
+        $preferFull = $request->string('pay')->toString() === 'full';
 
         $reservation = Reservation::with('ratePlan')->where('code', strtoupper(trim($code)))->first();
 
@@ -414,7 +421,7 @@ class BookingController extends Controller
         // pasarela: se respeta, no se le impone la pasarela.
         if ($link && $preferred !== 'transfer') {
             try {
-                $paymentRequest = $action->handle($reservation, PaymentRequest::METHOD_GATEWAY, null, $link);
+                $paymentRequest = $action->handle($reservation, PaymentRequest::METHOD_GATEWAY, null, $link, $preferFull);
 
                 return response()->json([
                     'method' => 'gateway',
@@ -432,16 +439,66 @@ class BookingController extends Controller
             }
         }
 
-        $paymentRequest = $action->handle($reservation, PaymentRequest::METHOD_TRANSFER);
+        $paymentRequest = $action->handle($reservation, PaymentRequest::METHOD_TRANSFER, preferFull: $preferFull);
 
         return response()->json([
             'method' => 'transfer',
             'amount' => (float) $paymentRequest->amount,
             'amount_label' => $paymentRequest->amountLabel(),
             'bank_accounts' => $accounts,
+            'whatsapps' => app(\App\Services\ReservationPolicy::class)->transferWhatsapps(),
             'valid_hours' => (int) now()->diffInHours($paymentRequest->expires_at ?? now()),
             'return_url' => route('tenant.payment.return', $paymentRequest->uuid),
         ], 201);
+    }
+
+    /**
+     * El huésped eligió "pagar en el hotel" (efectivo): el apartado deja el
+     * hold corto y pasa al plazo de efectivo del hotel (Plazos en
+     * /ajustes/metodos-pago, default 24 h), con tope en el check-in — un
+     * plazo que vence después de la llegada no aparta nada. Solo EXTIENDE
+     * (mismo criterio que IssuePaymentRequest, spec-pagos §6.1): nunca
+     * recorta un hold vivo. La liberación sigue siendo del scheduler de
+     * siempre (reservations:expire-holds) — aquí no se cancela nada.
+     */
+    public function payLater(string $code): JsonResponse
+    {
+        if (! $this->paymentIsOptional()) {
+            return response()->json(['message' => 'El hotel no ofrece pagar en el hotel; elige un método de pago en línea.'], 422);
+        }
+
+        $reservation = Reservation::query()->where('code', strtoupper(trim($code)))->first();
+
+        if (! $reservation) {
+            return response()->json(['message' => 'No encontramos una reserva con ese código.'], 404);
+        }
+
+        $deadline = now()->addMinutes(app(\App\Services\ReservationPolicy::class)->cashDeadlineMinutes());
+
+        if ($reservation->starts_at !== null && $reservation->starts_at->lt($deadline)) {
+            $deadline = $reservation->starts_at;
+        }
+
+        if (
+            $reservation->status === \App\Enums\ReservationStatus::Pending
+            && $reservation->hold_expires_at !== null
+            && $reservation->hold_expires_at->lt($deadline)
+        ) {
+            // La elección queda visible para recepción en las notas (una
+            // sola vez, aunque el huésped reintente).
+            $notes = (string) $reservation->notes;
+            $marca = 'Eligió pagar en el hotel (efectivo)';
+            $reservation->update([
+                'hold_expires_at' => $deadline,
+                'notes' => str_contains($notes, $marca)
+                    ? $reservation->notes
+                    : trim($notes === '' ? $marca : $notes.' — '.$marca),
+            ]);
+        }
+
+        return response()->json([
+            'hold_expires_at' => $reservation->fresh()->hold_expires_at?->toIso8601String(),
+        ]);
     }
 
     /**
@@ -490,13 +547,31 @@ class BookingController extends Controller
      */
     protected function requiresPrepaymentFor(RatePlan $ratePlan): bool
     {
-        $mode = Property::firstOrFail()->settings['payment_mode'] ?? 'automatic';
-
-        return match ($mode) {
-            'always' => true,
+        // 'optional' es el valor legacy del viejo modo "ambos" (hoy ese
+        // caso es 'always' + método efectivo activo): sigue mostrando el
+        // paso de pago igual que siempre.
+        return match ($this->paymentMode()) {
+            'always', 'optional' => true,
             'never' => false,
             default => $ratePlan->requiresPrepayment(),
         };
+    }
+
+    protected function paymentMode(): string
+    {
+        return Property::firstOrFail()->settings['payment_mode'] ?? 'automatic';
+    }
+
+    /**
+     * ¿El pago en línea es una oferta, no una obligación? Lo decide el
+     * método "Pago en el hotel (efectivo)": si el hotel lo tiene activo, el
+     * paso de pago ofrece también "pagar en el hotel" y el huésped elige.
+     * (Antes esto era el modo "ambos"; ese valor legacy sigue activando el
+     * efectivo por default vía cashPaymentEnabled.)
+     */
+    protected function paymentIsOptional(): bool
+    {
+        return app(\App\Services\ReservationPolicy::class)->cashPaymentEnabled();
     }
 
     /**

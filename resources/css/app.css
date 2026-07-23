@@ -81,6 +81,69 @@
 
 /*
  |--------------------------------------------------------------------------
+ | Piel oscura del wizard público (/reservar, modo elegido en
+ | /reservas/ajustes). El markup del wizard usa utilidades claras
+ | (bg-white, text-slate-*); este bloque las remapea SOLO dentro de
+ | .booking-dark (la tarjeta del wizard) sin tocar el resto del panel.
+ | Va fuera de @layer a propósito: el CSS sin capa le gana a las
+ | utilidades de Tailwind sin necesidad de !important.
+ |--------------------------------------------------------------------------
+ */
+.booking-dark {
+    color-scheme: dark;
+}
+.booking-dark.bg-white,
+.booking-dark .bg-white {
+    background-color: var(--color-darkmode-600);
+}
+.booking-dark .bg-slate-50 {
+    background-color: var(--color-darkmode-500);
+}
+.booking-dark .bg-slate-100 {
+    background-color: var(--color-darkmode-400);
+}
+.booking-dark .hover\:bg-slate-50:hover,
+.booking-dark .hover\:bg-slate-100:hover {
+    background-color: var(--color-darkmode-400);
+}
+.booking-dark .text-slate-800,
+.booking-dark .text-slate-700 {
+    color: var(--color-slate-200);
+}
+.booking-dark .text-slate-600 {
+    color: var(--color-slate-300);
+}
+.booking-dark .text-slate-500 {
+    color: var(--color-slate-400);
+}
+.booking-dark .text-slate-400 {
+    color: var(--color-slate-500);
+}
+.booking-dark .text-slate-300 {
+    color: var(--color-darkmode-300);
+}
+.booking-dark .border-slate-100,
+.booking-dark .border-slate-200,
+.booking-dark .border-slate-200\/60,
+.booking-dark .border-slate-200\/70,
+.booking-dark .border-slate-300,
+.booking-dark .hover\:border-slate-300:hover {
+    border-color: var(--color-darkmode-400);
+}
+.booking-dark .divide-slate-200 > :not(:last-child) {
+    border-color: var(--color-darkmode-400);
+}
+.booking-dark .hover\:shadow-slate-200\/60:hover {
+    --tw-shadow-color: rgb(0 0 0 / 0.4);
+}
+.booking-dark input,
+.booking-dark select,
+.booking-dark textarea {
+    color: var(--color-slate-200);
+}
+
+/*
+ |--------------------------------------------------------------------------
  | El preflight de Tailwind v4 pone cursor: default en los botones; en el
  | panel todo lo clickeable debe mostrar la manita.
  |--------------------------------------------------------------------------

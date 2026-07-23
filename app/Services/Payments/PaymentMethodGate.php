@@ -5,10 +5,13 @@ namespace App\Services\Payments;
 use App\Models\Central\PaymentMethodSetting;
 
 /**
- * Punto único de verdad sobre qué métodos de cobro EN LÍNEA están
- * disponibles: plataforma manda (apagado global = no existe para nadie) y
- * el override por hotel refina. Sin fila = habilitado. Efectivo/tarjeta de
- * mostrador no pasan por aquí: son registro contable, no oferta al huésped.
+ * Punto único de verdad sobre qué métodos de cobro están disponibles:
+ * plataforma manda (apagado global = no existe para nadie) y el override
+ * por hotel refina. Sin fila = habilitado. 'cash' es la excepción al "en
+ * línea": aquí solo vive el PERMISO de plataforma para ofrecer "pagar en
+ * el hotel" en los wizards; que un hotel lo ofrezca de verdad es opt-in
+ * suyo (ReservationPolicy::cashPaymentEnabled). El registro contable de
+ * efectivo/tarjeta en mostrador sigue sin pasar por aquí.
  */
 class PaymentMethodGate
 {
@@ -17,6 +20,7 @@ class PaymentMethodGate
         'stripe' => 'Stripe',
         'mercadopago' => 'Mercado Pago',
         'paypal' => 'PayPal',
+        'cash' => 'Pago en el hotel (efectivo)',
     ];
 
     public function platformEnabled(string $method): bool

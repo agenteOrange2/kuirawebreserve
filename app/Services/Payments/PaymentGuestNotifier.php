@@ -27,30 +27,46 @@ class PaymentGuestNotifier
     public function paymentReceived(PaymentRequest $request): void
     {
         // Cobro de experiencia: sin conversación ni reserva de habitación —
-        // aviso directo al huésped del tour.
+        // aviso directo al huésped del tour (WhatsApp + correo).
         if ($request->isForExperience()) {
             $booking = $request->experienceBooking()->with(['session.experience', 'guest'])->first();
 
             if ($booking) {
                 $when = $booking->session?->starts_at?->locale('es')->isoFormat('dddd D [de] MMMM [a las] HH:mm');
-                $this->direct->sendToGuest(
+                $this->direct->sendToGuestFull(
                     $booking->guest,
+                    'Pago recibido',
                     "Recibimos tu pago de {$request->amountLabel()}. Tu lugar en {$booking->session?->experience?->name} ({$booking->displayCode()}) está confirmado para el {$when}. Te esperamos.",
+                    $booking->displayCode(),
+                    array_values(array_filter([
+                        ['label' => 'Experiencia', 'value' => (string) $booking->session?->experience?->name],
+                        $when ? ['label' => 'Fecha', 'value' => $when] : null,
+                        ['label' => 'Personas', 'value' => (string) $booking->people],
+                        ['label' => 'Total', 'value' => $request->amountLabel()],
+                    ])),
                 );
             }
 
             return;
         }
 
-        // Cobro consolidado de grupo: aviso directo al responsable.
+        // Cobro consolidado de grupo: aviso directo al responsable
+        // (WhatsApp + correo).
         if ($request->isForGroup()) {
             $group = $request->group()->with(['guest', 'reservations'])->first();
 
             if ($group) {
                 $confirmed = $group->reservations->where('status', \App\Enums\ReservationStatus::Confirmed)->count();
-                $this->direct->sendToGuest(
+                $this->direct->sendToGuestFull(
                     $group->guest,
+                    'Pago recibido',
                     "Recibimos tu pago de {$request->amountLabel()}. Tu grupo {$group->displayCode()} ({$group->reservations->count()} habitaciones, {$confirmed} confirmadas) está listo. Te esperamos.",
+                    $group->displayCode(),
+                    [
+                        ['label' => 'Grupo', 'value' => $group->displayCode()],
+                        ['label' => 'Habitaciones', 'value' => (string) $group->reservations->count()],
+                        ['label' => 'Total pagado', 'value' => $request->amountLabel()],
+                    ],
                 );
             }
 
