@@ -105,11 +105,41 @@ const categoryOptions = computed(() =>
     Array.from(new Set([...props.categories, ...commonCategories])).sort(),
 );
 
-const filteredProducts = computed(() =>
-    categoryFilter.value
-        ? props.products.filter((p) => p.category === categoryFilter.value)
-        : props.products,
+// Con un catálogo de verdad (decenas de productos) los chips de categoría
+// solos no alcanzan: hace falta buscar por nombre.
+const search = ref('');
+
+const filteredProducts = computed(() => {
+    const term = search.value.trim().toLowerCase();
+
+    return props.products.filter((p) => {
+        if (categoryFilter.value && p.category !== categoryFilter.value) {
+            return false;
+        }
+        if (!term) return true;
+
+        return [p.name, p.category, p.sku].some((value) =>
+            (value ?? '').toLowerCase().includes(term),
+        );
+    });
+});
+
+const productFiltersActive = computed(
+    () => search.value.trim() !== '' || categoryFilter.value !== '',
 );
+
+function clearProductFilters() {
+    search.value = '';
+    categoryFilter.value = '';
+}
+
+/** Margen sobre el precio de venta, que es como se lee en el mostrador. */
+function marginPercent(p: ProductRow): string {
+    const price = Number(p.price) || 0;
+    if (price <= 0) return '—';
+
+    return `${Math.round((p.margin / price) * 100)}%`;
+}
 
 const lowStockItems = computed(() => [
     ...props.ingredients
@@ -442,9 +472,9 @@ const tabs = computed(() => [
             </div>
 
             <!-- KPIs -->
-            <div class="mt-5 grid grid-cols-12 gap-5">
+            <div class="mt-5 grid auto-rows-fr grid-cols-12 gap-4 sm:gap-5">
                 <div
-                    class="box box--stacked col-span-6 p-5 sm:col-span-4 xl:col-span-3"
+                    class="box box--stacked col-span-6 p-4 sm:col-span-6 sm:p-5 xl:col-span-3"
                 >
                     <div class="flex items-center justify-between">
                         <div
@@ -467,7 +497,7 @@ const tabs = computed(() => [
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-6 p-5 sm:col-span-4 xl:col-span-3"
+                    class="box box--stacked col-span-6 p-4 sm:col-span-6 sm:p-5 xl:col-span-3"
                 >
                     <div class="flex items-center justify-between">
                         <div
@@ -488,7 +518,7 @@ const tabs = computed(() => [
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-6 p-5 sm:col-span-4 xl:col-span-3"
+                    class="box box--stacked col-span-6 p-4 sm:col-span-6 sm:p-5 xl:col-span-3"
                 >
                     <div class="flex items-center justify-between">
                         <div
@@ -508,7 +538,7 @@ const tabs = computed(() => [
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-6 p-5 sm:col-span-4 xl:col-span-3"
+                    class="box box--stacked col-span-6 p-4 sm:col-span-6 sm:p-5 xl:col-span-3"
                     :class="summary.low_stock ? 'ring-1 ring-danger/30' : ''"
                 >
                     <div class="flex items-center justify-between">
@@ -574,7 +604,7 @@ const tabs = computed(() => [
 
             <!-- Tabs -->
             <div
-                class="mt-5 inline-flex flex-wrap gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
+                class="mt-6 inline-flex flex-wrap gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
             >
                 <button
                     v-for="t in tabs"
@@ -601,63 +631,204 @@ const tabs = computed(() => [
             </div>
 
             <!-- ============ Productos ============ -->
-            <div v-show="tab === 'productos'" class="mt-4">
-                <div
-                    v-if="categories.length"
-                    class="mb-3 flex flex-wrap items-center gap-2"
-                >
-                    <button
-                        class="rounded-full px-3 py-1 text-xs font-medium transition"
-                        :class="
-                            !categoryFilter
-                                ? 'bg-primary text-white'
-                                : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-darkmode-400'
-                        "
-                        @click="categoryFilter = ''"
+            <div v-show="tab === 'productos'" class="mt-5">
+                <!-- Buscador y categoría. Antes eran diez pastillas diminutas
+                     en una sola fila: con un catálogo real no se podía ni
+                     leer ni atinar en el teléfono. -->
+                <div class="box box--stacked p-4 sm:p-5">
+                    <div
+                        class="flex flex-col gap-4 lg:flex-row lg:items-center"
                     >
-                        Todas
-                    </button>
-                    <button
-                        v-for="c in categories"
-                        :key="c"
-                        class="rounded-full px-3 py-1 text-xs font-medium transition"
-                        :class="
-                            categoryFilter === c
-                                ? 'bg-primary text-white'
-                                : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-darkmode-400'
-                        "
-                        @click="categoryFilter = c"
+                        <div class="relative min-w-0 flex-1">
+                            <Lucide
+                                icon="Search"
+                                class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                            />
+                            <FormInput
+                                v-model="search"
+                                type="text"
+                                class="pl-9"
+                                placeholder="Buscar producto por nombre, categoría o código"
+                            />
+                        </div>
+                        <div
+                            class="flex flex-col gap-3 sm:flex-row sm:items-center"
+                        >
+                            <FormSelect
+                                v-if="categories.length"
+                                v-model="categoryFilter"
+                                class="sm:w-56"
+                                aria-label="Filtrar por categoría"
+                            >
+                                <option value="">Todas las categorías</option>
+                                <option
+                                    v-for="c in categories"
+                                    :key="c"
+                                    :value="c"
+                                >
+                                    {{ c }}
+                                </option>
+                            </FormSelect>
+                            <Button
+                                v-if="productFiltersActive"
+                                variant="outline-secondary"
+                                class="rounded-[0.5rem] whitespace-nowrap"
+                                @click="clearProductFilters"
+                            >
+                                <Lucide icon="X" class="mr-2 h-4 w-4" />
+                                Limpiar
+                            </Button>
+                        </div>
+                    </div>
+                    <p
+                        v-if="productFiltersActive"
+                        class="mt-3.5 text-sm text-slate-500"
                     >
-                        {{ c }}
-                    </button>
+                        {{ filteredProducts.length }} de {{ products.length }}
+                        {{ products.length === 1 ? 'producto' : 'productos' }}
+                    </p>
                 </div>
-                <div class="overflow-auto lg:overflow-visible">
+
+                <!-- Tarjetas en móvil: la tabla de seis columnas obligaba a
+                     hacer scroll horizontal para ver el precio. -->
+                <div class="mt-5 space-y-3 lg:hidden">
+                    <div
+                        v-for="p in filteredProducts"
+                        :key="p.id"
+                        class="box box--stacked p-4"
+                    >
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div
+                                    class="font-medium"
+                                    :class="{
+                                        'text-slate-400 line-through':
+                                            !p.active,
+                                    }"
+                                >
+                                    {{ p.name }}
+                                </div>
+                                <div
+                                    class="mt-1.5 flex flex-wrap items-center gap-1.5"
+                                >
+                                    <span
+                                        v-if="p.category"
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                                        >{{ p.category }}</span
+                                    >
+                                    <span
+                                        class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                        :class="
+                                            p.type === 'composite'
+                                                ? 'bg-pending/10 text-pending'
+                                                : 'bg-info/10 text-info'
+                                        "
+                                        >{{
+                                            p.type === 'composite'
+                                                ? 'Compuesto'
+                                                : 'Simple'
+                                        }}</span
+                                    >
+                                </div>
+                            </div>
+                            <div class="shrink-0 text-right">
+                                <div class="text-lg font-medium">
+                                    ${{ p.price }}
+                                </div>
+                                <div
+                                    v-if="p.cost > 0"
+                                    class="mt-0.5 text-xs text-slate-500"
+                                >
+                                    Costo {{ money(p.cost) }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div
+                            class="mt-4 flex items-center justify-between gap-3 border-t border-slate-200/70 pt-3.5 dark:border-darkmode-400"
+                        >
+                            <span class="text-sm text-slate-500">
+                                <template
+                                    v-if="p.type === 'simple' && p.track_stock"
+                                >
+                                    <span
+                                        :class="
+                                            p.low_stock
+                                                ? 'font-medium text-danger'
+                                                : ''
+                                        "
+                                        >{{ p.stock_qty }} {{ p.unit }}</span
+                                    >
+                                </template>
+                                <template v-else>Sin control de stock</template>
+                            </span>
+                            <div class="flex items-center gap-1.5">
+                                <button
+                                    v-if="p.type === 'simple' && p.track_stock"
+                                    type="button"
+                                    title="Movimiento de stock"
+                                    class="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 transition hover:bg-success/10 hover:text-success"
+                                    @click="openMovement('product', p)"
+                                >
+                                    <Lucide
+                                        icon="PackagePlus"
+                                        class="h-4 w-4"
+                                    />
+                                </button>
+                                <button
+                                    type="button"
+                                    title="Editar"
+                                    class="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                    @click="openProduct(p)"
+                                >
+                                    <Lucide icon="Pencil" class="h-4 w-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    title="Eliminar"
+                                    class="flex h-10 w-10 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                    @click="deletingProduct = p"
+                                >
+                                    <Lucide icon="Trash2" class="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div
+                    class="mt-5 hidden overflow-auto lg:block lg:overflow-visible"
+                >
                     <Table
                         v-if="filteredProducts.length"
-                        class="border-separate border-spacing-y-[8px]"
+                        class="border-separate border-spacing-y-[12px]"
                     >
                         <Table.Thead>
                             <Table.Tr>
                                 <Table.Th class="border-b-0 !bg-transparent"
                                     >Producto</Table.Th
                                 >
-                                <Table.Th class="border-b-0 !bg-transparent"
+                                <!-- Anchos fijos en las columnas de dato: sin
+                                     ellos la tabla estiraba el nombre y dejaba
+                                     un hueco enorme hasta el precio. -->
+                                <Table.Th
+                                    class="w-32 border-b-0 !bg-transparent"
                                     >Tipo</Table.Th
                                 >
                                 <Table.Th
-                                    class="border-b-0 !bg-transparent text-right"
+                                    class="w-28 border-b-0 !bg-transparent text-right"
                                     >Precio</Table.Th
                                 >
                                 <Table.Th
-                                    class="border-b-0 !bg-transparent text-right"
-                                    >Costo / Margen</Table.Th
+                                    class="w-40 border-b-0 !bg-transparent text-right"
+                                    >Costo</Table.Th
                                 >
                                 <Table.Th
-                                    class="border-b-0 !bg-transparent text-right"
+                                    class="w-32 border-b-0 !bg-transparent text-right"
                                     >Stock</Table.Th
                                 >
                                 <Table.Th
-                                    class="border-b-0 !bg-transparent text-right"
+                                    class="w-32 border-b-0 !bg-transparent text-right"
                                     >Acciones</Table.Th
                                 >
                             </Table.Tr>
@@ -717,17 +888,26 @@ const tabs = computed(() => [
                                     :class="cellClass"
                                     class="text-right text-sm"
                                 >
-                                    <span class="text-slate-500"
-                                        >${{ p.cost.toFixed(2) }}</span
-                                    >
-                                    <span
-                                        class="ml-1 rounded-full px-1.5 py-0.5 text-xs"
-                                        :class="
-                                            p.margin >= 0
-                                                ? 'bg-success/10 text-success'
-                                                : 'bg-danger/10 text-danger'
-                                        "
-                                        >{{ money(p.margin) }}</span
+                                    <!-- Sin costo capturado el margen era el
+                                         precio completo: dos cifras pegadas que
+                                         no significaban nada. Mejor decir que
+                                         falta el dato. -->
+                                    <template v-if="p.cost > 0">
+                                        <span class="text-slate-500">{{
+                                            money(p.cost)
+                                        }}</span>
+                                        <span
+                                            class="ml-1.5 rounded-full px-2 py-0.5 text-xs"
+                                            :class="
+                                                p.margin >= 0
+                                                    ? 'bg-success/10 text-success'
+                                                    : 'bg-danger/10 text-danger'
+                                            "
+                                            >{{ marginPercent(p) }}</span
+                                        >
+                                    </template>
+                                    <span v-else class="text-slate-400"
+                                        >Sin capturar</span
                                     >
                                 </Table.Td>
                                 <Table.Td :class="cellClass" class="text-right">
@@ -794,36 +974,49 @@ const tabs = computed(() => [
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
+                </div>
+
+                <!-- Vacío: fuera de la tabla para que también se vea en
+                     móvil, donde la tabla no se renderiza. -->
+                <div
+                    v-if="!filteredProducts.length"
+                    class="box box--stacked mt-5 flex flex-col items-center gap-3.5 px-5 py-14 text-center"
+                >
                     <div
-                        v-else
-                        class="box box--stacked flex flex-col items-center gap-3 py-12 text-center"
+                        class="flex h-12 w-12 items-center justify-center rounded-full bg-info/10 text-info"
                     >
-                        <div
-                            class="flex h-12 w-12 items-center justify-center rounded-full bg-info/10 text-info"
-                        >
-                            <Lucide icon="Package" class="h-6 w-6" />
-                        </div>
-                        <p class="text-sm text-slate-500">
-                            {{
-                                categoryFilter
-                                    ? 'Sin productos en esta categoría.'
-                                    : 'Sin productos. Ej: Coca (simple) o Hamburguesa (compuesto con receta).'
-                            }}
-                        </p>
-                        <Button
-                            variant="outline-primary"
-                            size="sm"
-                            class="rounded-[0.5rem]"
-                            @click="openProduct(null)"
-                            ><Lucide icon="Plus" class="mr-1.5 h-4 w-4" /> Nuevo
-                            producto</Button
-                        >
+                        <Lucide icon="Package" class="h-6 w-6" />
                     </div>
+                    <p class="text-sm text-slate-500">
+                        {{
+                            productFiltersActive
+                                ? 'Ningún producto coincide con la búsqueda.'
+                                : 'Sin productos. Ej: Coca (simple) o Hamburguesa (compuesto con receta).'
+                        }}
+                    </p>
+                    <Button
+                        v-if="productFiltersActive"
+                        variant="outline-secondary"
+                        size="sm"
+                        class="rounded-[0.5rem]"
+                        @click="clearProductFilters"
+                        ><Lucide icon="X" class="mr-1.5 h-4 w-4" /> Limpiar
+                        filtros</Button
+                    >
+                    <Button
+                        v-else
+                        variant="outline-primary"
+                        size="sm"
+                        class="rounded-[0.5rem]"
+                        @click="openProduct(null)"
+                        ><Lucide icon="Plus" class="mr-1.5 h-4 w-4" /> Nuevo
+                        producto</Button
+                    >
                 </div>
             </div>
 
             <!-- ============ Insumos ============ -->
-            <div v-show="tab === 'insumos'" class="mt-4">
+            <div v-show="tab === 'insumos'" class="mt-5">
                 <div class="overflow-auto lg:overflow-visible">
                     <Table
                         v-if="ingredients.length"
@@ -947,7 +1140,7 @@ const tabs = computed(() => [
             </div>
 
             <!-- ============ Movimientos ============ -->
-            <div v-show="tab === 'movimientos'" class="mt-4">
+            <div v-show="tab === 'movimientos'" class="mt-5">
                 <div
                     class="box box--stacked overflow-auto p-5 lg:overflow-visible"
                 >
