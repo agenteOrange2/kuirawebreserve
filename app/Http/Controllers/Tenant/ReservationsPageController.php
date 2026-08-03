@@ -18,6 +18,9 @@ use Spatie\Activitylog\Models\Activity;
 
 class ReservationsPageController extends Controller
 {
+    /** Líneas de bitácora que muestra el detalle de cada reserva. */
+    private const TIMELINE_LIMIT = 8;
+
     public function __invoke(Request $request): Response
     {
         $property = Property::firstOrFail();
@@ -66,16 +69,11 @@ class ReservationsPageController extends Controller
             ->orderBy('starts_at')
             ->get();
 
-        $reservationTimeline = Activity::query()
-            ->where('subject_type', Reservation::class)
-            ->whereIn('subject_id', [
-                ...$reservationModels->modelKeys(),
-                ...$historyModels->modelKeys(),
-                ...$inHouseModels->modelKeys(),
-            ])
-            ->latest()
-            ->get()
-            ->groupBy('subject_id');
+        $reservationTimeline = $this->recentTimelines([
+            ...$reservationModels->modelKeys(),
+            ...$historyModels->modelKeys(),
+            ...$inHouseModels->modelKeys(),
+        ]);
 
         $serialize = fn (Reservation $r) => $this->serializeReservation($r, $reservationTimeline->get($r->id, collect()));
 
@@ -287,13 +285,47 @@ class ReservationsPageController extends Controller
     }
 
     /**
+     * Últimas actividades POR reserva, acotadas en SQL con ROW_NUMBER.
+     *
+     * Antes esto traía la bitácora COMPLETA de todas las reservas cargadas
+     * para quedarse con las más recientes de cada una ya en PHP: a un año
+     * de operación son miles de filas en cada visita a /reservas.
+     *
+     * @param  array<int, int>  $subjectIds
+     * @return Collection<int, Collection<int, Activity>>
+     */
+    protected function recentTimelines(array $subjectIds): Collection
+    {
+        if ($subjectIds === []) {
+            return collect();
+        }
+
+        $ranked = Activity::query()
+            ->select('*')
+            ->selectRaw('ROW_NUMBER() OVER (PARTITION BY subject_id ORDER BY created_at DESC, id DESC) AS rn')
+            ->where('subject_type', Reservation::class)
+            ->whereIn('subject_id', $subjectIds);
+
+        return Activity::query()
+            ->fromSub($ranked, 'ranked_activities')
+            ->where('rn', '<=', self::TIMELINE_LIMIT)
+            ->orderBy('subject_id')
+            ->orderBy('rn')
+            // Cada línea pinta el nombre de quien hizo el cambio; sin esto
+            // cada fila iba a buscar su causer por separado.
+            ->with('causer')
+            ->get()
+            ->groupBy('subject_id');
+    }
+
+    /**
      * @param  Collection<int, Activity>  $activities
      * @return array<int, array<string, string|null>>
      */
     protected function timelineFor(Collection $activities): array
     {
         return $activities
-            ->take(8)
+            ->take(self::TIMELINE_LIMIT)
             ->map(function (Activity $activity) {
                 $old = $activity->properties['old'] ?? [];
                 $attributes = $activity->properties['attributes'] ?? [];

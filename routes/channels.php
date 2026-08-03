@@ -12,3 +12,10 @@ Broadcast::channel('App.Models.User.{id}', function ($user, $id) {
 Broadcast::channel('tenant.{tenantId}.property.{propertyId}.rooms', function ($user, string $tenantId, int $propertyId) {
     return tenant('id') === $tenantId && $user->can('rooms.view');
 });
+
+// Actividad de la bandeja (mensaje nuevo en cualquier canal). Mismo criterio
+// que el semáforo: el tenant va en el nombre del canal para que dos hoteles
+// nunca lo compartan, y solo entra quien puede ver la bandeja.
+Broadcast::channel('tenant.{tenantId}.inbox', function ($user, string $tenantId) {
+    return tenant('id') === $tenantId && $user->can('reservations.view');
+});

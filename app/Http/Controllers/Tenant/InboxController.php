@@ -30,9 +30,7 @@ class InboxController extends Controller
         // archivo (histórico consultable, restaurable).
         $archived = $request->boolean('archived');
 
-        $conversations = Conversation::query()
-            ->with(['channel:id,type,name,mode', 'guest:id,first_name,last_name', 'assignee:id,name', 'reservation:id,code,payment_status'])
-            ->withCount(['messages as unread_count' => fn ($q) => $q->where('direction', 'in')->whereNull('read_at')])
+        $conversations = $this->conversationQuery()
             ->when(
                 $archived,
                 fn ($q) => $q->whereNotNull('archived_at'),
@@ -44,6 +42,8 @@ class InboxController extends Controller
             ->map(fn (Conversation $c) => $this->serializeConversation($c));
 
         return Inertia::render('tenant/inbox/Index', [
+            // Para suscribirse al canal privado de la bandeja (Reverb).
+            'tenantId' => tenant('id'),
             'property' => $property->only(['id', 'name']),
             'conversations' => $conversations,
             'filters' => ['archived' => $archived],
@@ -80,11 +80,10 @@ class InboxController extends Controller
     {
         $conversation->messages()->where('direction', 'in')->whereNull('read_at')->update(['read_at' => now()]);
 
+        $refreshed = $this->conversationQuery()->findOrFail($conversation->getKey());
+
         return response()->json([
-            'conversation' => $this->serializeConversation(
-                $conversation->fresh(['channel:id,type,name,mode', 'guest:id,first_name,last_name', 'assignee:id,name'])
-                    ->loadCount(['messages as unread_count' => fn ($q) => $q->where('direction', 'in')->whereNull('read_at')]),
-            ),
+            'conversation' => $this->serializeConversation($refreshed),
             'messages' => $conversation->messages()->with(['sender:id,name', 'media'])->orderBy('id')->get()->map(fn (Message $m) => [
                 'id' => $m->id,
                 'direction' => $m->direction,
@@ -240,6 +239,25 @@ class InboxController extends Controller
     }
 
     /**
+     * Consulta base de una conversación lista para serializar: trae de una
+     * vez todo lo que pinta la bandeja, incluida la bandera de transferencia
+     * por verificar (EXISTS). La lista carga 100 de golpe en cada refresco,
+     * así que serializar NO debe costar consultas extra por fila.
+     *
+     * @return \Illuminate\Database\Eloquent\Builder<Conversation>
+     */
+    protected function conversationQuery(): \Illuminate\Database\Eloquent\Builder
+    {
+        return Conversation::query()
+            ->with(['channel:id,type,name,mode', 'guest:id,first_name,last_name', 'assignee:id,name', 'reservation:id,code,payment_status'])
+            ->withCount(['messages as unread_count' => fn ($q) => $q->where('direction', 'in')->whereNull('read_at')])
+            ->withExists(['reservation as payment_pending_verification' => fn ($q) => $q
+                ->whereHas('paymentRequests', fn ($pr) => $pr
+                    ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
+                    ->where('status', \App\Models\PaymentRequest::STATUS_PENDING))]);
+    }
+
+    /**
      * @return array<string, mixed>
      */
     protected function serializeConversation(Conversation $c): array
@@ -260,16 +278,12 @@ class InboxController extends Controller
             'assignee' => $c->assignee?->name,
             'unread' => (int) ($c->unread_count ?? 0),
             'last_message_at' => $c->last_message_at?->diffForHumans(short: true),
-            'preview' => $c->messages()->latest('id')->value('body'),
+            'preview' => $c->last_message_preview,
             // Chip de pago (spec-pagos §9.3) para conversaciones con reserva.
             'reservation_code' => $c->reservation?->displayCode(),
             'payment_status' => $c->reservation?->payment_status?->value,
             'payment_status_label' => $c->reservation?->payment_status?->label(),
-            'payment_pending_verification' => $c->reservation_id !== null && \App\Models\PaymentRequest::query()
-                ->where('reservation_id', $c->reservation_id)
-                ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
-                ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)
-                ->exists(),
+            'payment_pending_verification' => (bool) ($c->payment_pending_verification ?? false),
         ];
     }
 }

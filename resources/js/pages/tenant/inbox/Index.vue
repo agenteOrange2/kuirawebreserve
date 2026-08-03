@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Link, router } from '@inertiajs/vue3';
+import { useEcho } from '@laravel/echo-vue';
 import axios from 'axios';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -53,6 +54,7 @@ interface ChannelRow {
     mode: string;
 }
 const props = defineProps<{
+    tenantId: string;
     property: { id: number; name: string };
     conversations: ConversationRow[];
     filters: { archived: boolean };
@@ -521,14 +523,54 @@ function maybeAutoSuggest() {
     if (last && last.direction === 'in') fetchSuggestion();
 }
 
-onMounted(() => {
-    poller = setInterval(async () => {
+// Reverb avisa de cada mensaje nuevo (ConversationActivity). Como pueden
+// llegar varios de golpe, la recarga se agrupa: una sola por ráfaga.
+let refreshDebounce: ReturnType<typeof setTimeout> | null = null;
+
+function refreshInbox(conversationId?: number) {
+    if (refreshDebounce) clearTimeout(refreshDebounce);
+
+    refreshDebounce = setTimeout(async () => {
         router.reload({ only: ['conversations', 'counts'] });
-        await refreshThread();
-    }, 10000);
+
+        // El hilo abierto solo se recarga si el mensaje es suyo (o si no
+        // sabemos de cuál venía, como en el refresco de respaldo).
+        if (
+            selected.value &&
+            (conversationId === undefined ||
+                conversationId === selected.value.id)
+        ) {
+            await refreshThread();
+        }
+    }, 400);
+}
+
+useEcho<{ conversation_id: number; direction: string; at: string }>(
+    `tenant.${props.tenantId}.inbox`,
+    '.conversation.activity',
+    (payload) => refreshInbox(payload.conversation_id),
+);
+
+// Red de seguridad por si el websocket se cae: un repaso cada minuto y al
+// volver el foco a la pestaña — mismo patrón que el plano. Nunca cada pocos
+// segundos: eso era lo que hacía la bandeja antes de Reverb.
+function refreshIfVisible() {
+    if (document.hidden) return;
+    refreshInbox();
+}
+
+function onVisibilityChange() {
+    refreshIfVisible();
+}
+
+onMounted(() => {
+    poller = setInterval(refreshIfVisible, 60000);
+    document.addEventListener('visibilitychange', onVisibilityChange);
 });
 onBeforeUnmount(() => {
     if (poller) clearInterval(poller);
+    if (refreshDebounce) clearTimeout(refreshDebounce);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 </script>
 
@@ -1237,7 +1279,9 @@ onBeforeUnmount(() => {
                                             :disabled="
                                                 archivingId === selected.id
                                             "
-                                            @click="setArchived(selected, false)"
+                                            @click="
+                                                setArchived(selected, false)
+                                            "
                                         >
                                             <Lucide
                                                 icon="ArchiveRestore"

@@ -2,8 +2,10 @@
 
 namespace App\Models;
 
+use App\Events\ConversationActivity;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Support\Str;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
 use Spatie\MediaLibrary\MediaCollections\Models\Media;
@@ -36,10 +38,23 @@ class Message extends Model implements HasMedia
 
     protected static function booted(): void
     {
-        // Si el huésped vuelve a escribir a una conversación archivada,
-        // esta regresa sola a la bandeja activa y se reabre (todos los
-        // canales — webchat, Meta, Evolution — crean el mensaje por aquí).
         static::created(function (self $message): void {
+            // La bandeja lista la vista previa de 100 conversaciones a la
+            // vez: se guarda denormalizada en la conversación en lugar de
+            // consultar el último mensaje fila por fila. Este es el único
+            // punto por el que nacen los mensajes de todos los canales,
+            // así que aquí no se puede quedar desincronizada.
+            Conversation::query()
+                ->whereKey($message->conversation_id)
+                ->update(['last_message_preview' => Str::limit((string) $message->body, 250)]);
+
+            // La bandeja se entera en el momento (Reverb) en lugar de estar
+            // preguntando cada pocos segundos.
+            ConversationActivity::dispatch($message);
+
+            // Si el huésped vuelve a escribir a una conversación archivada,
+            // esta regresa sola a la bandeja activa y se reabre (todos los
+            // canales — webchat, Meta, Evolution — crean el mensaje por aquí).
             if ($message->direction !== 'in') {
                 return;
             }

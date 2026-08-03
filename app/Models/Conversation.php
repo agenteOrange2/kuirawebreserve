@@ -41,6 +41,7 @@ class Conversation extends Model
         'bot_enabled',
         'assigned_to',
         'last_message_at',
+        'last_message_preview',
         'archived_at',
     ];
 
