@@ -52,6 +52,31 @@ class Message extends Model implements HasMedia
             // preguntando cada pocos segundos.
             ConversationActivity::dispatch($message);
 
+            // La campana del panel avisa desde CUALQUIER pantalla, no solo
+            // con la bandeja abierta. Solo lo que entra: las respuestas del
+            // propio staff o del bot no son novedad para nadie.
+            if ($message->direction === 'in') {
+                $conversation = $message->conversation;
+
+                // Avisar es cortesía: si falla, JAMÁS debe tumbar la entrada
+                // de un mensaje del huésped (que es lo que de verdad importa
+                // guardar). Cubre también el hueco entre desplegar el código
+                // y correr la migración.
+                try {
+                    app(\App\Services\StaffNotifier::class)->notify(
+                        type: StaffNotification::TYPE_MESSAGE,
+                        title: $conversation?->guest?->full_name
+                            ?? $conversation?->contact_name
+                            ?? 'Mensaje nuevo',
+                        body: Str::limit((string) $message->body, 90),
+                        url: '/bandeja',
+                        subject: $conversation,
+                    );
+                } catch (\Throwable $e) {
+                    report($e);
+                }
+            }
+
             // Si el huésped vuelve a escribir a una conversación archivada,
             // esta regresa sola a la bandeja activa y se reabre (todos los
             // canales — webchat, Meta, Evolution — crean el mensaje por aquí).

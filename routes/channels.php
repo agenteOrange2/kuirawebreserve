@@ -19,3 +19,9 @@ Broadcast::channel('tenant.{tenantId}.property.{propertyId}.rooms', function ($u
 Broadcast::channel('tenant.{tenantId}.inbox', function ($user, string $tenantId) {
     return tenant('id') === $tenantId && $user->can('reservations.view');
 });
+
+// Campana del panel: cualquier miembro del staff del tenant. El contenido
+// ya viene filtrado por el servidor al pedir la lista.
+Broadcast::channel('tenant.{tenantId}.staff', function ($user, string $tenantId) {
+    return tenant('id') === $tenantId;
+});

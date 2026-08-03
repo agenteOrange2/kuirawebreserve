@@ -190,6 +190,26 @@ class CreateReservation
             }
         }
 
+        // Campana del panel: solo lo que llega SOLO (wizard, bot, WhatsApp).
+        // Una reserva capturada en el mostrador ya la sabe quien la capturó.
+        if (! in_array($reservation->source_channel, ['front_desk', 'walk_in'], true)) {
+            try {
+                app(\App\Services\StaffNotifier::class)->notify(
+                    type: \App\Models\StaffNotification::TYPE_RESERVATION,
+                    title: 'Reserva nueva · '.$reservation->displayCode(),
+                    body: trim(sprintf(
+                        '%s · %s',
+                        $reservation->guest_name ?: 'Sin nombre',
+                        $reservation->starts_at->format('d/m/Y H:i'),
+                    )),
+                    url: '/reservas?reservation='.$reservation->id,
+                    subject: $reservation,
+                );
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+
         return $reservation;
     }
 

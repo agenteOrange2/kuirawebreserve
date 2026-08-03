@@ -39,6 +39,22 @@ class InboundMediaService
         if ($this->attachAsReceipt($conversation, $media)) {
             $this->acknowledgeReceipt($conversation);
 
+            // Dinero esperando ojos humanos: es el aviso más urgente de los
+            // tres, porque hasta que alguien lo aprueba la reserva no avanza.
+            try {
+                app(\App\Services\StaffNotifier::class)->notify(
+                    type: \App\Models\StaffNotification::TYPE_PAYMENT,
+                    title: 'Comprobante por verificar',
+                    body: trim(($conversation->guest?->full_name
+                        ?? $conversation->contact_name
+                        ?? 'Un huésped').' mandó su comprobante de transferencia'),
+                    url: '/pagos',
+                    subject: $conversation->reservation ?? $conversation,
+                );
+            } catch (\Throwable $e) {
+                report($e);
+            }
+
             return self::OUTCOME_RECEIPT;
         }
 

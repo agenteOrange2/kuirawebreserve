@@ -4,6 +4,7 @@ import { computed, ref, watch } from 'vue';
 import Breadcrumb from '@/components/Base/Breadcrumb';
 import { Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import StaffBell from '@/components/StaffBell.vue';
 import ToastHost from '@/components/ToastHost.vue';
 import { useAppearance } from '@/composables/useAppearance';
 import { useCompactMenu } from '@/composables/useCompactMenu';
@@ -238,9 +239,7 @@ const requestFullscreen = () => {
                             </li>
                             <!-- Título de sección colapsable: el divider ES
                                  el toggle (sin renglón duplicado debajo). -->
-                            <li
-                                v-else-if="item.subMenu && item.sectionToggle"
-                            >
+                            <li v-else-if="item.subMenu && item.sectionToggle">
                                 <a
                                     href="#"
                                     class="side-menu__divider flex cursor-pointer items-center justify-between uppercase transition-colors hover:text-white/70"
@@ -484,6 +483,13 @@ const requestFullscreen = () => {
                                         tenant.plan
                                     }}</span>
                                 </div>
+                                <!-- Avisos: solo en el panel del hotel, que
+                                     es donde hay mensajes, reservas y
+                                     comprobantes de los que enterarse. -->
+                                <StaffBell
+                                    v-if="isTenantPanel && tenant"
+                                    :tenant-id="tenant.id"
+                                />
                                 <a
                                     href="#"
                                     @click.prevent="toggleDarkMode"

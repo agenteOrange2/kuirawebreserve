@@ -325,6 +325,12 @@ Route::middleware([
     });
 
     Route::middleware('auth')->prefix('api')->group(function () {
+        // Campana del panel: sin gate de permiso, todo el staff la ve (el
+        // contenido ya viene acotado a lo que le toca a cada quien).
+        Route::get('staff-notifications', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'index'])->name('staff-notifications.index');
+        Route::post('staff-notifications/read-all', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'readAll'])->name('staff-notifications.read-all');
+        Route::post('staff-notifications/{notification}/read', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'read'])->name('staff-notifications.read');
+
         Route::apiResource('properties', PropertyController::class)
             ->middleware('can:properties.manage');
 
