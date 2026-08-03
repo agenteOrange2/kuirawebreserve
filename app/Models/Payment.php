@@ -52,6 +52,7 @@ class Payment extends Model
         'reference',
         'notes',
         'received_by',
+        'shift_id',
         'paid_at',
     ];
 
@@ -62,6 +63,31 @@ class Payment extends Model
             'fee_amount' => 'decimal:2',
             'paid_at' => 'datetime',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        static::creating(function (self $payment): void {
+            // El turno se resuelve solo: los cobros nacen en media docena de
+            // acciones distintas (walk-in, folio, abono, pasarela...) y
+            // ponerlo en cada una se olvidaría en la siguiente que se sume.
+            // Los cobros de pasarela no traen encargado y quedan sin turno,
+            // que es justo lo correcto: no pasaron por ninguna caja.
+            if ($payment->shift_id !== null || $payment->received_by === null) {
+                return;
+            }
+
+            $payment->shift_id = Shift::query()
+                ->open()
+                ->where('user_id', $payment->received_by)
+                ->latest('started_at')
+                ->value('id');
+        });
+    }
+
+    public function shift(): BelongsTo
+    {
+        return $this->belongsTo(Shift::class);
     }
 
     public function reservation(): BelongsTo

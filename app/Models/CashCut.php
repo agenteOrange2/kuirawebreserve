@@ -15,6 +15,7 @@ class CashCut extends Model
     protected $fillable = [
         'property_id',
         'user_id',
+        'shift_id',
         'opened_at',
         'closed_at',
         'orders_count',

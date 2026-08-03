@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\CashCut;
 use App\Models\Order;
 use App\Models\Payment;
+use App\Models\Shift;
 use App\Models\User;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Carbon;
@@ -44,18 +45,35 @@ class CashCutService
     /**
      * Agregados del periodo (sin guardar nada).
      *
+     * Con `$shift`, el corte se arma por turno y no por reloj: es lo exacto
+     * cuando alguien cierra tarde o dos personas comparten usuario. Las
+     * ventas y cobros sin turno (los anteriores a que existiera el enlace)
+     * se siguen tomando por fecha para no perderlos.
+     *
      * @return array<string, mixed>
      */
-    public function compute(User $user, CarbonInterface $from, CarbonInterface $to): array
+    public function compute(User $user, CarbonInterface $from, CarbonInterface $to, ?Shift $shift = null): array
     {
-        // Ventas POS del encargado en el periodo.
         // Límite inferior exclusivo: evita recontar la venta justo en el
         // instante de cierre del corte anterior.
+        $inPeriod = function ($query, string $dateColumn) use ($from, $to, $shift) {
+            if ($shift === null) {
+                return $query->where($dateColumn, '>', $from)->where($dateColumn, '<=', $to);
+            }
+
+            return $query->where(fn ($q) => $q
+                ->where('shift_id', $shift->id)
+                ->orWhere(fn ($legacy) => $legacy
+                    ->whereNull('shift_id')
+                    ->where($dateColumn, '>', $from)
+                    ->where($dateColumn, '<=', $to)));
+        };
+
+        // Ventas POS del encargado en el periodo.
         $orders = Order::query()
             ->where('created_by', $user->id)
             ->where('status', Order::STATUS_COMPLETED)
-            ->where('created_at', '>', $from)
-            ->where('created_at', '<=', $to)
+            ->tap(fn ($q) => $inPeriod($q, 'created_at'))
             ->get(['id', 'payment_method', 'total', 'total_cost']);
 
         $ordersByMethod = $orders->groupBy('payment_method');
@@ -71,8 +89,7 @@ class CashCutService
         // Abonos de reservas que recibió el encargado.
         $allPayments = Payment::query()
             ->where('received_by', $user->id)
-            ->where('paid_at', '>', $from)
-            ->where('paid_at', '<=', $to)
+            ->tap(fn ($q) => $inPeriod($q, 'paid_at'))
             ->get(['id', 'method', 'amount', 'kind']);
 
         // Fianzas (depósito en garantía): NO son venta ni ingreso — se

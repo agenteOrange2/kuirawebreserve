@@ -4,6 +4,7 @@ import axios from 'axios';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormInput, FormSelect } from '@/components/Base/Form';
+import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
@@ -29,16 +30,23 @@ const props = defineProps<{
     activeStays: { id: number; label: string }[];
     recentOrders: {
         id: number;
-        total: string;
+        total: number;
         room: string | null;
         created_at: string;
         summary: string;
+        is_void: boolean;
+        is_settled: boolean;
+        void_reason: string | null;
     }[];
 }>();
 
 const cart = ref<CartLine[]>([]);
 const stayId = ref<string | number>('');
 const paymentMethod = ref<'cash' | 'card' | 'transfer'>('cash');
+const paymentReference = ref('');
+const discount = ref<number | string>('');
+const discountReason = ref('');
+const tip = ref<number | string>('');
 const methods = [
     { key: 'cash', label: 'Efectivo', icon: 'Banknote' },
     { key: 'card', label: 'Tarjeta', icon: 'CreditCard' },
@@ -71,12 +79,24 @@ const filteredProducts = computed(() =>
     }),
 );
 
-const total = computed(() =>
+const subtotal = computed(() =>
     cart.value.reduce(
         (sum, line) => sum + line.qty * Number(line.product.price),
         0,
     ),
 );
+
+// El descuento nunca deja la cuenta en negativo (el servidor lo vuelve a
+// acotar: aquí es solo para que el mostrador vea el total real).
+const discountAmount = computed(() =>
+    Math.min(Math.max(Number(discount.value) || 0, 0), subtotal.value),
+);
+const tipAmount = computed(() => Math.max(Number(tip.value) || 0, 0));
+
+const total = computed(
+    () => subtotal.value - discountAmount.value + tipAmount.value,
+);
+
 const itemCount = computed(() =>
     cart.value.reduce((sum, line) => sum + line.qty, 0),
 );
@@ -92,9 +112,28 @@ function decrease(line: CartLine) {
     line.qty -= 1;
     if (line.qty <= 0) cart.value = cart.value.filter((l) => l !== line);
 }
-function clearCart() {
+function resetSale() {
     cart.value = [];
     stayId.value = '';
+    discount.value = '';
+    discountReason.value = '';
+    tip.value = '';
+    paymentReference.value = '';
+}
+
+function clearCart() {
+    resetSale();
+}
+
+// Última venta registrada, para ofrecer su ticket sin ir a buscarla.
+const lastOrderId = ref<number | null>(null);
+
+function ticketUrl(orderId: number) {
+    return `/pos/ticket/${orderId}`;
+}
+
+function openTicket(orderId: number) {
+    window.open(ticketUrl(orderId), '_blank', 'noopener');
 }
 
 async function submit() {
@@ -106,20 +145,55 @@ async function submit() {
             property_id: props.property.id,
             stay_id: stayId.value || null,
             payment_method: paymentMethod.value,
+            payment_reference: paymentReference.value || null,
+            discount: discountAmount.value || null,
+            discount_reason: discountReason.value || null,
+            tip: tipAmount.value || null,
             lines: cart.value.map((l) => ({
                 product_id: l.product.id,
                 qty: l.qty,
             })),
         });
+        lastOrderId.value = data.id;
         success.value = `Venta #${data.id} registrada · ${money(Number(data.total))}`;
-        cart.value = [];
-        stayId.value = '';
+        resetSale();
         router.reload({ only: ['products', 'recentOrders', 'activeStays'] });
     } catch (e: any) {
         error.value =
             e.response?.data?.message ?? 'No se pudo registrar la venta.';
     } finally {
         saving.value = false;
+    }
+}
+
+// Cancelación de venta: devuelve la mercancía al inventario y la saca del
+// corte de caja y del folio.
+const voidingId = ref<number | null>(null);
+const voidReason = ref('');
+const voidBusy = ref(false);
+const voidError = ref<string | null>(null);
+
+function askVoid(orderId: number) {
+    voidingId.value = orderId;
+    voidReason.value = '';
+    voidError.value = null;
+}
+
+async function confirmVoid() {
+    if (voidingId.value === null || voidBusy.value) return;
+    voidBusy.value = true;
+    voidError.value = null;
+    try {
+        await axios.post(`/api/orders/${voidingId.value}/void`, {
+            reason: voidReason.value || null,
+        });
+        voidingId.value = null;
+        router.reload({ only: ['products', 'recentOrders', 'activeStays'] });
+    } catch (e: any) {
+        voidError.value =
+            e.response?.data?.message ?? 'No se pudo cancelar la venta.';
+    } finally {
+        voidBusy.value = false;
     }
 }
 </script>
@@ -307,26 +381,64 @@ async function submit() {
                             <div
                                 v-for="o in recentOrders"
                                 :key="o.id"
-                                class="flex items-center justify-between gap-3 px-5 py-3 text-sm"
+                                class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-5 py-3 text-sm"
+                                :class="o.is_void ? 'opacity-60' : ''"
                             >
-                                <div class="min-w-0">
+                                <div class="min-w-0 flex-1">
                                     <span class="text-slate-400"
                                         >#{{ o.id }}</span
                                     >
-                                    <span class="ml-1">{{ o.summary }}</span>
+                                    <span
+                                        class="ml-1"
+                                        :class="o.is_void ? 'line-through' : ''"
+                                        >{{ o.summary }}</span
+                                    >
                                     <span
                                         v-if="o.room"
                                         class="ml-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-xs text-primary"
                                         >Hab. {{ o.room }}</span
                                     >
+                                    <span
+                                        v-if="o.is_void"
+                                        class="ml-1.5 rounded-full bg-danger/10 px-1.5 py-0.5 text-xs text-danger"
+                                        >Cancelada</span
+                                    >
+                                    <p
+                                        v-if="o.is_void && o.void_reason"
+                                        class="mt-0.5 text-xs text-slate-400"
+                                    >
+                                        {{ o.void_reason }}
+                                    </p>
                                 </div>
                                 <div class="flex shrink-0 items-center gap-3">
-                                    <span class="font-medium"
-                                        >${{ o.total }}</span
+                                    <span
+                                        class="font-medium"
+                                        :class="o.is_void ? 'line-through' : ''"
+                                        >{{ money(o.total) }}</span
                                     >
                                     <span class="text-xs text-slate-400">{{
                                         o.created_at
                                     }}</span>
+                                    <button
+                                        type="button"
+                                        class="text-slate-400 transition hover:text-primary"
+                                        title="Imprimir ticket"
+                                        @click="openTicket(o.id)"
+                                    >
+                                        <Lucide
+                                            icon="Printer"
+                                            class="h-4 w-4"
+                                        />
+                                    </button>
+                                    <button
+                                        v-if="!o.is_void && !o.is_settled"
+                                        type="button"
+                                        class="text-slate-400 transition hover:text-danger"
+                                        title="Cancelar venta"
+                                        @click="askVoid(o.id)"
+                                    >
+                                        <Lucide icon="Ban" class="h-4 w-4" />
+                                    </button>
                                 </div>
                             </div>
                             <div
@@ -513,13 +625,112 @@ async function submit() {
                                 check-out.
                             </p>
 
+                            <!-- Referencia del cobro (autorización de tarjeta
+                                 o folio de transferencia) -->
                             <div
-                                class="mt-4 flex items-center justify-between rounded-lg bg-slate-50 px-4 py-3 dark:bg-darkmode-700"
+                                v-if="!stayId && paymentMethod !== 'cash'"
+                                class="mt-3"
                             >
-                                <span class="text-slate-500">Total</span>
-                                <span class="text-xl font-medium">{{
-                                    money(total)
-                                }}</span>
+                                <label
+                                    for="pos-reference"
+                                    class="mb-1.5 block text-sm text-slate-500"
+                                    >Referencia (opcional)</label
+                                >
+                                <FormInput
+                                    id="pos-reference"
+                                    v-model="paymentReference"
+                                    type="text"
+                                    maxlength="100"
+                                    placeholder="Autorización o folio"
+                                />
+                            </div>
+
+                            <!-- Descuento y propina -->
+                            <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                                <div>
+                                    <label
+                                        for="pos-discount"
+                                        class="mb-1.5 block text-sm text-slate-500"
+                                        >Descuento</label
+                                    >
+                                    <FormInput
+                                        id="pos-discount"
+                                        v-model="discount"
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder="0.00"
+                                    />
+                                </div>
+                                <div>
+                                    <label
+                                        for="pos-tip"
+                                        class="mb-1.5 block text-sm text-slate-500"
+                                        >Propina</label
+                                    >
+                                    <FormInput
+                                        id="pos-tip"
+                                        v-model="tip"
+                                        type="number"
+                                        min="0"
+                                        step="0.01"
+                                        placeholder="0.00"
+                                    />
+                                </div>
+                            </div>
+                            <div v-if="discountAmount > 0" class="mt-3">
+                                <label
+                                    for="pos-discount-reason"
+                                    class="mb-1.5 block text-sm text-slate-500"
+                                    >Motivo del descuento</label
+                                >
+                                <FormInput
+                                    id="pos-discount-reason"
+                                    v-model="discountReason"
+                                    type="text"
+                                    maxlength="100"
+                                    placeholder="Cortesía, promoción, ajuste…"
+                                />
+                            </div>
+
+                            <div
+                                class="mt-4 rounded-lg bg-slate-50 px-4 py-3 dark:bg-darkmode-700"
+                            >
+                                <div
+                                    v-if="discountAmount > 0 || tipAmount > 0"
+                                    class="mb-2 space-y-1 border-b border-slate-200/70 pb-2 text-sm dark:border-darkmode-400"
+                                >
+                                    <div class="flex justify-between">
+                                        <span class="text-slate-500"
+                                            >Subtotal</span
+                                        >
+                                        <span>{{ money(subtotal) }}</span>
+                                    </div>
+                                    <div
+                                        v-if="discountAmount > 0"
+                                        class="flex justify-between text-success"
+                                    >
+                                        <span>Descuento</span>
+                                        <span
+                                            >-{{ money(discountAmount) }}</span
+                                        >
+                                    </div>
+                                    <div
+                                        v-if="tipAmount > 0"
+                                        class="flex justify-between"
+                                    >
+                                        <span class="text-slate-500"
+                                            >Propina</span
+                                        >
+                                        <span>{{ money(tipAmount) }}</span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <span class="text-slate-500">Total</span>
+                                    <span class="text-xl font-medium">{{
+                                        money(total)
+                                    }}</span>
+                                </div>
                             </div>
 
                             <p
@@ -528,13 +739,27 @@ async function submit() {
                             >
                                 {{ error }}
                             </p>
-                            <p
+                            <div
                                 v-if="success"
-                                class="mt-3 flex items-center gap-2 rounded-lg bg-success/10 px-3 py-2 text-sm text-success"
+                                class="mt-3 rounded-lg bg-success/10 px-3 py-2 text-sm text-success"
                             >
-                                <Lucide icon="CircleCheck" class="h-4 w-4" />
-                                {{ success }}
-                            </p>
+                                <p class="flex items-center gap-2">
+                                    <Lucide
+                                        icon="CircleCheck"
+                                        class="h-4 w-4 shrink-0"
+                                    />
+                                    {{ success }}
+                                </p>
+                                <button
+                                    v-if="lastOrderId"
+                                    type="button"
+                                    class="mt-1.5 ml-6 inline-flex items-center gap-1.5 font-medium underline underline-offset-2"
+                                    @click="openTicket(lastOrderId)"
+                                >
+                                    <Lucide icon="Printer" class="h-4 w-4" />
+                                    Imprimir ticket
+                                </button>
+                            </div>
 
                             <Button
                                 class="mt-4 w-full rounded-[0.5rem] shadow-md shadow-primary/20"
@@ -557,5 +782,66 @@ async function submit() {
                 </div>
             </div>
         </div>
+
+        <Dialog :open="voidingId !== null" @close="voidingId = null">
+            <Dialog.Panel>
+                <div class="p-5">
+                    <div class="text-center">
+                        <Lucide
+                            icon="Ban"
+                            class="mx-auto mb-3 h-12 w-12 text-danger"
+                        />
+                        <h2 class="text-base font-medium">
+                            ¿Cancelar la venta #{{ voidingId }}?
+                        </h2>
+                        <p class="mt-2 text-sm text-slate-500">
+                            Lo vendido regresa al inventario y la venta deja de
+                            contar en el corte de caja. Queda registrada como
+                            cancelada, no se borra.
+                        </p>
+                    </div>
+
+                    <div class="mt-4">
+                        <label
+                            for="pos-void-reason"
+                            class="mb-1.5 block text-sm text-slate-500"
+                            >Motivo (opcional)</label
+                        >
+                        <FormInput
+                            id="pos-void-reason"
+                            v-model="voidReason"
+                            type="text"
+                            maxlength="255"
+                            placeholder="Se cobró de más, el cliente devolvió…"
+                        />
+                    </div>
+
+                    <p
+                        v-if="voidError"
+                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                    >
+                        {{ voidError }}
+                    </p>
+
+                    <div class="mt-5 flex justify-center gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            class="min-h-11"
+                            @click="voidingId = null"
+                            >Volver</Button
+                        >
+                        <Button
+                            variant="danger"
+                            class="min-h-11"
+                            :disabled="voidBusy"
+                            @click="confirmVoid"
+                            >{{
+                                voidBusy ? 'Cancelando…' : 'Sí, cancelar'
+                            }}</Button
+                        >
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
     </RazeLayout>
 </template>

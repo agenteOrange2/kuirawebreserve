@@ -10,7 +10,9 @@ class StockMovement extends Model
 {
     public const UPDATED_AT = null;
 
-    public const TYPES = ['purchase', 'sale', 'waste', 'adjustment'];
+    // `void` es la devolución al inventario cuando se cancela una venta: se
+    // distingue de `adjustment` para que el historial diga por qué volvió.
+    public const TYPES = ['purchase', 'sale', 'waste', 'adjustment', 'void'];
 
     protected $fillable = [
         'stockable_type',

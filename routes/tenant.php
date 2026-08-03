@@ -225,6 +225,13 @@ Route::middleware([
             ->middleware(['can:orders.manage', 'module:pos'])
             ->name('pos');
 
+        // Ticket imprimible de una venta (se abre en pestaña nueva y manda
+        // solo el diálogo de impresión).
+        Route::get('/pos/ticket/{order}', \App\Http\Controllers\Tenant\PosTicketController::class)
+            ->middleware(['can:orders.manage', 'module:pos'])
+            ->whereNumber('order')
+            ->name('pos.ticket');
+
         Route::get('/cortes', CashCutsPageController::class)
             ->middleware(['can:orders.manage', 'module:pos'])
             ->name('cashcuts');
@@ -508,6 +515,9 @@ Route::middleware([
         Route::middleware(['can:orders.manage', 'module:pos'])->group(function () {
             Route::get('orders', [OrderController::class, 'index'])->name('orders.index');
             Route::post('orders', [OrderController::class, 'store'])->name('orders.store');
+            // Cancelar una venta: devuelve la mercancía al inventario y la
+            // saca del corte y del folio (ambos solo suman completadas).
+            Route::post('orders/{order}/void', [OrderController::class, 'void'])->name('orders.void');
             Route::post('cash-cuts', [CashCutController::class, 'store'])->name('cashcuts.store');
             Route::post('shifts', [ShiftController::class, 'store'])->name('shifts.store');
             Route::patch('shifts/{shift}/close', [ShiftController::class, 'close'])->name('shifts.close');

@@ -49,9 +49,14 @@ class PosPageController extends Controller
                 ->get()
                 ->map(fn (Order $order) => [
                     'id' => $order->id,
-                    'total' => $order->total,
+                    'total' => (float) $order->total,
                     'room' => $order->stay?->room?->number,
                     'created_at' => $order->created_at->format('d/m H:i'),
+                    'is_void' => $order->isVoid(),
+                    // Ya liquidada en el check-out: cancelarla ya no procede,
+                    // eso se resuelve con un reembolso.
+                    'is_settled' => $order->isSettled(),
+                    'void_reason' => $order->void_reason,
                     'summary' => $order->lines
                         ->map(fn ($line) => ((float) $line->qty).'× '.$line->product?->name)
                         ->implode(', '),

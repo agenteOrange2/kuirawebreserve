@@ -5,6 +5,7 @@ namespace App\Actions\Inventory;
 use App\Exceptions\InsufficientStockException;
 use App\Models\Order;
 use App\Models\Product;
+use App\Models\Shift;
 use App\Models\Stay;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +20,7 @@ class CreateOrder
     public function __construct(protected RecordStockMovement $recordMovement) {}
 
     /**
-     * @param  array{stay_id?: int|null, notes?: string|null, lines: array<int, array{product_id: int, qty: float}>}  $data
+     * @param  array{stay_id?: int|null, notes?: string|null, discount?: float|null, tip?: float|null, lines: array<int, array{product_id: int, qty: float}>}  $data
      *
      * @throws InsufficientStockException
      */
@@ -41,8 +42,16 @@ class CreateOrder
             $order = Order::create([
                 'property_id' => $data['property_id'],
                 'stay_id' => $stay?->id,
+                // El turno abierto del encargado, para que su corte no
+                // dependa de adivinar el periodo por fechas.
+                'shift_id' => $this->openShiftIdFor($user, (int) $data['property_id']),
                 'status' => Order::STATUS_COMPLETED,
                 'payment_method' => $method,
+                'payment_reference' => $data['payment_reference'] ?? null,
+                'subtotal' => 0,
+                'discount' => 0,
+                'discount_reason' => $data['discount_reason'] ?? null,
+                'tip' => 0,
                 'total' => 0,
                 'total_cost' => 0,
                 'notes' => $data['notes'] ?? null,
@@ -92,9 +101,38 @@ class CreateOrder
                 $totalCost += round($qty * $unitCost, 2);
             }
 
-            $order->update(['total' => $total, 'total_cost' => $totalCost]);
+            // El descuento nunca deja la venta en negativo; la propina se
+            // suma aparte y no cuenta para el COGS.
+            $discount = round(min(max((float) ($data['discount'] ?? 0), 0), $total), 2);
+            $tip = round(max((float) ($data['tip'] ?? 0), 0), 2);
+
+            $order->update([
+                'subtotal' => $total,
+                'discount' => $discount,
+                'tip' => $tip,
+                'total' => round($total - $discount + $tip, 2),
+                'total_cost' => $totalCost,
+            ]);
 
             return $order;
         });
+    }
+
+    /**
+     * Turno abierto del encargado en la propiedad, si lo hay. No se exige:
+     * un hotel puede vender sin llevar turnos y la venta no debe frenarse.
+     */
+    protected function openShiftIdFor(?User $user, int $propertyId): ?int
+    {
+        if ($user === null) {
+            return null;
+        }
+
+        return Shift::query()
+            ->open()
+            ->where('user_id', $user->id)
+            ->where('property_id', $propertyId)
+            ->latest('started_at')
+            ->value('id');
     }
 }
