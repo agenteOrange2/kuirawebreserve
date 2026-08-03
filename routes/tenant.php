@@ -506,6 +506,10 @@ Route::middleware([
             // Reembolsos (spec-pagos F4): siempre decisión humana.
             Route::post('reservations/{reservation}/payments/{payment}/refund', [ReservationController::class, 'refundPayment'])->name('reservations.payments.refund');
             Route::post('stays', [StayController::class, 'store'])->name('stays.store');
+            // Con el huésped adentro: "una noche más" y cambio de cuarto sin
+            // tener que registrar su salida y volver a darle entrada.
+            Route::patch('stays/{stay}/extend', [StayController::class, 'extend'])->name('stays.extend');
+            Route::patch('stays/{stay}/room', [StayController::class, 'changeRoom'])->name('stays.change-room');
             Route::patch('stays/{stay}/check-out', [StayController::class, 'checkOut'])->name('stays.check-out');
         });
 

@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers\Tenant;
 
+use App\Actions\Reservations\ChangeStayRoom;
 use App\Actions\Reservations\CreateWalkInStay;
+use App\Actions\Reservations\ExtendStay;
 use App\Actions\Reservations\SettleStay;
 use App\Actions\Reservations\TransitionReservation;
 use App\Exceptions\NoAvailabilityException;
@@ -12,6 +14,7 @@ use App\Models\Payment;
 use App\Models\Stay;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Validation\Rule;
 use InvalidArgumentException;
 
@@ -69,6 +72,50 @@ class StayController extends Controller
         }
 
         return response()->json($this->serialize($stay->load(['room:id,number', 'ratePlan:id,name,type'])), 201);
+    }
+
+    /**
+     * "Una noche más": mueve la salida prevista y recalcula el hospedaje.
+     * La diferencia queda como saldo pendiente en el folio.
+     */
+    public function extend(Request $request, Stay $stay, ExtendStay $action): JsonResponse
+    {
+        $data = $request->validate([
+            'planned_end_at' => ['required', 'date', 'after:now'],
+        ]);
+
+        try {
+            $stay = $action->handle($stay, Carbon::parse($data['planned_end_at']), $request->user());
+        } catch (NoAvailabilityException|InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($this->serialize($stay->load(['room:id,number', 'ratePlan:id,name,type'])));
+    }
+
+    /**
+     * Cambio de habitación con el huésped adentro: la que deja pasa a sucia.
+     */
+    public function changeRoom(Request $request, Stay $stay, ChangeStayRoom $action): JsonResponse
+    {
+        $data = $request->validate([
+            'room_id' => ['required', 'exists:rooms,id'],
+            // Por defecto NO se recobra: mover suele ser cortesía del hotel.
+            'recalculate' => ['sometimes', 'boolean'],
+        ]);
+
+        try {
+            $stay = $action->handle(
+                $stay,
+                \App\Models\Room::findOrFail($data['room_id']),
+                $request->user(),
+                $request->boolean('recalculate'),
+            );
+        } catch (NoAvailabilityException|InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($this->serialize($stay->load(['room:id,number', 'ratePlan:id,name,type'])));
     }
 
     /**

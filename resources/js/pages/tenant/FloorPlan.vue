@@ -11,7 +11,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormInput, FormSelect } from '@/components/Base/Form';
-import { Slideover } from '@/components/Base/Headless';
+import { Dialog, Slideover } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
@@ -958,6 +958,106 @@ function openReservationDetail(reservationId: number) {
     router.visit(route('tenant.reservations', { reservation: reservationId }));
 }
 
+/* --- Extender estancia y cambio de cuarto ------------------------------
+ * Las dos operan sobre un huésped que YA está adentro, sin tocar su folio.
+ */
+const pad = (n: number) => String(n).padStart(2, '0');
+const toLocalInput = (d: Date) =>
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+const extending = ref<RoomData | null>(null);
+const extendUntil = ref('');
+const extendBusy = ref(false);
+const extendError = ref<string | null>(null);
+
+function openExtend(room: RoomData) {
+    extending.value = room;
+    extendError.value = null;
+
+    // Arranca en un día más que la salida actual, que es el caso típico.
+    const current = room.active_stay?.planned_end_at_iso;
+    const base = current ? new Date(current) : new Date();
+    base.setDate(base.getDate() + 1);
+    extendUntil.value = toLocalInput(base);
+}
+
+async function submitExtend() {
+    const stayId = extending.value?.active_stay?.id;
+    if (!stayId || extendBusy.value) return;
+
+    extendBusy.value = true;
+    extendError.value = null;
+    try {
+        await axios.patch(`/api/stays/${stayId}/extend`, {
+            planned_end_at: extendUntil.value,
+        });
+        extending.value = null;
+        toast.success(
+            'Estancia extendida',
+            'La diferencia queda en su cuenta y se cobra al registrar la salida.',
+        );
+        reloadRooms();
+    } catch (e: any) {
+        extendError.value =
+            e.response?.data?.message ?? 'No se pudo extender la estancia.';
+    } finally {
+        extendBusy.value = false;
+    }
+}
+
+const moving = ref<RoomData | null>(null);
+const moveTargetId = ref<number | ''>('');
+const moveRecalculate = ref(false);
+const moveBusy = ref(false);
+const moveError = ref<string | null>(null);
+
+/** Cuartos libres del MISMO tipo: la tarifa pertenece a un tipo. */
+const moveOptions = computed(() => {
+    const origin = moving.value;
+    if (!origin) return [];
+
+    return props.rooms.filter(
+        (r) =>
+            r.id !== origin.id &&
+            r.status === 'available' &&
+            r.room_type === origin.room_type &&
+            !r.blocks.some((b) => b.active),
+    );
+});
+
+function openMove(room: RoomData) {
+    moving.value = room;
+    moveTargetId.value = '';
+    moveRecalculate.value = false;
+    moveError.value = null;
+}
+
+async function submitMove() {
+    const stayId = moving.value?.active_stay?.id;
+    if (!stayId || !moveTargetId.value || moveBusy.value) return;
+
+    moveBusy.value = true;
+    moveError.value = null;
+    try {
+        await axios.patch(`/api/stays/${stayId}/room`, {
+            room_id: moveTargetId.value,
+            recalculate: moveRecalculate.value,
+        });
+        moving.value = null;
+        selectedId.value = null;
+        toast.success(
+            'Huésped movido',
+            'La habitación que dejó quedó marcada como sucia.',
+        );
+        reloadRooms();
+    } catch (e: any) {
+        moveError.value =
+            e.response?.data?.message ?? 'No se pudo cambiar la habitación.';
+    } finally {
+        moveBusy.value = false;
+    }
+}
+
 function openPos(stayId: number) {
     router.visit(route('tenant.pos', { stay: stayId }));
 }
@@ -1338,6 +1438,160 @@ useEcho<RoomStatusChangedPayload>(
         <p v-if="errorMessage" class="mt-3 text-sm text-danger">
             {{ errorMessage }}
         </p>
+
+        <!-- Extender estancia -->
+        <Dialog :open="extending !== null" @close="extending = null">
+            <Dialog.Panel>
+                <div class="p-5">
+                    <div class="text-center">
+                        <div
+                            class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="CalendarPlus" class="h-6 w-6" />
+                        </div>
+                        <h2 class="text-base font-medium">
+                            Extender la estancia de la
+                            {{ extending?.number }}
+                        </h2>
+                        <p class="mt-2 text-sm text-slate-500">
+                            Ahora sale el
+                            {{ extending?.active_stay?.planned_end_at }}. Lo que
+                            ya pagó no se toca: la diferencia se le cobra al
+                            registrar su salida.
+                        </p>
+                    </div>
+
+                    <div class="mt-4">
+                        <label
+                            for="extend-until"
+                            class="mb-1.5 block text-sm text-slate-500"
+                            >Nueva salida</label
+                        >
+                        <FormInput
+                            id="extend-until"
+                            v-model="extendUntil"
+                            type="datetime-local"
+                        />
+                    </div>
+
+                    <p
+                        v-if="extendError"
+                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                    >
+                        {{ extendError }}
+                    </p>
+
+                    <div class="mt-5 flex justify-center gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            class="min-h-11"
+                            @click="extending = null"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="primary"
+                            class="min-h-11"
+                            :disabled="extendBusy || !extendUntil"
+                            @click="submitExtend"
+                            >{{
+                                extendBusy ? 'Extendiendo…' : 'Extender'
+                            }}</Button
+                        >
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Cambio de habitación -->
+        <Dialog :open="moving !== null" @close="moving = null">
+            <Dialog.Panel>
+                <div class="p-5">
+                    <div class="text-center">
+                        <div
+                            class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="ArrowRightLeft" class="h-6 w-6" />
+                        </div>
+                        <h2 class="text-base font-medium">
+                            Mover al huésped de la {{ moving?.number }}
+                        </h2>
+                        <p class="mt-2 text-sm text-slate-500">
+                            Su cuenta y sus consumos se van con él. La
+                            {{ moving?.number }} queda marcada como sucia.
+                        </p>
+                    </div>
+
+                    <div class="mt-4">
+                        <label
+                            for="move-target"
+                            class="mb-1.5 block text-sm text-slate-500"
+                            >Habitación destino</label
+                        >
+                        <FormSelect id="move-target" v-model="moveTargetId">
+                            <option value="">Elige una habitación</option>
+                            <option
+                                v-for="r in moveOptions"
+                                :key="r.id"
+                                :value="r.id"
+                            >
+                                {{ r.number }}{{ r.name ? ` · ${r.name}` : '' }}
+                            </option>
+                        </FormSelect>
+                        <p
+                            v-if="!moveOptions.length"
+                            class="mt-2 text-sm text-warning"
+                        >
+                            No hay habitaciones libres del mismo tipo. Para
+                            moverlo a otro tipo hay que registrar su salida y
+                            abrir una estancia nueva con su tarifa.
+                        </p>
+                    </div>
+
+                    <label
+                        v-if="moveOptions.length"
+                        class="mt-4 flex cursor-pointer items-start gap-2.5 rounded-xl bg-slate-50 p-3.5 dark:bg-darkmode-700"
+                    >
+                        <input
+                            v-model="moveRecalculate"
+                            type="checkbox"
+                            class="mt-0.5 h-4 w-4 shrink-0"
+                        />
+                        <span class="text-sm">
+                            <span class="font-medium"
+                                >Recalcular el precio</span
+                            >
+                            <span class="mt-0.5 block text-slate-500">
+                                Déjalo apagado si lo mueves por una falla o
+                                cortesía: así paga lo mismo que ya le dijiste.
+                            </span>
+                        </span>
+                    </label>
+
+                    <p
+                        v-if="moveError"
+                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                    >
+                        {{ moveError }}
+                    </p>
+
+                    <div class="mt-5 flex justify-center gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            class="min-h-11"
+                            @click="moving = null"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="primary"
+                            class="min-h-11"
+                            :disabled="moveBusy || !moveTargetId"
+                            @click="submitMove"
+                            >{{ moveBusy ? 'Moviendo…' : 'Mover' }}</Button
+                        >
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
 
         <Slideover :open="selectedRoom !== null" @close="selectedId = null">
             <Slideover.Panel
@@ -1975,6 +2229,34 @@ useEcho<RoomStatusChangedPayload>(
                                         class="mr-2 h-5 w-5"
                                     />
                                     Ver reserva
+                                </Button>
+                                <!-- Antes, "una noche más" o mover de cuarto a
+                                     alguien que ya está adentro obligaba a
+                                     registrar su salida y darle entrada otra
+                                     vez, perdiendo el folio. -->
+                                <Button
+                                    v-if="canManageReservations"
+                                    variant="outline-primary"
+                                    class="min-h-11 justify-center"
+                                    @click="openExtend(selectedRoom)"
+                                >
+                                    <Lucide
+                                        icon="CalendarPlus"
+                                        class="mr-2 h-5 w-5"
+                                    />
+                                    Extender
+                                </Button>
+                                <Button
+                                    v-if="canManageReservations"
+                                    variant="outline-primary"
+                                    class="min-h-11 justify-center"
+                                    @click="openMove(selectedRoom)"
+                                >
+                                    <Lucide
+                                        icon="ArrowRightLeft"
+                                        class="mr-2 h-5 w-5"
+                                    />
+                                    Cambiar de cuarto
                                 </Button>
                                 <Button
                                     v-if="canManageReservations"
