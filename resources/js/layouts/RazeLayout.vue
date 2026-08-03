@@ -21,6 +21,7 @@ const tenant = computed(
             name: string;
             plan: string;
             logo_url: string | null;
+            vapid_key: string | null;
         } | null,
 );
 
@@ -489,6 +490,7 @@ const requestFullscreen = () => {
                                 <StaffBell
                                     v-if="isTenantPanel && tenant"
                                     :tenant-id="tenant.id"
+                                    :vapid-key="tenant.vapid_key"
                                 />
                                 <a
                                     href="#"

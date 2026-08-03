@@ -61,6 +61,9 @@ class HandleInertiaRequests extends Middleware
                 // Módulos activos del hotel (plan + overrides): el menú
                 // lateral oculta los items de módulos apagados.
                 'modules' => tenant()->enabledModules(),
+                // Llave pública VAPID para suscribirse a las notificaciones
+                // push. Null = función apagada y el panel no la ofrece.
+                'vapid_key' => config('webpush.public_key') ?: null,
             ] : null,
             // Branding de plataforma (login universal, layout). Cacheado.
             'branding' => [

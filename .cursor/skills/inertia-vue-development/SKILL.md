@@ -8,18 +8,6 @@ metadata:
 
 # Inertia Vue Development
 
-## REGLAS DEL PROYECTO KuiraWebReserve (obligatorias, sobreescriben lo genérico)
-
-Al construir layouts y diseños en este proyecto usa SIEMPRE el theme Raze/Midone:
-
-- Toda página del panel se envuelve en `RazeLayout` (`@/layouts/RazeLayout.vue`) con su prop `title`. Retícula del theme: `grid grid-cols-12 gap-5` + `col-span-12 sm:col-span-6 xl:col-span-N`.
-- Componentes SOLO de `resources/js/components/Base`: Button, FormInput/FormSelect/FormSwitch/FormTextarea/FormHelp/FormLabel, Dialog y Menu (Headless), Table, Lucide. No crear botones/inputs/modales a mano.
-- Iconos: SOLO el componente `Lucide` del theme (`@/components/Base/Lucide`, lucide-vue-next). Nada de SVG inline, otras librerías de iconos ni emojis. Verificar que el icono existe: `grep "@name Nombre$" node_modules/lucide-vue-next/dist/lucide-vue-next.d.ts`.
-- Sin emojis en ningún texto visible (options, badges, toasts, placeholders, mensajes del bot).
-- Cards: `box box--stacked`; círculos de icono `border-<token>/10 bg-<token>/10 text-<token>`; headers de página estilo reportes (título izquierda, acciones derecha); alturas alineadas (`h-full`/`flex-1`).
-- Referencias de diseño en `estructura/diseño/` (DashboardOverview8.vue es la hotelera).
-- Tippy del theme rompe el build de vite: tooltips con atributo nativo `title`.
-
 ## When to Apply
 
 Activate this skill when:
@@ -41,8 +29,6 @@ Use `search-docs` for detailed Inertia v2 Vue patterns and documentation.
 Vue page components should be placed in the `resources/js/pages` directory.
 
 ### Page Component Structure
-
-Important: Vue components must have a single root element.
 
 <!-- Basic Vue Page Component -->
 ```vue
@@ -325,18 +311,29 @@ defineProps({
 
 ### Polling
 
-Use the `usePoll` composable to automatically refresh data at intervals. It handles cleanup on unmount and throttles polling when the tab is inactive.
+Automatically refresh data at intervals:
 
-<!-- Basic Polling -->
+<!-- Polling Example -->
 ```vue
 <script setup>
-import { usePoll } from '@inertiajs/vue3'
+import { router } from '@inertiajs/vue3'
+import { onMounted, onUnmounted } from 'vue'
 
 defineProps({
     stats: Object
 })
 
-usePoll(5000)
+let interval
+
+onMounted(() => {
+    interval = setInterval(() => {
+        router.reload({ only: ['stats'] })
+    }, 5000) // Poll every 5 seconds
+})
+
+onUnmounted(() => {
+    clearInterval(interval)
+})
 </script>
 
 <template>
@@ -346,42 +343,6 @@ usePoll(5000)
     </div>
 </template>
 ```
-
-<!-- Polling With Request Options and Manual Control -->
-```vue
-<script setup>
-import { usePoll } from '@inertiajs/vue3'
-
-defineProps({
-    stats: Object
-})
-
-const { start, stop } = usePoll(5000, {
-    only: ['stats'],
-    onStart() {
-        console.log('Polling request started')
-    },
-    onFinish() {
-        console.log('Polling request finished')
-    },
-}, {
-    autoStart: false,
-    keepAlive: true,
-})
-</script>
-
-<template>
-    <div>
-        <h1>Dashboard</h1>
-        <div>Active Users: {{ stats.activeUsers }}</div>
-        <button @click="start">Start Polling</button>
-        <button @click="stop">Stop Polling</button>
-    </div>
-</template>
-```
-
-- `autoStart` (default `true`) — set to `false` to start polling manually via the returned `start()` function
-- `keepAlive` (default `false`) — set to `true` to prevent throttling when the browser tab is inactive
 
 ### WhenVisible
 
@@ -401,6 +362,7 @@ defineProps({
     <div>
         <h1>Dashboard</h1>
 
+        <!-- stats prop is loaded only when this section scrolls into view -->
         <WhenVisible data="stats" :buffer="200">
             <template #fallback>
                 <div class="animate-pulse">Loading stats...</div>
@@ -417,31 +379,6 @@ defineProps({
     </div>
 </template>
 ```
-
-### InfiniteScroll
-
-Automatically load additional pages of paginated data as users scroll:
-
-<!-- InfiniteScroll Example -->
-```vue
-<script setup>
-import { InfiniteScroll } from '@inertiajs/vue3'
-
-defineProps({
-    users: Object
-})
-</script>
-
-<template>
-    <InfiniteScroll data="users">
-        <div v-for="user in users.data" :key="user.id">
-            {{ user.name }}
-        </div>
-    </InfiniteScroll>
-</template>
-```
-
-The server must use `Inertia::scroll()` to configure the paginated data. Use the `search-docs` tool with a query of `infinite scroll` for detailed guidance on buffers, manual loading, reverse mode, and custom trigger elements.
 
 ## Server-Side Patterns
 

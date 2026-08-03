@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Events\StaffNotified;
+use App\Jobs\SendStaffPush;
 use App\Models\StaffNotification;
 use Illuminate\Database\Eloquent\Model;
 
@@ -37,6 +38,7 @@ class StaffNotifier
             $existing->update(['title' => $title, 'body' => $body, 'url' => $url]);
             // Se emite igual: la campana debe volver a moverse.
             StaffNotified::dispatch($existing);
+            SendStaffPush::dispatch($existing->id);
 
             return $existing;
         }
@@ -52,6 +54,7 @@ class StaffNotifier
         ]);
 
         StaffNotified::dispatch($notification);
+        SendStaffPush::dispatch($notification->id);
 
         return $notification;
     }

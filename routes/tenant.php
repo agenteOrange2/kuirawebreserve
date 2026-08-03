@@ -331,6 +331,11 @@ Route::middleware([
         Route::post('staff-notifications/read-all', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'readAll'])->name('staff-notifications.read-all');
         Route::post('staff-notifications/{notification}/read', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'read'])->name('staff-notifications.read');
 
+        // Push del panel: cada quien conecta y desconecta SUS dispositivos.
+        Route::post('push-subscriptions', [\App\Http\Controllers\Tenant\PushSubscriptionController::class, 'store'])->name('push-subscriptions.store');
+        Route::delete('push-subscriptions', [\App\Http\Controllers\Tenant\PushSubscriptionController::class, 'destroy'])->name('push-subscriptions.destroy');
+        Route::post('push-subscriptions/test', [\App\Http\Controllers\Tenant\PushSubscriptionController::class, 'test'])->name('push-subscriptions.test');
+
         Route::apiResource('properties', PropertyController::class)
             ->middleware('can:properties.manage');
 

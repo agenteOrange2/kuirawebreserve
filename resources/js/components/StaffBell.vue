@@ -6,6 +6,7 @@ import { onMounted, ref } from 'vue';
 import { Slideover } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
+import { usePushNotifications } from '@/composables/usePushNotifications';
 
 /**
  * Campana del panel: avisa desde CUALQUIER pantalla, a diferencia del tono
@@ -14,7 +15,11 @@ import type { Icon } from '@/components/Base/Lucide';
  * (El NotificationsPanel que traía el theme colgaba de datos falsos que ni
  * siquiera existen en el proyecto, así que este lo sustituye.)
  */
-const props = defineProps<{ tenantId: string }>();
+const props = defineProps<{ tenantId: string; vapidKey?: string | null }>();
+
+// Push real: avisa con el panel CERRADO. Se ofrece aquí porque es donde el
+// staff ya viene a ver sus avisos.
+const push = usePushNotifications(props.vapidKey ?? null);
 
 interface StaffNotice {
     id: number;
@@ -130,6 +135,77 @@ onMounted(load);
                 </Slideover.Title>
 
                 <Slideover.Description class="p-0">
+                    <!-- Push: lo único que avisa con el panel cerrado -->
+                    <div
+                        v-if="push.supported.value"
+                        class="border-b border-slate-100 px-5 py-4 dark:border-darkmode-400"
+                    >
+                        <div class="flex items-start gap-3">
+                            <span
+                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                                :class="
+                                    push.subscribed.value
+                                        ? 'bg-success/10 text-success'
+                                        : 'bg-slate-100 text-slate-400 dark:bg-darkmode-400'
+                                "
+                            >
+                                <Lucide
+                                    :icon="
+                                        push.subscribed.value
+                                            ? 'BellRing'
+                                            : 'BellOff'
+                                    "
+                                    class="h-4 w-4"
+                                />
+                            </span>
+                            <div class="min-w-0 flex-1">
+                                <p class="text-sm font-medium">
+                                    {{
+                                        push.subscribed.value
+                                            ? 'Avisos activos en este dispositivo'
+                                            : 'Recibir avisos con el panel cerrado'
+                                    }}
+                                </p>
+                                <p class="mt-0.5 text-xs text-slate-500">
+                                    {{
+                                        push.subscribed.value
+                                            ? 'Te llegan aunque no tengas el panel abierto.'
+                                            : 'Actívalos y te avisamos aunque cierres el panel.'
+                                    }}
+                                </p>
+                                <button
+                                    type="button"
+                                    class="mt-2 text-xs font-medium hover:underline"
+                                    :class="
+                                        push.subscribed.value
+                                            ? 'text-slate-500'
+                                            : 'text-primary'
+                                    "
+                                    :disabled="push.busy.value"
+                                    @click="
+                                        push.subscribed.value
+                                            ? push.unsubscribe()
+                                            : push.subscribe()
+                                    "
+                                >
+                                    {{
+                                        push.busy.value
+                                            ? 'Un momento…'
+                                            : push.subscribed.value
+                                              ? 'Desactivar en este dispositivo'
+                                              : 'Activar en este dispositivo'
+                                    }}
+                                </button>
+                                <p
+                                    v-if="push.error.value"
+                                    class="mt-1.5 text-xs text-danger"
+                                >
+                                    {{ push.error.value }}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+
                     <div
                         v-if="notices.length"
                         class="divide-y divide-slate-100 dark:divide-darkmode-400"
