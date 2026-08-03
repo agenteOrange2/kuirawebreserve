@@ -282,23 +282,23 @@ async function confirmVoid() {
                         </div>
                     </div>
 
-                    <!-- Grid de productos -->
+                    <!-- Lista de productos: una fila por producto con la
+                         miniatura a la izquierda. Caben muchos más a la vista
+                         que en rejilla y se leen de corrido. -->
                     <div
                         v-if="filteredProducts.length"
-                        class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3"
+                        class="box box--stacked mt-4 divide-y divide-slate-100 dark:divide-darkmode-400"
                     >
                         <button
                             v-for="p in filteredProducts"
                             :key="p.id"
-                            class="box box--stacked flex flex-col p-4 text-left transition hover:-translate-y-0.5 hover:border-primary/40"
+                            class="flex w-full items-center gap-3.5 p-3.5 text-left transition hover:bg-slate-50 disabled:cursor-not-allowed dark:hover:bg-darkmode-600"
                             :disabled="isOutOfStock(p)"
                             :class="{ 'opacity-40': isOutOfStock(p) }"
                             @click="add(p)"
                         >
-                            <!-- La foto es lo que el mostrador reconoce de un
-                                 vistazo; sin ella, la inicial del nombre. -->
-                            <div
-                                class="mb-3 flex aspect-square w-full items-center justify-center overflow-hidden rounded-lg bg-slate-100 dark:bg-darkmode-400"
+                            <span
+                                class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 dark:bg-darkmode-400"
                             >
                                 <img
                                     v-if="p.photo"
@@ -308,51 +308,58 @@ async function confirmVoid() {
                                 />
                                 <span
                                     v-else
-                                    class="text-2xl font-medium text-slate-300"
+                                    class="text-lg font-medium text-slate-300"
                                     >{{ p.name.charAt(0).toUpperCase() }}</span
                                 >
-                            </div>
-                            <div class="flex items-start justify-between gap-2">
-                                <div class="truncate font-medium">
-                                    {{ p.name }}
-                                </div>
-                                <span
-                                    v-if="p.type === 'composite'"
-                                    title="Compuesto (receta)"
-                                    ><Lucide
+                            </span>
+
+                            <span class="min-w-0 flex-1">
+                                <span class="flex items-center gap-1.5">
+                                    <span class="truncate font-medium">{{
+                                        p.name
+                                    }}</span>
+                                    <Lucide
+                                        v-if="p.type === 'composite'"
                                         icon="ChefHat"
+                                        title="Compuesto (receta)"
                                         class="h-4 w-4 shrink-0 text-pending"
-                                /></span>
-                            </div>
-                            <div
-                                v-if="p.category"
-                                class="mt-0.5 text-xs text-slate-400"
-                            >
-                                {{ p.category }}
-                            </div>
-                            <div
-                                class="mt-auto flex items-end justify-between pt-3"
-                            >
-                                <span
-                                    class="text-lg font-medium text-primary"
-                                    >{{ money(Number(p.price)) }}</span
-                                >
-                                <span
-                                    v-if="p.type === 'simple' && p.track_stock"
-                                    class="rounded-full px-1.5 py-0.5 text-xs"
-                                    :class="
-                                        p.stock_qty <= 0
-                                            ? 'bg-danger/10 text-danger'
-                                            : 'bg-slate-100 text-slate-400 dark:bg-darkmode-400'
-                                    "
-                                >
-                                    {{
-                                        p.stock_qty <= 0
-                                            ? 'Agotado'
-                                            : `${p.stock_qty} disp.`
-                                    }}
+                                    />
                                 </span>
-                            </div>
+                                <span
+                                    class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-400"
+                                >
+                                    <span v-if="p.category">{{
+                                        p.category
+                                    }}</span>
+                                    <span
+                                        v-if="
+                                            p.type === 'simple' && p.track_stock
+                                        "
+                                        class="rounded-full px-1.5 py-0.5"
+                                        :class="
+                                            p.stock_qty <= 0
+                                                ? 'bg-danger/10 text-danger'
+                                                : 'bg-slate-100 dark:bg-darkmode-400'
+                                        "
+                                    >
+                                        {{
+                                            p.stock_qty <= 0
+                                                ? 'Agotado'
+                                                : `${p.stock_qty} disp.`
+                                        }}
+                                    </span>
+                                </span>
+                            </span>
+
+                            <span
+                                class="shrink-0 text-base font-medium text-primary sm:text-lg"
+                                >{{ money(Number(p.price)) }}</span
+                            >
+                            <span
+                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            >
+                                <Lucide icon="Plus" class="h-4 w-4" />
+                            </span>
                         </button>
                     </div>
                     <div
