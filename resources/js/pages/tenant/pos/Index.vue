@@ -111,7 +111,19 @@ function add(product: PosProduct) {
 }
 function decrease(line: CartLine) {
     line.qty -= 1;
-    if (line.qty <= 0) cart.value = cart.value.filter((l) => l !== line);
+    if (line.qty <= 0) removeLine(line);
+}
+function removeLine(line: CartLine) {
+    cart.value = cart.value.filter((l) => l !== line);
+}
+
+// En pantallas chicas el carrito vive debajo de toda la lista: con un
+// catálogo largo había que recorrerla entera para llegar a cobrar. La
+// barra fija de abajo salta directo.
+const cartSection = ref<HTMLElement | null>(null);
+
+function goToCart() {
+    cartSection.value?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function resetSale() {
     cart.value = [];
@@ -237,48 +249,72 @@ async function confirmVoid() {
             <div class="mt-5 grid grid-cols-12 gap-6">
                 <!-- Productos -->
                 <div class="col-span-12 xl:col-span-7">
-                    <!-- Buscador + categorías -->
-                    <div class="box box--stacked flex flex-col gap-3 p-3">
-                        <div class="relative">
-                            <Lucide
-                                icon="Search"
-                                class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                            />
-                            <FormInput
-                                v-model="search"
-                                type="text"
-                                placeholder="Buscar producto…"
-                                class="pl-9"
-                            />
-                        </div>
-                        <div
-                            v-if="categories.length"
-                            class="flex flex-wrap gap-1.5"
-                        >
-                            <button
-                                class="rounded-full px-3 py-1 text-xs font-medium transition"
-                                :class="
-                                    !categoryFilter
-                                        ? 'bg-primary text-white'
-                                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-darkmode-400'
-                                "
-                                @click="categoryFilter = ''"
+                    <!-- Buscador + categorías. Pegajoso: con un catálogo largo
+                         la búsqueda se perdía al scrollear y había que subir
+                         hasta arriba para cambiar de categoría. -->
+                    <div
+                        class="sticky top-[68px] z-20 -mx-1 px-1 pb-1 backdrop-blur"
+                    >
+                        <div class="box box--stacked flex flex-col gap-2.5 p-3">
+                            <div class="relative">
+                                <Lucide
+                                    icon="Search"
+                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                />
+                                <FormInput
+                                    v-model="search"
+                                    type="text"
+                                    placeholder="Buscar producto…"
+                                    class="pl-9"
+                                />
+                                <button
+                                    v-if="search"
+                                    type="button"
+                                    title="Limpiar búsqueda"
+                                    class="absolute inset-y-0 right-0 z-10 mr-2 flex w-8 items-center justify-center text-slate-400 transition hover:text-slate-600"
+                                    @click="search = ''"
+                                >
+                                    <Lucide icon="X" class="h-4 w-4" />
+                                </button>
+                            </div>
+                            <!-- En una sola línea con scroll lateral: envueltos
+                                 ocupaban tres renglones de alto fijo. -->
+                            <div
+                                v-if="categories.length"
+                                class="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1"
                             >
-                                Todo
-                            </button>
-                            <button
-                                v-for="c in categories"
-                                :key="c"
-                                class="rounded-full px-3 py-1 text-xs font-medium transition"
-                                :class="
-                                    categoryFilter === c
-                                        ? 'bg-primary text-white'
-                                        : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-darkmode-400'
-                                "
-                                @click="categoryFilter = c"
+                                <button
+                                    class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition"
+                                    :class="
+                                        !categoryFilter
+                                            ? 'bg-primary text-white'
+                                            : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-darkmode-400'
+                                    "
+                                    @click="categoryFilter = ''"
+                                >
+                                    Todo
+                                </button>
+                                <button
+                                    v-for="c in categories"
+                                    :key="c"
+                                    class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap transition"
+                                    :class="
+                                        categoryFilter === c
+                                            ? 'bg-primary text-white'
+                                            : 'bg-slate-100 text-slate-500 hover:bg-slate-200 dark:bg-darkmode-400'
+                                    "
+                                    @click="categoryFilter = c"
+                                >
+                                    {{ c }}
+                                </button>
+                            </div>
+                            <p
+                                v-if="search || categoryFilter"
+                                class="text-xs text-slate-500"
                             >
-                                {{ c }}
-                            </button>
+                                {{ filteredProducts.length }} de
+                                {{ products.length }} productos
+                            </p>
                         </div>
                     </div>
 
@@ -477,7 +513,7 @@ async function confirmVoid() {
                 </div>
 
                 <!-- Carrito -->
-                <div class="col-span-12 xl:col-span-5">
+                <div ref="cartSection" class="col-span-12 xl:col-span-5">
                     <div class="box box--stacked sticky top-24 flex flex-col">
                         <div
                             class="flex items-center justify-between border-b border-slate-200/60 p-5 dark:border-darkmode-400"
@@ -536,7 +572,8 @@ async function confirmVoid() {
                                     <div class="flex items-center gap-2">
                                         <button
                                             type="button"
-                                            class="flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
+                                            title="Quitar uno"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
                                             @click="decrease(line)"
                                         >
                                             <Lucide
@@ -550,7 +587,8 @@ async function confirmVoid() {
                                         >
                                         <button
                                             type="button"
-                                            class="flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
+                                            title="Agregar uno"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
                                             @click="line.qty += 1"
                                         >
                                             <Lucide
@@ -569,6 +607,20 @@ async function confirmVoid() {
                                                 )
                                             }}</span
                                         >
+                                        <!-- Quitar el renglón de un golpe: sin
+                                             esto había que picarle al menos
+                                             hasta bajarlo a cero. -->
+                                        <button
+                                            type="button"
+                                            title="Quitar de la cuenta"
+                                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                            @click="removeLine(line)"
+                                        >
+                                            <Lucide
+                                                icon="Trash2"
+                                                class="h-4 w-4"
+                                            />
+                                        </button>
                                     </div>
                                 </div>
                             </div>
@@ -868,5 +920,31 @@ async function confirmVoid() {
                 </div>
             </Dialog.Panel>
         </Dialog>
+
+        <!-- Barra fija de cuenta (solo pantallas chicas): el carrito queda
+             hasta abajo de la lista y sin esto había que recorrerla toda
+             para ver el total o cobrar. -->
+        <div
+            v-if="cart.length"
+            class="fixed inset-x-0 bottom-0 z-40 border-t border-slate-200/80 bg-white/95 p-3 shadow-[0_-4px_16px_#0000000d] backdrop-blur xl:hidden dark:border-darkmode-400 dark:bg-darkmode-600/95"
+        >
+            <button
+                type="button"
+                class="flex w-full items-center justify-between gap-3 rounded-xl bg-primary px-4 py-3 text-white"
+                @click="goToCart"
+            >
+                <span class="flex items-center gap-2.5">
+                    <span
+                        class="flex h-7 min-w-7 items-center justify-center rounded-full bg-white/20 px-1.5 text-sm font-semibold"
+                        >{{ itemCount }}</span
+                    >
+                    <span class="text-sm font-medium">Ver la cuenta</span>
+                </span>
+                <span class="text-lg font-medium">{{ money(total) }}</span>
+            </button>
+        </div>
+
+        <!-- Colchón para que la barra no tape la última fila. -->
+        <div v-if="cart.length" class="h-24 xl:hidden" />
     </RazeLayout>
 </template>
