@@ -31,10 +31,13 @@ class CreateReservation
 
     /**
      * @param  array<string, mixed>  $data
+     * @param  bool  $notifyGuest  false cuando quien crea ya avisa por su
+     *                             cuenta (p. ej. el grupo GRP- consolida sus
+     *                             propios avisos en vez de uno por cuarto).
      *
      * @throws NoAvailabilityException
      */
-    public function handle(array $data, ?User $user = null): Reservation
+    public function handle(array $data, ?User $user = null, bool $notifyGuest = true): Reservation
     {
         $ratePlan = RatePlan::findOrFail($data['rate_plan_id']);
         $start = Carbon::parse($data['starts_at']);
@@ -50,7 +53,7 @@ class CreateReservation
 
         $confirmed = (bool) ($data['confirmed'] ?? false);
 
-        return DB::transaction(function () use ($data, $ratePlan, $start, $end, $confirmed, $user) {
+        $reservation = DB::transaction(function () use ($data, $ratePlan, $start, $end, $confirmed, $user) {
             $room = $this->resolveRoom($data, $ratePlan, $start, $end);
 
             $guest = $this->resolveGuest($data);
@@ -102,6 +105,15 @@ class CreateReservation
                 2,
             );
 
+            // Cupón (módulo cupones): se REVALIDA aquí server-side — el
+            // endpoint público de consulta solo es vitrina. El descuento se
+            // congela en la reserva y el total nunca baja de 0; el uso se
+            // cuenta recién al confirmarse (TransitionReservation), no en
+            // el hold.
+            $coupon = $this->resolveCoupon($data['coupon_code'] ?? null);
+            $discount = $coupon?->discountFor($total) ?? 0.0;
+            $total = round(max(0, $total - $discount), 2);
+
             $reservation = Reservation::create([
                 'property_id' => $room->property_id,
                 'room_type_id' => $ratePlan->room_type_id,
@@ -128,8 +140,12 @@ class CreateReservation
                 'extras' => $extraLines ?: null,
                 // Cobro anticipado (spec §2.6.3): la tarifa manda ("Exigir
                 // cobro anticipado" en Catálogo); el monto manual solo
-                // aplica en tarifas sin anticipo configurado.
+                // aplica en tarifas sin anticipo configurado. El % aplica
+                // sobre el total YA con descuento: se anticipa lo que de
+                // verdad se cobrará.
                 'deposit_amount' => $ratePlan->depositAmountFor($total) ?? $data['deposit_amount'] ?? 0,
+                'coupon_code' => $coupon?->code,
+                'discount_amount' => $discount,
                 'payment_status' => \App\Enums\PaymentStatus::Unpaid,
                 // La tarifa manda; sin anticipación propia aplica el default
                 // del hotel, y el interruptor global puede apagar el módulo.
@@ -161,6 +177,20 @@ class CreateReservation
 
             return $reservation;
         });
+
+        // Fuera de la transacción: avisar es cortesía, no debe poder
+        // revertir una creación ya hecha. Solo cuando la reserva NACE
+        // confirmada (mostrador, palabra); un hold pendiente avisa recién
+        // al confirmarse (TransitionReservation::confirm).
+        if ($confirmed && $notifyGuest) {
+            try {
+                app(\App\Services\Payments\PaymentGuestNotifier::class)->reservationConfirmed($reservation);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+
+        return $reservation;
     }
 
     /**
@@ -192,6 +222,30 @@ class CreateReservation
         }
 
         return $room;
+    }
+
+    /**
+     * Resuelve y valida el cupón (módulo cupones). Código vacío = sin
+     * cupón; código presente pero inválido/vencido/agotado = error claro,
+     * nunca cobrar el total completo en silencio.
+     *
+     * @throws \InvalidArgumentException
+     */
+    protected function resolveCoupon(?string $code): ?\App\Models\Coupon
+    {
+        $code = strtoupper(trim((string) $code));
+
+        if ($code === '') {
+            return null;
+        }
+
+        $coupon = \App\Models\Coupon::query()->where('code', $code)->first();
+
+        if (! $coupon || ! $coupon->isRedeemable()) {
+            throw new \InvalidArgumentException('Ese código de descuento no es válido o ya no está disponible.');
+        }
+
+        return $coupon;
     }
 
     /**
@@ -375,9 +429,17 @@ class CreateReservation
             return null;
         }
 
-        return Guest::firstOrCreate(
+        $guest = Guest::firstOrCreate(
             $phone ? ['phone' => $phone] : ['email' => $email],
             ['first_name' => $data['guest_name'] ?? null, 'email' => $email, 'phone' => $phone],
         );
+
+        // Huésped ya conocido por teléfono que ahora deja correo: se
+        // agrega a su ficha (sin pisar un correo ya guardado en el CRM).
+        if ($email && ! $guest->email) {
+            $guest->update(['email' => $email]);
+        }
+
+        return $guest;
     }
 }

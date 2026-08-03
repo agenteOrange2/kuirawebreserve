@@ -17,8 +17,10 @@ class GuestsPageController extends Controller
     public function index(Request $request): Response
     {
         $search = trim($request->string('q')->toString());
+        $archived = $request->boolean('archived');
 
         $guests = Guest::query()
+            ->when($archived, fn ($q) => $q->onlyTrashed())
             ->when($search !== '', fn ($q) => $q->search($search))
             ->when($request->boolean('blacklisted'), fn ($q) => $q->where('is_blacklisted', true))
             ->withCount(['stays as visits' => fn ($q) => $q->where('status', 'completed')])
@@ -32,12 +34,14 @@ class GuestsPageController extends Controller
                 'email' => $guest->email,
                 'visits' => $guest->visits,
                 'is_blacklisted' => $guest->is_blacklisted,
+                'is_archived' => $guest->trashed(),
                 'created_at' => $guest->created_at->format('d/m/Y'),
             ]);
 
         return Inertia::render('tenant/guests/Index', [
             'guests' => $guests,
-            'filters' => ['q' => $search, 'blacklisted' => $request->boolean('blacklisted')],
+            'archivedCount' => Guest::onlyTrashed()->count(),
+            'filters' => ['q' => $search, 'blacklisted' => $request->boolean('blacklisted'), 'archived' => $archived],
             'canManage' => $request->user()->can('guests.manage'),
             'canViewDocuments' => $request->user()->can('guests.view-documents'),
             'documentTypes' => Guest::DOCUMENT_TYPES,
@@ -81,6 +85,8 @@ class GuestsPageController extends Controller
                 'blacklist_reason' => $guest->blacklist_reason,
                 'marketing_consent' => $guest->marketing_consent,
                 'created_at' => $guest->created_at->format('d/m/Y'),
+                'is_archived' => $guest->trashed(),
+                'archived_at' => $guest->deleted_at?->format('d/m/Y'),
             ],
             'metrics' => $guest->metrics(),
             'documents' => $canViewDocuments ? GuestController::documents($guest) : [],

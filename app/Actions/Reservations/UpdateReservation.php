@@ -201,7 +201,7 @@ class UpdateReservation
     protected function resolveGuest(array $data): ?Guest
     {
         if (! empty($data['guest_id'])) {
-            return Guest::findOrFail($data['guest_id']);
+            return $this->fillMissingEmail(Guest::findOrFail($data['guest_id']), $data['guest_email'] ?? null);
         }
 
         $phone = $data['guest_phone'] ?? null;
@@ -211,9 +211,22 @@ class UpdateReservation
             return null;
         }
 
-        return Guest::firstOrCreate(
+        return $this->fillMissingEmail(Guest::firstOrCreate(
             $phone ? ['phone' => $phone] : ['email' => $email],
             ['first_name' => $data['guest_name'] ?? null, 'email' => $email, 'phone' => $phone],
-        );
+        ), $email);
+    }
+
+    /**
+     * Correo capturado al editar la reserva: se agrega a la ficha del
+     * huésped si no tenía uno (no pisa un correo ya guardado en el CRM).
+     */
+    protected function fillMissingEmail(Guest $guest, ?string $email): Guest
+    {
+        if ($email && ! $guest->email) {
+            $guest->update(['email' => $email]);
+        }
+
+        return $guest;
     }
 }

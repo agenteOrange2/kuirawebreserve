@@ -146,11 +146,47 @@ class PropertyController extends Controller
             'settings.balance_due_enabled' => ['sometimes', 'boolean'],
             'settings.balance_due_value' => ['sometimes', 'integer', 'min:1', 'max:365'],
             'settings.balance_due_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['day', 'week'])],
+            // Política de cancelación default del hotel (Métodos de pago →
+            // Cancelaciones): ventana sin costo antes de la llegada y % que
+            // se retiene después. Una tarifa con política propia manda.
+            'settings.cancel_policy_enabled' => ['sometimes', 'boolean'],
+            'settings.cancel_free_value' => ['sometimes', 'integer', 'min:1', 'max:365'],
+            'settings.cancel_free_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['hour', 'day', 'week'])],
+            'settings.cancel_penalty_percent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
+            'settings.cancel_policy_text' => ['sometimes', 'nullable', 'string', 'max:2000'],
+            // Walk-ins de mostrador: cobrar al registrar la llegada o la
+            // cuenta final al registrar la salida (default histórico).
+            'settings.walkin_charge' => ['sometimes', \Illuminate\Validation\Rule::in(['checkout', 'checkin'])],
+            // Fianza (depósito en garantía): monto fijo por estancia que se
+            // cobra al registrar la llegada y se devuelve al registrar la
+            // salida — ver ReservationPolicy::guaranteeEnabled().
+            'settings.guarantee_enabled' => ['sometimes', 'boolean'],
+            'settings.guarantee_amount' => ['sometimes', 'numeric', 'min:0', 'max:999999'],
+            // Operación del día (/ajustes/limpieza): check-in automático a
+            // la hora de llegada, cómo avanza el semáforo sucia → limpieza →
+            // disponible y qué pasa con una reservada cuya salida venció
+            // sin check-in registrado.
+            'settings.checkin_mode' => ['sometimes', \Illuminate\Validation\Rule::in(['manual', 'auto', 'both'])],
+            'settings.hk_mode' => ['sometimes', \Illuminate\Validation\Rule::in(['manual', 'auto', 'both'])],
+            'settings.hk_dirty_value' => ['sometimes', 'integer', 'min:1', 'max:999'],
+            'settings.hk_dirty_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['minute', 'hour'])],
+            'settings.hk_cleaning_value' => ['sometimes', 'integer', 'min:1', 'max:999'],
+            'settings.hk_cleaning_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['minute', 'hour'])],
+            'settings.day_close_no_checkin' => ['sometimes', \Illuminate\Validation\Rule::in(['dirty', 'available', 'none'])],
             'settings.phone_country_code' => ['sometimes', 'string', 'max:4'],
             // Canal para avisos directos al huésped (sin conversación):
             // Meta oficial, Evolution, o automático con respaldo.
             'settings.direct_notify_channel' => ['sometimes', \Illuminate\Validation\Rule::in(['auto', 'meta', 'evolution'])],
             'settings.arrival_reminder_enabled' => ['sometimes', 'boolean'],
+            // Aviso el día de la llegada: segundo recordatorio cuando la
+            // entrada está a N horas (default 2).
+            'settings.arrival_soon_enabled' => ['sometimes', 'boolean'],
+            'settings.arrival_soon_hours' => ['sometimes', 'integer', 'min:1', 'max:24'],
+            // Agradecimiento al salir: mensaje al completar la estancia,
+            // con el link de reseñas del hotel (Google/Tripadvisor) si lo
+            // capturó — ver ReservationPolicy::postStayThanksEnabled.
+            'settings.post_stay_thanks_enabled' => ['sometimes', 'boolean'],
+            'settings.review_url' => ['sometimes', 'nullable', 'url', 'max:500'],
             // Widgets públicos incrustables (/integracion): el toggle apaga
             // también la página pública correspondiente.
             'settings.widget_reservas_enabled' => ['sometimes', 'boolean'],

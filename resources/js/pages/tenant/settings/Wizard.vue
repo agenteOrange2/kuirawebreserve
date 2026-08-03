@@ -212,6 +212,19 @@ const money = (n: number) =>
                     </Button>
                     <Button
                         as="a"
+                        :href="route('tenant.reservations.settings')"
+                        variant="outline-secondary"
+                        class="rounded-[0.5rem] bg-white"
+                        title="Logo, colores y modo oscuro del wizard público"
+                    >
+                        <Lucide
+                            icon="Palette"
+                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                        />
+                        Apariencia
+                    </Button>
+                    <Button
+                        as="a"
                         :href="wizardUrl"
                         target="_blank"
                         variant="outline-primary"

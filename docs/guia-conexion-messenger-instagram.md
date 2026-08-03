@@ -136,8 +136,12 @@ pilotar con tus hoteles. Para que CUALQUIER huésped escriba:
 - **Nombre del contacto**: se consulta a Meta al crear la conversación
   (nombre en Messenger, usuario en Instagram) — ya no aparecen como
   "Visitante".
-- **Medios entrantes** (fotos/audios): entran como "[tipo no soportado
-  todavía]" — pendiente P2 de canales, igual que en Evolution.
+- **Medios entrantes** — imagen y documento (PDF) ✅ HECHOS (2026-07-24)
+  para WhatsApp (Cloud API y Evolution): se descargan, quedan como adjunto
+  del mensaje en la bandeja y, si hay transferencia por verificar, caen
+  solos como comprobante en /pagos. Audios y stickers siguen como "[tipo
+  no soportado todavía]"; los adjuntos de Messenger/IG (otro formato de
+  webhook) quedan P2.
 - **Dedupe y firma**: los reintentos de Meta se deduplican por id de
   mensaje y la firma `X-Hub-Signature-256` se valida en producción — ya
   estaba construido.

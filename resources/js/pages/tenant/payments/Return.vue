@@ -108,6 +108,53 @@ onBeforeUnmount(() => {
                 </div>
             </template>
 
+            <!-- El hotel confirmó la reserva a mano mientras el cobro sigue
+                 en verificación: responder la pregunta real del huésped
+                 ("¿quedó mi reserva?") en vez de girar para siempre. -->
+            <template
+                v-else-if="
+                    payment.status === 'pending' && payment.reservation_confirmed
+                "
+            >
+                <div
+                    class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-success/10 bg-success/10"
+                >
+                    <Lucide icon="CircleCheck" class="h-7 w-7 text-success" />
+                </div>
+                <h1 class="mt-4 text-lg font-medium">
+                    Tu reserva está confirmada
+                </h1>
+                <p class="mt-2 text-sm text-slate-500">
+                    {{ hotel.name }} confirmó tu reserva
+                    {{ payment.reservation_code }}. Tu
+                    {{ payment.concept.toLowerCase() }} de
+                    {{ payment.amount_label }} sigue en revisión — te avisaremos
+                    en cuanto quede registrado. Si ya enviaste tu comprobante,
+                    no tienes que hacer nada más.
+                </p>
+                <div class="mt-5 flex flex-col gap-2">
+                    <Button
+                        as="a"
+                        :href="lookupUrl"
+                        variant="primary"
+                        class="rounded-[0.5rem]"
+                    >
+                        <Lucide icon="CalendarCheck" class="mr-2 h-4 w-4" />
+                        Consultar mi reserva
+                    </Button>
+                    <Button
+                        v-if="payment.checkout_url"
+                        as="a"
+                        :href="payment.checkout_url"
+                        variant="outline-secondary"
+                        class="rounded-[0.5rem] bg-white"
+                    >
+                        <Lucide icon="CreditCard" class="mr-2 h-4 w-4" />
+                        Completar mi pago
+                    </Button>
+                </div>
+            </template>
+
             <template v-else-if="payment.status === 'pending'">
                 <div
                     class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-primary/10 bg-primary/10"

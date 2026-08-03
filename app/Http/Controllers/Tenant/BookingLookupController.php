@@ -80,6 +80,72 @@ class BookingLookupController extends Controller
         return $this->summary($reservation->refresh()->load(['roomType', 'ratePlan', 'guest']));
     }
 
+    /**
+     * Pre-registro en línea: el huésped completa sus datos antes de llegar
+     * (nombre, correo, vehículo, hora estimada y notas) con las mismas
+     * llaves código + teléfono. Solo tiene sentido antes del check-in
+     * (Pendiente/Confirmada). El correo y el nombre se agregan a la ficha
+     * del Guest únicamente si el CRM no los tenía — mismo criterio
+     * fillMissing de CreateReservation: lo capturado por staff no se pisa.
+     */
+    public function preRegister(Request $request): JsonResponse
+    {
+        $reservation = $this->resolve($request);
+
+        if ($reservation === null) {
+            return $this->notFound();
+        }
+
+        if (! in_array($reservation->status, [\App\Enums\ReservationStatus::Pending, \App\Enums\ReservationStatus::Confirmed], true)) {
+            return response()->json([
+                'message' => 'Esta reserva ya no admite pre-registro; si necesitas actualizar tus datos, contacta al hotel.',
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'guest_name' => ['nullable', 'string', 'max:120'],
+            'guest_email' => ['nullable', 'email', 'max:255'],
+            'vehicle_plate' => ['nullable', 'string', 'max:20'],
+            'vehicle_desc' => ['nullable', 'string', 'max:120'],
+            'eta' => ['nullable', 'date_format:H:i'],
+            'guest_notes' => ['nullable', 'string', 'max:1000'],
+        ]);
+
+        // Vehículo, hora estimada y notas son del huésped: lo que mande es
+        // la verdad (vacío = lo quitó). El nombre nunca se blanquea.
+        $updates = [];
+        foreach (['vehicle_plate', 'vehicle_desc', 'eta', 'guest_notes'] as $field) {
+            if (array_key_exists($field, $data)) {
+                $value = trim((string) ($data[$field] ?? ''));
+                $updates[$field] = $value === '' ? null : $value;
+            }
+        }
+
+        $name = trim((string) ($data['guest_name'] ?? ''));
+        if ($name !== '') {
+            $updates['guest_name'] = $name;
+        }
+
+        $reservation->update($updates);
+
+        if ($guest = $reservation->guest) {
+            $fill = [];
+            $email = trim((string) ($data['guest_email'] ?? ''));
+
+            if ($email !== '' && ! $guest->email) {
+                $fill['email'] = $email;
+            }
+            if ($name !== '' && blank($guest->first_name) && blank($guest->last_name)) {
+                $fill['first_name'] = $name;
+            }
+            if ($fill !== []) {
+                $guest->update($fill);
+            }
+        }
+
+        return $this->summary($reservation->refresh()->load(['roomType', 'ratePlan', 'guest']));
+    }
+
     protected function resolve(Request $request): ?Reservation
     {
         $data = $request->validate([
@@ -151,8 +217,28 @@ class BookingLookupController extends Controller
                 'expires_at' => $pending->expires_at?->toIso8601String(),
                 'bank_accounts' => $accounts,
             ] : null,
+            // Pre-registro: lo que ya sabemos, para precargar el formulario
+            // público (solo editable en Pendiente/Confirmada).
+            'pre_registration' => [
+                'guest_name' => $reservation->guest_name ?? $reservation->guest?->full_name,
+                'guest_email' => $reservation->guest?->email,
+                'has_email' => (bool) $reservation->guest?->email,
+                'vehicle_plate' => $reservation->vehicle_plate,
+                'vehicle_desc' => $reservation->vehicle_desc,
+                'eta' => $reservation->eta ? substr((string) $reservation->eta, 0, 5) : null,
+                'guest_notes' => $reservation->guest_notes,
+            ],
             'can_cancel' => $this->selfCancelState($reservation)[0],
-            'cancellation_policy' => $reservation->ratePlan?->cancellationPolicyLabel(),
+            'cancellation_policy' => app(\App\Services\ReservationPolicy::class)
+                ->cancellationPolicyLabel($reservation->ratePlan),
+            'cancellation_policy_text' => app(\App\Services\ReservationPolicy::class)
+                ->cancellationPolicyText(),
+            // Estimación honesta para el huésped: "si cancelas ahora, según
+            // la política te corresponden $X". El reembolso en sí siempre lo
+            // ejecuta el hotel, nunca este botón.
+            'cancel_refund_estimate' => in_array($reservation->status, [\App\Enums\ReservationStatus::Pending, \App\Enums\ReservationStatus::Confirmed], true)
+                ? $reservation->suggestedRefund()
+                : null,
         ]);
     }
 
@@ -172,7 +258,9 @@ class BookingLookupController extends Controller
             return [true, ''];
         }
 
-        $deadline = $reservation->ratePlan?->cancelFreeDeadlineFor($reservation->starts_at);
+        // Ventana efectiva: la de la tarifa o la default del hotel.
+        $deadline = app(\App\Services\ReservationPolicy::class)
+            ->cancelFreeDeadlineFor($reservation->ratePlan, $reservation->starts_at);
 
         if ($deadline !== null && now()->lte($deadline)) {
             return [true, ''];

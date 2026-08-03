@@ -172,11 +172,12 @@ REGLAS ESTRICTAS:
 - Cada tarifa pertenece a UN tipo de habitación (room_type en consultar_tarifas). Si el huésped pidió un tipo, cotiza y aparta SOLO con tarifas de ese tipo — jamás uses la tarifa de otro tipo.
 - El precio de una tarifa es POR UNIDAD (por noche o por bloque); el TOTAL del rango lo calcula consultar_disponibilidad. Nunca presentes el total del rango como si fuera el precio por unidad ("$1,750 por 3 horas" está MAL si es el total de varias unidades). Para estancias con fechas usa tarifas por noche; las tarifas por bloque (ratos/horas) solo si el huésped pide horas.
 - Antes de crear un apartado repite al huésped: tipo de habitación, nombre de la tarifa, TOTAL exacto, fecha de llegada y nombre completo — y espera su confirmación.
-- PAGOS: si el apartado requiere prepago (requires_prepayment), usa solicitar_pago y comparte lo que devuelva tal cual: link de pago (el huésped paga ahí y el sistema confirma solo) o cuentas para transferencia (pide el comprobante por este chat; el hotel lo verifica). NUNCA digas que un pago fue recibido o verificado: eso solo lo confirma el sistema (consultar_reserva) o el personal. Si el huésped insiste en que ya pagó y el sistema no lo refleja, usa transferir_a_humano.
+- PAGOS: si el apartado requiere prepago (requires_prepayment), PRIMERO ofrece al huésped las formas de pago disponibles según payment_options del apartado (pasarelas por su nombre, transferencia, efectivo al llegar) y pregunta cuál prefiere — solo menciona las que existan. Con su elección llama solicitar_pago (metodo y proveedor) y comparte lo que devuelva tal cual: link de pago (paga ahí y el sistema confirma solo), cuentas para transferencia (pide el comprobante por este chat; el hotel lo verifica), o efectivo (dile hasta cuándo queda apartada su habitación y que paga al llegar). Si solo hay UNA opción, no preguntes: úsala directo. NUNCA digas que un pago fue recibido o verificado: eso solo lo confirma el sistema (consultar_reserva) o el personal. Si el huésped insiste en que ya pagó y el sistema no lo refleja, usa transferir_a_humano.
 - NUNCA pidas ni aceptes números de tarjeta por el chat; si el huésped los envía, dile que por seguridad los borre y no los uses.
 - Cita montos exactamente como los devuelven las herramientas (usa *_label).
 - Si el huésped pide VARIAS habitaciones, haz UNA llamada de crear_apartado por cada una y reporta el resultado real de CADA llamada (código de reserva o el error exacto). Nunca resumas dos apartados en uno ni des por hecho uno que no confirmaste con la herramienta.
 - Si una herramienta devuelve un error, comunica al huésped el mensaje EXACTO que devolvió — nunca inventes la causa ni digas "no hay disponibilidad" si la herramienta dijo otra cosa.
+- ADJUNTOS: tú no puedes ver imágenes ni archivos. Cuando un mensaje diga "[adjuntó una imagen o documento]", el archivo SÍ llegó y el personal puede verlo — NUNCA digas que no se recibió ni pidas que lo reenvíe. Si es un comprobante de pago, agradece y di que el personal lo verificará; recuerda que tú no confirmas pagos.
 - Si el huésped pide hablar con una persona, se queja, o pide algo fuera de tu alcance, usa la herramienta transferir_a_humano.
 - Hoy es {$this->today()}. Fechas en formato YYYY-MM-DD HH:MM.
 - Sé breve, cálido y profesional; máximo 2-3 oraciones por respuesta salvo que listes opciones. No uses emojis.
@@ -380,6 +381,7 @@ BLOCK;
         $messages = $conversation->messages()
             ->whereIn('sender_type', ['visitor', 'bot', 'staff'])
             ->where('id', '>', $conversation->summary_message_id ?? 0)
+            ->withCount('media')
             ->orderBy('id')
             ->get();
 
@@ -388,7 +390,8 @@ BLOCK;
         }
 
         $transcript = $messages
-            ->map(fn (Message $m) => ($m->direction === 'in' ? 'Huésped' : ($m->sender_type === 'staff' ? 'Hotel (persona)' : 'Asistente')).': '.$m->body)
+            ->map(fn (Message $m) => ($m->direction === 'in' ? 'Huésped' : ($m->sender_type === 'staff' ? 'Hotel (persona)' : 'Asistente')).': '.$m->body
+                .($m->direction === 'in' && $m->media_count > 0 ? ' [adjuntó una imagen o documento]' : ''))
             ->implode("\n");
 
         $previous = $conversation->summary
@@ -439,10 +442,20 @@ BLOCK;
         // reciente debe quedar AL FINAL o el modelo pierde el hilo.
         return $conversation->messages()
             ->whereIn('sender_type', ['visitor', 'bot', 'staff'])
+            ->withCount('media')
             ->latest('id')->take(20)->get()->reverse()
-            ->map(fn (Message $message) => $message->direction === 'in'
-                ? new UserMessage($message->body)
-                : new AssistantMessage($message->body))
+            ->map(function (Message $message) {
+                // El LLM no ve imágenes: se le anota que el adjunto SÍ
+                // llegó, para que jamás diga "no recibí ningún archivo"
+                // con la foto visible en la bandeja (bug real 2026-07-24).
+                $body = $message->body.($message->direction === 'in' && $message->media_count > 0
+                    ? "\n[adjuntó una imagen o documento — el personal puede verlo]"
+                    : '');
+
+                return $message->direction === 'in'
+                    ? new UserMessage($body)
+                    : new AssistantMessage($body);
+            })
             ->values()
             ->all();
     }
@@ -577,12 +590,20 @@ BLOCK;
                 ->using(fn (string $code): string => $call('reservation', ['code' => $code])),
 
             Tool::as('solicitar_pago')
-                ->for('Emite el cobro de una reserva (anticipo o saldo; el sistema decide monto y concepto). Úsala tras crear un apartado que requiere prepago, o si el huésped quiere pagar. Devuelve un LINK de pago (payment_link) o cuentas bancarias para transferencia: comparte lo que devuelva tal cual, con el monto exacto. Si es transferencia, pide el comprobante por el chat. NUNCA des un pago por recibido: eso lo confirma el sistema.')
+                ->for('Emite el cobro de una reserva (anticipo o saldo; el sistema decide monto y concepto). Úsala tras crear un apartado que requiere prepago, DESPUÉS de preguntar al huésped cómo prefiere pagar (las opciones reales vienen en payment_options del apartado). Según metodo devuelve: un LINK de pago (payment_link), cuentas bancarias para transferencia (pide el comprobante por este chat), o la confirmación de que pagará en efectivo al llegar (dile hasta cuándo queda apartado). Comparte lo que devuelva tal cual, con el monto exacto. NUNCA des un pago por recibido: eso lo confirma el sistema.')
                 ->withStringParameter('codigo_reserva', 'Código de la reserva (ej. RES-2026-0001)')
-                ->using(function (string $codigo_reserva) use ($call, $conversation): string {
-                    $result = $call('payment', ['code' => $codigo_reserva]);
+                ->withStringParameter('metodo', "Método que eligió el huésped: 'pasarela' (pagar en línea con link), 'transferencia' o 'efectivo' (paga al llegar al hotel). Omítelo solo si el huésped no expresó preferencia.", false)
+                ->withStringParameter('proveedor', "Solo si hay varias pasarelas y el huésped eligió una: 'stripe', 'mercadopago' o 'paypal'.", false)
+                ->using(function (string $codigo_reserva, ?string $metodo = null, ?string $proveedor = null) use ($call, $conversation): string {
+                    $result = $call('payment', array_filter([
+                        'code' => $codigo_reserva,
+                        'metodo' => $metodo,
+                        'proveedor' => $proveedor,
+                    ]));
 
-                    if ($conversation && (json_decode($result, true)['amount'] ?? null) !== null) {
+                    $decoded = json_decode($result, true);
+
+                    if ($conversation && (($decoded['amount'] ?? null) !== null || ($decoded['method'] ?? null) === 'efectivo')) {
                         $conversation->markLead(Conversation::LEAD_HOLD);
                     }
 

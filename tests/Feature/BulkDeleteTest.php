@@ -1,13 +1,11 @@
 <?php
 
-use App\Enums\ReservationStatus;
 use App\Http\Controllers\Tenant\GuestController;
 use App\Http\Controllers\Tenant\RoomController;
 use App\Http\Controllers\Tenant\UserController;
 use App\Models\Guest;
 use App\Models\Property;
 use App\Models\RatePlan;
-use App\Models\Reservation;
 use App\Models\Room;
 use App\Models\RoomType;
 use App\Models\User;
@@ -29,7 +27,7 @@ function bulkDelete(string $controller, array $ids, ?User $actor = null): array
     return app($controller)->destroyBulk($request)->getData(true);
 }
 
-it('huéspedes: borra los sin historial y conserva los que tienen reservas', function () {
+it('huéspedes: borra los sin historial y archiva los que tienen reservas', function () {
     $roomType = RoomType::factory()->create(['property_id' => $this->property->id]);
     $room = Room::factory()->create(['property_id' => $this->property->id, 'room_type_id' => $roomType->id]);
     $plan = RatePlan::factory()->create(['property_id' => $this->property->id, 'room_type_id' => $roomType->id, 'price' => 1000]);
@@ -48,9 +46,11 @@ it('huéspedes: borra los sin historial y conserva los que tienen reservas', fun
 
     $result = bulkDelete(GuestController::class, [$libre->id, $conHistorial->id]);
 
-    expect($result)->toBe(['deleted' => 1, 'skipped' => 1])
-        ->and(Guest::whereKey($libre->id)->exists())->toBeFalse()
-        ->and(Guest::whereKey($conHistorial->id)->exists())->toBeTrue();
+    expect($result)->toBe(['deleted' => 1, 'archived' => 1])
+        ->and(Guest::withTrashed()->whereKey($libre->id)->exists())->toBeFalse()
+        // Archivado: fuera del directorio, pero restaurable.
+        ->and(Guest::whereKey($conHistorial->id)->exists())->toBeFalse()
+        ->and(Guest::onlyTrashed()->whereKey($conHistorial->id)->exists())->toBeTrue();
 });
 
 it('habitaciones: borra las libres y conserva las con reservas próximas', function () {

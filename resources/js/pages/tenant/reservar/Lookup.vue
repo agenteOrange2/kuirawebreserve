@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { Head } from '@inertiajs/vue3';
 import axios from 'axios';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormInput, FormLabel } from '@/components/Base/Form';
+import { FormInput, FormLabel, FormTextarea } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import type { WizardAppearance } from '@/composables/useWizardAppearance';
 import { useWizardAppearance } from '@/composables/useWizardAppearance';
@@ -15,6 +15,16 @@ interface PendingRequest {
     checkout_url: string | null;
     expires_at: string | null;
     bank_accounts: { banco: string; titular: string; cuenta: string }[];
+}
+
+interface PreRegistration {
+    guest_name: string | null;
+    guest_email: string | null;
+    has_email: boolean;
+    vehicle_plate: string | null;
+    vehicle_desc: string | null;
+    eta: string | null;
+    guest_notes: string | null;
 }
 
 interface LookupResult {
@@ -33,8 +43,11 @@ interface LookupResult {
     payment_due_at: string | null;
     hold_expires_at: string | null;
     pending_request: PendingRequest | null;
+    pre_registration: PreRegistration;
     can_cancel: boolean;
     cancellation_policy: string | null;
+    cancellation_policy_text: string | null;
+    cancel_refund_estimate: number | null;
 }
 
 const props = defineProps<{
@@ -73,6 +86,14 @@ async function search() {
             },
         );
         result.value = data;
+        fillPreForm(data.pre_registration);
+        preSaved.value = false;
+        preError.value = null;
+        // Con datos clave aún vacíos, la sección se abre sola para invitar
+        // a completarlos; ya llenos, queda plegada.
+        preOpen.value = !(
+            data.pre_registration.eta || data.pre_registration.vehicle_plate
+        );
     } catch (e: any) {
         error.value =
             e.response?.data?.message ??
@@ -108,6 +129,68 @@ async function cancelReservation() {
             'No se pudo cancelar. Intenta de nuevo o contacta al hotel.';
     } finally {
         canceling.value = false;
+    }
+}
+
+// Pre-registro en línea: el huésped deja sus datos antes de llegar. El
+// formulario se precarga con lo que la reserva ya sabe y solo aplica en
+// Pendiente/Confirmada (después del check-in ya no tiene caso).
+const preOpen = ref(false);
+const preSaving = ref(false);
+const preError = ref<string | null>(null);
+const preSaved = ref(false);
+const preForm = reactive({
+    guest_name: '',
+    guest_email: '',
+    vehicle_plate: '',
+    vehicle_desc: '',
+    eta: '',
+    guest_notes: '',
+});
+
+const canPreRegister = computed(
+    () =>
+        !!result.value &&
+        !canceled.value &&
+        ['pending', 'confirmed'].includes(result.value.status),
+);
+
+function fillPreForm(pre: PreRegistration) {
+    preForm.guest_name = pre.guest_name ?? '';
+    preForm.guest_email = pre.guest_email ?? '';
+    preForm.vehicle_plate = pre.vehicle_plate ?? '';
+    preForm.vehicle_desc = pre.vehicle_desc ?? '';
+    preForm.eta = pre.eta ?? '';
+    preForm.guest_notes = pre.guest_notes ?? '';
+}
+
+async function savePreRegistration() {
+    preSaving.value = true;
+    preError.value = null;
+    preSaved.value = false;
+    try {
+        const { data } = await axios.post<LookupResult>(
+            '/api/booking/reservation/pre-register',
+            {
+                code: code.value.trim(),
+                phone: phone.value.trim(),
+                guest_name: preForm.guest_name.trim() || null,
+                guest_email: preForm.guest_email.trim() || null,
+                vehicle_plate: preForm.vehicle_plate.trim() || null,
+                vehicle_desc: preForm.vehicle_desc.trim() || null,
+                eta: preForm.eta || null,
+                guest_notes: preForm.guest_notes.trim() || null,
+            },
+        );
+        result.value = data;
+        fillPreForm(data.pre_registration);
+        preSaved.value = true;
+    } catch (e: any) {
+        preError.value =
+            e.response?.data?.message ??
+            'No se pudieron guardar tus datos. Intenta de nuevo en un momento.';
+    } finally {
+        preSaving.value = false;
     }
 }
 
@@ -415,6 +498,151 @@ const holdCountdown = computed(() => {
                             </div>
                         </template>
 
+                        <!-- Pre-registro en línea: datos listos antes de llegar -->
+                        <div
+                            v-if="canPreRegister"
+                            class="mt-4 rounded-xl border border-slate-200"
+                        >
+                            <button
+                                type="button"
+                                class="flex min-h-11 w-full items-center justify-between gap-2 px-4 py-3 text-left"
+                                @click="preOpen = !preOpen"
+                            >
+                                <span
+                                    class="flex items-center gap-2 text-sm font-medium text-slate-700"
+                                >
+                                    <Lucide
+                                        icon="ClipboardCheck"
+                                        class="h-4 w-4 shrink-0 text-primary"
+                                    />
+                                    Completa tu pre-registro
+                                </span>
+                                <Lucide
+                                    :icon="preOpen ? 'ChevronUp' : 'ChevronDown'"
+                                    class="h-4 w-4 shrink-0 text-slate-400"
+                                />
+                            </button>
+                            <div
+                                v-if="preOpen"
+                                class="border-t border-slate-100 p-4 sm:p-5"
+                            >
+                                <p class="text-xs text-slate-500">
+                                    Déjanos tus datos desde ahora y tu llegada
+                                    será más rápida: en recepción solo confirmas
+                                    y recibes tu llave.
+                                </p>
+                                <div
+                                    class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2"
+                                >
+                                    <div>
+                                        <FormLabel>Nombre completo</FormLabel>
+                                        <FormInput
+                                            v-model="preForm.guest_name"
+                                            type="text"
+                                            placeholder="Quien llega a recepción"
+                                        />
+                                    </div>
+                                    <div>
+                                        <FormLabel
+                                            >Correo electrónico</FormLabel
+                                        >
+                                        <FormInput
+                                            v-model="preForm.guest_email"
+                                            type="email"
+                                            placeholder="Para tus confirmaciones"
+                                            :disabled="
+                                                result.pre_registration
+                                                    .has_email
+                                            "
+                                        />
+                                        <p
+                                            v-if="
+                                                result.pre_registration
+                                                    .has_email
+                                            "
+                                            class="mt-1 text-xs text-slate-400"
+                                        >
+                                            Este correo ya está registrado en tu
+                                            reserva.
+                                        </p>
+                                    </div>
+                                    <div>
+                                        <FormLabel
+                                            >Placa del vehículo</FormLabel
+                                        >
+                                        <FormInput
+                                            v-model="preForm.vehicle_plate"
+                                            type="text"
+                                            class="uppercase"
+                                            placeholder="ABC-123"
+                                        />
+                                    </div>
+                                    <div>
+                                        <FormLabel
+                                            >Vehículo (marca y color)</FormLabel
+                                        >
+                                        <FormInput
+                                            v-model="preForm.vehicle_desc"
+                                            type="text"
+                                            placeholder="Sedán gris"
+                                        />
+                                    </div>
+                                    <div>
+                                        <FormLabel
+                                            >Hora estimada de llegada</FormLabel
+                                        >
+                                        <FormInput
+                                            v-model="preForm.eta"
+                                            type="time"
+                                        />
+                                    </div>
+                                    <div class="sm:col-span-2">
+                                        <FormLabel
+                                            >¿Algo que debamos saber?</FormLabel
+                                        >
+                                        <FormTextarea
+                                            v-model="preForm.guest_notes"
+                                            :rows="2"
+                                            placeholder="Llegada tarde, cuna para bebé, alguna alergia..."
+                                        />
+                                    </div>
+                                </div>
+                                <p
+                                    v-if="preError"
+                                    class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
+                                >
+                                    {{ preError }}
+                                </p>
+                                <p
+                                    v-if="preSaved"
+                                    class="mt-3 flex items-center gap-2 rounded-lg bg-success/10 px-3 py-2 text-xs font-medium text-success"
+                                >
+                                    <Lucide
+                                        icon="ClipboardCheck"
+                                        class="h-4 w-4 shrink-0"
+                                    />
+                                    Listo, guardamos tus datos. Te esperamos.
+                                </p>
+                                <Button
+                                    variant="primary"
+                                    class="mt-4 min-h-11 w-full shadow-md shadow-primary/20"
+                                    :disabled="preSaving"
+                                    @click="savePreRegistration"
+                                >
+                                    <Lucide
+                                        :icon="preSaving ? 'RefreshCw' : 'Save'"
+                                        class="mr-2 h-4 w-4"
+                                        :class="preSaving && 'animate-spin'"
+                                    />
+                                    {{
+                                        preSaving
+                                            ? 'Guardando…'
+                                            : 'Guardar mis datos'
+                                    }}
+                                </Button>
+                            </div>
+                        </div>
+
                         <!-- Cancelación autoservicio: dos pasos, con la política a la vista -->
                         <template v-if="result.can_cancel && !canceled">
                             <div
@@ -429,6 +657,24 @@ const holdCountdown = computed(() => {
                                         result.cancellation_policy ??
                                         'La habitación se libera de inmediato y tu código dejará de ser válido.'
                                     }}
+                                </p>
+                                <p
+                                    v-if="result.cancellation_policy_text"
+                                    class="mt-1 text-xs text-slate-500"
+                                >
+                                    {{ result.cancellation_policy_text }}
+                                </p>
+                                <p
+                                    v-if="
+                                        result.paid > 0 &&
+                                        result.cancel_refund_estimate !== null
+                                    "
+                                    class="mt-2 text-xs font-medium text-slate-700"
+                                >
+                                    Según la política, al cancelar ahora te
+                                    corresponde un reembolso de
+                                    {{ money(result.cancel_refund_estimate) }}.
+                                    El hotel lo procesará y te contactará.
                                 </p>
                                 <p
                                     v-if="cancelError"

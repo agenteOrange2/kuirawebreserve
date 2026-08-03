@@ -138,6 +138,7 @@ const props = defineProps<{
     canManage: boolean;
     canManageReservations: boolean;
     canManageOrders: boolean;
+    manualCheckinAllowed: boolean;
 }>();
 
 const statusStyles: Record<
@@ -245,7 +246,18 @@ const currencyFormatter = new Intl.NumberFormat('es-MX', {
 // desacomodado por accidente.
 const editMode = ref(false);
 
-function buildNodes(rooms: RoomData[]): Node[] {
+// Retícula del plano: misma separación que los puntitos del fondo; el drag
+// se imanta a ella y el botón "Alinear" redondea a la celda más cercana.
+const GRID = 24;
+
+interface ZoneNodeData {
+    name: string;
+    color: string | null;
+    width: number;
+    height: number;
+}
+
+function buildRoomNodes(rooms: RoomData[]): Node[] {
     return rooms.map((room) => ({
         id: String(room.id),
         type: 'room',
@@ -253,6 +265,71 @@ function buildNodes(rooms: RoomData[]): Node[] {
         draggable: props.canManage && editMode.value,
         data: room,
     }));
+}
+
+// Letreros de zona (piso/área): un contenedor suave detrás de cada grupo de
+// habitaciones con el nombre y color de su zona. Son decorativos: no se
+// arrastran, no se seleccionan y dejan pasar los clics al pane.
+function buildZoneNodes(rooms: RoomData[]): Node[] {
+    const groups = new Map<number, RoomData[]>();
+
+    rooms.forEach((room) => {
+        if (room.zone_id === null || !room.zone) {
+            return;
+        }
+
+        groups.set(room.zone_id, [...(groups.get(room.zone_id) ?? []), room]);
+    });
+
+    const padding = 20;
+    const labelSpace = 34;
+
+    return [...groups.entries()].map(([zoneId, members]) => {
+        const minX = Math.min(...members.map((r) => r.pos_x)) - padding;
+        const minY =
+            Math.min(...members.map((r) => r.pos_y)) - padding - labelSpace;
+        const maxX =
+            Math.max(...members.map((r) => r.pos_x + r.width)) + padding;
+        const maxY =
+            Math.max(...members.map((r) => r.pos_y + r.height)) + padding;
+
+        return {
+            id: `zone-${zoneId}`,
+            type: 'zone',
+            position: { x: minX, y: minY },
+            draggable: false,
+            selectable: false,
+            focusable: false,
+            zIndex: -1,
+            // El wrapper del nodo no captura eventos: los clics dentro del
+            // contenedor caen al pane (cierra el modal) o a la habitación.
+            style: { pointerEvents: 'none' },
+            data: {
+                name: members[0].zone ?? '',
+                color: members[0].zone_color,
+                width: maxX - minX,
+                height: maxY - minY,
+            } satisfies ZoneNodeData,
+        };
+    });
+}
+
+function buildNodes(rooms: RoomData[]): Node[] {
+    return [...buildZoneNodes(rooms), ...buildRoomNodes(rooms)];
+}
+
+// Tinta translúcida a partir del color hex de la zona (viene de la BD);
+// gris neutro cuando la zona no tiene color.
+function zoneTint(color: string | null, alpha: number): string {
+    if (!color || !/^#[0-9a-f]{6}$/i.test(color)) {
+        return `rgba(148, 163, 184, ${alpha})`;
+    }
+
+    const r = parseInt(color.slice(1, 3), 16);
+    const g = parseInt(color.slice(3, 5), 16);
+    const b = parseInt(color.slice(5, 7), 16);
+
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
 const toast = useToasts();
@@ -278,13 +355,17 @@ watch(
 
 watch(editMode, (enabled) => {
     nodes.value.forEach((node) => {
-        node.draggable = props.canManage && enabled;
+        if (node.type === 'room') {
+            node.draggable = props.canManage && enabled;
+        }
     });
 });
 
 const selectedRoom = computed<RoomData | null>(() => {
     const node = nodes.value.find(
-        (item) => (item.data as RoomData).id === selectedId.value,
+        (item) =>
+            item.type === 'room' &&
+            (item.data as RoomData).id === selectedId.value,
     );
     return (node?.data as RoomData) ?? null;
 });
@@ -319,7 +400,7 @@ const fichaItems = computed<{ icon: Icon; label: string; text: string }[]>(
             items.push({
                 icon: 'UserPlus',
                 label: 'Persona extra',
-                text: `${formatMoney(room.extra_guest_fee)} c/u después de ${room.included_occupancy}`,
+                text: `${formatMoney(room.extra_guest_fee)} por persona después de ${room.included_occupancy}`,
             });
         }
 
@@ -359,8 +440,8 @@ const fichaItems = computed<{ icon: Icon; label: string; text: string }[]>(
 
         if (room.check_in_time || room.check_out_time) {
             const times = [
-                room.check_in_time ? `Check-in ${room.check_in_time}` : null,
-                room.check_out_time ? `Check-out ${room.check_out_time}` : null,
+                room.check_in_time ? `Llegada ${room.check_in_time}` : null,
+                room.check_out_time ? `Salida ${room.check_out_time}` : null,
             ].filter((part): part is string => part !== null);
 
             items.push({
@@ -373,6 +454,53 @@ const fichaItems = computed<{ icon: Icon; label: string; text: string }[]>(
         return items;
     },
 );
+
+interface AmenityGroup {
+    title: string;
+    icon: Icon;
+    items: string[];
+}
+
+const amenityGroups = computed<AmenityGroup[]>(() => {
+    const amenities = selectedRoom.value?.amenities ?? [];
+    const groups: AmenityGroup[] = [
+        { title: 'Descanso y comodidad', icon: 'BedDouble', items: [] },
+        { title: 'Entretenimiento y conexión', icon: 'Tv', items: [] },
+        { title: 'Servicios y acceso', icon: 'ConciergeBell', items: [] },
+        { title: 'Otros detalles', icon: 'Sparkles', items: [] },
+    ];
+
+    amenities.forEach((amenity) => {
+        const normalized = amenity
+            .normalize('NFD')
+            .replace(/\p{Diacritic}/gu, '')
+            .toLowerCase();
+
+        if (
+            /(tv|television|teatro|theater|cable|wifi|internet|audio|sonido)/.test(
+                normalized,
+            )
+        ) {
+            groups[1].items.push(amenity);
+        } else if (
+            /(servicio|comida|bebida|cochera|garage|garaje|puerta|estacionamiento)/.test(
+                normalized,
+            )
+        ) {
+            groups[2].items.push(amenity);
+        } else if (
+            /(cama|bano|espejo|iluminacion|piso|acabado|minisplit|clima|aire|colchon|almohada)/.test(
+                normalized,
+            )
+        ) {
+            groups[0].items.push(amenity);
+        } else {
+            groups[3].items.push(amenity);
+        }
+    });
+
+    return groups.filter((group) => group.items.length > 0);
+});
 
 // Refresco de respaldo (spec-plan-maestro E5): Echo empuja los cambios de
 // ESTADO, pero estancias, reservas próximas y consumos solo viajan con el
@@ -507,10 +635,29 @@ function nodeHint(room: RoomData): string {
 }
 
 function patchNode(id: number, data: Partial<RoomData>) {
-    const node = nodes.value.find((item) => (item.data as RoomData).id === id);
+    const node = nodes.value.find(
+        (item) => item.type === 'room' && (item.data as RoomData).id === id,
+    );
     if (node) {
         node.data = { ...(node.data as RoomData), ...data };
     }
+}
+
+// Recalcula los contenedores de zona a partir de las posiciones actuales de
+// los cuartos (tras un drag o un alineado), sin tocar los nodos de cuarto.
+function rebuildZoneNodes() {
+    const rooms = nodes.value
+        .filter((node) => node.type === 'room')
+        .map((node) => ({
+            ...(node.data as RoomData),
+            pos_x: Math.round(node.position.x),
+            pos_y: Math.round(node.position.y),
+        }));
+
+    nodes.value = [
+        ...buildZoneNodes(rooms),
+        ...nodes.value.filter((node) => node.type === 'room'),
+    ];
 }
 
 function reloadRooms() {
@@ -519,7 +666,7 @@ function reloadRooms() {
 }
 
 async function onNodeDragStop(event: NodeDragEvent) {
-    if (!editMode.value) {
+    if (!editMode.value || event.node.type !== 'room') {
         return;
     }
 
@@ -527,12 +674,86 @@ async function onNodeDragStop(event: NodeDragEvent) {
     const pos_x = Math.round(event.node.position.x);
     const pos_y = Math.round(event.node.position.y);
     patchNode(room.id, { pos_x, pos_y });
+    rebuildZoneNodes();
 
     try {
         await axios.patch(`/api/rooms/${room.id}`, { pos_x, pos_y });
     } catch {
         errorMessage.value = `No se pudo guardar la posición de la habitación ${room.number}.`;
     }
+}
+
+function onNodeClick(event: { node: Node }) {
+    if (event.node.type === 'room') {
+        selectedId.value = (event.node.data as RoomData).id;
+    }
+}
+
+const aligning = ref(false);
+
+// Endereza el plano sin reacomodarlo: cada cuarto se redondea a la celda de
+// la retícula más cercana — quién está junto a quién no cambia.
+async function alignToGrid() {
+    aligning.value = true;
+    errorMessage.value = null;
+
+    const moved: {
+        id: number;
+        number: string;
+        pos_x: number;
+        pos_y: number;
+    }[] = [];
+
+    nodes.value.forEach((node) => {
+        if (node.type !== 'room') {
+            return;
+        }
+
+        const room = node.data as RoomData;
+        const pos_x = Math.round(node.position.x / GRID) * GRID;
+        const pos_y = Math.round(node.position.y / GRID) * GRID;
+
+        if (pos_x === room.pos_x && pos_y === room.pos_y) {
+            return;
+        }
+
+        node.position = { x: pos_x, y: pos_y };
+        node.data = { ...room, pos_x, pos_y };
+        moved.push({ id: room.id, number: room.number, pos_x, pos_y });
+    });
+
+    rebuildZoneNodes();
+
+    if (moved.length === 0) {
+        toast.success('Plano alineado', 'Todo ya estaba en la cuadrícula.');
+        aligning.value = false;
+        return;
+    }
+
+    const results = await Promise.allSettled(
+        moved.map((room) =>
+            axios.patch(`/api/rooms/${room.id}`, {
+                pos_x: room.pos_x,
+                pos_y: room.pos_y,
+            }),
+        ),
+    );
+
+    const failed = results.filter(
+        (result) => result.status === 'rejected',
+    ).length;
+
+    if (failed > 0) {
+        errorMessage.value = `No se pudo guardar la posición de ${failed} ${failed === 1 ? 'habitación' : 'habitaciones'}.`;
+        toast.error('Alineado incompleto', errorMessage.value);
+    } else {
+        toast.success(
+            'Plano alineado',
+            `${moved.length} ${moved.length === 1 ? 'habitación ajustada' : 'habitaciones ajustadas'} a la cuadrícula.`,
+        );
+    }
+
+    aligning.value = false;
 }
 
 async function changeStatus(room: RoomData, status: string) {
@@ -595,9 +816,9 @@ function checkInReservation(room: RoomData) {
             );
         },
         {
-            successTitle: 'Check-in realizado',
+            successTitle: 'Llegada registrada',
             successMessage: `Habitación ${room.number} ocupada`,
-            errorTitle: 'No se pudo hacer el check-in',
+            errorTitle: 'No se pudo registrar la llegada',
         },
     );
 }
@@ -613,9 +834,9 @@ function checkOutStay(room: RoomData) {
             await axios.patch(`/api/stays/${room.active_stay?.id}/check-out`);
         },
         {
-            successTitle: 'Check-out realizado',
+            successTitle: 'Salida registrada',
             successMessage: `La habitación ${room.number} pasó a sucia; limpieza puede entrar`,
-            errorTitle: 'No se pudo hacer el check-out',
+            errorTitle: 'No se pudo registrar la salida',
         },
     );
 }
@@ -700,6 +921,17 @@ useEcho<RoomStatusChangedPayload>(
                     {{ meta.label }}
                 </span>
                 <Button
+                    v-if="canManage && editMode"
+                    variant="outline-secondary"
+                    class="rounded-[0.5rem]"
+                    :disabled="aligning"
+                    title="Endereza los cuartos a la cuadrícula sin cambiar su acomodo"
+                    @click="alignToGrid"
+                >
+                    <Lucide icon="Grid3x3" class="mr-2 h-4 w-4" />
+                    {{ aligning ? 'Alineando…' : 'Alinear' }}
+                </Button>
+                <Button
                     v-if="canManage"
                     :variant="editMode ? 'primary' : 'outline-secondary'"
                     class="rounded-[0.5rem]"
@@ -724,9 +956,10 @@ useEcho<RoomStatusChangedPayload>(
             class="mt-3 flex items-center gap-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2 text-xs text-slate-600 dark:text-slate-300"
         >
             <Lucide icon="Move" class="h-4 w-4 shrink-0 text-warning" />
-            Modo edición: arrastra los cuartos para acomodarlos; la posición se
-            guarda sola. El refresco automático queda pausado hasta que
-            presiones "Terminar edición".
+            Modo edición: arrastra los cuartos para acomodarlos — se imantan a
+            la cuadrícula y la posición se guarda sola. "Alinear" endereza de un
+            golpe los que quedaron chuecos. El refresco automático queda pausado
+            hasta que presiones "Terminar edición".
         </div>
 
         <div
@@ -747,13 +980,39 @@ useEcho<RoomStatusChangedPayload>(
                 :max-zoom="2.5"
                 fit-view-on-init
                 :nodes-connectable="false"
+                :snap-to-grid="true"
+                :snap-grid="[GRID, GRID]"
                 @node-drag-stop="onNodeDragStop"
-                @node-click="selectedId = ($event.node.data as RoomData).id"
+                @node-click="onNodeClick"
                 @pane-click="selectedId = null"
             >
-                <Background :gap="24" />
+                <Background :gap="GRID" />
                 <MiniMap pannable zoomable />
                 <Controls :show-interactive="false" />
+
+                <template #node-zone="{ data }">
+                    <div
+                        class="relative rounded-2xl border border-dashed"
+                        :style="{
+                            width: `${data.width}px`,
+                            height: `${data.height}px`,
+                            borderColor: zoneTint(data.color, 0.45),
+                            backgroundColor: zoneTint(data.color, 0.06),
+                        }"
+                    >
+                        <span
+                            class="absolute top-2 left-3 inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600 shadow-sm dark:bg-darkmode-600 dark:text-slate-200"
+                        >
+                            <span
+                                class="h-2 w-2 shrink-0 rounded-full"
+                                :style="{
+                                    backgroundColor: zoneTint(data.color, 1),
+                                }"
+                            />
+                            {{ data.name }}
+                        </span>
+                    </div>
+                </template>
 
                 <template #node-room="{ data }">
                     <div
@@ -828,101 +1087,224 @@ useEcho<RoomStatusChangedPayload>(
 
         <Slideover :open="selectedRoom !== null" @close="selectedId = null">
             <Slideover.Panel
-                class="w-full overflow-hidden rounded-[1rem_0_0_1rem/1.25rem_0_0_1.25rem] sm:w-[720px]"
+                class="w-full overflow-hidden rounded-[1rem_0_0_1rem/1.25rem_0_0_1.25rem] sm:w-[820px]"
             >
                 <template v-if="selectedRoom">
                     <Slideover.Title
-                        class="relative border-b border-slate-200/70 px-6 py-5 text-left dark:border-darkmode-400"
+                        class="relative border-b border-slate-200/70 px-5 py-5 text-left sm:px-7 sm:py-6 dark:border-darkmode-400"
                     >
                         <button
-                            class="absolute top-4 right-4 flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-darkmode-400 dark:hover:text-slate-200"
+                            class="absolute top-4 right-4 flex h-10 w-10 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-darkmode-400 dark:hover:text-slate-100"
                             aria-label="Cerrar"
                             @click="selectedId = null"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-6 w-6" />
                         </button>
-                        <div class="pr-10">
+                        <div class="pr-12">
                             <div
-                                class="flex flex-wrap items-center gap-x-3 gap-y-2 text-xl font-medium"
+                                class="flex flex-wrap items-center gap-x-3 gap-y-2"
                             >
-                                <span>
-                                    Habitación {{ selectedRoom.number
-                                    }}<template v-if="selectedRoom.name">
-                                        · {{ selectedRoom.name }}</template
+                                <div
+                                    class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-primary/10 bg-primary/10 text-primary"
+                                >
+                                    <Lucide icon="DoorClosed" class="h-6 w-6" />
+                                </div>
+                                <div>
+                                    <div
+                                        class="text-sm font-medium text-slate-500"
                                     >
-                                </span>
+                                        Habitación
+                                    </div>
+                                    <h2
+                                        class="text-2xl font-semibold text-slate-900 dark:text-slate-100"
+                                    >
+                                        {{ selectedRoom.number }}
+                                    </h2>
+                                </div>
                                 <span
-                                    class="rounded-full px-2.5 py-1 text-xs font-medium"
+                                    class="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-sm font-semibold"
                                     :class="
                                         statusStyles[selectedRoom.color]?.soft
                                     "
                                 >
+                                    <span
+                                        class="h-2.5 w-2.5 rounded-full"
+                                        :class="
+                                            statusStyles[selectedRoom.color]
+                                                ?.dot
+                                        "
+                                    />
                                     {{ selectedRoom.label }}
                                 </span>
                             </div>
-                            <div
-                                class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-slate-500"
+                            <p
+                                v-if="selectedRoom.name"
+                                class="mt-3 text-base font-medium text-slate-700 dark:text-slate-200"
                             >
-                                <span>{{ selectedRoom.room_type }}</span>
-                                <template v-if="selectedRoom.zone">
-                                    <span
-                                        class="text-slate-300 dark:text-slate-600"
-                                        >·</span
-                                    >
-                                    <span
-                                        class="inline-flex items-center gap-1.5"
-                                    >
-                                        <span
-                                            v-if="selectedRoom.zone_color"
-                                            class="h-2 w-2 shrink-0 rounded-full"
-                                            :style="{
-                                                backgroundColor:
-                                                    selectedRoom.zone_color,
-                                            }"
-                                        />
-                                        {{ selectedRoom.zone }}
-                                    </span>
-                                </template>
-                                <span class="text-slate-300 dark:text-slate-600"
-                                    >·</span
+                                {{ selectedRoom.name }}
+                            </p>
+                            <div
+                                class="mt-3 flex flex-wrap gap-2 text-sm text-slate-600 dark:text-slate-300"
+                            >
+                                <span
+                                    class="inline-flex min-h-9 items-center gap-2 rounded-lg bg-slate-100 px-3 dark:bg-darkmode-600"
                                 >
-                                <span class="inline-flex items-center gap-1">
-                                    <Lucide icon="Users" class="h-3.5 w-3.5" />
-                                    {{ selectedRoom.capacity ?? '—' }} pax
+                                    <Lucide
+                                        icon="BedDouble"
+                                        class="h-4 w-4 text-slate-500"
+                                    />
+                                    {{ selectedRoom.room_type }}
+                                </span>
+                                <span
+                                    v-if="selectedRoom.zone"
+                                    class="inline-flex min-h-9 items-center gap-2 rounded-lg bg-slate-100 px-3 dark:bg-darkmode-600"
+                                >
+                                    <Lucide
+                                        icon="MapPin"
+                                        class="h-4 w-4 text-slate-500"
+                                    />
+                                    <span
+                                        v-if="selectedRoom.zone_color"
+                                        class="h-2.5 w-2.5 shrink-0 rounded-full"
+                                        :style="{
+                                            backgroundColor:
+                                                selectedRoom.zone_color,
+                                        }"
+                                    />
+                                    {{ selectedRoom.zone }}
+                                </span>
+                                <span
+                                    class="inline-flex min-h-9 items-center gap-2 rounded-lg bg-slate-100 px-3 dark:bg-darkmode-600"
+                                >
+                                    <Lucide
+                                        icon="Users"
+                                        class="h-4 w-4 text-slate-500"
+                                    />
+                                    Hasta
+                                    {{ selectedRoom.capacity ?? '—' }}
+                                    personas
                                 </span>
                             </div>
                         </div>
                     </Slideover.Title>
 
-                    <Slideover.Description class="space-y-5 px-6 py-5">
+                    <Slideover.Description
+                        class="space-y-5 px-4 py-5 sm:px-7 sm:py-6"
+                    >
                         <section
-                            class="rounded-2xl border border-slate-200/70 bg-slate-50/80 p-4 dark:border-darkmode-400 dark:bg-darkmode-700/50"
+                            v-if="
+                                selectedRoom.status === 'available' &&
+                                canManageReservations
+                            "
+                            class="rounded-2xl border border-primary/20 bg-primary/5 p-5 dark:border-primary/30 dark:bg-primary/10"
+                        >
+                            <div class="flex items-start gap-3">
+                                <div
+                                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                                >
+                                    <Lucide
+                                        icon="MousePointerClick"
+                                        class="h-5 w-5"
+                                    />
+                                </div>
+                                <div>
+                                    <h3
+                                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                                    >
+                                        ¿Qué necesitas hacer?
+                                    </h3>
+                                    <p
+                                        class="mt-1 text-sm text-slate-600 dark:text-slate-300"
+                                    >
+                                        La habitación está libre. Elige una de
+                                        estas dos acciones.
+                                    </p>
+                                </div>
+                            </div>
+                            <div
+                                class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
+                            >
+                                <Button
+                                    variant="primary"
+                                    class="h-auto min-h-14 justify-start rounded-xl px-4 py-3 text-left"
+                                    @click="
+                                        openReservations(
+                                            'walkin',
+                                            selectedRoom.id,
+                                        )
+                                    "
+                                >
+                                    <Lucide
+                                        icon="LogIn"
+                                        class="mr-3 h-5 w-5 shrink-0"
+                                    />
+                                    <span>
+                                        <span class="block font-semibold">
+                                            Llegó sin reserva
+                                        </span>
+                                        <span
+                                            class="mt-0.5 block text-xs font-normal opacity-80"
+                                        >
+                                            Registrar su entrada ahora
+                                        </span>
+                                    </span>
+                                </Button>
+                                <Button
+                                    variant="outline-primary"
+                                    class="h-auto min-h-14 justify-start rounded-xl bg-white px-4 py-3 text-left dark:bg-darkmode-600"
+                                    @click="
+                                        openReservations(
+                                            'reserve',
+                                            selectedRoom.id,
+                                        )
+                                    "
+                                >
+                                    <Lucide
+                                        icon="CalendarPlus"
+                                        class="mr-3 h-5 w-5 shrink-0"
+                                    />
+                                    <span>
+                                        <span class="block font-semibold">
+                                            Crear una reserva
+                                        </span>
+                                        <span
+                                            class="mt-0.5 block text-xs font-normal text-slate-500"
+                                        >
+                                            Apartarla para otra fecha
+                                        </span>
+                                    </span>
+                                </Button>
+                            </div>
+                        </section>
+
+                        <section
+                            class="rounded-2xl border border-slate-200/70 bg-slate-50/80 p-5 dark:border-darkmode-400 dark:bg-darkmode-700/50"
                         >
                             <div
                                 class="flex flex-wrap items-start justify-between gap-3"
                             >
                                 <div>
                                     <h3
-                                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
+                                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
                                     >
-                                        Resumen
+                                        Información de la habitación
                                     </h3>
                                     <p class="mt-1 text-sm text-slate-500">
-                                        Estado actual, notas y atributos
-                                        comerciales.
+                                        Lo más importante para explicarle la
+                                        habitación al huésped.
                                     </p>
                                 </div>
                                 <div
                                     v-if="selectedRoom.price_from !== null"
-                                    class="rounded-xl bg-white px-3 py-2 text-right shadow-sm dark:bg-darkmode-600"
+                                    class="rounded-xl bg-white px-4 py-3 text-right shadow-sm dark:bg-darkmode-600"
                                 >
                                     <div
-                                        class="text-[11px] tracking-wide text-slate-500 uppercase"
+                                        class="text-xs font-medium tracking-wide text-slate-500 uppercase"
                                     >
                                         Desde
                                     </div>
                                     <div
-                                        class="text-sm font-semibold text-slate-900 dark:text-slate-100"
+                                        class="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100"
                                     >
                                         {{
                                             formatMoney(selectedRoom.price_from)
@@ -938,20 +1320,24 @@ useEcho<RoomStatusChangedPayload>(
                                 <div
                                     v-for="item in fichaItems"
                                     :key="item.label"
-                                    class="flex items-start gap-2.5 rounded-xl bg-white px-3 py-2.5 shadow-sm dark:bg-darkmode-600"
+                                    class="flex min-h-20 items-center gap-3 rounded-xl bg-white p-3.5 shadow-sm dark:bg-darkmode-600"
                                 >
-                                    <Lucide
-                                        :icon="item.icon"
-                                        class="mt-0.5 h-4 w-4 shrink-0 text-slate-400"
-                                    />
+                                    <div
+                                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                                    >
+                                        <Lucide
+                                            :icon="item.icon"
+                                            class="h-5 w-5"
+                                        />
+                                    </div>
                                     <div class="min-w-0">
                                         <div
-                                            class="text-[11px] tracking-wide text-slate-500 uppercase"
+                                            class="text-xs font-medium tracking-wide text-slate-500 uppercase"
                                         >
                                             {{ item.label }}
                                         </div>
                                         <div
-                                            class="mt-0.5 text-sm font-medium text-slate-700 dark:text-slate-200"
+                                            class="mt-1 text-base leading-snug font-medium text-slate-800 dark:text-slate-100"
                                         >
                                             {{ item.text }}
                                         </div>
@@ -961,28 +1347,61 @@ useEcho<RoomStatusChangedPayload>(
 
                             <p
                                 v-if="selectedRoom.description"
-                                class="mt-3 text-xs text-slate-500"
+                                class="mt-4 rounded-xl bg-white p-3.5 text-sm leading-relaxed text-slate-600 shadow-sm dark:bg-darkmode-600 dark:text-slate-300"
                             >
                                 {{ selectedRoom.description }}
                             </p>
 
                             <div
                                 v-if="selectedRoom.amenities.length"
-                                class="mt-4 border-t border-slate-200/70 pt-4 dark:border-darkmode-400"
+                                class="mt-5 border-t border-slate-200/70 pt-5 dark:border-darkmode-400"
                             >
-                                <div
-                                    class="text-[11px] tracking-wide text-slate-500 uppercase"
-                                >
-                                    Amenidades
-                                </div>
-                                <div class="mt-2 flex flex-wrap gap-1.5">
-                                    <span
-                                        v-for="amenity in selectedRoom.amenities"
-                                        :key="amenity"
-                                        class="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm dark:bg-darkmode-600 dark:text-slate-200"
+                                <div>
+                                    <h4
+                                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
                                     >
-                                        {{ amenity }}
-                                    </span>
+                                        Lo que incluye
+                                    </h4>
+                                    <p class="mt-1 text-sm text-slate-500">
+                                        Amenidades agrupadas para encontrarlas
+                                        más rápido.
+                                    </p>
+                                </div>
+                                <div
+                                    class="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2"
+                                >
+                                    <div
+                                        v-for="group in amenityGroups"
+                                        :key="group.title"
+                                        class="rounded-xl bg-white p-4 shadow-sm dark:bg-darkmode-600"
+                                    >
+                                        <div
+                                            class="flex items-center gap-2.5 text-sm font-semibold text-slate-800 dark:text-slate-100"
+                                        >
+                                            <div
+                                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                                            >
+                                                <Lucide
+                                                    :icon="group.icon"
+                                                    class="h-5 w-5"
+                                                />
+                                            </div>
+                                            {{ group.title }}
+                                        </div>
+                                        <ul class="mt-3 space-y-2.5">
+                                            <li
+                                                v-for="amenity in group.items"
+                                                :key="amenity"
+                                                class="flex items-start gap-2 text-sm leading-snug text-slate-600 dark:text-slate-300"
+                                            >
+                                                <Lucide
+                                                    icon="CircleCheck"
+                                                    class="mt-0.5 h-4 w-4 shrink-0 text-success"
+                                                />
+                                                <span>{{ amenity }}</span>
+                                            </li>
+                                        </ul>
+                                    </div>
                                 </div>
                             </div>
 
@@ -991,19 +1410,27 @@ useEcho<RoomStatusChangedPayload>(
                                 class="mt-4 border-t border-slate-200/70 pt-4 dark:border-darkmode-400"
                             >
                                 <div
-                                    class="text-[11px] tracking-wide text-slate-500 uppercase"
+                                    class="text-sm font-semibold text-slate-900 dark:text-slate-100"
                                 >
-                                    Cargos opcionales
+                                    Servicios con costo adicional
                                 </div>
-                                <div class="mt-2 flex flex-wrap gap-1.5">
-                                    <span
+                                <div class="mt-3 grid gap-2 sm:grid-cols-2">
+                                    <div
                                         v-for="charge in selectedRoom.optional_charges"
                                         :key="charge.concept"
-                                        class="rounded-full bg-white px-3 py-1 text-xs font-medium text-slate-600 shadow-sm dark:bg-darkmode-600 dark:text-slate-200"
+                                        class="flex items-center justify-between gap-3 rounded-xl bg-white px-3.5 py-3 text-sm shadow-sm dark:bg-darkmode-600"
                                     >
-                                        {{ charge.concept }} ·
-                                        {{ formatMoney(charge.amount) }}
-                                    </span>
+                                        <span class="flex items-center gap-2">
+                                            <Lucide
+                                                icon="CirclePlus"
+                                                class="h-5 w-5 shrink-0 text-primary"
+                                            />
+                                            {{ charge.concept }}
+                                        </span>
+                                        <span class="font-semibold">
+                                            {{ formatMoney(charge.amount) }}
+                                        </span>
+                                    </div>
                                 </div>
                             </div>
 
@@ -1012,9 +1439,9 @@ useEcho<RoomStatusChangedPayload>(
                                 class="mt-4 border-t border-slate-200/70 pt-4 dark:border-darkmode-400"
                             >
                                 <div
-                                    class="text-[11px] tracking-wide text-slate-500 uppercase"
+                                    class="text-sm font-semibold text-slate-900 dark:text-slate-100"
                                 >
-                                    Notas
+                                    Información adicional
                                 </div>
                                 <p
                                     class="mt-2 text-sm whitespace-pre-line text-slate-600 dark:text-slate-300"
@@ -1026,12 +1453,12 @@ useEcho<RoomStatusChangedPayload>(
 
                         <section
                             v-if="selectedRoom.active_stay"
-                            class="rounded-2xl border border-primary/20 bg-primary/5 p-4 dark:border-primary/30 dark:bg-primary/10"
+                            class="rounded-2xl border border-primary/20 bg-primary/5 p-5 dark:border-primary/30 dark:bg-primary/10"
                         >
                             <div class="flex items-start justify-between gap-3">
                                 <div>
                                     <h3
-                                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
+                                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
                                     >
                                         Estancia activa
                                     </h3>
@@ -1085,7 +1512,9 @@ useEcho<RoomStatusChangedPayload>(
                                 <div
                                     class="rounded-xl bg-white/80 p-3 dark:bg-darkmode-600/80"
                                 >
-                                    <dt class="text-slate-500">Check-in</dt>
+                                    <dt class="text-slate-500">
+                                        Entrada registrada
+                                    </dt>
                                     <dd
                                         class="mt-1 font-medium text-slate-900 dark:text-slate-100"
                                     >
@@ -1209,18 +1638,19 @@ useEcho<RoomStatusChangedPayload>(
 
                             <div
                                 v-if="canManageReservations || canManageOrders"
-                                class="mt-4 flex flex-wrap gap-2"
+                                class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3"
                             >
                                 <Button
                                     v-if="canManageOrders"
                                     variant="outline-primary"
+                                    class="min-h-11 justify-center"
                                     @click="
                                         openPos(selectedRoom.active_stay.id)
                                     "
                                 >
                                     <Lucide
                                         icon="ReceiptText"
-                                        class="mr-2 h-4 w-4"
+                                        class="mr-2 h-5 w-5"
                                     />
                                     Cargar consumo
                                 </Button>
@@ -1230,6 +1660,7 @@ useEcho<RoomStatusChangedPayload>(
                                         selectedRoom.active_stay.reservation_id
                                     "
                                     variant="outline-primary"
+                                    class="min-h-11 justify-center"
                                     @click="
                                         openReservationDetail(
                                             selectedRoom.active_stay
@@ -1239,13 +1670,14 @@ useEcho<RoomStatusChangedPayload>(
                                 >
                                     <Lucide
                                         icon="CalendarSearch"
-                                        class="mr-2 h-4 w-4"
+                                        class="mr-2 h-5 w-5"
                                     />
                                     Ver reserva
                                 </Button>
                                 <Button
                                     v-if="canManageReservations"
                                     variant="primary"
+                                    class="min-h-11 justify-center"
                                     :disabled="
                                         busyAction ===
                                         `stay:${selectedRoom.active_stay.id}`
@@ -1254,13 +1686,13 @@ useEcho<RoomStatusChangedPayload>(
                                 >
                                     <Lucide
                                         icon="LogOut"
-                                        class="mr-2 h-4 w-4"
+                                        class="mr-2 h-5 w-5"
                                     />
                                     {{
                                         busyAction ===
                                         `stay:${selectedRoom.active_stay.id}`
                                             ? 'Procesando…'
-                                            : 'Check-out'
+                                            : 'Registrar salida'
                                     }}
                                 </Button>
                             </div>
@@ -1268,12 +1700,12 @@ useEcho<RoomStatusChangedPayload>(
 
                         <section
                             v-if="selectedRoom.upcoming_reservation"
-                            class="rounded-2xl border border-info/20 bg-info/5 p-4 dark:border-info/30 dark:bg-info/10"
+                            class="rounded-2xl border border-info/20 bg-info/5 p-5 dark:border-info/30 dark:bg-info/10"
                         >
                             <div class="flex items-start justify-between gap-3">
                                 <div>
                                     <h3
-                                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
+                                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
                                     >
                                         Reserva próxima
                                     </h3>
@@ -1447,26 +1879,29 @@ useEcho<RoomStatusChangedPayload>(
 
                             <div
                                 v-if="canManageReservations"
-                                class="mt-4 flex flex-wrap gap-2"
+                                class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2"
                             >
                                 <Button
+                                    v-if="manualCheckinAllowed"
                                     variant="primary"
+                                    class="min-h-11 justify-center"
                                     :disabled="
                                         busyAction ===
                                         `reservation:${selectedRoom.upcoming_reservation.id}`
                                     "
                                     @click="checkInReservation(selectedRoom)"
                                 >
-                                    <Lucide icon="LogIn" class="mr-2 h-4 w-4" />
+                                    <Lucide icon="LogIn" class="mr-2 h-5 w-5" />
                                     {{
                                         busyAction ===
                                         `reservation:${selectedRoom.upcoming_reservation.id}`
                                             ? 'Procesando…'
-                                            : 'Check-in'
+                                            : 'Registrar llegada'
                                     }}
                                 </Button>
                                 <Button
                                     variant="outline-primary"
+                                    class="min-h-11 justify-center"
                                     @click="
                                         openReservationDetail(
                                             selectedRoom.upcoming_reservation
@@ -1476,7 +1911,7 @@ useEcho<RoomStatusChangedPayload>(
                                 >
                                     <Lucide
                                         icon="CalendarSearch"
-                                        class="mr-2 h-4 w-4"
+                                        class="mr-2 h-5 w-5"
                                     />
                                     Ver reserva
                                 </Button>
@@ -1485,30 +1920,30 @@ useEcho<RoomStatusChangedPayload>(
 
                         <section
                             v-if="selectedRoom.status === 'available'"
-                            class="rounded-2xl border border-success/20 bg-success/5 p-4 dark:border-success/30 dark:bg-success/10"
+                            class="rounded-2xl border border-success/20 bg-success/5 p-5 dark:border-success/30 dark:bg-success/10"
                         >
                             <div class="flex items-start justify-between gap-3">
                                 <div>
                                     <h3
-                                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
+                                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
                                     >
-                                        Tarifas disponibles
+                                        Precios disponibles
                                     </h3>
                                     <p class="mt-1 text-sm text-slate-500">
-                                        Listas para un walk-in o una reserva
-                                        nueva.
+                                        Elige según el tiempo que ocuparán la
+                                        habitación.
                                     </p>
                                 </div>
                                 <div
-                                    class="rounded-xl bg-white px-3 py-2 text-right shadow-sm dark:bg-darkmode-600"
+                                    class="rounded-xl bg-white px-4 py-3 text-right shadow-sm dark:bg-darkmode-600"
                                 >
                                     <div
-                                        class="text-[11px] tracking-wide text-slate-500 uppercase"
+                                        class="text-xs font-medium tracking-wide text-slate-500 uppercase"
                                     >
                                         Desde
                                     </div>
                                     <div
-                                        class="mt-1 text-sm font-semibold text-success"
+                                        class="mt-1 text-lg font-semibold text-success"
                                     >
                                         {{
                                             selectedRoom.rate_plans.length
@@ -1526,20 +1961,33 @@ useEcho<RoomStatusChangedPayload>(
                                 <div
                                     v-for="plan in selectedRoom.rate_plans"
                                     :key="plan.id"
-                                    class="flex items-center justify-between rounded-xl bg-white/80 px-3 py-2 text-sm dark:bg-darkmode-600/80"
+                                    class="flex items-center justify-between gap-4 rounded-xl bg-white/90 p-4 shadow-sm dark:bg-darkmode-600/80"
                                 >
-                                    <div>
+                                    <div class="flex items-center gap-3">
                                         <div
-                                            class="font-medium text-slate-900 dark:text-slate-100"
+                                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
                                         >
-                                            {{ plan.name }}
+                                            <Lucide
+                                                icon="Clock"
+                                                class="h-5 w-5"
+                                            />
                                         </div>
-                                        <div class="text-xs text-slate-500">
-                                            {{ plan.duration_label }}
+                                        <div>
+                                            <div
+                                                class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                                            >
+                                                {{ plan.name }}
+                                            </div>
+                                            <div
+                                                class="mt-0.5 text-sm text-slate-500"
+                                            >
+                                                Duración:
+                                                {{ plan.duration_label }}
+                                            </div>
                                         </div>
                                     </div>
                                     <div
-                                        class="font-semibold text-slate-900 dark:text-slate-100"
+                                        class="shrink-0 text-lg font-semibold text-slate-900 dark:text-slate-100"
                                     >
                                         {{ formatMoney(plan.price) }}
                                     </div>
@@ -1565,41 +2013,8 @@ useEcho<RoomStatusChangedPayload>(
                                         selectedRoom.price_modifier,
                                     )
                                 }}
-                                / unidad)
+                                por estancia)
                             </p>
-
-                            <div
-                                v-if="canManageReservations"
-                                class="mt-4 flex flex-wrap gap-2"
-                            >
-                                <Button
-                                    variant="outline-primary"
-                                    @click="
-                                        openReservations(
-                                            'walkin',
-                                            selectedRoom.id,
-                                        )
-                                    "
-                                >
-                                    <Lucide icon="Zap" class="mr-2 h-4 w-4" />
-                                    Walk-in
-                                </Button>
-                                <Button
-                                    variant="primary"
-                                    @click="
-                                        openReservations(
-                                            'reserve',
-                                            selectedRoom.id,
-                                        )
-                                    "
-                                >
-                                    <Lucide
-                                        icon="CalendarPlus"
-                                        class="mr-2 h-4 w-4"
-                                    />
-                                    Reservar
-                                </Button>
-                            </div>
                         </section>
 
                         <section
@@ -1659,12 +2074,12 @@ useEcho<RoomStatusChangedPayload>(
                             >
                                 <div>
                                     <h3
-                                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
+                                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
                                     >
-                                        Historial del día
+                                        Cambios de hoy
                                     </h3>
                                     <p class="mt-1 text-sm text-slate-500">
-                                        Mini timeline del semáforo para esta
+                                        Movimientos registrados para esta
                                         habitación.
                                     </p>
                                 </div>
@@ -1706,7 +2121,7 @@ useEcho<RoomStatusChangedPayload>(
                                                     icon="Zap"
                                                     class="h-3 w-3"
                                                 />
-                                                auto
+                                                Automático
                                             </span>
                                         </div>
                                         <div
@@ -1723,6 +2138,21 @@ useEcho<RoomStatusChangedPayload>(
                             <p v-else class="mt-4 text-sm text-slate-500">
                                 Sin cambios registrados hoy.
                             </p>
+
+                            <Button
+                                as="a"
+                                :href="
+                                    route(
+                                        'tenant.rooms.history',
+                                        selectedRoom.id,
+                                    )
+                                "
+                                variant="outline-secondary"
+                                class="mt-4 w-full justify-center"
+                            >
+                                <Lucide icon="History" class="mr-2 h-5 w-5" />
+                                Ver historial completo y próximas reservas
+                            </Button>
                         </section>
 
                         <section
@@ -1730,12 +2160,34 @@ useEcho<RoomStatusChangedPayload>(
                             class="rounded-2xl border border-slate-200/70 p-4 dark:border-darkmode-400"
                         >
                             <h3
-                                class="text-sm font-medium text-slate-900 dark:text-slate-100"
+                                class="text-base font-semibold text-slate-900 dark:text-slate-100"
                             >
-                                Cambiar estado
+                                Limpieza y mantenimiento
                             </h3>
                             <p class="mt-1 text-sm text-slate-500">
-                                Transiciones válidas desde el estado actual.
+                                Aquí solo vive la operación física del cuarto
+                                (limpieza y mantenimiento). Reservada y ocupada
+                                se mueven solas cuando creas una reserva o
+                                registras la llegada del huésped.
+                            </p>
+                            <p
+                                v-if="
+                                    selectedRoom.status === 'reserved' &&
+                                    selectedRoom.upcoming_reservation
+                                "
+                                class="mt-2 flex items-start gap-2 rounded-xl border border-info/30 bg-info/5 p-3 text-sm text-slate-600 dark:text-slate-300"
+                            >
+                                <Lucide
+                                    icon="Info"
+                                    class="mt-0.5 h-4 w-4 shrink-0 text-info"
+                                />
+                                <span>
+                                    Esta habitación está apartada por la reserva
+                                    {{
+                                        selectedRoom.upcoming_reservation.code
+                                    }}; para liberarla, cancela la reserva desde
+                                    "Ver reserva".
+                                </span>
                             </p>
                             <div class="mt-4 flex flex-col gap-2">
                                 <Button
@@ -1743,12 +2195,12 @@ useEcho<RoomStatusChangedPayload>(
                                     :key="status"
                                     :variant="transitionMeta[status].variant"
                                     :disabled="saving"
-                                    class="w-full justify-center py-2.5"
+                                    class="min-h-11 w-full justify-center py-2.5"
                                     @click="changeStatus(selectedRoom, status)"
                                 >
                                     <Lucide
                                         :icon="transitionMeta[status].icon"
-                                        class="mr-2 h-4 w-4"
+                                        class="mr-2 h-5 w-5"
                                     />
                                     {{ transitionMeta[status].label }}
                                 </Button>
@@ -1756,10 +2208,11 @@ useEcho<RoomStatusChangedPayload>(
                         </section>
                     </Slideover.Description>
                     <Slideover.Footer
-                        class="flex justify-end bg-slate-50/80 dark:bg-darkmode-700/50"
+                        class="flex justify-end bg-slate-50/80 px-5 py-4 sm:px-7 dark:bg-darkmode-700/50"
                     >
                         <Button
                             variant="outline-secondary"
+                            class="min-h-11 min-w-28 justify-center rounded-[0.5rem] bg-white text-base dark:bg-darkmode-600"
                             @click="selectedId = null"
                             >Cerrar</Button
                         >

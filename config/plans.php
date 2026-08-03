@@ -36,7 +36,10 @@ return [
         'max_users' => 20,
         'max_channels' => 3,
         'max_gateways' => 3,
-        'modules' => ['pos', 'cobros', 'agente-ia', 'extras', 'experiencias', 'grupos'],
+        // SEMILLA: la verdad viva por plan es la tabla central `plans`
+        // (editable en /admin/plans) — ahí se activan lista-espera y
+        // cupones para los planes que ya existen en BD.
+        'modules' => ['pos', 'cobros', 'agente-ia', 'extras', 'experiencias', 'grupos', 'lista-espera', 'cupones'],
         // IA incluida con cuota mensual de respuestas del bot (null = sin límite).
         'ai' => ['enabled' => true, 'monthly_replies' => 500],
     ],

@@ -250,3 +250,35 @@ it('el bot entrega link de pago cuando hay pasarela activa', function () {
         ->and($data['payment_link'])->toContain('checkout.stripe.com')
         ->and((float) $data['amount'])->toBe(200.0);
 });
+
+it('cambiar de pasarela emite un checkout NUEVO: nunca recicla el link de la otra', function () {
+    Http::fake([
+        'api.stripe.com/v1/checkout/sessions' => Http::response(['id' => 'cs_1', 'url' => 'https://checkout.stripe.com/pay/cs_1']),
+        'api-m.sandbox.paypal.com/v1/oauth2/token' => Http::response(['access_token' => 'tok-1']),
+        'api-m.sandbox.paypal.com/v2/checkout/orders' => Http::response([
+            'id' => 'ORDER-1',
+            'links' => [['rel' => 'approve', 'href' => 'https://www.sandbox.paypal.com/checkoutnow?token=ORDER-1']],
+        ]),
+    ]);
+
+    $reservation = reservaGateway();
+    $stripe = stripeLink();
+    $paypal = stripeLink(['provider' => 'paypal', 'public_key' => 'client_1', 'secret_key' => 'secret_1']);
+    $issue = app(\App\Actions\Payments\IssuePaymentRequest::class);
+
+    // El huésped pidió PayPal y luego se arrepintió: quiere Stripe.
+    $first = $issue->handle($reservation, \App\Models\PaymentRequest::METHOD_GATEWAY, null, $paypal);
+    $second = $issue->handle($reservation->refresh(), \App\Models\PaymentRequest::METHOD_GATEWAY, null, $stripe);
+
+    expect($first->provider)->toBe('paypal')
+        ->and($first->checkout_url)->toContain('paypal.com')
+        ->and($second->id)->not->toBe($first->id)
+        ->and($second->provider)->toBe('stripe')
+        ->and($second->checkout_url)->toContain('checkout.stripe.com')
+        // El link viejo muere: un solo cobro vivo por el mismo dinero.
+        ->and($first->refresh()->status)->toBe(\App\Models\PaymentRequest::STATUS_CANCELED);
+
+    // Misma pasarela dos veces sigue siendo idempotente (mismo cobro).
+    $third = $issue->handle($reservation->refresh(), \App\Models\PaymentRequest::METHOD_GATEWAY, null, $stripe);
+    expect($third->id)->toBe($second->id);
+});

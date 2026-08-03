@@ -62,6 +62,19 @@ class DirectGuestMessenger
         return $this->noticeEmailTo($guest?->email, $subject, $body, $code, $details) || $sent;
     }
 
+    /**
+     * WhatsApp + correo a un contacto suelto que NO existe (todavía) en el
+     * CRM — el caso de la lista de espera: dejó nombre y teléfono/correo en
+     * el wizard sin llegar a reservar. Mismo doble canal que
+     * sendToGuestFull, sin Guest de por medio.
+     */
+    public function sendToContact(?string $phone, ?string $email, string $subject, string $body): bool
+    {
+        $sent = $this->whatsAppTo((string) $phone, $body);
+
+        return $this->noticeEmailTo($email ?: null, $subject, $body, '', []) || $sent;
+    }
+
     protected function noticeEmailTo(?string $email, string $subject, string $body, string $code, array $details): bool
     {
         if (! $email) {

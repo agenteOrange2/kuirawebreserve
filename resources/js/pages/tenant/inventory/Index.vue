@@ -398,12 +398,27 @@ const tabs = computed(() => [
 <template>
     <RazeLayout title="Inventario">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Inventario</h1>
-                    <p class="text-sm text-slate-500">{{ property.name }}</p>
+            <div
+                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                    >
+                        <Lucide icon="Package" class="h-5 w-5 sm:h-7 sm:w-7" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-lg font-medium sm:text-xl">
+                            Inventario
+                        </h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            {{ property.name }}
+                        </p>
+                    </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
+                >
                     <Button
                         variant="outline-primary"
                         class="rounded-[0.5rem] bg-white"

@@ -106,6 +106,31 @@ it('calcula métricas del huésped: visitas y gasto con consumos', function () {
         ->and($metrics['cancellations'])->toBe(0);
 });
 
+it('purga definitivamente a un huésped archivado y su historial queda sin vínculo', function () {
+    $guest = Guest::create(['first_name' => 'Paola', 'phone' => '+52666666']);
+
+    $reservation = app(CreateReservation::class)->handle([
+        'rate_plan_id' => $this->plan->id,
+        'guest_id' => $guest->id,
+        'starts_at' => now()->addDay()->setTime(15, 0),
+        'ends_at' => now()->addDays(2)->setTime(12, 0),
+        'confirmed' => true,
+    ]);
+
+    // Primer borrado: tiene historial, así que se archiva (soft delete).
+    app(App\Http\Controllers\Tenant\GuestController::class)->destroy($guest);
+
+    expect(Guest::find($guest->id))->toBeNull()
+        ->and(Guest::withTrashed()->find($guest->id))->not->toBeNull();
+
+    // Segundo borrado sobre el archivado: purga definitiva; la reserva
+    // se conserva pero pierde el vínculo (FK nullOnDelete).
+    app(App\Http\Controllers\Tenant\GuestController::class)->destroy($guest->refresh());
+
+    expect(Guest::withTrashed()->find($guest->id))->toBeNull()
+        ->and($reservation->refresh()->guest_id)->toBeNull();
+});
+
 it('busca huéspedes por nombre, teléfono o email', function () {
     Guest::create(['first_name' => 'Carlos', 'last_name' => 'Santana', 'phone' => '+52644444', 'email' => 'carlos@mail.com']);
     Guest::create(['first_name' => 'Otro', 'phone' => '+52655555']);

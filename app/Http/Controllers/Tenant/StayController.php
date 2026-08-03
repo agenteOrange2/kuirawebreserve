@@ -53,6 +53,13 @@ class StayController extends Controller
             'extra_charges' => ['sometimes', 'array', 'max:20'],
             'extra_charges.*' => ['string', 'max:100'],
             'notes' => ['nullable', 'string'],
+            // Cobro al llegar (walkin_charge=checkin): método presencial del
+            // mostrador; el monto SIEMPRE es el de la estancia, nunca del cliente.
+            'payment_method' => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Payment::METHODS)],
+            'payment_reference' => ['nullable', 'string', 'max:100'],
+            // Fianza (depósito en garantía): método presencial; el monto lo
+            // decide el ajuste del hotel, nunca el cliente.
+            'guarantee_method' => ['nullable', \Illuminate\Validation\Rule::in(['cash', 'card'])],
         ]);
 
         try {
@@ -82,6 +89,11 @@ class StayController extends Controller
             'payment_method' => ['nullable', Rule::in(Payment::METHODS)],
             'reference' => ['nullable', 'string', 'max:100'],
             'force' => ['sometimes', 'boolean'],
+            // Fianza cobrada a la llegada: por default se devuelve al
+            // registrar la salida; desmarcada = retención por daños, con
+            // motivo obligatorio que queda en el registro del pago.
+            'guarantee_refund' => ['sometimes', 'boolean'],
+            'guarantee_retain_reason' => ['nullable', 'string', 'max:255'],
         ]);
 
         try {
@@ -101,6 +113,8 @@ class StayController extends Controller
                 }
             }
 
+            $this->settleGuarantee($request, $stay, $data);
+
             $action->checkOut($stay, $request->user());
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
@@ -110,11 +124,70 @@ class StayController extends Controller
     }
 
     /**
+     * Fianza al registrar la salida: devolverla (default, Refund manual —
+     * el dinero regresa en mostrador) o retenerla por daños con motivo. La
+     * ausencia de guarantee_refund cuenta como devolver: la fianza es un
+     * pasivo y quedársela requiere decisión explícita, nunca un olvido.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    protected function settleGuarantee(Request $request, Stay $stay, array $data): void
+    {
+        $guarantees = $stay->payments()
+            ->where('kind', Payment::KIND_GUARANTEE)
+            ->get()
+            ->filter(fn (Payment $payment) => $payment->refundableAmount() > 0);
+
+        if ($guarantees->isEmpty()) {
+            return;
+        }
+
+        $refund = array_key_exists('guarantee_refund', $data)
+            ? (bool) $data['guarantee_refund']
+            : true;
+
+        if ($refund) {
+            foreach ($guarantees as $payment) {
+                app(\App\Actions\Payments\RefundPayment::class)->handle(
+                    $payment,
+                    $payment->refundableAmount(),
+                    'Devolución de fianza al registrar la salida',
+                    $request->user(),
+                    manual: true,
+                );
+            }
+
+            return;
+        }
+
+        // Retención: exige el porqué — queda en el registro del pago.
+        $reason = trim((string) ($data['guarantee_retain_reason'] ?? ''));
+
+        if ($reason === '') {
+            throw new InvalidArgumentException('Para retener la fianza indica el motivo (daños, faltantes...).');
+        }
+
+        foreach ($guarantees as $payment) {
+            $payment->update([
+                'notes' => trim(($payment->notes ? $payment->notes.' | ' : '')."Fianza retenida: {$reason}"),
+            ]);
+        }
+    }
+
+    /**
      * @return array<string, mixed>
      */
     protected function serializeFolio(Stay $stay): array
     {
         $folio = $stay->folio();
+
+        // Fianza viva de la estancia (cobrada y aún no devuelta): el modal
+        // de salida ofrece devolverla. Fuera del folio a propósito — no es
+        // parte de la cuenta, es un pasivo que regresa.
+        $guaranteeRefundable = round($stay->payments()
+            ->where('kind', Payment::KIND_GUARANTEE)
+            ->get()
+            ->sum(fn (Payment $payment) => $payment->refundableAmount()), 2);
 
         return [
             'lodging_total' => $folio['lodging_total'],
@@ -122,6 +195,7 @@ class StayController extends Controller
             'lodging_pending' => $folio['lodging_pending'],
             'consumption_pending' => $folio['consumption_pending'],
             'grand_pending' => $folio['grand_pending'],
+            'guarantee_refundable' => $guaranteeRefundable,
             'orders' => $folio['orders']->map(fn (Order $order) => [
                 'id' => $order->id,
                 'total' => (float) $order->total,

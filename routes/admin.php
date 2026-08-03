@@ -3,6 +3,7 @@
 use App\Http\Controllers\Admin\AiAgentsController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\PlanController;
+use App\Http\Controllers\Admin\PlanProspectController;
 use App\Http\Controllers\Admin\TenantController;
 use Illuminate\Support\Facades\Route;
 
@@ -35,6 +36,16 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
     Route::delete('tenants/{tenant}/module-requests/{module}', [TenantController::class, 'dismissModuleRequest'])
         ->name('tenants.module-requests.dismiss');
 
+    // Usuarios del propio panel de plataforma (BD central, rol platform-admin).
+    Route::get('usuarios', [\App\Http\Controllers\Admin\AdminUserController::class, 'index'])
+        ->name('users');
+    Route::post('usuarios', [\App\Http\Controllers\Admin\AdminUserController::class, 'store'])
+        ->name('users.store');
+    Route::patch('usuarios/{user}', [\App\Http\Controllers\Admin\AdminUserController::class, 'update'])
+        ->name('users.update');
+    Route::delete('usuarios/{user}', [\App\Http\Controllers\Admin\AdminUserController::class, 'destroy'])
+        ->name('users.destroy');
+
     // Usuarios (datos de acceso del personal) de cada hotel.
     Route::post('tenants/{tenant}/users', [\App\Http\Controllers\Admin\TenantUserController::class, 'store'])
         ->name('tenants.users.store');
@@ -48,6 +59,9 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
     Route::post('plans', [PlanController::class, 'store'])->name('plans.store');
     Route::patch('plans/{plan}', [PlanController::class, 'update'])->name('plans.update');
     Route::delete('plans/{plan}', [PlanController::class, 'destroy'])->name('plans.destroy');
+
+    Route::get('prospectos', [PlanProspectController::class, 'index'])->name('prospects');
+    Route::patch('prospectos/{planProspect}', [PlanProspectController::class, 'update'])->name('prospects.update');
 
     // Agentes IA de plataforma: keys maestras + asignación por tenant.
     Route::get('agentes-ia', [AiAgentsController::class, 'index'])->name('ai');

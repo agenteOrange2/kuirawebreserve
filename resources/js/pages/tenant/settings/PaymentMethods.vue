@@ -8,6 +8,7 @@ import {
     FormInput,
     FormSelect,
     FormSwitch,
+    FormTextarea,
 } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
@@ -52,8 +53,20 @@ const props = defineProps<{
         balance_due_enabled: boolean;
         balance_due_value: number;
         balance_due_unit: string;
+        cancel_policy_enabled: boolean;
+        cancel_free_value: number;
+        cancel_free_unit: string;
+        cancel_penalty_percent: number;
+        cancel_policy_text: string;
+        walkin_charge: 'checkout' | 'checkin';
+        guarantee_enabled: boolean;
+        guarantee_amount: number;
         direct_notify_channel: 'auto' | 'meta' | 'evolution';
         arrival_reminder_enabled: boolean;
+        arrival_soon_enabled: boolean;
+        arrival_soon_hours: number;
+        post_stay_thanks_enabled: boolean;
+        review_url: string;
     };
     notifyChannels: { meta_whatsapp: boolean; evolution: boolean };
     gateways: GatewayLink[];
@@ -64,6 +77,7 @@ const props = defineProps<{
     maxGateways: number | null;
     ratePlansWithDeposit: number;
     activeRatePlans: number;
+    ratePlansWithCancelPolicy: number;
 }>();
 
 const toast = useToasts();
@@ -332,8 +346,45 @@ const form = reactive({
     balance_due_enabled: props.settings.balance_due_enabled,
     balance_due_value: props.settings.balance_due_value,
     balance_due_unit: props.settings.balance_due_unit,
+    cancel_policy_enabled: props.settings.cancel_policy_enabled,
+    cancel_free_value: props.settings.cancel_free_value,
+    cancel_free_unit: props.settings.cancel_free_unit,
+    cancel_penalty_percent: props.settings.cancel_penalty_percent,
+    cancel_policy_text: props.settings.cancel_policy_text,
+    walkin_charge: props.settings.walkin_charge,
+    guarantee_enabled: props.settings.guarantee_enabled,
+    guarantee_amount: props.settings.guarantee_amount as string | number,
     direct_notify_channel: props.settings.direct_notify_channel,
     arrival_reminder_enabled: props.settings.arrival_reminder_enabled,
+    arrival_soon_enabled: props.settings.arrival_soon_enabled,
+    arrival_soon_hours: props.settings.arrival_soon_hours,
+    post_stay_thanks_enabled: props.settings.post_stay_thanks_enabled,
+    review_url: props.settings.review_url,
+});
+
+// La política como la leerá el huésped (mismo formato que el backend).
+const cancelPolicyPreview = computed(() => {
+    const value = form.cancel_free_value || 0;
+    const plural = value !== 1;
+    const unitWord =
+        form.cancel_free_unit === 'hour'
+            ? plural
+                ? 'horas'
+                : 'hora'
+            : form.cancel_free_unit === 'week'
+              ? plural
+                  ? 'semanas'
+                  : 'semana'
+              : plural
+                ? 'días'
+                : 'día';
+    const penalty = form.cancel_penalty_percent;
+    const after =
+        penalty >= 100
+            ? 'después no hay reembolso'
+            : `después se retiene el ${penalty}% de lo pagado`;
+
+    return `Cancelación sin costo hasta ${value} ${unitWord} antes de la llegada; ${after}.`;
 });
 
 // Aviso si el canal elegido no está conectado (el envío caería en silencio).
@@ -390,8 +441,22 @@ async function submit() {
                 balance_due_enabled: form.balance_due_enabled,
                 balance_due_value: form.balance_due_value,
                 balance_due_unit: form.balance_due_unit,
+                cancel_policy_enabled: form.cancel_policy_enabled,
+                cancel_free_value: form.cancel_free_value,
+                cancel_free_unit: form.cancel_free_unit,
+                cancel_penalty_percent: form.cancel_penalty_percent,
+                cancel_policy_text: form.cancel_policy_text,
+                walkin_charge: form.walkin_charge,
+                guarantee_enabled: form.guarantee_enabled,
+                guarantee_amount:
+                    form.guarantee_amount === '' ? 0 : form.guarantee_amount,
                 direct_notify_channel: form.direct_notify_channel,
                 arrival_reminder_enabled: form.arrival_reminder_enabled,
+                arrival_soon_enabled: form.arrival_soon_enabled,
+                arrival_soon_hours: form.arrival_soon_hours,
+                post_stay_thanks_enabled: form.post_stay_thanks_enabled,
+                // 'url' de Laravel rechaza cadena vacía: sin link va null.
+                review_url: form.review_url.trim() || null,
             },
         });
         toast.success('Guardado', 'Los métodos de pago se actualizaron.');
@@ -1454,6 +1519,262 @@ async function submit() {
                             </div>
                         </div>
 
+                        <!-- Política de cancelación default del hotel: ventana con reembolso y retención -->
+                        <div
+                            class="mt-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        >
+                            <div class="flex items-start justify-between gap-4">
+                                <div class="text-sm">
+                                    <div class="font-medium">
+                                        Política de cancelación
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-slate-500">
+                                        Hasta cuándo puede cancelar el huésped
+                                        con reembolso y qué se retiene después.
+                                        Se muestra al reservar, aplica al botón
+                                        de cancelar de la consulta pública y
+                                        calcula el reembolso sugerido en el
+                                        panel. Si una tarifa define su propia
+                                        política, esa manda para sus reservas.
+                                        Apagada: toda cancelación con dinero
+                                        pagado se revisa a mano, como siempre.
+                                    </p>
+                                </div>
+                                <FormSwitch class="mt-1">
+                                    <FormSwitch.Input
+                                        :checked="form.cancel_policy_enabled"
+                                        type="checkbox"
+                                        @change="
+                                            form.cancel_policy_enabled =
+                                                !form.cancel_policy_enabled
+                                        "
+                                    />
+                                </FormSwitch>
+                            </div>
+                            <div
+                                v-if="form.cancel_policy_enabled"
+                                class="mt-3 space-y-3 border-t border-dashed border-slate-300/70 pt-3 dark:border-darkmode-400"
+                            >
+                                <div
+                                    class="flex flex-wrap items-center gap-2"
+                                >
+                                    <span class="text-xs text-slate-500"
+                                        >Cancelación con reembolso completo
+                                        hasta</span
+                                    >
+                                    <FormInput
+                                        v-model.number="form.cancel_free_value"
+                                        type="number"
+                                        min="1"
+                                        max="365"
+                                        class="!w-24 text-center"
+                                    />
+                                    <FormSelect
+                                        v-model="form.cancel_free_unit"
+                                        class="!w-40"
+                                    >
+                                        <option value="hour">Horas</option>
+                                        <option value="day">Días</option>
+                                        <option value="week">Semanas</option>
+                                    </FormSelect>
+                                    <span class="text-xs text-slate-500"
+                                        >antes de la llegada</span
+                                    >
+                                </div>
+                                <div
+                                    class="flex flex-wrap items-center gap-2"
+                                >
+                                    <span class="text-xs text-slate-500"
+                                        >Después de ese plazo se retiene
+                                        el</span
+                                    >
+                                    <FormInput
+                                        v-model.number="
+                                            form.cancel_penalty_percent
+                                        "
+                                        type="number"
+                                        min="0"
+                                        max="100"
+                                        class="!w-24 text-center"
+                                    />
+                                    <span class="text-xs text-slate-500"
+                                        >% de lo pagado (100 = no hay
+                                        reembolso).</span
+                                    >
+                                </div>
+                                <FormHelp
+                                    v-if="
+                                        errors.cancel_free_value ||
+                                        errors.cancel_free_unit ||
+                                        errors.cancel_penalty_percent
+                                    "
+                                    class="text-danger"
+                                    >{{
+                                        errors.cancel_free_value ??
+                                        errors.cancel_free_unit ??
+                                        errors.cancel_penalty_percent
+                                    }}</FormHelp
+                                >
+                                <div
+                                    class="flex items-start gap-1.5 rounded-md border border-info/20 bg-info/5 px-3 py-2 text-xs text-slate-600 dark:text-slate-300"
+                                >
+                                    <Lucide
+                                        icon="Info"
+                                        class="mt-0.5 h-3.5 w-3.5 shrink-0 text-info"
+                                    />
+                                    <span
+                                        >Así la verá el huésped: "{{
+                                            cancelPolicyPreview
+                                        }}"</span
+                                    >
+                                </div>
+                                <div>
+                                    <div class="text-xs text-slate-500">
+                                        Condiciones adicionales (opcional): se
+                                        muestran junto a la política — por
+                                        ejemplo cómo y en cuántos días se
+                                        devuelve el dinero.
+                                    </div>
+                                    <FormTextarea
+                                        v-model="form.cancel_policy_text"
+                                        class="mt-1.5"
+                                        rows="2"
+                                        maxlength="2000"
+                                        placeholder="Ej. Los reembolsos se procesan por el mismo medio de pago en un plazo de 7 días hábiles."
+                                    />
+                                    <FormHelp
+                                        v-if="errors.cancel_policy_text"
+                                        class="text-danger"
+                                        >{{
+                                            errors.cancel_policy_text
+                                        }}</FormHelp
+                                    >
+                                </div>
+                                <p
+                                    v-if="ratePlansWithCancelPolicy > 0"
+                                    class="flex items-start gap-1.5 text-xs text-warning"
+                                >
+                                    <Lucide
+                                        icon="TriangleAlert"
+                                        class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                                    />
+                                    {{ ratePlansWithCancelPolicy }}
+                                    tarifa(s) activa(s) definen su propia
+                                    política de cancelación y mandan sobre esta
+                                    para sus reservas.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Walk-ins de mostrador: cuándo se cobra el hospedaje -->
+                        <div
+                            class="mt-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        >
+                            <div
+                                class="flex flex-wrap items-start justify-between gap-4"
+                            >
+                                <div class="text-sm">
+                                    <div class="font-medium">
+                                        Cobro de huéspedes sin reserva
+                                        (walk-in)
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-slate-500">
+                                        Cuándo se cobra el hospedaje de una
+                                        llegada de mostrador. Al llegar: el
+                                        registro pide el método de pago y el
+                                        hospedaje entra al corte desde el
+                                        inicio (al salir solo consumos). Al
+                                        salir: cuenta final con hospedaje y
+                                        consumos, como siempre.
+                                    </p>
+                                </div>
+                                <FormSelect
+                                    v-model="form.walkin_charge"
+                                    class="!w-64 shrink-0"
+                                >
+                                    <option value="checkout">
+                                        Al registrar la salida
+                                    </option>
+                                    <option value="checkin">
+                                        Al registrar la llegada
+                                    </option>
+                                </FormSelect>
+                            </div>
+                        </div>
+
+                        <!-- Fianza (depósito en garantía): se cobra al llegar,
+                             se devuelve al salir. No es ingreso, es pasivo. -->
+                        <div
+                            class="mt-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        >
+                            <div
+                                class="flex flex-wrap items-start justify-between gap-4"
+                            >
+                                <div class="text-sm">
+                                    <div class="font-medium">
+                                        Fianza (depósito en garantía)
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-slate-500">
+                                        Monto fijo por estancia que se cobra al
+                                        registrar la llegada (walk-in o
+                                        check-in) y se devuelve al registrar la
+                                        salida. No cuenta como venta: el corte
+                                        la muestra aparte y solo ajusta el
+                                        efectivo esperado del arqueo.
+                                    </p>
+                                </div>
+                                <FormSwitch>
+                                    <FormSwitch.Input
+                                        :checked="form.guarantee_enabled"
+                                        type="checkbox"
+                                        @change="
+                                            form.guarantee_enabled =
+                                                !form.guarantee_enabled
+                                        "
+                                    />
+                                </FormSwitch>
+                            </div>
+                            <div
+                                v-if="form.guarantee_enabled"
+                                class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2"
+                            >
+                                <div>
+                                    <label class="mb-1 block text-sm"
+                                        >Monto de la fianza ($)</label
+                                    >
+                                    <FormInput
+                                        v-model="form.guarantee_amount"
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        placeholder="500.00"
+                                    />
+                                    <FormHelp
+                                        v-if="errors.guarantee_amount"
+                                        class="text-danger"
+                                        >{{
+                                            errors.guarantee_amount
+                                        }}</FormHelp
+                                    >
+                                    <FormHelp v-else>
+                                        Con monto en 0 la fianza queda apagada
+                                        aunque el interruptor esté prendido.
+                                    </FormHelp>
+                                </div>
+                                <p
+                                    class="flex items-start gap-1.5 self-center text-xs text-slate-500"
+                                >
+                                    <Lucide
+                                        icon="Info"
+                                        class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                                    />
+                                    Si el staff la retiene al registrar la
+                                    salida (daños, faltantes), se le pide el
+                                    motivo y queda en el registro del pago.
+                                </p>
+                            </div>
+                        </div>
+
                         <!-- Canal de avisos directos (huésped sin conversación: wizard web) -->
                         <div
                             class="mt-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
@@ -1540,6 +1861,107 @@ async function submit() {
                                     "
                                 />
                             </FormSwitch>
+                        </div>
+
+                        <div
+                            class="mt-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        >
+                            <div class="flex items-start justify-between gap-4">
+                                <div class="text-sm">
+                                    <div class="font-medium">
+                                        Aviso el día de la llegada
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-slate-500">
+                                        Un segundo aviso cuando la entrada ya
+                                        está a unas horas: su habitación lo
+                                        espera hoy, con su código y horario.
+                                        Sale por la conversación si existe, o
+                                        por el canal directo de arriba.
+                                    </p>
+                                </div>
+                                <FormSwitch class="mt-1">
+                                    <FormSwitch.Input
+                                        :checked="form.arrival_soon_enabled"
+                                        type="checkbox"
+                                        @change="
+                                            form.arrival_soon_enabled =
+                                                !form.arrival_soon_enabled
+                                        "
+                                    />
+                                </FormSwitch>
+                            </div>
+                            <div
+                                v-if="form.arrival_soon_enabled"
+                                class="mt-3 flex flex-wrap items-center gap-2 border-t border-dashed border-slate-300/70 pt-3 dark:border-darkmode-400"
+                            >
+                                <span class="text-xs text-slate-500"
+                                    >Mandarlo cuando falten</span
+                                >
+                                <FormInput
+                                    v-model.number="form.arrival_soon_hours"
+                                    type="number"
+                                    min="1"
+                                    max="24"
+                                    class="!w-24 text-center"
+                                />
+                                <span class="text-xs text-slate-500"
+                                    >horas para la llegada</span
+                                >
+                            </div>
+                        </div>
+
+                        <div
+                            class="mt-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        >
+                            <div class="flex items-start justify-between gap-4">
+                                <div class="text-sm">
+                                    <div class="font-medium">
+                                        Agradecimiento al salir
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-slate-500">
+                                        Se envía al completar la estancia
+                                        (check-out manual o automático): un
+                                        mensaje agradeciendo la visita, con el
+                                        link de reseñas si lo capturas abajo.
+                                        Sale por la conversación si existe, o
+                                        por el canal directo de arriba.
+                                    </p>
+                                </div>
+                                <FormSwitch class="mt-1">
+                                    <FormSwitch.Input
+                                        :checked="form.post_stay_thanks_enabled"
+                                        type="checkbox"
+                                        @change="
+                                            form.post_stay_thanks_enabled =
+                                                !form.post_stay_thanks_enabled
+                                        "
+                                    />
+                                </FormSwitch>
+                            </div>
+                            <div
+                                v-if="form.post_stay_thanks_enabled"
+                                class="mt-3 border-t border-dashed border-slate-300/70 pt-3 dark:border-darkmode-400"
+                            >
+                                <span class="text-xs text-slate-500"
+                                    >Link de reseñas (Google, Tripadvisor...)
+                                </span>
+                                <FormInput
+                                    v-model="form.review_url"
+                                    type="url"
+                                    placeholder="https://g.page/r/tu-hotel/review"
+                                    class="mt-1.5"
+                                />
+                                <p
+                                    v-if="errors.review_url"
+                                    class="mt-1 text-xs text-danger"
+                                >
+                                    {{ errors.review_url }}
+                                </p>
+                                <FormHelp v-else>
+                                    Sin link, el mensaje solo agradece la
+                                    estancia e invita a volver.
+                                </FormHelp>
+                            </div>
                         </div>
 
                         <div

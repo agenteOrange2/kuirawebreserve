@@ -164,11 +164,18 @@ Configurado por tarifa:
 
 ## 7. Puntos a validar (decisiones tomadas que puedes querer cambiar)
 
-1. **"La primera pasarela conectada gana."** Con Stripe + MP + PayPal
-   conectados, todos los links salen de la que se dio de alta primero (las
-   otras solo cobrarían si esa se desactiva). Alternativas posibles: un
-   selector "pasarela preferida" en /ajustes, o mandar al huésped a una
-   página nuestra donde él elija. Hoy NO es así.
+1. **El huésped elige el método en el chat** — ✅ RESUELTO (2026-07-24,
+   antes "la primera pasarela conectada gana"): `crear_apartado` devuelve
+   `payment_options` (pasarelas activas con nombre, transferencia,
+   efectivo al llegar según la doble llave de ReservationPolicy) y el bot
+   ofrece SOLO las que existen; `solicitar_pago` acepta `metodo`
+   (pasarela/transferencia/efectivo) y `proveedor` (stripe/mercadopago/
+   paypal). Transferencia elegida se respeta aunque haya pasarela (mismo
+   principio §1.4 del wizard, sin sustituciones en silencio); efectivo
+   extiende el apartado al plazo de efectivo (misma acción
+   `ChooseCashPayment` que el wizard) y recepción cobra al llegar. Sin
+   metodo, el sistema decide como siempre (pasarela primero, transferencia
+   de respaldo). Tests en `AgentToolsTest`.
 2. **Vigencias**: 2 h el link de pasarela, 24 h la transferencia, y el
    saldo por transferencia vive hasta su fecha límite. ¿Se ajustan a tu
    operación?
@@ -178,7 +185,11 @@ Configurado por tarifa:
 5. **El plan Básico no incluye pasarelas** (`max_gateways = 0`): un hotel
    Básico solo cobra por transferencia verificada. ¿Va con tu estrategia
    comercial?
-6. **Comprobantes de transferencia**: hoy el huésped manda la foto por el
-   chat y el staff la ve en la conversación; la solicitud NO adjunta la
-   imagen (los medios entrantes de WhatsApp siguen pendientes, P2 de
-   canales). El staff verifica contra su banca de todos modos.
+6. **Comprobantes de transferencia** — ✅ RESUELTO (2026-07-24): la foto o
+   PDF que el huésped manda por WhatsApp (Evolution o Meta) se guarda como
+   adjunto del mensaje en la bandeja Y, si su reserva tiene una
+   transferencia POR VERIFICAR sin comprobante, se copia sola como
+   comprobante de esa solicitud (`InboundMediaService`) — el staff la ve
+   directo en /pagos. Se acusa recibo al huésped SIN dar el pago por
+   recibido (la regla dura se mantiene: solo un humano aprueba). El staff
+   verifica contra su banca de todos modos.

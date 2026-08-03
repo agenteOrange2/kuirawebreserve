@@ -65,13 +65,47 @@ class MetaWebhookController extends Controller
                     $contactName = $value['contacts'][0]['profile']['name'] ?? null;
 
                     foreach ($value['messages'] ?? [] as $message) {
+                        // Imagen y documento entran al flujo (media_id se
+                        // baja por la Graph API); otros tipos siguen con
+                        // el placeholder de siempre.
+                        $type = (string) ($message['type'] ?? 'text');
+                        $mediaInfo = in_array($type, ['image', 'document'], true)
+                            ? ($message[$type] ?? null)
+                            : null;
+
                         $this->handleInbound(
                             $link,
                             from: (string) $message['from'],
                             name: $contactName,
-                            body: $message['text']['body'] ?? '['.($message['type'] ?? 'mensaje').' no soportado todavía]',
+                            body: $message['text']['body']
+                                ?? $mediaInfo['caption']
+                                ?? ($mediaInfo !== null
+                                    ? ($type === 'image' ? '[Imagen]' : '[Documento]')
+                                    : '['.$type.' no soportado todavía]'),
                             externalId: $message['id'] ?? null,
+                            media: $mediaInfo !== null ? [
+                                'media_id' => (string) ($mediaInfo['id'] ?? ''),
+                                'mime' => $mediaInfo['mime_type'] ?? null,
+                                'filename' => $mediaInfo['filename'] ?? null,
+                            ] : null,
                         );
+                    }
+
+                    // Estatus de entrega: la Cloud API acepta el envío con
+                    // 200 y reporta el fracaso DESPUÉS por aquí (p. ej.
+                    // #131047 fuera de la ventana de 24 h). Sin esto, un
+                    // mensaje que "salió bien" muere sin dejar rastro —
+                    // tres rondas de pruebas en vivo lo sufrieron
+                    // (2026-07-24, motellacupula).
+                    foreach ($value['statuses'] ?? [] as $status) {
+                        if (($status['status'] ?? '') === 'failed') {
+                            Log::warning('Meta: entrega fallida (status asíncrono)', [
+                                'tenant' => $link->tenant_id,
+                                'to' => $status['recipient_id'] ?? null,
+                                'message_id' => $status['id'] ?? null,
+                                'errors' => $status['errors'] ?? [],
+                            ]);
+                        }
                     }
                 }
             }
@@ -161,8 +195,10 @@ class MetaWebhookController extends Controller
     /**
      * El mismo camino que el webchat, dentro del tenant dueño del canal:
      * conversación por contacto + mensaje + bot (o cola para humano).
+     *
+     * @param  array{media_id: string, mime: string|null, filename: string|null}|null  $media
      */
-    protected function handleInbound(MetaChannelLink $link, string $from, ?string $name, string $body, ?string $externalId): void
+    protected function handleInbound(MetaChannelLink $link, string $from, ?string $name, string $body, ?string $externalId, ?array $media = null): void
     {
         $tenant = Tenant::find($link->tenant_id);
 
@@ -170,7 +206,7 @@ class MetaWebhookController extends Controller
             return;
         }
 
-        $tenant->run(function () use ($link, $from, $name, $body, $externalId) {
+        $tenant->run(function () use ($link, $from, $name, $body, $externalId, $media) {
             // Meta reintenta webhooks: no duplicar mensajes ya procesados.
             if ($externalId && Message::query()->where('meta->external_id', $externalId)->exists()) {
                 return;
@@ -205,7 +241,13 @@ class MetaWebhookController extends Controller
                 $conversation->update(['status' => Conversation::STATUS_OPEN]);
             }
 
-            $conversation->messages()->create([
+            // Solo WhatsApp trae teléfono real (Messenger/IG mandan un PSID
+            // numérico que podría coincidir por accidente con un teléfono).
+            if ($link->type === 'whatsapp') {
+                $conversation->linkReservationByPhone();
+            }
+
+            $message = $conversation->messages()->create([
                 'direction' => 'in',
                 'sender_type' => 'visitor',
                 'body' => $body,
@@ -214,9 +256,37 @@ class MetaWebhookController extends Controller
             ]);
             $conversation->update(['last_message_at' => now()]);
 
+            // Imagen/documento de WhatsApp: bajar por la Graph API y dejar
+            // que el servicio decida su destino (adjunto/comprobante).
+            $mediaOutcome = null;
+
+            if ($media !== null && $media['media_id'] !== '' && $link->type === 'whatsapp') {
+                $binary = $this->api->downloadMedia($link, $media['media_id']);
+
+                if ($binary) {
+                    $mediaOutcome = app(\App\Services\Channels\InboundMediaService::class)->handle(
+                        $conversation,
+                        $message,
+                        $binary['contents'],
+                        $media['mime'] ?? $binary['mime'],
+                        $media['filename'] ?? null,
+                    );
+                }
+            }
+
+            // Comprobante detectado: el acuse ya salió y el staff lo verá
+            // en /pagos — ni bot ni cola de "espera humano".
+            if ($mediaOutcome === \App\Services\Channels\InboundMediaService::OUTCOME_RECEIPT) {
+                return;
+            }
+
             $brain = app(AgentBrain::class);
 
-            if ($channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
+            // El bot no ve imágenes: una foto sin texto espera a un humano
+            // (el servicio ya dejó la conversación en pendiente).
+            $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true);
+
+            if (! $noCaption && $channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
                 $reply = $brain->reply($conversation);
 
                 if ($reply?->body) {

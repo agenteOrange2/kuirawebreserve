@@ -87,6 +87,39 @@ class CreateWalkInStay
                 'created_by' => $user?->id,
             ]);
 
+            // Cobro al registrar la llegada (walkin_charge=checkin en
+            // /ajustes/metodos-pago): el hospedaje queda pagado desde el
+            // inicio y entra al corte del cobrador; al salir solo consumos.
+            if (! empty($data['payment_method'])) {
+                $stay->payments()->create([
+                    'amount' => $stay->amount,
+                    'method' => $data['payment_method'],
+                    'kind' => \App\Models\Payment::KIND_LODGING,
+                    'reference' => $data['payment_reference'] ?? null,
+                    'notes' => 'Hospedaje cobrado al registrar la llegada',
+                    'received_by' => $user?->id,
+                    'paid_at' => now(),
+                    'created_at' => now(),
+                ]);
+            }
+
+            // Fianza (depósito en garantía, /ajustes/metodos-pago): monto
+            // fijo del ajuste — NUNCA del cliente — cobrado con método
+            // presencial. No es ingreso: kind 'guarantee' la deja fuera del
+            // folio y de los totales de venta; se devuelve al check-out.
+            $policy = app(\App\Services\ReservationPolicy::class);
+            if (! empty($data['guarantee_method']) && $policy->guaranteeEnabled()) {
+                $stay->payments()->create([
+                    'amount' => $policy->guaranteeAmount(),
+                    'method' => $data['guarantee_method'],
+                    'kind' => \App\Models\Payment::KIND_GUARANTEE,
+                    'notes' => 'Fianza (depósito en garantía) cobrada al registrar la llegada',
+                    'received_by' => $user?->id,
+                    'paid_at' => now(),
+                    'created_at' => now(),
+                ]);
+            }
+
             $this->changeRoomStatus->handle($room, RoomStatus::Occupied->value, $user, [
                 'stay_id' => $stay->id,
             ]);

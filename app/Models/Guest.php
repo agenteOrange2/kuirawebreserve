@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\SoftDeletes;
 use Spatie\MediaLibrary\HasMedia;
 use Spatie\MediaLibrary\InteractsWithMedia;
 
@@ -12,10 +13,15 @@ use Spatie\MediaLibrary\InteractsWithMedia;
  * CRM de huéspedes (spec-profundidad §1). El documento de identidad va
  * encriptado y sus fotos en disco privado; se sirven solo con permiso
  * guests.view-documents.
+ *
+ * Soft deletes = "archivado": el huésped con historial desaparece del
+ * directorio y del autocompletado, pero sus reservas/estancias lo siguen
+ * mostrando (relaciones withTrashed) y puede restaurarse.
  */
 class Guest extends Model implements HasMedia
 {
     use InteractsWithMedia;
+    use SoftDeletes;
 
     public const DOCUMENT_TYPES = ['ine', 'pasaporte', 'licencia', 'otro'];
 

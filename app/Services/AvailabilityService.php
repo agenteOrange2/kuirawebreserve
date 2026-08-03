@@ -11,7 +11,8 @@ use Illuminate\Support\Collection;
 /**
  * Motor de disponibilidad (spec §7). Una habitación está libre en un rango si
  * no tiene solape con reservas bloqueantes (confirmadas/en casa, o pendientes
- * con hold vigente) ni con estancias activas, y no está en mantenimiento.
+ * con hold vigente) ni con estancias activas, no está en mantenimiento y no
+ * tiene un bloqueo por fechas (RoomBlock) sobre las noches pedidas.
  *
  * Anti-doble-reserva: dentro de una transacción, con $lock=true el SELECT es
  * FOR UPDATE — bloquea las filas de habitaciones candidatas y lee el último
@@ -66,6 +67,12 @@ class AvailabilityService
             return false;
         }
 
+        // Bloqueo por fechas (mantenimiento programado): los días marcados
+        // no se venden, aunque el semáforo presente siga en disponible.
+        if ($room->blocks()->overlapping($start, $end)->exists()) {
+            return false;
+        }
+
         return $room->stays()
             ->active()
             ->overlapping($start, $end)
@@ -85,6 +92,10 @@ class AvailabilityService
                     ->overlapping($start, $end)
                     ->when($ignoreReservationId, fn (Builder $qq) => $qq->whereKeyNot($ignoreReservationId));
             })
-            ->whereDoesntHave('stays', fn (Builder $q) => $q->active()->overlapping($start, $end));
+            ->whereDoesntHave('stays', fn (Builder $q) => $q->active()->overlapping($start, $end))
+            // Bloqueos por fechas: la habitación no se ofrece si algún
+            // bloqueo pisa las noches pedidas (panel, wizard y agentes
+            // pasan todos por esta query).
+            ->whereDoesntHave('blocks', fn (Builder $q) => $q->overlapping($start, $end));
     }
 }

@@ -42,7 +42,7 @@ class RoomStatusChanged implements ShouldBroadcast
             'status' => $room->status->getMorphClass(),
             'color' => $room->status->color(),
             'label' => $room->status->label(),
-            'transitions' => $room->status->transitionableStates(),
+            'transitions' => $room->manualStatusTransitions(),
             'changed_by' => $changedBy,
             'changed_at' => now()->toIso8601String(),
         ];

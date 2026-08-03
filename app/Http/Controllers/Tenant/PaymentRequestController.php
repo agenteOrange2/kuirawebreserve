@@ -6,6 +6,7 @@ use App\Actions\Payments\RegisterGatewayPayment;
 use App\Http\Controllers\Controller;
 use App\Models\Conversation;
 use App\Models\PaymentRequest;
+use App\Models\Property;
 use App\Services\Payments\PaymentGuestNotifier;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -22,6 +23,97 @@ class PaymentRequestController extends Controller
     public function index(): JsonResponse
     {
         return response()->json(['requests' => $this->queue()]);
+    }
+
+    /**
+     * Detalle completo de una solicitud: todo lo que el staff necesita para
+     * verificar sin salir de /pagos — el sujeto (reserva/experiencia/grupo),
+     * cuánto lleva pagado, las cuentas donde pudo caer el depósito y el
+     * comprobante si ya se subió.
+     */
+    public function show(PaymentRequest $paymentRequest): JsonResponse
+    {
+        $paymentRequest->load([
+            'reservation.guest:id,first_name,last_name,phone,email',
+            'reservation.roomType:id,name',
+            'experienceBooking.guest:id,first_name,last_name,phone,email',
+            'experienceBooking.session.experience:id,name',
+            'group.guest:id,first_name,last_name,phone,email',
+            'group.reservations:id,reservation_group_id,status',
+            'requestedBy:id,name',
+        ]);
+
+        $guest = $paymentRequest->reservation?->guest
+            ?? $paymentRequest->experienceBooking?->guest
+            ?? $paymentRequest->group?->guest;
+
+        $details = [];
+
+        if ($r = $paymentRequest->reservation) {
+            $details = [
+                ['label' => 'Habitación', 'value' => $r->roomType?->name ?? 'Por asignar'],
+                ['label' => 'Llegada', 'value' => $r->starts_at->format('d/m/Y H:i')],
+                ['label' => 'Salida', 'value' => $r->ends_at->format('d/m/Y H:i')],
+                ['label' => 'Total de la reserva', 'value' => '$'.number_format((float) $r->total_amount, 2)],
+                ['label' => 'Pagado hasta ahora', 'value' => '$'.number_format($r->paidTotal(), 2)],
+                ['label' => 'Saldo pendiente', 'value' => '$'.number_format($r->pendingBalance(), 2)],
+                ['label' => 'Estado', 'value' => $r->status->label()],
+            ];
+        } elseif ($booking = $paymentRequest->experienceBooking) {
+            $details = array_values(array_filter([
+                ['label' => 'Experiencia', 'value' => (string) $booking->session?->experience?->name],
+                $booking->session?->starts_at ? ['label' => 'Fecha', 'value' => $booking->session->starts_at->format('d/m/Y H:i')] : null,
+                ['label' => 'Personas', 'value' => (string) $booking->people],
+            ]));
+        } elseif ($group = $paymentRequest->group) {
+            $details = [
+                ['label' => 'Habitaciones del grupo', 'value' => (string) $group->reservations->count()],
+            ];
+        }
+
+        // Las cuentas activas del hotel: contra cuál comparar el depósito.
+        $accounts = collect(Property::firstOrFail()->settings['bank_accounts'] ?? [])
+            ->filter(fn (array $a) => ! empty($a['active']))
+            ->map(fn (array $a) => [
+                'bank' => $a['bank'] ?? '',
+                'holder' => $a['holder'] ?? '',
+                'clabe' => $a['clabe'] ?? '',
+            ])
+            ->values();
+
+        return response()->json([
+            'id' => $paymentRequest->id,
+            'status' => $paymentRequest->status,
+            'status_label' => $paymentRequest->statusLabel(),
+            'concept' => $paymentRequest->conceptLabel(),
+            'amount_label' => $paymentRequest->amountLabel(),
+            'method' => $paymentRequest->method,
+            'provider' => $paymentRequest->provider,
+            'requested_by' => $paymentRequest->requestedBy?->name ?? 'Asistente IA',
+            'requested_at' => $paymentRequest->created_at->format('d/m/Y H:i'),
+            'expires_at' => $paymentRequest->expires_at?->format('d/m/Y H:i'),
+            'subject_code' => $paymentRequest->subjectCode(),
+            'guest' => [
+                'name' => $guest?->full_name ?? $paymentRequest->reservation?->guest_name ?? 'Huésped',
+                'phone' => $guest?->phone,
+                'email' => $guest?->email,
+            ],
+            'details' => $details,
+            'bank_accounts' => $accounts,
+            'receipt' => $paymentRequest->receiptPayload(),
+            'conversation_id' => $paymentRequest->reservation_id ? Conversation::query()
+                ->where('reservation_id', $paymentRequest->reservation_id)->latest('id')->value('id') : null,
+        ]);
+    }
+
+    /** Comprobante subido al aprobar (privado: solo staff con permiso). */
+    public function receipt(PaymentRequest $paymentRequest): \Symfony\Component\HttpFoundation\BinaryFileResponse
+    {
+        $media = $paymentRequest->getFirstMedia('receipt');
+
+        abort_unless($media !== null, 404);
+
+        return response()->file($media->getPath());
     }
 
     /**
@@ -42,12 +134,19 @@ class PaymentRequestController extends Controller
         $data = $request->validate([
             'reference' => ['nullable', 'string', 'max:120'],
             'notes' => ['nullable', 'string', 'max:500'],
+            // Foto o PDF del comprobante que mandó el huésped: queda
+            // adjunto a la solicitud como evidencia de la verificación.
+            'receipt' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
         ]);
 
         try {
             $action->handle($paymentRequest, $data, $request->user());
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        if ($request->hasFile('receipt')) {
+            $paymentRequest->addMedia($request->file('receipt'))->toMediaCollection('receipt');
         }
 
         $paymentRequest->refresh();
@@ -57,6 +156,41 @@ class PaymentRequestController extends Controller
             'ok' => true,
             'reservation_status' => $paymentRequest->reservation()->value('status'),
             'requires_attention' => (bool) ($paymentRequest->meta['requires_attention'] ?? false),
+        ]);
+    }
+
+    /**
+     * Reemite un cobro rechazado/vencido/cancelado: la solicitud vieja
+     * queda como historial y nace una nueva PENDIENTE (vía
+     * IssuePaymentRequest, con montos y vigencia recalculados). Si el
+     * huésped ya mandó el comprobante bueno por el chat, se rescata y se
+     * adjunta a la nueva — el ciclo rechazo → corrección cierra sin
+     * descargar nada a mano.
+     */
+    public function reissue(PaymentRequest $paymentRequest, \App\Actions\Payments\IssuePaymentRequest $issue): JsonResponse
+    {
+        $reissuable = [PaymentRequest::STATUS_REJECTED, PaymentRequest::STATUS_EXPIRED, PaymentRequest::STATUS_CANCELED];
+
+        if (! in_array($paymentRequest->status, $reissuable, true)) {
+            return response()->json(['message' => 'Solo se reemiten cobros rechazados, vencidos o cancelados.'], 422);
+        }
+
+        if (! $paymentRequest->reservation_id) {
+            return response()->json(['message' => 'Este cobro no pertenece a una reserva de habitación.'], 422);
+        }
+
+        try {
+            $fresh = $issue->handle($paymentRequest->reservation()->firstOrFail());
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $rescued = app(\App\Services\Channels\InboundMediaService::class)->rescueLatestAttachment($fresh);
+
+        return response()->json([
+            'ok' => true,
+            'request_id' => $fresh->id,
+            'rescued_receipt' => $rescued,
         ]);
     }
 

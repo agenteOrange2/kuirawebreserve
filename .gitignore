@@ -27,3 +27,8 @@ yarn-error.log
 /.vscode
 /.zed
 /storage/tenantdemo
+/graphify-out/*
+# Media PRIVADA de los tenants (adjuntos entrantes de WhatsApp, documentos
+# de huéspedes con INE): son datos reales de producción y nunca deben
+# viajar en el repositorio. Las fotos públicas (app/public/) sí se versionan.
+/storage/tenant*/app/[0-9]*

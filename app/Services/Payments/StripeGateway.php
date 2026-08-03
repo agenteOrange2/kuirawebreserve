@@ -19,7 +19,7 @@ class StripeGateway implements PaymentGateway
 
     public function createCheckout(PaymentRequest $request, PaymentGatewayLink $link): array
     {
-        $returnUrl = route('tenant.payment.return', $request->uuid);
+        $returnUrl = $request->publicReturnUrl();
 
         // Stripe exige expiración entre 30 min y 24 h.
         $expiresAt = min(

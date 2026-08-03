@@ -12,6 +12,9 @@ export interface MenuItem {
     // Key de config/modules.php: el item solo aparece si el módulo está
     // activo para el hotel (panelTenant.modules del share de Inertia).
     module?: string;
+    // El TÍTULO de sección es el toggle: se pinta como divider (uppercase)
+    // con chevron y colapsa sus items — sin renglón duplicado debajo.
+    sectionToggle?: boolean;
 }
 
 // Menú del panel de plataforma (dominio central, rol platform-admin).
@@ -28,9 +31,19 @@ const centralMenu: Array<MenuItem | string> = [
         title: 'Hoteles',
     },
     {
+        icon: 'UserCog',
+        pageName: 'admin.users',
+        title: 'Usuarios',
+    },
+    {
         icon: 'Layers',
         pageName: 'admin.plans',
         title: 'Planes',
+    },
+    {
+        icon: 'ContactRound',
+        pageName: 'admin.prospects',
+        title: 'Prospectos',
     },
     {
         icon: 'Bot',
@@ -54,10 +67,13 @@ const centralMenu: Array<MenuItem | string> = [
     },
 ];
 
-// Menú del panel de cada hotel (subdominios de tenant). La operación
-// diaria (Dashboard/Plano/Bandeja) queda a un clic; el resto se agrupa
-// por área en submenus colapsables.
+// Menú del panel de cada hotel (subdominios de tenant): títulos de
+// sección que separan cada área Y grupos colapsables debajo, para que el
+// menú no crezca al agregar páginas (pedido explícito). Solo la operación
+// diaria (Dashboard/Plano/Bandeja) va plana, a un clic; el grupo de la
+// página activa se abre solo.
 const tenantMenu: Array<MenuItem | string> = [
+    'OPERACIÓN',
     {
         icon: 'LayoutDashboard',
         pageName: 'tenant.dashboard',
@@ -104,6 +120,18 @@ const tenantMenu: Array<MenuItem | string> = [
                 pageName: 'tenant.extras',
                 title: 'Extras de reserva',
                 module: 'extras',
+            },
+            {
+                icon: 'BellRing',
+                pageName: 'tenant.waitlist',
+                title: 'Lista de espera',
+                module: 'lista-espera',
+            },
+            {
+                icon: 'TicketPercent',
+                pageName: 'tenant.coupons',
+                title: 'Cupones',
+                module: 'cupones',
             },
         ],
     },
@@ -210,21 +238,40 @@ export function useMenu() {
         }
 
         // Items de módulos apagados desaparecen del menú (spec-plan-maestro E1).
-        // También dentro de los submenus; un grupo que queda vacío no se pinta.
+        // También dentro de submenus (si los hubiera) y un título de sección
+        // que se queda sin items debajo tampoco se pinta.
         const modules =
             (page.props.panelTenant as { modules?: string[] } | null)
                 ?.modules ?? [];
         const enabled = (item: MenuItem) =>
             !item.module || modules.includes(item.module);
 
-        return tenantMenu.flatMap((item): Array<MenuItem | string> => {
-            if (typeof item === 'string') return [item];
-            if (!enabled(item)) return [];
-            if (!item.subMenu) return [item];
+        const filtered = tenantMenu.flatMap(
+            (item): Array<MenuItem | string> => {
+                if (typeof item === 'string') return [item];
+                if (!enabled(item)) return [];
+                if (!item.subMenu) return [item];
 
-            const subMenu = item.subMenu.filter(enabled);
-            return subMenu.length ? [{ ...item, subMenu }] : [];
+                const subMenu = item.subMenu.filter(enabled);
+                return subMenu.length ? [{ ...item, subMenu }] : [];
+            },
+        );
+
+        const pruned: Array<MenuItem | string> = [];
+        filtered.forEach((item) => {
+            if (
+                typeof item === 'string' &&
+                typeof pruned[pruned.length - 1] === 'string'
+            ) {
+                pruned.pop(); // título sin items: lo reemplaza el siguiente
+            }
+            pruned.push(item);
         });
+        if (typeof pruned[pruned.length - 1] === 'string') {
+            pruned.pop();
+        }
+
+        return pruned;
     });
 
     return {

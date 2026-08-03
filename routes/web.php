@@ -1,11 +1,12 @@
 <?php
 
+use App\Http\Controllers\LandingController;
 use Illuminate\Support\Facades\Route;
-use Laravel\Fortify\Features;
 
-Route::inertia('/', 'Welcome', [
-    'canRegister' => Features::enabled(Features::registration()),
-])->name('home');
+Route::get('/', LandingController::class)->name('home');
+Route::post('/solicitar-demo', [LandingController::class, 'store'])
+    ->middleware('throttle:6,1')
+    ->name('prospects.store');
 
 // Fortify redirige aquí tras el login (config fortify.home); el panel de
 // plataforma vive en /admin. En dominios de tenant, /dashboard lo resuelve

@@ -60,24 +60,49 @@ class GuestController extends Controller
         return response()->json($guest->refresh());
     }
 
+    /**
+     * Con historial (reservas/estancias) se ARCHIVA: desaparece del
+     * directorio y del autocompletado, pero el historial lo sigue mostrando
+     * y puede restaurarse. Sin historial se elimina definitivamente. Sobre
+     * un huésped YA archivado la petición es la purga definitiva: su
+     * historial se conserva con guest_id en null (FKs nullOnDelete).
+     */
     public function destroy(Guest $guest): JsonResponse
     {
-        if ($guest->reservations()->exists() || $guest->stays()->exists()) {
+        if (! $guest->trashed() && ($guest->reservations()->exists() || $guest->stays()->exists())) {
+            $guest->delete();
+
             return response()->json([
-                'message' => 'El huésped tiene historial de reservas; no se puede eliminar.',
-            ], 409);
+                'archived' => true,
+                'message' => 'Huésped archivado: tiene historial, así que se ocultó del directorio. Puedes restaurarlo desde el filtro Archivados.',
+            ]);
         }
 
-        $guest->clearMediaCollection('documents');
-        $guest->clearMediaCollection('vehicle');
-        $guest->delete();
+        $this->purge($guest);
 
         return response()->json(status: 204);
     }
 
+    /** Borra ficha y fotos sin vuelta atrás. */
+    private function purge(Guest $guest): void
+    {
+        $guest->clearMediaCollection('documents');
+        $guest->clearMediaCollection('vehicle');
+        $guest->forceDelete();
+    }
+
+    /** Regresa al directorio un huésped archivado. */
+    public function restore(Guest $guest): JsonResponse
+    {
+        $guest->restore();
+
+        return response()->json($guest->refresh());
+    }
+
     /**
-     * Borrado en masa: elimina los huéspedes SIN historial; los que tienen
-     * reservas/estancias se conservan (rastro) y se reportan como omitidos.
+     * Borrado en masa: elimina definitivamente los huéspedes SIN historial;
+     * los que tienen reservas/estancias se archivan (restaurables). Los que
+     * ya estaban archivados se purgan definitivamente.
      */
     public function destroyBulk(Request $request): JsonResponse
     {
@@ -87,22 +112,21 @@ class GuestController extends Controller
         ]);
 
         $deleted = 0;
-        $skipped = 0;
+        $archived = 0;
 
-        foreach (Guest::query()->whereIn('id', $data['ids'])->get() as $guest) {
-            if ($guest->reservations()->exists() || $guest->stays()->exists()) {
-                $skipped++;
+        foreach (Guest::query()->withTrashed()->whereIn('id', $data['ids'])->get() as $guest) {
+            if (! $guest->trashed() && ($guest->reservations()->exists() || $guest->stays()->exists())) {
+                $guest->delete();
+                $archived++;
 
                 continue;
             }
 
-            $guest->clearMediaCollection('documents');
-            $guest->clearMediaCollection('vehicle');
-            $guest->delete();
+            $this->purge($guest);
             $deleted++;
         }
 
-        return response()->json(['deleted' => $deleted, 'skipped' => $skipped]);
+        return response()->json(['deleted' => $deleted, 'archived' => $archived]);
     }
 
     /**

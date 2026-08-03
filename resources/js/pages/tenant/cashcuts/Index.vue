@@ -35,6 +35,13 @@ interface Preview {
     transfer_total: number;
     grand_total: number;
     expected_cash: number;
+    // Fianzas (depósito en garantía) del periodo: no son venta — solo
+    // ajustan el efectivo esperado del arqueo (entra al cobrarlas en
+    // efectivo, sale al devolverlas).
+    guarantees_count: number;
+    guarantees_collected: number;
+    guarantees_cash_in: number;
+    guarantees_cash_out: number;
     sources: Source[];
     methods: Method[];
 }
@@ -148,15 +155,31 @@ const detailCut = ref<Cut | null>(null);
         <div class="grid grid-cols-12 gap-x-6 gap-y-8">
             <!-- Encabezado -->
             <div class="col-span-12">
-                <div class="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <h1 class="text-lg font-medium">Cortes de venta</h1>
-                        <p class="text-sm text-slate-500">
-                            {{ property.name }} · contabiliza lo cobrado por
-                            cada encargado
-                        </p>
+                <div
+                    class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                >
+                    <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        >
+                            <Lucide
+                                icon="Calculator"
+                                class="h-5 w-5 sm:h-7 sm:w-7"
+                            />
+                        </div>
+                        <div class="min-w-0">
+                            <h1 class="text-lg font-medium sm:text-xl">
+                                Cortes de venta
+                            </h1>
+                            <p class="mt-1 text-sm text-slate-500">
+                                {{ property.name }} · contabiliza lo cobrado
+                                por cada encargado
+                            </p>
+                        </div>
                     </div>
-                    <div class="flex flex-wrap gap-2">
+                    <div
+                        class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
+                    >
                         <Button
                             as="a"
                             :href="route('tenant.shifts')"
@@ -305,6 +328,23 @@ const detailCut = ref<Cut | null>(null);
                         </div>
                         <div class="mt-1 text-xs text-slate-500">
                             Lo que debe haber en caja
+                        </div>
+                        <div
+                            v-if="
+                                preview.guarantees_cash_in > 0 ||
+                                preview.guarantees_cash_out > 0
+                            "
+                            class="mt-1 text-xs text-slate-500"
+                        >
+                            Incluye fianzas en garantía:
+                            {{ money(preview.guarantees_cash_in) }} cobradas<template
+                                v-if="preview.guarantees_cash_out > 0"
+                            >
+                                −
+                                {{ money(preview.guarantees_cash_out) }}
+                                devueltas</template
+                            >
+                            (no son venta).
                         </div>
                     </div>
                     <!-- Utilidad POS -->

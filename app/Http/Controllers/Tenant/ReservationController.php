@@ -104,7 +104,17 @@ class ReservationController extends Controller
 
     public function checkIn(Request $request, Reservation $reservation, TransitionReservation $action): JsonResponse
     {
-        return $this->transition(fn () => $action->checkIn($reservation, $request->user()), $reservation);
+        // Fianza (depósito en garantía): método presencial con el que el
+        // staff la cobró al registrar la llegada. El monto SIEMPRE sale del
+        // ajuste del hotel (ReservationPolicy), nunca del cliente.
+        $data = $request->validate([
+            'guarantee_method' => ['nullable', Rule::in(['cash', 'card'])],
+        ]);
+
+        return $this->transition(
+            fn () => $action->checkIn($reservation, $request->user(), [], $data['guarantee_method'] ?? null),
+            $reservation,
+        );
     }
 
     /**
@@ -147,9 +157,15 @@ class ReservationController extends Controller
     {
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'gt:0'],
-            'method' => ['required', Rule::in(Payment::METHODS)],
+            // Solo métodos presenciales verificables al momento: la
+            // transferencia NO se registra directo — se genera la solicitud
+            // (cobro en línea) y se confirma con su comprobante en /pagos.
+            // El check-out (SettleStay) y la verificación usan otras rutas.
+            'method' => ['required', Rule::in(['cash', 'card'])],
             'reference' => ['nullable', 'string', 'max:100'],
             'notes' => ['nullable', 'string', 'max:255'],
+        ], [
+            'method.in' => 'La transferencia no se registra directo: genera el cobro en línea y confírmala con su comprobante en Pagos.',
         ]);
 
         try {
@@ -186,6 +202,7 @@ class ReservationController extends Controller
             'code' => $r->displayCode(),
             'guest_id' => $r->guest_id,
             'guest_name' => $r->guest_name,
+            'guest_email' => $r->guest?->email,
             'num_people' => $r->num_people,
             'adults' => $r->adults,
             'children' => $r->children,
@@ -207,6 +224,10 @@ class ReservationController extends Controller
             'total_amount' => $r->total_amount,
             'extra_charges' => $r->extra_charges ?? [],
             'deposit_amount' => $r->deposit_amount,
+            // Cupón aplicado en el wizard (módulo cupones): el descuento ya
+            // está dentro de total_amount; aquí solo se muestra la línea.
+            'coupon_code' => $r->coupon_code,
+            'discount_amount' => (float) ($r->discount_amount ?? 0),
             'payment_status' => $r->payment_status->value,
             'payment_status_label' => $r->payment_status->label(),
             'payment_due_at' => $r->payment_due_at?->format('d/m/Y H:i'),
@@ -226,12 +247,13 @@ class ReservationController extends Controller
                 'via_gateway' => $p->gateway !== null,
             ]),
             'refunded_total' => $r->refundedTotal(),
-            // Sugerencia por política de cancelación (si la tarifa la define):
-            // "si se cancela ahora / ya cancelada, correspondería devolver X".
+            // Sugerencia por política de cancelación (la de la tarifa, o la
+            // default del hotel): "si se cancela ahora, correspondería X".
             'refund_suggestion' => ($suggestion = $r->suggestedRefund()) !== null ? [
                 'amount' => $suggestion,
                 'amount_label' => '$'.number_format($suggestion, 2),
-                'policy_label' => $r->ratePlan?->cancellationPolicyLabel(),
+                'policy_label' => app(\App\Services\ReservationPolicy::class)
+                    ->cancellationPolicyLabel($r->ratePlan),
             ] : null,
             'stay_id' => $r->stay?->id,
             // Cobro en curso (spec-pagos §7.5): link vivo para copiar/enviar.
@@ -263,16 +285,26 @@ class ReservationController extends Controller
             ->first();
 
         try {
-            $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user(), $link);
+            $paymentRequest = $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user(), $link);
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (\RuntimeException $e) {
             // La pasarela falló: cae a transferencia (spec-pagos §7.1).
             try {
-                $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user());
+                $paymentRequest = $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user());
             } catch (InvalidArgumentException $inner) {
                 return response()->json(['message' => $inner->getMessage()], 422);
             }
+        }
+
+        // Fuera de la transacción: el link/instrucciones viajan solos al
+        // huésped por sus canales de contacto. Avisar es cortesía — el
+        // cobro ya existe y el panel lo muestra; un transporte caído no
+        // debe convertirlo en error.
+        try {
+            app(\App\Services\Payments\PaymentGuestNotifier::class)->paymentRequestIssued($paymentRequest);
+        } catch (\Throwable $e) {
+            report($e);
         }
 
         return response()->json($this->serialize(

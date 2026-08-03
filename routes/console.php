@@ -31,10 +31,31 @@ Schedule::command('tenants:run payments:collect-balance')
     ->hourly()
     ->withoutOverlapping();
 
-// Recordatorio de llegada: un aviso a reservas confirmadas que llegan en
-// las próximas 24 horas (conversación o WhatsApp/correo directo).
+// Recordatorios de llegada: 24 horas antes y el aviso del día de la
+// llegada (N horas antes de la entrada, /ajustes/metodos-pago). Cada 15
+// minutos para que el segundo llegue puntual.
 Schedule::command('tenants:run reservations:arrival-reminders')
-    ->hourly()
+    ->everyFifteenMinutes()
+    ->withoutOverlapping();
+
+// Llegadas confirmadas del día: el semáforo pasa solo a "reservada" cuando
+// la fecha de una reserva pagada/confirmada llega (o cuando limpieza libera
+// una habitación que tiene llegada hoy).
+Schedule::command('tenants:run rooms:reserve-arrivals')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();
+
+// Cierre de día (reservas confirmadas cuya salida venció sin check-in) y
+// limpieza automática sucia → limpieza → disponible según /ajustes/limpieza.
+Schedule::command('tenants:run rooms:advance-housekeeping')
+    ->everyMinute()
+    ->withoutOverlapping();
+
+// Check-in automático a la hora de llegada (modos auto/ambos de
+// /ajustes/limpieza): crea la estancia y ocupa la habitación si el
+// personal no registró la llegada.
+Schedule::command('tenants:run reservations:auto-checkin')
+    ->everyMinute()
     ->withoutOverlapping();
 
 // El bot retoma conversaciones: holds por vencer/vencidos, reservas
@@ -46,6 +67,12 @@ Schedule::command('tenants:run conversations:follow-up')
 // Resumen rodante de conversaciones inactivas (memoria del bot).
 Schedule::command('tenants:run conversations:summarize')
     ->everyFifteenMinutes()
+    ->withoutOverlapping();
+
+// El archivo de la bandeja se vacía solo: lo archivado se elimina
+// definitivamente a los 30 días (el staff también puede vaciarlo a mano).
+Schedule::command('tenants:run conversations:prune-archived')
+    ->dailyAt('04:45')
     ->withoutOverlapping();
 
 // Horizonte de venta de experiencias con programación semanal: cada día

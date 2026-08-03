@@ -57,6 +57,9 @@ class FloorPlanController extends Controller
             'canManage' => $request->user()->can('rooms.update-status'),
             'canManageReservations' => $request->user()->can('reservations.manage'),
             'canManageOrders' => $request->user()->can('orders.manage'),
+            // En modo de check-in "automático" puro (/ajustes/limpieza) la
+            // llegada la registra el reloj: el botón manual se oculta.
+            'manualCheckinAllowed' => app(\App\Services\HousekeepingPolicy::class)->manualCheckInAllowed(),
         ]);
     }
 }

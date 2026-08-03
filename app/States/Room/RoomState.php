@@ -11,7 +11,8 @@ use Spatie\ModelStates\StateConfig;
  *
  * available → reserved → occupied → dirty → cleaning → available
  * available → occupied (walk-in) · reserved → available (cancelación)
- * cualquiera → maintenance → available
+ * reserved → dirty (cierre de día: la salida venció sin check-in y se
+ * asume que la habitación se usó) · cualquiera → maintenance → available
  */
 abstract class RoomState extends State
 {
@@ -22,6 +23,7 @@ abstract class RoomState extends State
             ->allowTransition(Available::class, Reserved::class)
             ->allowTransition(Reserved::class, Occupied::class)
             ->allowTransition(Reserved::class, Available::class)
+            ->allowTransition(Reserved::class, Dirty::class)
             ->allowTransition(Available::class, Occupied::class)
             ->allowTransition(Occupied::class, Dirty::class)
             ->allowTransition(Dirty::class, Cleaning::class)

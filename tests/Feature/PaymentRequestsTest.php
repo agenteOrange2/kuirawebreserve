@@ -202,3 +202,97 @@ it('emitir un cobro nuevo cancela la solicitud anterior si el monto cambió', fu
         ->and($second->status)->toBe(PaymentRequest::STATUS_PENDING)
         ->and((float) $second->amount)->toBe(400.0);
 });
+
+it('aprobar con comprobante lo adjunta como evidencia y el detalle lo expone', function () {
+    \Illuminate\Support\Facades\Storage::fake('local');
+
+    $reservation = apartar(['guest_name' => 'Ana García', 'guest_phone' => '6141234567']);
+    $request = app(IssuePaymentRequest::class)->handle($reservation);
+
+    $httpRequest = \Illuminate\Http\Request::create('/api/payment-requests', 'POST', [], [], [
+        'receipt' => \Illuminate\Http\UploadedFile::fake()->image('comprobante.jpg'),
+    ]);
+    $httpRequest->setUserResolver(fn () => null);
+
+    $response = app(\App\Http\Controllers\Tenant\PaymentRequestController::class)
+        ->approve($httpRequest, $request, app(RegisterGatewayPayment::class));
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and($request->refresh()->status)->toBe(PaymentRequest::STATUS_PAID)
+        ->and($request->getFirstMedia('receipt'))->not->toBeNull()
+        ->and($request->receiptPayload()['is_image'])->toBeTrue();
+});
+
+it('el detalle de la solicitud trae huésped, montos del sujeto y cuentas del hotel', function () {
+    $this->property->update(['settings' => [
+        'bank_accounts' => [['bank' => 'BBVA', 'holder' => 'Hotel Demo', 'clabe' => '012345678901234567', 'active' => true]],
+    ]]);
+
+    $reservation = apartar(['guest_name' => 'Ana García', 'guest_phone' => '6141234567']);
+    $request = app(IssuePaymentRequest::class)->handle($reservation);
+
+    $data = app(\App\Http\Controllers\Tenant\PaymentRequestController::class)->show($request)->getData(true);
+
+    expect($data['subject_code'])->toBe($reservation->displayCode())
+        ->and($data['guest']['name'])->toBe('Ana García')
+        ->and($data['guest']['phone'])->toBe('6141234567')
+        ->and($data['bank_accounts'])->toHaveCount(1)
+        ->and(collect($data['details'])->firstWhere('label', 'Saldo pendiente'))->not->toBeNull()
+        ->and($data['receipt'])->toBeNull();
+});
+
+it('los últimos pagos de /pagos paginan, filtran por método y marcan reembolsos', function () {
+    \Spatie\Permission\Models\Permission::findOrCreate('reservations.manage', 'web');
+    $user = \App\Models\User::factory()->create();
+    $user->givePermissionTo('reservations.manage');
+
+    $reservation = apartar(['guest_name' => 'Laura Paginada']);
+    foreach (range(1, 17) as $i) {
+        $reservation->payments()->create([
+            'amount' => 100 + $i,
+            'method' => $i % 2 ? 'cash' : 'transfer',
+            'kind' => \App\Models\Payment::KIND_LODGING,
+            'paid_at' => now(),
+        ]);
+    }
+
+    // Un reembolso completado cambia el estatus de ese pago.
+    $refunded = $reservation->payments()->latest('id')->first();
+    \App\Models\Refund::create([
+        'payment_id' => $refunded->id,
+        'reservation_id' => $reservation->id,
+        'amount' => (float) $refunded->amount,
+        'status' => \App\Models\Refund::STATUS_COMPLETED,
+        'refunded_at' => now(),
+    ]);
+
+    $props = function (array $query = []) use ($user): array {
+        $request = \Illuminate\Http\Request::create('/pagos', 'GET', $query);
+        $request->headers->set('X-Inertia', 'true');
+        $request->setUserResolver(fn () => $user);
+
+        return app(\App\Http\Controllers\Tenant\PaymentsPageController::class)($request)
+            ->toResponse($request)->getData(true)['props'];
+    };
+
+    $page1 = $props()['recentPayments'];
+    expect($page1['total'])->toBe(17)
+        ->and($page1['data'])->toHaveCount(15)
+        ->and($page1['last_page'])->toBe(2)
+        ->and($page1['data'][0]['status'])->toBe('refunded')
+        ->and($page1['data'][0]['status_label'])->toBe('Reembolsado')
+        ->and($page1['data'][1]['status'])->toBe('registered');
+
+    $page2 = $props(['payments_page' => 2])['recentPayments'];
+    expect($page2['data'])->toHaveCount(2)
+        ->and($page2['current_page'])->toBe(2);
+
+    $cash = $props(['method' => 'cash'])['recentPayments'];
+    expect($cash['total'])->toBe(9);
+
+    $porNombre = $props(['q' => 'Laura'])['recentPayments'];
+    expect($porNombre['total'])->toBe(17);
+
+    $porFolio = $props(['q' => $reservation->displayCode()])['recentPayments'];
+    expect($porFolio['total'])->toBe(17);
+});

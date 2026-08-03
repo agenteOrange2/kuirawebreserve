@@ -4,9 +4,8 @@ import axios from 'axios';
 import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormCheck, FormInput } from '@/components/Base/Form';
-import { Dialog } from '@/components/Base/Headless';
+import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
-import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 import GuestFormModal from './GuestFormModal.vue';
@@ -18,6 +17,7 @@ interface GuestRow {
     email: string | null;
     visits: number;
     is_blacklisted: boolean;
+    is_archived: boolean;
     created_at: string;
 }
 
@@ -29,7 +29,8 @@ interface PaginationLink {
 
 const props = defineProps<{
     guests: { data: GuestRow[]; links: PaginationLink[]; total: number };
-    filters: { q: string; blacklisted: boolean };
+    archivedCount: number;
+    filters: { q: string; blacklisted: boolean; archived: boolean };
     canManage: boolean;
     canViewDocuments: boolean;
     documentTypes: string[];
@@ -38,9 +39,20 @@ const props = defineProps<{
 const toast = useToasts();
 const q = ref(props.filters.q);
 const blacklisted = ref(props.filters.blacklisted);
+const archived = ref(props.filters.archived);
+const filtersActive = computed(
+    () => q.value.trim() !== '' || blacklisted.value || archived.value,
+);
+
+function clearFilters(): void {
+    q.value = '';
+    blacklisted.value = false;
+    archived.value = false;
+}
 
 let timer: ReturnType<typeof setTimeout> | null = null;
-watch([q, blacklisted], () => {
+watch([q, blacklisted, archived], () => {
+    selectedIds.value = [];
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
         router.get(
@@ -48,8 +60,13 @@ watch([q, blacklisted], () => {
             {
                 q: q.value || undefined,
                 blacklisted: blacklisted.value || undefined,
+                archived: archived.value || undefined,
             },
-            { preserveState: true, replace: true, only: ['guests', 'filters'] },
+            {
+                preserveState: true,
+                replace: true,
+                only: ['guests', 'archivedCount', 'filters'],
+            },
         );
     }, 350);
 });
@@ -61,7 +78,8 @@ function onSaved(id: number) {
     router.visit(route('tenant.guests.show', id));
 }
 
-// Eliminar (con confirmación; el backend bloquea si hay historial).
+// Eliminar (con confirmación; con historial el backend archiva en vez
+// de borrar, y aquí se avisa con un toast).
 const deleting = ref<GuestRow | null>(null);
 const deleteBusy = ref(false);
 const deleteError = ref<string | null>(null);
@@ -76,9 +94,22 @@ async function submitDelete() {
     deleteBusy.value = true;
     deleteError.value = null;
     try {
-        await axios.delete(`/api/guests/${deleting.value.id}`);
+        const { data } = await axios.delete(`/api/guests/${deleting.value.id}`);
+        if (data?.archived) {
+            toast.success('Huésped archivado', data.message);
+        } else if (deleting.value.is_archived) {
+            toast.success(
+                'Huésped eliminado',
+                `${deleting.value.full_name} se eliminó definitivamente; su historial queda sin huésped vinculado.`,
+            );
+        } else {
+            toast.success(
+                'Huésped eliminado',
+                `${deleting.value.full_name} se eliminó del directorio.`,
+            );
+        }
         deleting.value = null;
-        router.reload({ only: ['guests'] });
+        router.reload({ only: ['guests', 'archivedCount'] });
     } catch (error: any) {
         deleteError.value =
             error.response?.data?.message ?? 'No se pudo eliminar el huésped.';
@@ -87,8 +118,31 @@ async function submitDelete() {
     }
 }
 
+// Restaurar un huésped archivado al directorio.
+const restoringId = ref<number | null>(null);
+
+async function restoreGuest(g: GuestRow) {
+    restoringId.value = g.id;
+    try {
+        await axios.post(`/api/guests/${g.id}/restore`);
+        toast.success(
+            'Huésped restaurado',
+            `${g.full_name} vuelve a aparecer en el directorio.`,
+        );
+        router.reload({ only: ['guests', 'archivedCount'] });
+    } catch (error: any) {
+        toast.error(
+            'No se pudo restaurar',
+            error.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        restoringId.value = null;
+    }
+}
+
 // ── Selección múltiple (opera sobre la página visible; el backend
-// conserva los que tienen historial de reservas) ──
+// archiva los que tienen historial y elimina el resto; en la vista de
+// archivados todo se elimina definitivamente) ──
 const selectedIds = ref<number[]>([]);
 const bulkDeleteOpen = ref(false);
 const bulkDeleting = ref(false);
@@ -120,15 +174,17 @@ async function bulkDelete() {
             data: { ids: selectedIds.value },
         });
         toast.success(
-            'Huéspedes eliminados',
-            `${data.deleted} eliminado(s)` +
-                (data.skipped
-                    ? ` · ${data.skipped} conservado(s) por historial de reservas`
-                    : ''),
+            'Listo',
+            archived.value
+                ? `${data.deleted} huésped(es) eliminado(s) definitivamente.`
+                : `${data.deleted} eliminado(s)` +
+                      (data.archived
+                          ? ` · ${data.archived} archivado(s) por tener historial (restaurables)`
+                          : ''),
         );
         selectedIds.value = [];
         bulkDeleteOpen.value = false;
-        router.reload({ only: ['guests'] });
+        router.reload({ only: ['guests', 'archivedCount'] });
     } catch (error: any) {
         toast.error(
             'No se pudo eliminar',
@@ -146,315 +202,417 @@ const initials = (name: string) =>
         .slice(0, 2)
         .map((p) => p.charAt(0).toUpperCase())
         .join('') || '?';
-
-const cellClass =
-    'box shadow-[5px_3px_5px_#00000005] first:border-l last:border-r first:rounded-l-[0.6rem] last:rounded-r-[0.6rem] rounded-l-none rounded-r-none border-x-0 dark:bg-darkmode-600';
 </script>
 
 <template>
     <RazeLayout title="Huéspedes">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Huéspedes</h1>
-                    <p class="text-sm text-slate-500">
-                        {{ guests.total }} registrado(s) en el directorio
-                    </p>
+            <div
+                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+            >
+                <div class="flex items-center gap-4">
+                    <div
+                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Users" class="h-7 w-7" />
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-medium">
+                            Directorio de huéspedes
+                        </h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            Consulta datos de contacto, visitas e historial de
+                            {{ guests.total }} huésped{{
+                                guests.total === 1 ? '' : 'es'
+                            }}.
+                        </p>
+                    </div>
                 </div>
                 <Button
                     v-if="canManage"
                     variant="primary"
-                    class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                    class="min-h-11 rounded-[0.5rem] px-5 shadow-md shadow-primary/20"
                     @click="showCreate = true"
                 >
-                    <Lucide icon="UserPlus" class="mr-2 h-4 w-4 stroke-[1.3]" />
+                    <Lucide icon="UserPlus" class="mr-2 h-5 w-5 stroke-[1.5]" />
                     Nuevo huésped
                 </Button>
             </div>
 
             <!-- Toolbar -->
-            <div
-                class="box box--stacked mt-5 flex flex-wrap items-center gap-3 p-3"
-            >
-                <div class="relative flex-1 sm:max-w-xs">
-                    <Lucide
-                        icon="Search"
-                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                    />
-                    <FormInput
-                        v-model="q"
-                        type="text"
-                        placeholder="Buscar por nombre, teléfono o email…"
-                        class="pl-9"
-                    />
+            <div class="box box--stacked mt-5 p-5">
+                <div class="mb-4 flex items-center gap-3">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                    >
+                        <Lucide icon="Search" class="h-5 w-5" />
+                    </div>
+                    <div>
+                        <div class="text-sm font-medium">
+                            Encuentra un huésped
+                        </div>
+                        <div class="text-xs text-slate-500">
+                            Busca por nombre, teléfono o correo electrónico.
+                        </div>
+                    </div>
                 </div>
-                <label
-                    class="flex cursor-pointer items-center gap-2 rounded-[0.5rem] border px-3 py-2 text-sm transition"
-                    :class="
-                        blacklisted
-                            ? 'border-danger/30 bg-danger/5 text-danger'
-                            : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
-                    "
+                <div
+                    class="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(18rem,1fr)_auto_auto_auto]"
                 >
-                    <FormCheck.Input
-                        id="f-blacklist"
-                        v-model="blacklisted"
-                        type="checkbox"
-                        class="!mt-0"
-                    />
-                    <Lucide icon="ShieldAlert" class="h-4 w-4" /> Solo lista
-                    negra
-                </label>
-                <template v-if="canManage && selectedIds.length">
-                    <span class="ml-auto text-xs text-slate-500"
-                        >{{ selectedIds.length }} seleccionado(s)</span
+                    <div class="relative">
+                        <Lucide
+                            icon="Search"
+                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3.5 h-5 w-5 stroke-[1.5] text-slate-400"
+                        />
+                        <FormInput
+                            v-model="q"
+                            type="search"
+                            placeholder="Nombre, teléfono o correo"
+                            class="h-11 pl-11 text-sm"
+                        />
+                    </div>
+                    <label
+                        class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-[0.5rem] border px-4 py-2 text-sm font-medium transition"
+                        :class="
+                            blacklisted
+                                ? 'border-danger/30 bg-danger/5 text-danger'
+                                : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
+                        "
                     >
-                    <button
-                        type="button"
-                        class="text-xs font-medium text-primary hover:underline"
-                        @click="selectedIds = []"
+                        <FormCheck.Input
+                            id="f-blacklist"
+                            v-model="blacklisted"
+                            type="checkbox"
+                            class="!mt-0"
+                        />
+                        <Lucide icon="ShieldAlert" class="h-5 w-5" />
+                        Lista negra
+                    </label>
+                    <label
+                        v-if="archivedCount > 0 || archived"
+                        class="flex min-h-11 cursor-pointer items-center gap-2.5 rounded-[0.5rem] border px-4 py-2 text-sm font-medium transition"
+                        :class="
+                            archived
+                                ? 'border-primary/30 bg-primary/5 text-primary'
+                                : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
+                        "
                     >
-                        Quitar selección
-                    </button>
+                        <FormCheck.Input
+                            id="f-archived"
+                            v-model="archived"
+                            type="checkbox"
+                            class="!mt-0"
+                        />
+                        <Lucide icon="Archive" class="h-5 w-5" />
+                        Archivados ({{ archivedCount }})
+                    </label>
                     <Button
-                        variant="danger"
-                        class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
-                        @click="bulkDeleteOpen = true"
+                        v-if="filtersActive"
+                        type="button"
+                        variant="outline-secondary"
+                        class="min-h-11"
+                        @click="clearFilters"
                     >
-                        <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
-                        Eliminar seleccionados
+                        <Lucide icon="X" class="mr-2 h-5 w-5" />
+                        Limpiar
                     </Button>
+                </div>
+                <template v-if="canManage && selectedIds.length">
+                    <div
+                        class="mt-4 flex flex-wrap items-center justify-end gap-3 border-t border-slate-200/60 pt-4 dark:border-darkmode-400"
+                    >
+                        <span class="text-sm text-slate-500"
+                            >{{ selectedIds.length }} seleccionado(s)</span
+                        >
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            class="min-h-10"
+                            @click="selectedIds = []"
+                        >
+                            Quitar selección
+                        </Button>
+                        <Button
+                            variant="danger"
+                            class="min-h-10 rounded-[0.5rem]"
+                            @click="bulkDeleteOpen = true"
+                        >
+                            <Lucide icon="Trash2" class="mr-2 h-5 w-5" />
+                            {{
+                                archived
+                                    ? 'Eliminar definitivamente'
+                                    : 'Eliminar seleccionados'
+                            }}
+                        </Button>
+                    </div>
                 </template>
             </div>
 
-            <div class="mt-5">
-                <div class="overflow-auto lg:overflow-visible">
-                    <Table
-                        v-if="guests.data.length"
-                        class="border-separate border-spacing-y-[8px]"
-                    >
-                        <Table.Thead>
-                            <Table.Tr>
-                                <Table.Th
-                                    v-if="canManage"
-                                    class="w-10 border-b-0 !bg-transparent"
-                                >
-                                    <FormCheck.Input
-                                        type="checkbox"
-                                        :checked="allSelected"
-                                        title="Seleccionar esta página"
-                                        @change="toggleAll"
-                                    />
-                                </Table.Th>
-                                <Table.Th class="border-b-0 !bg-transparent"
-                                    >Huésped</Table.Th
-                                >
-                                <Table.Th class="border-b-0 !bg-transparent"
-                                    >Contacto</Table.Th
-                                >
-                                <Table.Th class="border-b-0 !bg-transparent"
-                                    >Visitas</Table.Th
-                                >
-                                <Table.Th class="border-b-0 !bg-transparent"
-                                    >Alta</Table.Th
-                                >
-                                <Table.Th
-                                    class="border-b-0 !bg-transparent text-right"
-                                    >Acciones</Table.Th
-                                >
-                            </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                            <Table.Tr v-for="g in guests.data" :key="g.id">
-                                <Table.Td
-                                    v-if="canManage"
-                                    :class="cellClass"
-                                    class="w-10"
-                                >
-                                    <FormCheck.Input
-                                        type="checkbox"
-                                        :checked="selectedIds.includes(g.id)"
-                                        @change="toggleRow(g.id)"
-                                    />
-                                </Table.Td>
-                                <Table.Td :class="cellClass">
-                                    <div class="flex items-center gap-3">
-                                        <div
-                                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
-                                        >
-                                            {{ initials(g.full_name) }}
-                                        </div>
-                                        <div class="min-w-0">
-                                            <Link
-                                                :href="
-                                                    route(
-                                                        'tenant.guests.show',
-                                                        g.id,
-                                                    )
-                                                "
-                                                class="font-medium text-primary hover:underline"
-                                                >{{ g.full_name }}</Link
-                                            >
-                                            <span
-                                                v-if="g.is_blacklisted"
-                                                class="ml-1.5 rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger"
-                                                >Lista negra</span
-                                            >
-                                        </div>
-                                    </div>
-                                </Table.Td>
-                                <Table.Td
-                                    :class="cellClass"
-                                    class="text-sm text-slate-500"
-                                >
-                                    <div
-                                        v-if="g.phone"
-                                        class="flex items-center gap-1.5 whitespace-nowrap"
-                                    >
-                                        <Lucide
-                                            icon="Phone"
-                                            class="h-3.5 w-3.5"
-                                        />
-                                        {{ g.phone }}
-                                    </div>
-                                    <div
-                                        v-if="g.email"
-                                        class="flex items-center gap-1.5 whitespace-nowrap"
-                                    >
-                                        <Lucide
-                                            icon="Mail"
-                                            class="h-3.5 w-3.5"
-                                        />
-                                        {{ g.email }}
-                                    </div>
-                                    <span
-                                        v-if="!g.phone && !g.email"
-                                        class="text-slate-400"
-                                        >—</span
-                                    >
-                                </Table.Td>
-                                <Table.Td :class="cellClass">
-                                    <span
-                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
-                                        :class="
-                                            g.visits > 0
-                                                ? 'bg-success/10 text-success'
-                                                : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
-                                        "
-                                    >
-                                        <Lucide
-                                            icon="BedDouble"
-                                            class="h-3.5 w-3.5"
-                                        />
-                                        {{ g.visits }}
-                                    </span>
-                                </Table.Td>
-                                <Table.Td
-                                    :class="cellClass"
-                                    class="text-sm whitespace-nowrap text-slate-500"
-                                    >{{ g.created_at }}</Table.Td
-                                >
-                                <Table.Td :class="cellClass" class="text-right">
-                                    <div
-                                        class="flex items-center justify-end gap-2"
-                                    >
-                                        <Link
-                                            :href="
-                                                route(
-                                                    'tenant.guests.show',
-                                                    g.id,
-                                                )
-                                            "
-                                            title="Ver perfil"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
-                                        >
-                                            <Lucide
-                                                icon="Eye"
-                                                class="h-4 w-4"
-                                            />
-                                        </Link>
-                                        <Link
-                                            v-if="canManage"
-                                            :href="`${route('tenant.guests.show', g.id)}?edit=1`"
-                                            title="Editar"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
-                                        >
-                                            <Lucide
-                                                icon="Pencil"
-                                                class="h-4 w-4"
-                                            />
-                                        </Link>
-                                        <button
-                                            v-if="canManage"
-                                            type="button"
-                                            title="Eliminar"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
-                                            @click="askDelete(g)"
-                                        >
-                                            <Lucide
-                                                icon="Trash2"
-                                                class="h-4 w-4"
-                                            />
-                                        </button>
-                                    </div>
-                                </Table.Td>
-                            </Table.Tr>
-                        </Table.Tbody>
-                    </Table>
-                    <div
-                        v-else
-                        class="box box--stacked flex flex-col items-center gap-3 py-12 text-center"
-                    >
-                        <div
-                            class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
-                        >
-                            <Lucide icon="Users" class="h-6 w-6" />
-                        </div>
-                        <p class="text-sm text-slate-500">
-                            {{
-                                filters.q
-                                    ? 'Sin resultados para tu búsqueda.'
-                                    : 'Aún no hay huéspedes; se crean solos al reservar, o da de alta uno.'
+            <div class="box box--stacked mt-5 p-5">
+                <div
+                    v-if="guests.data.length"
+                    class="mb-4 flex flex-wrap items-center justify-between gap-3"
+                >
+                    <div>
+                        <h2 class="text-base font-medium">
+                            Resultados del directorio
+                        </h2>
+                        <p class="text-xs text-slate-500">
+                            {{ guests.total }} huésped{{
+                                guests.total === 1 ? '' : 'es'
                             }}
+                            encontrado(s)
                         </p>
-                        <Button
-                            v-if="canManage && !filters.q"
-                            variant="outline-primary"
-                            size="sm"
-                            class="rounded-[0.5rem]"
-                            @click="showCreate = true"
-                        >
-                            <Lucide icon="UserPlus" class="mr-1.5 h-4 w-4" />
-                            Nuevo huésped
-                        </Button>
                     </div>
-
-                    <!-- Paginación -->
-                    <div
-                        v-if="guests.links.length > 3"
-                        class="mt-4 flex flex-wrap justify-center gap-1"
+                    <label
+                        v-if="canManage"
+                        class="flex cursor-pointer items-center gap-2 text-sm text-slate-500"
                     >
-                        <template v-for="(link, i) in guests.links" :key="i">
-                            <Link
-                                v-if="link.url"
-                                :href="link.url"
-                                preserve-state
-                                class="rounded-md px-3 py-1.5 text-sm"
+                        <FormCheck.Input
+                            type="checkbox"
+                            :checked="allSelected"
+                            @change="toggleAll"
+                        />
+                        Seleccionar esta página
+                    </label>
+                </div>
+
+                <div v-if="guests.data.length" class="space-y-3">
+                    <article
+                        v-for="g in guests.data"
+                        :key="g.id"
+                        class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-4 gap-y-3 rounded-xl border border-slate-200/70 bg-white p-4 shadow-xs transition hover:border-primary/25 hover:shadow-sm lg:grid-cols-[auto_minmax(14rem,1.25fr)_minmax(13rem,1fr)_minmax(10rem,0.65fr)_auto] dark:border-darkmode-400 dark:bg-darkmode-600"
+                    >
+                        <FormCheck.Input
+                            v-if="canManage"
+                            type="checkbox"
+                            :checked="selectedIds.includes(g.id)"
+                            @change="toggleRow(g.id)"
+                        />
+                        <div v-else class="h-4 w-4" aria-hidden="true" />
+
+                        <div class="flex min-w-0 items-center gap-3">
+                            <div
+                                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-sm font-semibold text-white"
+                            >
+                                {{ initials(g.full_name) }}
+                            </div>
+                            <div class="min-w-0">
+                                <Link
+                                    :href="route('tenant.guests.show', g.id)"
+                                    class="block truncate font-medium text-primary hover:underline"
+                                >
+                                    {{ g.full_name }}
+                                </Link>
+                                <div class="mt-1 flex flex-wrap gap-1.5">
+                                    <span
+                                        v-if="g.is_blacklisted"
+                                        class="rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger"
+                                    >
+                                        Lista negra
+                                    </span>
+                                    <span
+                                        v-if="g.is_archived"
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-500 dark:bg-darkmode-400"
+                                    >
+                                        Archivado
+                                    </span>
+                                    <span class="text-xs text-slate-400">
+                                        Registrado {{ g.created_at }}
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div
+                            class="col-start-2 min-w-0 text-sm text-slate-500 lg:col-start-auto"
+                        >
+                            <div v-if="g.phone" class="flex items-center gap-2">
+                                <Lucide
+                                    icon="Phone"
+                                    class="h-4 w-4 shrink-0 text-primary"
+                                />
+                                <span class="truncate">{{ g.phone }}</span>
+                            </div>
+                            <div
+                                v-if="g.email"
+                                class="mt-1 flex items-center gap-2"
+                            >
+                                <Lucide
+                                    icon="Mail"
+                                    class="h-4 w-4 shrink-0 text-info"
+                                />
+                                <span class="truncate">{{ g.email }}</span>
+                            </div>
+                            <span v-if="!g.phone && !g.email">
+                                Sin datos de contacto
+                            </span>
+                        </div>
+
+                        <div
+                            class="col-start-2 flex items-center gap-2 lg:col-start-auto"
+                        >
+                            <div
+                                class="flex h-9 w-9 items-center justify-center rounded-full"
                                 :class="
-                                    link.active
-                                        ? 'bg-primary text-white'
-                                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                                    g.visits > 0
+                                        ? 'bg-success/10 text-success'
+                                        : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
                                 "
                             >
-                                <span v-html="link.label" />
-                            </Link>
-                            <span
-                                v-else
-                                class="px-3 py-1.5 text-sm text-slate-400"
-                                v-html="link.label"
-                            />
-                        </template>
+                                <Lucide icon="BedDouble" class="h-5 w-5" />
+                            </div>
+                            <div>
+                                <div class="text-sm font-medium">
+                                    {{ g.visits }}
+                                    {{ g.visits === 1 ? 'visita' : 'visitas' }}
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    Estancias registradas
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Móvil: las acciones en su propio renglón a lo
+                             ancho — compartir fila aplastaba el nombre. -->
+                        <div
+                            class="col-span-full flex items-center gap-2 lg:col-span-1 lg:col-start-auto lg:justify-end"
+                        >
+                            <Button
+                                :as="Link"
+                                :href="route('tenant.guests.show', g.id)"
+                                variant="outline-secondary"
+                                class="min-h-10 flex-1 rounded-[0.5rem] whitespace-nowrap lg:flex-none"
+                            >
+                                <Lucide icon="Eye" class="mr-2 h-4 w-4" />
+                                Ver ficha
+                            </Button>
+                            <Menu v-if="canManage">
+                                <Menu.Button
+                                    class="flex h-10 w-10 items-center justify-center rounded-[0.5rem] border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                    title="Más acciones"
+                                >
+                                    <Lucide
+                                        icon="MoreVertical"
+                                        class="h-5 w-5"
+                                    />
+                                </Menu.Button>
+                                <Menu.Items class="w-52">
+                                    <Menu.Item
+                                        v-if="!g.is_archived"
+                                        :as="Link"
+                                        :href="`${route('tenant.guests.show', g.id)}?edit=1`"
+                                    >
+                                        <Lucide
+                                            icon="Pencil"
+                                            class="mr-2 h-5 w-5"
+                                        />
+                                        Editar huésped
+                                    </Menu.Item>
+                                    <Menu.Item
+                                        v-if="!g.is_archived"
+                                        as="button"
+                                        type="button"
+                                        class="text-danger"
+                                        @click="askDelete(g)"
+                                    >
+                                        <Lucide
+                                            icon="Archive"
+                                            class="mr-2 h-5 w-5"
+                                        />
+                                        Archivar o eliminar
+                                    </Menu.Item>
+                                    <Menu.Item
+                                        v-if="g.is_archived"
+                                        as="button"
+                                        type="button"
+                                        :disabled="restoringId === g.id"
+                                        @click="restoreGuest(g)"
+                                    >
+                                        <Lucide
+                                            icon="ArchiveRestore"
+                                            class="mr-2 h-5 w-5"
+                                        />
+                                        {{
+                                            restoringId === g.id
+                                                ? 'Restaurando…'
+                                                : 'Restaurar huésped'
+                                        }}
+                                    </Menu.Item>
+                                    <Menu.Item
+                                        v-if="g.is_archived"
+                                        as="button"
+                                        type="button"
+                                        class="text-danger"
+                                        @click="askDelete(g)"
+                                    >
+                                        <Lucide
+                                            icon="Trash2"
+                                            class="mr-2 h-5 w-5"
+                                        />
+                                        Eliminar definitivamente
+                                    </Menu.Item>
+                                </Menu.Items>
+                            </Menu>
+                        </div>
+                    </article>
+                </div>
+
+                <div
+                    v-if="!guests.data.length"
+                    class="flex flex-col items-center gap-3 py-12 text-center"
+                >
+                    <div
+                        class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Users" class="h-6 w-6" />
                     </div>
+                    <p class="text-sm text-slate-500">
+                        {{
+                            filters.archived
+                                ? 'No hay huéspedes archivados.'
+                                : filters.q
+                                  ? 'Sin resultados para tu búsqueda.'
+                                  : 'Aún no hay huéspedes; se crean solos al reservar, o da de alta uno.'
+                        }}
+                    </p>
+                    <Button
+                        v-if="canManage && !filters.q"
+                        variant="outline-primary"
+                        size="sm"
+                        class="rounded-[0.5rem]"
+                        @click="showCreate = true"
+                    >
+                        <Lucide icon="UserPlus" class="mr-1.5 h-4 w-4" />
+                        Nuevo huésped
+                    </Button>
+                </div>
+
+                <!-- Paginación -->
+                <div
+                    v-if="guests.links.length > 3"
+                    class="mt-4 flex flex-wrap justify-center gap-1"
+                >
+                    <template v-for="(link, i) in guests.links" :key="i">
+                        <Link
+                            v-if="link.url"
+                            :href="link.url"
+                            preserve-state
+                            class="rounded-md px-3 py-1.5 text-sm"
+                            :class="
+                                link.active
+                                    ? 'bg-primary text-white'
+                                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                            "
+                        >
+                            <span v-html="link.label" />
+                        </Link>
+                        <span
+                            v-else
+                            class="px-3 py-1.5 text-sm text-slate-400"
+                            v-html="link.label"
+                        />
+                    </template>
                 </div>
             </div>
         </div>
@@ -469,31 +627,50 @@ const cellClass =
         />
 
         <!-- Modal eliminar -->
-        <Dialog :open="deleting !== null" @close="deleting = null">
+        <Dialog size="lg" :open="deleting !== null" @close="deleting = null">
             <Dialog.Panel>
                 <div v-if="deleting" class="p-6">
                     <div class="flex items-start gap-3.5">
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
                         >
-                            <Lucide icon="Trash2" class="h-5 w-5" />
+                            <Lucide icon="Trash2" class="h-7 w-7" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
-                                ¿Eliminar a {{ deleting.full_name }}?
+                            <h2 class="text-lg font-medium">
+                                {{
+                                    deleting.is_archived
+                                        ? `¿Eliminar definitivamente a ${deleting.full_name}?`
+                                        : `¿Eliminar a ${deleting.full_name}?`
+                                }}
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">
-                                Se borran su ficha, fotos de INE y vehículo.
-                                Esta acción no se puede deshacer.
+                                {{
+                                    deleting.is_archived
+                                        ? 'Se borran su ficha, fotos y documentos para siempre.'
+                                        : 'Si no tiene historial, se borran su ficha y fotos de forma definitiva.'
+                                }}
                             </p>
                         </div>
                     </div>
                     <div
+                        v-if="deleting.is_archived"
+                        class="mt-4 flex items-center gap-2 rounded-lg border border-danger/20 bg-danger/5 px-3 py-2.5 text-xs text-danger"
+                    >
+                        <Lucide icon="TriangleAlert" class="h-4 w-4 shrink-0" />
+                        Esta acción no se puede deshacer. Sus reservas y
+                        estancias pasadas se conservan, pero quedarán sin
+                        huésped vinculado. Si prefieres conservarlo, usa
+                        Restaurar huésped.
+                    </div>
+                    <div
+                        v-else
                         class="mt-4 flex items-center gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
                     >
-                        <Lucide icon="Info" class="h-4 w-4 shrink-0" /> Si el
-                        huésped tiene reservas o estancias, no podrá eliminarse
-                        (se conserva su historial).
+                        <Lucide icon="Archive" class="h-4 w-4 shrink-0" /> Si
+                        tiene reservas o estancias, se archiva: desaparece del
+                        directorio pero su historial se conserva y podrás
+                        restaurarlo desde el filtro Archivados.
                     </div>
                     <p
                         v-if="deleteError"
@@ -501,18 +678,20 @@ const cellClass =
                     >
                         {{ deleteError }}
                     </p>
-                    <div class="mt-6 flex justify-end gap-2">
+                    <div class="mt-6 flex justify-end gap-3">
                         <Button
                             variant="outline-secondary"
+                            class="min-h-11 px-5"
                             @click="deleting = null"
                             >Cancelar</Button
                         >
                         <Button
                             variant="danger"
+                            class="min-h-11 px-5"
                             :disabled="deleteBusy"
                             @click="submitDelete"
                         >
-                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Trash2" class="mr-2 h-5 w-5" />
                             {{ deleteBusy ? 'Eliminando…' : 'Sí, eliminar' }}
                         </Button>
                     </div>
@@ -521,22 +700,33 @@ const cellClass =
         </Dialog>
 
         <!-- Confirmar borrado masivo -->
-        <Dialog :open="bulkDeleteOpen" @close="bulkDeleteOpen = false">
+        <Dialog
+            size="lg"
+            :open="bulkDeleteOpen"
+            @close="bulkDeleteOpen = false"
+        >
             <Dialog.Panel>
                 <div class="p-5">
                     <div class="mb-3 flex items-center gap-3">
                         <div
-                            class="flex h-10 w-10 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
+                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
                         >
-                            <Lucide icon="Trash2" class="h-5 w-5 text-danger" />
+                            <Lucide icon="Trash2" class="h-7 w-7 text-danger" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
-                                Eliminar {{ selectedRows.length }} huésped(es)
+                            <h2 class="text-lg font-medium">
+                                {{
+                                    archived
+                                        ? `Eliminar definitivamente ${selectedRows.length} huésped(es)`
+                                        : `Eliminar ${selectedRows.length} huésped(es)`
+                                }}
                             </h2>
-                            <p class="text-xs text-slate-500">
-                                Los que tengan historial de reservas o estancias
-                                se conservan (rastro) y se te informa.
+                            <p class="mt-1 text-sm text-slate-500">
+                                {{
+                                    archived
+                                        ? 'Se borran sus fichas, fotos y documentos para siempre; su historial queda sin huésped vinculado. Esta acción no se puede deshacer.'
+                                        : 'Los que tengan historial de reservas o estancias se archivan (restaurables); el resto se elimina definitivamente.'
+                                }}
                             </p>
                         </div>
                     </div>
@@ -554,14 +744,16 @@ const cellClass =
                             }}</span>
                         </div>
                     </div>
-                    <div class="mt-5 flex justify-end gap-2">
+                    <div class="mt-5 flex justify-end gap-3">
                         <Button
                             variant="outline-secondary"
+                            class="min-h-11 px-5"
                             @click="bulkDeleteOpen = false"
                             >Cancelar</Button
                         >
                         <Button
                             variant="danger"
+                            class="min-h-11 px-5"
                             :disabled="bulkDeleting"
                             @click="bulkDelete"
                         >

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
+import QRCode from 'qrcode';
 import { reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
@@ -143,6 +144,27 @@ async function copyText(text: string, message: string) {
         toast.success(message);
     } catch {
         toast.error('No se pudo copiar', 'Copia el texto manualmente.');
+    }
+}
+
+// QR de la página de reservas: para imprimir en recepción, menús o
+// tarjetas — el huésped lo escanea y cae directo en el wizard.
+async function downloadWizardQr() {
+    try {
+        const dataUrl = await QRCode.toDataURL(props.wizardUrl, {
+            width: 512,
+            margin: 2,
+        });
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = 'qr-pagina-de-reservas.png';
+        link.click();
+        toast.success(
+            'QR descargado',
+            'Imprímelo donde quieras: escanearlo abre tu página de reservas.',
+        );
+    } catch {
+        toast.error('No se pudo generar el QR', 'Intenta de nuevo.');
     }
 }
 
@@ -440,6 +462,14 @@ async function discardSuggestion(row: SuggestionRow) {
                         @click="copyText(wizardUrl, 'Link copiado')"
                     >
                         <Lucide icon="Copy" class="mr-1.5 h-3.5 w-3.5" /> Copiar
+                    </Button>
+                    <Button
+                        variant="outline-secondary"
+                        size="sm"
+                        title="Descargar código QR para imprimir"
+                        @click="downloadWizardQr"
+                    >
+                        <Lucide icon="QrCode" class="mr-1.5 h-3.5 w-3.5" /> QR
                     </Button>
                     <Button
                         as="a"

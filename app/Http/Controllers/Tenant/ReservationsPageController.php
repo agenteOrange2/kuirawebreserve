@@ -31,6 +31,12 @@ class ReservationsPageController extends Controller
 
         $reservationModels = Reservation::query()
             ->with($relations)
+            // ¿Hay transferencia esperando verificación? El modal de
+            // confirmar avisa: confirmar a mano NO registra ese dinero —
+            // se aprueba en /pagos (incidente RES-2026-0032, 2026-07-24).
+            ->withExists(['paymentRequests as pending_transfer_request' => fn ($q) => $q
+                ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
+                ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)])
             ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
             ->where('ends_at', '>=', now())
             ->orderBy('starts_at')
@@ -154,10 +160,20 @@ class ReservationsPageController extends Controller
                     'min_advance_label' => $plan->minAdvanceLabel(),
                 ]),
             'canManage' => $request->user()->can('reservations.manage'),
-            // Botón "Apariencia" (→ /reservas/ajustes): solo si puede
-            // configurar el hotel Y el wizard público existe (motor-web).
-            'canCustomizeWizard' => $request->user()->can('properties.manage')
-                && (bool) tenant()?->hasModule('motor-web'),
+            // En modo de check-in "automático" puro (/ajustes/limpieza) la
+            // llegada la registra el reloj: el botón manual se oculta.
+            'manualCheckinAllowed' => app(\App\Services\HousekeepingPolicy::class)->manualCheckInAllowed(),
+            // Walk-ins con cobro al llegar (/ajustes/metodos-pago): el modal
+            // de llegada pide el método de pago y registra el cobro.
+            'walkinChargeOnCheckin' => app(\App\Services\ReservationPolicy::class)->walkinChargeOnCheckIn(),
+            // Fianza (depósito en garantía): monto fijo que los modales de
+            // llegada cobran y el de salida devuelve. 0 = ajuste apagado.
+            'guaranteeAmount' => app(\App\Services\ReservationPolicy::class)->guaranteeEnabled()
+                ? app(\App\Services\ReservationPolicy::class)->guaranteeAmount()
+                : 0,
+            // Duración REAL del apartado (hold_value/unit de Métodos de
+            // pago): la UI nunca debe decir "30 minutos" fijo.
+            'holdMinutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
             'prefill' => [
                 'intent' => $prefillIntent,
                 'room' => $prefillRoom ? [
@@ -241,6 +257,10 @@ class ReservationsPageController extends Controller
             'hold_expires_at_iso' => $r->hold_expires_at?->toIso8601String(),
             'total_amount' => $r->total_amount,
             'extra_charges' => $r->extra_charges ?? [],
+            // Cupón aplicado en el wizard (módulo cupones): el descuento ya
+            // vive dentro de total_amount; el detalle muestra la línea.
+            'coupon_code' => $r->coupon_code,
+            'discount_amount' => (float) ($r->discount_amount ?? 0),
             // Líneas congeladas del wizard: productos POS, add-ons y
             // experiencias — el detalle desglosa de qué está hecho el total.
             'products' => $r->products ?? [],
@@ -256,6 +276,7 @@ class ReservationsPageController extends Controller
             'deposit_amount' => $r->deposit_amount,
             'payment_status' => $r->payment_status->value,
             'payment_status_label' => $r->payment_status->label(),
+            'pending_transfer_request' => (bool) ($r->pending_transfer_request ?? false),
             'payment_due_at' => $r->payment_due_at?->format('d/m/Y H:i'),
             'payment_overdue' => $r->isPaymentOverdue(),
             'paid_total' => $r->paidTotal(),

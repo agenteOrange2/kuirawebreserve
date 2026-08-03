@@ -231,12 +231,43 @@ class RoomController extends Controller
             ], 422);
         }
 
+        // Reservada/ocupada sin reserva real es un semáforo que miente:
+        // nadie sabe quién viene ni quién está adentro, y disponibilidad y
+        // cobros quedan desconectados del plano.
+        if ($data['status'] === RoomStatus::Reserved->value) {
+            return response()->json([
+                'message' => "Reservada no se marca a mano: crea la reserva de la {$room->number} (botón Reservar) y el semáforo se mueve solo.",
+            ], 422);
+        }
+
+        if ($data['status'] === RoomStatus::Occupied->value) {
+            return response()->json([
+                'message' => "Ocupada no se marca a mano: registra un Walk-in o haz el check-in de la reserva de la {$room->number} para saber quién entra.",
+            ], 422);
+        }
+
+        // Liberar una reservada por debajo de su reserva viva la dejaría
+        // vendible dos veces; el camino es cancelar la reserva.
+        if (
+            $data['status'] === RoomStatus::Available->value
+            && $room->status->getMorphClass() === RoomStatus::Reserved->value
+            && $room->hasLiveReservation()
+        ) {
+            $reservation = $room->upcomingReservation;
+
+            return response()->json([
+                'message' => "La {$room->number} está apartada por la reserva {$reservation->displayCode()}"
+                    .($reservation->guest_name ? " ({$reservation->guest_name})" : '')
+                    .'; cancélala en Reservas para liberarla.',
+            ], 422);
+        }
+
         try {
             $action->handle($room, $data['status'], $request->user());
         } catch (CouldNotPerformTransition) {
             return response()->json([
                 'message' => "Transición no permitida: {$room->status->label()} → {$data['status']}.",
-                'allowed' => $room->status->transitionableStates(),
+                'allowed' => $room->manualStatusTransitions(),
             ], 422);
         }
 
@@ -244,7 +275,7 @@ class RoomController extends Controller
             ...$room->toArray(),
             'status_color' => $room->status->color(),
             'status_label' => $room->status->label(),
-            'transitions' => $room->status->transitionableStates(),
+            'transitions' => $room->manualStatusTransitions(),
         ]);
     }
 

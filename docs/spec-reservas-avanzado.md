@@ -37,7 +37,7 @@ motellacupula necesita activar para dejar de ver "el hotel confirma
 directo"** — no hace falta código nuevo para esa mitad del problema, solo
 prender el interruptor.
 
-### 1.2 Lo que falta: transferencia conectada de verdad a WhatsApp
+### 1.2 ✅ YA CONSTRUIDO (2026-07-23): transferencia conectada de verdad a WhatsApp
 
 Hoy, cuando el método resuelto es transferencia, la pantalla de
 confirmación del wizard solo muestra las cuentas bancarias y el texto
@@ -76,7 +76,18 @@ Dos formas de tender ese puente, evaluadas:
   `/inbox` por los webhooks existentes (`EvolutionWebhookController`,
   `MetaWebhookController`), el staff lo ve con el resto de la bandeja.
 
-### 1.3 Mejora relacionada (P2, no bloquea 1.2): vincular la conversación a la reserva automáticamente
+**Así quedó construido (2026-07-23):** los números no se resuelven del
+canal conectado sino de `settings.transfer_whatsapps` — lista con lada
+propia que el hotel captura en `/ajustes/metodos-pago`;
+`ReservationPolicy::transferWhatsapps()` la normaliza lista para `wa.me`
+(compatibilidad con el campo viejo `transfer_whatsapp` incluida). La
+respuesta de transferencia de `payment()` (reservas, experiencias y
+grupos) incluye `whatsapps`, y los tres wizards pintan un botón "Enviar
+por WhatsApp" por número con el código de reserva precargado; sin
+números capturados, el wizard dice "el hotel te contactará". Cubierto en
+`BookingWizardTest`.
+
+### 1.3 ✅ YA CONSTRUIDO (2026-07-23): vincular la conversación a la reserva automáticamente
 
 `Conversation` ya tiene la columna `reservation_id`, pero nada la llena
 hoy. Cuando llega un mensaje nuevo por WhatsApp, buscar una reserva
@@ -86,6 +97,18 @@ tener que preguntar ni buscar. Vale la pena, pero es independiente del
 botón de WhatsApp (que funciona bien sin esto, el staff solo verifica el
 comprobante a mano contra el código que el huésped ya escribió en el
 mensaje precargado).
+
+**Así quedó construido (2026-07-23):**
+`Conversation::linkReservationByPhone()` — al entrar un mensaje por
+WhatsApp (Evolution o Meta tipo whatsapp; los PSID de Messenger/IG
+quedan fuera a propósito porque son numéricos y podrían coincidir por
+accidente) se busca la reserva PENDIENTE más reciente (ventana de 7
+días) cuyo huésped tenga un teléfono con los mismos últimos 10 dígitos
+que el remitente, y se ligan `reservation_id` + `guest_id` (lead →
+hold). Un vínculo existente (p. ej. puesto por el bot al crear el hold)
+nunca se pisa. La bandeja ya mostraba código y estado de pago de la
+reserva ligada — no hubo que tocar UI. Tests en
+`ConversationReservationLinkTest`.
 
 ### 1.4 ✅ YA CORREGIDO (2026-07-11): elegir pasarela específica cuando hay varias conectadas
 
@@ -406,15 +429,14 @@ ninguno.
 | P0 | Capacidad real por habitación en la búsqueda + `CreateReservation` como único punto de verdad | ✅ Hecho |
 | P0.1 | Elegir pasarela específica cuando hay varias activas (§1.4) | ✅ Hecho |
 | P0.2 | Consolidar campos de ocupación en el editor + corregir `occupancyPreview` (§2.4) | ✅ Hecho |
-| P1.a | `payment-options` con WhatsApp + botón en la confirmación de transferencia (§1.2) | S |
-| P1.c | Vincular `Conversation`↔`Reservation` automáticamente por teléfono (§1.3) | S |
+| P1.a | Botón "Enviar comprobante por WhatsApp" en la confirmación de transferencia (§1.2) | ✅ Hecho |
+| P1.c | Vincular `Conversation`↔`Reservation` automáticamente por teléfono (§1.3) | ✅ Hecho |
 | P2 | Módulo Experiencias completo (§3) — el más grande; resolver §3.5 primero | L |
 
-Siguiente paso sugerido: P1.a (WhatsApp) es lo único que queda corto y
-rápido; P1.c cuando haya tiempo de sobra; el módulo de Experiencias (P2)
-arranca cuando estén resueltas las preguntas de §3.5 — es una pieza
-grande y nueva, vale la pena tenerlas claras antes de empezar a construir
-modelos y migraciones.
+Siguiente paso sugerido: el módulo de Experiencias (P2) arranca cuando
+estén resueltas las preguntas de §3.5 — es una pieza grande y nueva,
+vale la pena tenerlas claras antes de empezar a construir modelos y
+migraciones.
 
 ---
 
@@ -437,7 +459,7 @@ un "bug", es que falta capturarlo).
 | Pedir pago en línea siempre / nunca / según tarifa | Setting `payment_mode` | `/ajustes/wizard` |
 | Elegir entre pasarelas específicas | Dato (cuántas pasarelas activas haya) — 2+ activas = aparece el selector, sin interruptor propio | `/ajustes` → Pasarelas de pago |
 | Transferencia como método | Dato (¿hay al menos 1 cuenta bancaria activa?) | `/ajustes` → Cuentas bancarias |
-| Comprobante por WhatsApp (§1.2, P1) | Dato (¿hay canal WhatsApp conectado o teléfono de contacto?) — sin interruptor propio, aparece solo si hay a quién mandarlo | `/ajustes` → Canales, o `/ajustes` → teléfono |
+| Comprobante por WhatsApp (§1.2, ✅) | Dato (`transfer_whatsapps`: lista de números con lada) — sin interruptor propio, el botón aparece solo si hay números capturados | `/ajustes/metodos-pago` → WhatsApps para comprobantes |
 | Habitación admite más gente con recargo | Dato puro, 3 campos por HABITACIÓN: `max_occupancy` (techo), `included_occupancy` (gratis), `extra_guest_fee` (precio del resto) — sin capturar los 3 coherentemente, no tiene efecto | Habitaciones → editar cuarto → "Ocupación de esta habitación" |
 | Temporadas y promos por tarifa | Dato (¿la tarifa tiene `rate_plan_seasons` activas para esas fechas?) | Catálogo → tarifa → "Temporadas y promos" |
 | Módulo Experiencias (§3, P2) | Módulo `experiencias` (ya reservado, `available:false` hasta construirse) | Plan/`/admin/plans`, cuando exista |

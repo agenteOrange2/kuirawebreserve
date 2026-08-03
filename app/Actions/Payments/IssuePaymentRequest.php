@@ -58,7 +58,16 @@ class IssuePaymentRequest
             // Idempotencia: una sola solicitud viva por el mismo dinero.
             $existing = $reservation->paymentRequests()->active()->latest('id')->first();
 
-            if ($existing && $existing->concept === $concept && (float) $existing->amount === $amount && $existing->method === $method) {
+            if (
+                $existing
+                && $existing->concept === $concept
+                && (float) $existing->amount === $amount
+                && $existing->method === $method
+                // La pasarela también cuenta: pedir Stripe con un link de
+                // PayPal vivo debe emitir un checkout NUEVO, no reciclar el
+                // ajeno (bug real 2026-07-24: "me sigues dando PayPal").
+                && ($method !== PaymentRequest::METHOD_GATEWAY || $existing->provider === $link?->provider)
+            ) {
                 return $existing;
             }
 

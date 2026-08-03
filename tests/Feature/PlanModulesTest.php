@@ -66,7 +66,7 @@ it('el override del admin manda sobre el plan, en ambos sentidos', function () {
 it('enabledModules respeta el orden del catálogo', function () {
     $pro = moduleTenant('hotel-pro', 'pro');
 
-    expect($pro->enabledModules())->toBe(['pos', 'cobros', 'agente-ia', 'extras', 'experiencias', 'grupos']);
+    expect($pro->enabledModules())->toBe(['pos', 'cobros', 'agente-ia', 'extras', 'experiencias', 'grupos', 'lista-espera', 'cupones']);
 });
 
 it('las solicitudes de activación no se duplican', function () {

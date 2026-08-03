@@ -831,15 +831,28 @@ async function bulkDelete() {
 <template>
     <RazeLayout title="Experiencias">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Experiencias</h1>
-                    <p class="mt-0.5 text-sm text-slate-500">
-                        Tours y recorridos con horario y cupo propios. Se
-                        reservan solos, con o sin habitación.
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                    >
+                        <Lucide icon="Compass" class="h-5 w-5 sm:h-7 sm:w-7" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-lg font-medium sm:text-xl">
+                            Experiencias
+                        </h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            Tours y recorridos con horario y cupo propios. Se
+                            reservan solos, con o sin habitación.
+                        </p>
+                    </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
+                >
                     <Button
                         as="a"
                         :href="publicUrl"
@@ -868,7 +881,7 @@ async function bulkDelete() {
                     <Button
                         v-if="canManage"
                         variant="primary"
-                        class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                        class="col-span-2 rounded-[0.5rem] shadow-md shadow-primary/20 md:col-auto"
                         @click="openForm()"
                     >
                         <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Nueva

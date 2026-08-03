@@ -316,9 +316,15 @@ const cellClass =
 
             <!-- ===================== Hotel Performance Insights ===================== -->
             <div class="col-span-12 flex flex-col 2xl:col-span-9">
-                <div class="flex items-center md:h-10">
+                <!-- Móvil: título arriba y botones en par a lo ancho; en una
+                     sola fila aplastaban el título contra el borde. -->
+                <div
+                    class="flex flex-col gap-3 sm:flex-row sm:items-center md:h-10"
+                >
                     <div class="text-base font-medium">Resumen operativo</div>
-                    <div class="ml-auto flex gap-2">
+                    <div
+                        class="grid grid-cols-2 gap-2 sm:ml-auto sm:flex sm:gap-2"
+                    >
                         <Button
                             as="a"
                             :href="route('tenant.plano')"
@@ -497,10 +503,12 @@ const cellClass =
                         Ocupación vs. ingresos
                     </div>
                 </div>
+                <!-- Móvil: apiladas (lado a lado se aplastan y el canvas de
+                     la gráfica desborda la página). -->
                 <div
-                    class="mt-3.5 grid flex-1 grid-cols-2 gap-6 2xl:auto-rows-fr 2xl:grid-cols-1"
+                    class="mt-3.5 grid flex-1 grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 2xl:auto-rows-fr 2xl:grid-cols-1"
                 >
-                    <div class="box box--stacked flex flex-col p-5">
+                    <div class="box box--stacked flex min-w-0 flex-col p-5">
                         <div class="text-base text-slate-500">
                             Ocupación (7 días)
                         </div>
@@ -528,16 +536,18 @@ const cellClass =
                                 />
                             </div>
                         </div>
-                        <div class="mt-4 flex min-h-[87px] flex-1 items-end">
+                        <div
+                            class="mt-4 flex min-h-[87px] w-full min-w-0 flex-1 items-end"
+                        >
                             <Chart
                                 type="line"
                                 :data="occupancyLine"
                                 :options="lineOptions"
-                                class="!h-[87px]"
+                                class="!h-[87px] w-full"
                             />
                         </div>
                     </div>
-                    <div class="box box--stacked flex flex-col p-5">
+                    <div class="box box--stacked flex min-w-0 flex-col p-5">
                         <div class="text-base text-slate-500">
                             Ingresos (7 días)
                         </div>
@@ -565,12 +575,14 @@ const cellClass =
                                 />
                             </div>
                         </div>
-                        <div class="mt-4 flex min-h-[87px] flex-1 items-end">
+                        <div
+                            class="mt-4 flex min-h-[87px] w-full min-w-0 flex-1 items-end"
+                        >
                             <Chart
                                 type="line"
                                 :data="revenueLine"
                                 :options="lineOptions"
-                                class="!h-[87px]"
+                                class="!h-[87px] w-full"
                             />
                         </div>
                     </div>

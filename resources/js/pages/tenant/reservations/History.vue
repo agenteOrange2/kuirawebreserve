@@ -129,6 +129,17 @@ const statusFor = (s: string) =>
         class: 'bg-slate-100 text-slate-600',
         icon: 'CircleHelp' as Icon,
     };
+const friendlyStatusLabel = (status: string, label: string) =>
+    status === 'no_show' ? 'No llegó' : label;
+
+const sourceChannelLabel: Record<string, string> = {
+    front_desk: 'Recepción',
+    phone: 'Teléfono',
+    web: 'Sitio web',
+    whatsapp: 'WhatsApp',
+    walk_in: 'Llegó sin reserva',
+    agent: 'Asistente',
+};
 
 function paymentBadge(r: HistoryRow): string {
     if (r.payment_status === 'paid') return 'bg-success/10 text-success';
@@ -235,7 +246,7 @@ async function submitDelete() {
                     <h1 class="text-lg font-medium">Historial de reservas</h1>
                     <p class="text-sm text-slate-500">
                         {{ property.name }} · {{ reservations.total }}
-                        completadas, canceladas y no-shows
+                        completadas, canceladas o huéspedes que no llegaron
                     </p>
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -278,7 +289,9 @@ async function submitDelete() {
                             :key="option.value"
                             :value="option.value"
                         >
-                            {{ option.label }}
+                            {{
+                                friendlyStatusLabel(option.value, option.label)
+                            }}
                         </option>
                     </FormSelect>
                     <template v-if="canManage && selectedIds.length">
@@ -325,7 +338,10 @@ async function submitDelete() {
                             </Table.Tr>
                         </Table.Thead>
                         <Table.Tbody>
-                            <Table.Tr v-for="r in reservations.data" :key="r.id">
+                            <Table.Tr
+                                v-for="r in reservations.data"
+                                :key="r.id"
+                            >
                                 <Table.Td v-if="canManage" class="w-10">
                                     <FormCheck.Input
                                         type="checkbox"
@@ -375,7 +391,12 @@ async function submitDelete() {
                                             :icon="statusFor(r.status).icon"
                                             class="h-3 w-3"
                                         />
-                                        {{ r.status_label }}
+                                        {{
+                                            friendlyStatusLabel(
+                                                r.status,
+                                                r.status_label,
+                                            )
+                                        }}
                                     </span>
                                     <span
                                         v-if="r.cancellation_reason"
@@ -480,7 +501,12 @@ async function submitDelete() {
                                 :icon="statusFor(detail.status).icon"
                                 class="h-3 w-3"
                             />
-                            {{ detail.status_label }}
+                            {{
+                                friendlyStatusLabel(
+                                    detail.status,
+                                    detail.status_label,
+                                )
+                            }}
                         </span>
                     </div>
                     <div class="min-h-0 flex-1 overflow-y-auto px-6 pb-2">
@@ -502,7 +528,7 @@ async function submitDelete() {
                                     v-if="detail.rate_plan"
                                     class="text-xs text-slate-500"
                                 >
-                                    Tarifa: {{ detail.rate_plan }}
+                                    Tipo de estancia: {{ detail.rate_plan }}
                                 </div>
                             </div>
                             <div>
@@ -515,8 +541,18 @@ async function submitDelete() {
                                     {{ detail.ends_at }}
                                 </div>
                                 <div class="text-xs text-slate-500">
-                                    {{ detail.num_people }} persona(s) · canal
-                                    {{ detail.source_channel }}
+                                    {{ detail.num_people }}
+                                    {{
+                                        detail.num_people === 1
+                                            ? 'persona'
+                                            : 'personas'
+                                    }}
+                                    ·
+                                    {{
+                                        sourceChannelLabel[
+                                            detail.source_channel
+                                        ] ?? detail.source_channel
+                                    }}
                                 </div>
                             </div>
                             <div>
@@ -678,7 +714,10 @@ async function submitDelete() {
                                     >
                                 </div>
                                 <span class="text-xs text-slate-500">{{
-                                    r.status_label
+                                    friendlyStatusLabel(
+                                        r.status,
+                                        r.status_label,
+                                    )
                                 }}</span>
                             </div>
                         </div>

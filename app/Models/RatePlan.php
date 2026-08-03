@@ -81,18 +81,20 @@ class RatePlan extends Model
 
     /**
      * Temporada/promo activa que cubre esa fecha, o null si ninguna aplica
-     * (rige el precio base de la tarifa). Si hay solape, gana la de mayor
-     * `priority`; empate lo resuelve la más reciente (id mayor).
+     * (rige el precio base de la tarifa). Cubrir la fecha exige caer en el
+     * rango (si lo hay) Y en los `weekdays` marcados — el filtro vive en
+     * RatePlanSeason::coversDate para que reglas sin fechas (recurrentes) y
+     * por día de la semana se resuelvan igual aquí que en el desglose. Si
+     * hay solape, gana la de mayor `priority`; empate lo resuelve la más
+     * reciente (id mayor).
      */
     public function activeSeasonFor(CarbonInterface $date): ?RatePlanSeason
     {
-        $candidates = $this->relationLoaded('seasons')
-            ? $this->seasons->filter(fn (RatePlanSeason $s) => $s->active && $s->coversDate($date))
-            : $this->seasons()
-                ->where('active', true)
-                ->whereDate('starts_on', '<=', $date->toDateString())
-                ->whereDate('ends_on', '>=', $date->toDateString())
-                ->get();
+        $seasons = $this->relationLoaded('seasons')
+            ? $this->seasons
+            : $this->seasons()->where('active', true)->get();
+
+        $candidates = $seasons->filter(fn (RatePlanSeason $s) => $s->active && $s->coversDate($date));
 
         return $candidates->isEmpty() ? null : $candidates
             ->sort(fn (RatePlanSeason $a, RatePlanSeason $b) => $b->priority <=> $a->priority ?: $b->id <=> $a->id)
@@ -107,7 +109,9 @@ class RatePlan extends Model
 
     /**
      * Precio total para un rango: noches calendario (night, cada una con SU
-     * propio precio de temporada si aplica) o periodos completos redondeados
+     * propio precio de temporada si aplica — incluidas temporadas acotadas
+     * por día de la semana: el viernes puede costar distinto que el
+     * miércoles dentro del mismo stay) o periodos completos redondeados
      * hacia arriba (block, precio de temporada resuelto por el día de
      * inicio). Si se pasa la habitación, su price_modifier ajusta el precio
      * por unidad (spec-profundidad §2.1: +$100 vista al mar, −$50 interior).

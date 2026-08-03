@@ -195,9 +195,13 @@ panel `/asistente` (URL + api key + nombre de instancia). Implementación:
   residencial/móvil configurado en Evolution (la sesión no debe salir con IP
   de datacenter); solo tráfico entrante al inicio y sin links en los primeros
   mensajes. Evolution = vía rápida/plan B; producción seria = Cloud API.
-- Pendiente P2: medios entrantes (imagen/audio → transcripción), alerta de
-  salud del canal (webhook sin eventos / instancia caída → campana), y mover
-  el procesamiento inbound a colas si el volumen crece.
+- Medios entrantes: imagen/documento ✅ HECHOS (2026-07-24) — adjunto en
+  bandeja + auto-comprobante en /pagos vía `InboundMediaService` (Evolution
+  por base64/API, Meta por Graph download); el bot nunca "lee" fotos: o se
+  acusa el comprobante o pasa a humano. Pendiente P2: audio → transcripción,
+  adjuntos de Messenger/IG, alerta de salud del canal (webhook sin eventos /
+  instancia caída → campana), y mover el procesamiento inbound a colas si el
+  volumen crece.
 
 ### 4.5 `P1` — Canales Meta: WhatsApp, Messenger e Instagram DM
 Integración **oficial vía Meta Graph API** (una sola app de Meta, N hoteles

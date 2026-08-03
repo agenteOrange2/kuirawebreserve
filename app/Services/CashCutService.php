@@ -69,11 +69,33 @@ class CashCutService
         $ordersCost = (float) $orders->sum('total_cost');
 
         // Abonos de reservas que recibió el encargado.
-        $payments = Payment::query()
+        $allPayments = Payment::query()
             ->where('received_by', $user->id)
             ->where('paid_at', '>', $from)
             ->where('paid_at', '<=', $to)
-            ->get(['id', 'method', 'amount']);
+            ->get(['id', 'method', 'amount', 'kind']);
+
+        // Fianzas (depósito en garantía): NO son venta ni ingreso — se
+        // devuelven al check-out. Van FUERA de los totales de cobro
+        // (payments_total, métodos, grand_total) pero el efectivo cobrado
+        // en fianza SÍ está físicamente en el cajón, así que el arqueo
+        // (expected_cash) lo suma como línea aparte, restando las fianzas
+        // en efectivo que este encargado ya devolvió en el periodo.
+        $guarantees = $allPayments->where('kind', Payment::KIND_GUARANTEE);
+        $payments = $allPayments->where('kind', '!==', Payment::KIND_GUARANTEE)->values();
+
+        $guaranteesCollected = round((float) $guarantees->sum('amount'), 2);
+        $guaranteesCashIn = round((float) $guarantees->where('method', 'cash')->sum('amount'), 2);
+
+        $guaranteesCashOut = round((float) \App\Models\Refund::query()
+            ->where('created_by', $user->id)
+            ->where('status', \App\Models\Refund::STATUS_COMPLETED)
+            ->where('refunded_at', '>', $from)
+            ->where('refunded_at', '<=', $to)
+            ->whereHas('payment', fn ($q) => $q
+                ->where('kind', Payment::KIND_GUARANTEE)
+                ->where('method', 'cash'))
+            ->sum('amount'), 2);
 
         $payByMethod = $payments->groupBy('method');
         $payCash = (float) ($payByMethod->get('cash')?->sum('amount') ?? 0);
@@ -98,7 +120,14 @@ class CashCutService
             'card_total' => $cardTotal,
             'transfer_total' => $transferTotal,
             'grand_total' => $grandTotal,
-            'expected_cash' => round($posCash + $payCash, 2),
+            // Arqueo: el cajón contiene también las fianzas en efectivo
+            // cobradas (menos las devueltas), aunque no sean venta.
+            'expected_cash' => round($posCash + $payCash + $guaranteesCashIn - $guaranteesCashOut, 2),
+            // Fianzas del periodo, como línea informativa aparte (pasivo).
+            'guarantees_count' => $guarantees->count(),
+            'guarantees_collected' => $guaranteesCollected,
+            'guarantees_cash_in' => $guaranteesCashIn,
+            'guarantees_cash_out' => $guaranteesCashOut,
             'sources' => [
                 ['key' => 'pos', 'label' => 'Ventas POS', 'count' => $orders->count(), 'total' => round($ordersCollected, 2)],
                 ['key' => 'payments', 'label' => 'Cobros de reservas', 'count' => $payments->count(), 'total' => round($paymentsTotal, 2)],

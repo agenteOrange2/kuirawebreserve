@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
 import axios from 'axios';
-import { onMounted, ref } from 'vue';
+import { computed, onMounted, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
+import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 import GuestFormModal from './GuestFormModal.vue';
 
@@ -42,6 +43,8 @@ interface GuestData {
     blacklist_reason: string | null;
     marketing_consent: boolean;
     created_at: string;
+    is_archived: boolean;
+    archived_at: string | null;
 }
 
 const props = defineProps<{
@@ -83,13 +86,19 @@ const props = defineProps<{
     documentTypes: string[];
 }>();
 
+const toast = useToasts();
 const showEdit = ref(false);
 function onSaved() {
     showEdit.value = false;
     router.reload();
 }
 
-// Eliminar huésped (con confirmación; el backend bloquea si tiene historial).
+// Con historial (reservas/estancias) el backend ARCHIVA en vez de borrar,
+// así que el modal avisa desde antes qué va a pasar.
+const hasHistory = computed(
+    () => props.stays.length > 0 || props.reservations.length > 0,
+);
+
 const deleting = ref(false);
 const deleteBusy = ref(false);
 const deleteError = ref<string | null>(null);
@@ -98,7 +107,15 @@ async function submitDelete() {
     deleteBusy.value = true;
     deleteError.value = null;
     try {
-        await axios.delete(`/api/guests/${props.guest.id}`);
+        const { data } = await axios.delete(`/api/guests/${props.guest.id}`);
+        if (data?.archived) {
+            toast.success('Huésped archivado', data.message);
+        } else {
+            toast.success(
+                'Huésped eliminado',
+                `${props.guest.full_name} se eliminó del directorio.`,
+            );
+        }
         router.visit(route('tenant.guests'));
     } catch (error: any) {
         deleteError.value =
@@ -108,9 +125,32 @@ async function submitDelete() {
     }
 }
 
+// Restaurar un perfil archivado al directorio.
+const restoreBusy = ref(false);
+
+async function submitRestore() {
+    restoreBusy.value = true;
+    try {
+        await axios.post(`/api/guests/${props.guest.id}/restore`);
+        toast.success(
+            'Huésped restaurado',
+            `${props.guest.full_name} vuelve a aparecer en el directorio.`,
+        );
+        router.reload();
+    } catch (error: any) {
+        toast.error(
+            'No se pudo restaurar',
+            error.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        restoreBusy.value = false;
+    }
+}
+
 onMounted(() => {
     if (
         props.canManage &&
+        !props.guest.is_archived &&
         new URLSearchParams(window.location.search).get('edit')
     ) {
         showEdit.value = true;
@@ -165,28 +205,32 @@ const hasVehicle =
         !!props.vehicle.color ||
         !!props.vehicle.year ||
         !!props.vehicle.notes);
+const detailItemClass =
+    'rounded-lg border border-slate-200/60 bg-slate-50/60 p-3.5 dark:border-darkmode-400 dark:bg-darkmode-700/40';
+const friendlyReservationStatus = (status: string, label: string) =>
+    status === 'no_show' ? 'No llegó' : label;
 </script>
 
 <template>
     <RazeLayout :title="guest.full_name">
         <div class="grid grid-cols-12 gap-x-6 gap-y-8">
-            <!-- Encabezado estilo reportes -->
-            <div class="col-span-12">
+            <!-- Encabezado del perfil -->
+            <div class="box box--stacked col-span-12 p-5">
                 <div class="flex flex-wrap items-center justify-between gap-3">
-                    <div class="flex items-center gap-3.5">
+                    <div class="flex items-center gap-4">
                         <div
-                            class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-sm font-semibold text-white"
+                            class="flex h-16 w-16 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-lg font-semibold text-white shadow-md"
                         >
                             {{ initials(guest.full_name) }}
                         </div>
                         <div>
                             <div class="flex flex-wrap items-center gap-2">
-                                <h1 class="text-lg font-medium">
+                                <h1 class="text-xl font-medium">
                                     {{ guest.full_name }}
                                 </h1>
                                 <span
                                     v-if="metrics.active_stay"
-                                    class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+                                    class="inline-flex items-center gap-2 rounded-full bg-success/10 px-3 py-1 text-sm font-medium text-success"
                                 >
                                     <span
                                         class="h-1.5 w-1.5 rounded-full bg-success"
@@ -195,12 +239,19 @@ const hasVehicle =
                                 </span>
                                 <span
                                     v-if="guest.is_blacklisted"
-                                    class="rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium text-danger"
+                                    class="rounded-full bg-danger/10 px-3 py-1 text-sm font-medium text-danger"
                                     >Lista negra</span
                                 >
+                                <span
+                                    v-if="guest.is_archived"
+                                    class="inline-flex items-center gap-2 rounded-full bg-slate-100 px-3 py-1 text-sm font-medium text-slate-500 dark:bg-darkmode-400"
+                                >
+                                    <Lucide icon="Archive" class="h-4 w-4" />
+                                    Archivado
+                                </span>
                             </div>
-                            <p class="text-sm text-slate-500">
-                                Cliente desde {{ guest.created_at }}
+                            <p class="mt-1 text-sm text-slate-500">
+                                Huésped registrado desde {{ guest.created_at }}
                             </p>
                         </div>
                     </div>
@@ -209,44 +260,62 @@ const hasVehicle =
                             as="a"
                             :href="route('tenant.guests')"
                             variant="outline-secondary"
-                            class="rounded-[0.5rem] bg-white"
+                            class="min-h-11 rounded-[0.5rem] bg-white"
                         >
                             <Lucide
                                 icon="ArrowLeft"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-2 h-5 w-5 stroke-[1.5]"
                             />
                             Huéspedes
                         </Button>
                         <Button
-                            v-if="canReserve && !guest.is_blacklisted"
+                            v-if="canManage && guest.is_archived"
+                            variant="primary"
+                            class="min-h-11 rounded-[0.5rem] shadow-md shadow-primary/20"
+                            :disabled="restoreBusy"
+                            @click="submitRestore"
+                        >
+                            <Lucide
+                                icon="ArchiveRestore"
+                                class="mr-2 h-5 w-5 stroke-[1.5]"
+                            />
+                            {{ restoreBusy ? 'Restaurando…' : 'Restaurar' }}
+                        </Button>
+                        <Button
+                            v-if="
+                                canReserve &&
+                                !guest.is_blacklisted &&
+                                !guest.is_archived
+                            "
                             as="a"
                             :href="`${route('tenant.reservations')}?intent=reserve&guest=${guest.id}`"
                             variant="primary"
-                            class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                            class="min-h-11 rounded-[0.5rem] shadow-md shadow-primary/20"
+                            title="Abre una nueva reserva con los datos de este huésped precargados"
                         >
                             <Lucide
                                 icon="CalendarPlus"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-2 h-5 w-5 stroke-[1.5]"
                             />
-                            Nueva reserva
+                            Reservar de nuevo
                         </Button>
                         <Button
-                            v-if="canManage"
+                            v-if="canManage && !guest.is_archived"
                             variant="outline-primary"
-                            class="rounded-[0.5rem] bg-white"
+                            class="min-h-11 rounded-[0.5rem] bg-white"
                             @click="showEdit = true"
                         >
                             <Lucide
                                 icon="Pencil"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-2 h-5 w-5 stroke-[1.5]"
                             />
                             Editar perfil
                         </Button>
-                        <Menu v-if="canManage">
+                        <Menu v-if="canManage && !guest.is_archived">
                             <Menu.Button
-                                class="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:bg-darkmode-600 dark:hover:bg-darkmode-400"
+                                class="flex h-11 w-11 items-center justify-center rounded-[0.5rem] border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:bg-darkmode-600 dark:hover:bg-darkmode-400"
                             >
-                                <Lucide icon="MoreVertical" class="h-4 w-4" />
+                                <Lucide icon="MoreVertical" class="h-5 w-5" />
                             </Menu.Button>
                             <Menu.Items class="w-48">
                                 <Menu.Item
@@ -259,14 +328,38 @@ const hasVehicle =
                                     "
                                 >
                                     <Lucide
-                                        icon="Trash2"
+                                        :icon="
+                                            hasHistory ? 'Archive' : 'Trash2'
+                                        "
                                         class="mr-2 h-4 w-4"
                                     />
-                                    Eliminar huésped
+                                    {{
+                                        hasHistory
+                                            ? 'Archivar huésped'
+                                            : 'Eliminar huésped'
+                                    }}
                                 </Menu.Item>
                             </Menu.Items>
                         </Menu>
                     </div>
+                </div>
+
+                <div
+                    v-if="guest.is_archived"
+                    class="mt-4 flex items-center gap-2 rounded-lg border-l-4 border-l-slate-400 bg-slate-100/70 px-4 py-3 text-sm dark:bg-darkmode-600"
+                >
+                    <Lucide
+                        icon="Archive"
+                        class="h-5 w-5 shrink-0 text-slate-500"
+                    />
+                    <span>
+                        <span class="font-medium">Perfil archivado</span>
+                        <template v-if="guest.archived_at">
+                            el {{ guest.archived_at }}</template
+                        >: no aparece en el directorio ni en el buscador de
+                        reservas, pero su historial se conserva. Restáuralo para
+                        volver a usarlo.
+                    </span>
                 </div>
 
                 <div
@@ -275,7 +368,7 @@ const hasVehicle =
                 >
                     <Lucide
                         icon="ShieldAlert"
-                        class="h-4 w-4 shrink-0 text-danger"
+                        class="h-5 w-5 shrink-0 text-danger"
                     />
                     <span
                         ><span class="font-medium text-danger"
@@ -292,11 +385,11 @@ const hasVehicle =
                     <div class="box box--stacked col-span-6 p-5 xl:col-span-3">
                         <div class="flex items-center justify-between">
                             <div
-                                class="flex h-11 w-11 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                                class="flex h-14 w-14 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                             >
                                 <Lucide
                                     icon="BedDouble"
-                                    class="h-5 w-5 text-primary"
+                                    class="h-7 w-7 text-primary"
                                 />
                             </div>
                             <div class="text-2xl font-medium">
@@ -311,11 +404,11 @@ const hasVehicle =
                     <div class="box box--stacked col-span-6 p-5 xl:col-span-3">
                         <div class="flex items-center justify-between">
                             <div
-                                class="flex h-11 w-11 items-center justify-center rounded-full border border-success/10 bg-success/10"
+                                class="flex h-14 w-14 items-center justify-center rounded-full border border-success/10 bg-success/10"
                             >
                                 <Lucide
                                     icon="DollarSign"
-                                    class="h-5 w-5 text-success"
+                                    class="h-7 w-7 text-success"
                                 />
                             </div>
                             <div class="text-2xl font-medium">
@@ -330,11 +423,11 @@ const hasVehicle =
                     <div class="box box--stacked col-span-6 p-5 xl:col-span-3">
                         <div class="flex items-center justify-between">
                             <div
-                                class="flex h-11 w-11 items-center justify-center rounded-full border border-info/10 bg-info/10"
+                                class="flex h-14 w-14 items-center justify-center rounded-full border border-info/10 bg-info/10"
                             >
                                 <Lucide
                                     icon="CalendarClock"
-                                    class="h-5 w-5 text-info"
+                                    class="h-7 w-7 text-info"
                                 />
                             </div>
                             <div class="text-2xl font-medium">
@@ -351,11 +444,11 @@ const hasVehicle =
                     <div class="box box--stacked col-span-6 p-5 xl:col-span-3">
                         <div class="flex items-center justify-between">
                             <div
-                                class="flex h-11 w-11 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
+                                class="flex h-14 w-14 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
                             >
                                 <Lucide
                                     icon="Ban"
-                                    class="h-5 w-5 text-danger"
+                                    class="h-7 w-7 text-danger"
                                 />
                             </div>
                             <div class="text-2xl font-medium">
@@ -364,7 +457,7 @@ const hasVehicle =
                             </div>
                         </div>
                         <div class="mt-4 text-sm font-medium">
-                            Cancelaciones / No-show
+                            Cancelaciones / No llegó
                         </div>
                         <div class="mt-1 text-xs text-slate-500">
                             Confiabilidad del huésped
@@ -377,74 +470,108 @@ const hasVehicle =
             <div class="col-span-12 flex flex-col gap-6 xl:col-span-5">
                 <!-- Contacto -->
                 <div class="box box--stacked p-5">
-                    <div
-                        class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                    >
-                        <Lucide icon="User" class="h-3.5 w-3.5" /> Datos de
-                        contacto
+                    <div class="mb-5 flex items-center gap-3">
+                        <div
+                            class="flex h-11 w-11 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="User" class="h-6 w-6" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                Información personal
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Contacto, residencia y preferencias.
+                            </p>
+                        </div>
                     </div>
-                    <dl class="space-y-3 text-sm">
-                        <div class="flex items-center justify-between">
+                    <dl class="grid gap-3 text-sm sm:grid-cols-2">
+                        <div :class="detailItemClass">
                             <dt class="flex items-center gap-2 text-slate-500">
-                                <Lucide icon="Phone" class="h-4 w-4" /> Teléfono
+                                <Lucide
+                                    icon="Phone"
+                                    class="h-5 w-5 text-primary"
+                                />
+                                Teléfono
                             </dt>
-                            <dd class="font-medium">
+                            <dd class="mt-2 font-medium">
                                 {{ guest.phone ?? '—' }}
                             </dd>
                         </div>
-                        <div class="flex items-center justify-between">
+                        <div :class="detailItemClass">
                             <dt class="flex items-center gap-2 text-slate-500">
-                                <Lucide icon="Mail" class="h-4 w-4" /> Email
+                                <Lucide icon="Mail" class="h-5 w-5 text-info" />
+                                Correo electrónico
                             </dt>
-                            <dd class="font-medium">
+                            <dd class="mt-2 font-medium break-all">
                                 {{ guest.email ?? '—' }}
                             </dd>
                         </div>
-                        <div class="flex items-center justify-between">
+                        <div :class="detailItemClass">
                             <dt class="flex items-center gap-2 text-slate-500">
-                                <Lucide icon="Cake" class="h-4 w-4" />
+                                <Lucide
+                                    icon="Cake"
+                                    class="h-5 w-5 text-warning"
+                                />
                                 Nacimiento
                             </dt>
-                            <dd class="font-medium">
+                            <dd class="mt-2 font-medium">
                                 {{ guest.birth_date ?? '—' }}
                             </dd>
                         </div>
-                        <div class="flex items-center justify-between">
+                        <div :class="detailItemClass">
                             <dt class="flex items-center gap-2 text-slate-500">
-                                <Lucide icon="Flag" class="h-4 w-4" />
+                                <Lucide
+                                    icon="Flag"
+                                    class="h-5 w-5 text-success"
+                                />
                                 Nacionalidad
                             </dt>
-                            <dd class="font-medium">
+                            <dd class="mt-2 font-medium">
                                 {{ guest.nationality ?? '—' }}
                             </dd>
                         </div>
-                        <div class="flex items-center justify-between gap-4">
+                        <div :class="detailItemClass" class="sm:col-span-2">
                             <dt class="flex items-center gap-2 text-slate-500">
-                                <Lucide icon="MapPin" class="h-4 w-4" />
+                                <Lucide
+                                    icon="MapPin"
+                                    class="h-5 w-5 text-danger"
+                                />
                                 Dirección
                             </dt>
-                            <dd class="text-right font-medium">
+                            <dd class="mt-2 font-medium">
                                 {{ address || '—' }}
                             </dd>
                         </div>
-                        <div class="flex items-center justify-between">
+                        <div :class="detailItemClass" class="sm:col-span-2">
                             <dt class="flex items-center gap-2 text-slate-500">
-                                <Lucide icon="Megaphone" class="h-4 w-4" />
-                                Marketing
+                                <Lucide
+                                    icon="Megaphone"
+                                    class="h-5 w-5 text-pending"
+                                />
+                                Mensajes promocionales
                             </dt>
-                            <dd class="font-medium">
-                                {{ guest.marketing_consent ? 'Acepta' : 'No' }}
+                            <dd class="mt-2 font-medium">
+                                {{
+                                    guest.marketing_consent
+                                        ? 'Aceptados por el huésped'
+                                        : 'No autorizados'
+                                }}
                             </dd>
                         </div>
                     </dl>
                     <div
                         v-if="guest.notes"
-                        class="mt-4 border-t border-dashed border-slate-300/70 pt-4 dark:border-darkmode-400"
+                        class="mt-4 rounded-lg border border-pending/20 bg-pending/5 p-4"
                     >
                         <div
-                            class="mb-1.5 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="mb-2 flex items-center gap-2 text-sm font-medium"
                         >
-                            Notas del staff
+                            <Lucide
+                                icon="StickyNote"
+                                class="h-5 w-5 text-pending"
+                            />
+                            Notas para el personal
                         </div>
                         <p
                             class="text-sm whitespace-pre-line text-slate-600 dark:text-slate-300"
@@ -456,16 +583,25 @@ const hasVehicle =
 
                 <!-- Identificación -->
                 <div v-if="canViewDocuments" class="box box--stacked p-5">
-                    <div
-                        class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                    >
-                        <Lucide icon="IdCard" class="h-3.5 w-3.5" />
-                        Identificación
+                    <div class="mb-5 flex items-center gap-3">
+                        <div
+                            class="flex h-11 w-11 items-center justify-center rounded-full border border-warning/10 bg-warning/10 text-warning"
+                        >
+                            <Lucide icon="IdCard" class="h-6 w-6" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                Identificación
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Documento registrado y fotografías.
+                            </p>
+                        </div>
                     </div>
-                    <dl class="space-y-3 text-sm">
-                        <div class="flex items-center justify-between">
+                    <dl class="grid gap-3 text-sm sm:grid-cols-2">
+                        <div :class="detailItemClass">
                             <dt class="text-slate-500">Tipo</dt>
-                            <dd class="font-medium">
+                            <dd class="mt-2 font-medium">
                                 {{
                                     guest.id_document_type
                                         ? docLabels[guest.id_document_type]
@@ -473,16 +609,16 @@ const hasVehicle =
                                 }}
                             </dd>
                         </div>
-                        <div class="flex items-center justify-between">
+                        <div :class="detailItemClass">
                             <dt class="text-slate-500">Número</dt>
-                            <dd class="font-mono font-medium">
+                            <dd class="mt-2 font-mono font-medium">
                                 {{ guest.id_document_number ?? '—' }}
                             </dd>
                         </div>
                     </dl>
                     <div
                         v-if="documents.length"
-                        class="mt-3 flex flex-wrap gap-3"
+                        class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3"
                     >
                         <a
                             v-for="doc in documents"
@@ -493,57 +629,59 @@ const hasVehicle =
                         >
                             <img
                                 :src="doc.url"
-                                class="h-24 w-36 rounded-lg border border-slate-200 object-cover dark:border-darkmode-400"
+                                class="h-28 w-full rounded-lg border border-slate-200 object-cover transition hover:border-primary/40 dark:border-darkmode-400"
                             />
                         </a>
                     </div>
                     <p
                         v-else
-                        class="mt-3 flex items-center gap-2 rounded-lg border border-dashed border-slate-300/70 px-3 py-2.5 text-xs text-slate-400 dark:border-darkmode-400"
+                        class="mt-4 flex items-center gap-3 rounded-lg border border-dashed border-slate-300/70 px-4 py-4 text-sm text-slate-400 dark:border-darkmode-400"
                     >
-                        <Lucide icon="Camera" class="h-4 w-4" /> Sin fotos del
+                        <Lucide icon="Camera" class="h-5 w-5" /> Sin fotos del
                         documento. Agrégalas al editar el perfil.
                     </p>
                 </div>
 
                 <!-- Vehículo -->
                 <div v-if="canViewDocuments" class="box box--stacked p-5">
-                    <div
-                        class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                    >
-                        <Lucide icon="Car" class="h-3.5 w-3.5" /> Vehículo
+                    <div class="mb-5 flex items-center gap-3">
+                        <div
+                            class="flex h-11 w-11 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                        >
+                            <Lucide icon="Car" class="h-6 w-6" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">Vehículo</h2>
+                            <p class="text-xs text-slate-500">
+                                Datos para reconocerlo en el acceso.
+                            </p>
+                        </div>
                     </div>
                     <template v-if="hasVehicle">
-                        <dl class="space-y-3 text-sm">
-                            <div class="flex items-center justify-between">
+                        <dl class="grid gap-3 text-sm">
+                            <div :class="detailItemClass">
                                 <dt class="text-slate-500">Placa</dt>
-                                <dd>
+                                <dd class="mt-2">
                                     <span
                                         class="rounded-md bg-slate-100 px-2 py-0.5 font-mono font-medium uppercase dark:bg-darkmode-400"
                                         >{{ vehicle?.plate ?? '—' }}</span
                                     >
                                 </dd>
                             </div>
-                            <div
-                                v-if="vehicleSummary"
-                                class="flex items-center justify-between"
-                            >
+                            <div v-if="vehicleSummary" :class="detailItemClass">
                                 <dt class="text-slate-500">Vehículo</dt>
-                                <dd class="text-right font-medium">
+                                <dd class="mt-2 font-medium">
                                     {{ vehicleSummary }}
                                 </dd>
                             </div>
-                            <div
-                                v-if="vehicle?.notes"
-                                class="flex items-center justify-between gap-4"
-                            >
+                            <div v-if="vehicle?.notes" :class="detailItemClass">
                                 <dt class="text-slate-500">Detalle</dt>
-                                <dd class="text-right">{{ vehicle.notes }}</dd>
+                                <dd class="mt-2">{{ vehicle.notes }}</dd>
                             </div>
                         </dl>
                         <div
                             v-if="vehiclePhotos.length"
-                            class="mt-3 flex flex-wrap gap-3"
+                            class="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-3"
                         >
                             <a
                                 v-for="p in vehiclePhotos"
@@ -554,16 +692,16 @@ const hasVehicle =
                             >
                                 <img
                                     :src="p.url"
-                                    class="h-24 w-36 rounded-lg border border-slate-200 object-cover dark:border-darkmode-400"
+                                    class="h-28 w-full rounded-lg border border-slate-200 object-cover transition hover:border-primary/40 dark:border-darkmode-400"
                                 />
                             </a>
                         </div>
                     </template>
                     <p
                         v-else
-                        class="flex items-center gap-2 rounded-lg border border-dashed border-slate-300/70 px-3 py-2.5 text-xs text-slate-400 dark:border-darkmode-400"
+                        class="flex items-center gap-3 rounded-lg border border-dashed border-slate-300/70 px-4 py-4 text-sm text-slate-400 dark:border-darkmode-400"
                     >
-                        <Lucide icon="Car" class="h-4 w-4" /> Sin vehículo
+                        <Lucide icon="Car" class="h-5 w-5" /> Sin vehículo
                         registrado. Agrégalo al editar el perfil.
                     </p>
                 </div>
@@ -573,16 +711,20 @@ const hasVehicle =
             <div class="col-span-12 flex flex-col gap-6 xl:col-span-7">
                 <div class="box box--stacked">
                     <div
-                        class="flex items-center border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex items-center gap-2 text-base font-medium"
+                            class="flex h-11 w-11 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <Lucide
-                                icon="DoorOpen"
-                                class="h-4 w-4 text-slate-400"
-                            />
-                            Estancias
+                            <Lucide icon="DoorOpen" class="h-6 w-6" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                Historial de estancias
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Habitaciones usadas y consumos registrados.
+                            </p>
                         </div>
                         <span
                             v-if="stays.length"
@@ -606,7 +748,11 @@ const hasVehicle =
                                 </Table.Tr>
                             </Table.Thead>
                             <Table.Tbody>
-                                <Table.Tr v-for="s in stays" :key="s.id">
+                                <Table.Tr
+                                    v-for="s in stays"
+                                    :key="s.id"
+                                    class="[&>td]:py-4"
+                                >
                                     <Table.Td class="font-medium">{{
                                         s.room
                                     }}</Table.Td>
@@ -621,7 +767,7 @@ const hasVehicle =
                                         <span
                                             v-if="s.status === 'active'"
                                             class="ml-1 rounded-full bg-success/10 px-1.5 text-xs text-success"
-                                            >en casa</span
+                                            >Alojado ahora</span
                                         >
                                     </Table.Td>
                                     <Table.Td class="text-right font-medium"
@@ -640,25 +786,34 @@ const hasVehicle =
                         </Table>
                         <div
                             v-else
-                            class="py-6 text-center text-sm text-slate-500"
+                            class="flex flex-col items-center gap-3 py-10 text-center text-sm text-slate-500"
                         >
-                            Sin estancias todavía.
+                            <div
+                                class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            >
+                                <Lucide icon="BedDouble" class="h-6 w-6" />
+                            </div>
+                            Sin estancias registradas.
                         </div>
                     </div>
                 </div>
 
                 <div class="box box--stacked">
                     <div
-                        class="flex items-center border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex items-center gap-2 text-base font-medium"
+                            class="flex h-11 w-11 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
                         >
-                            <Lucide
-                                icon="CalendarDays"
-                                class="h-4 w-4 text-slate-400"
-                            />
-                            Reservas
+                            <Lucide icon="CalendarDays" class="h-6 w-6" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                Historial de reservas
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Próximas, completadas y canceladas.
+                            </p>
                         </div>
                         <span
                             v-if="reservations.length"
@@ -669,7 +824,11 @@ const hasVehicle =
                     <div class="overflow-auto p-5 lg:overflow-visible">
                         <Table v-if="reservations.length">
                             <Table.Tbody>
-                                <Table.Tr v-for="r in reservations" :key="r.id">
+                                <Table.Tr
+                                    v-for="r in reservations"
+                                    :key="r.id"
+                                    class="[&>td]:py-4"
+                                >
                                     <Table.Td class="font-medium">{{
                                         r.room ?? '—'
                                     }}</Table.Td>
@@ -694,7 +853,12 @@ const hasVehicle =
                                                       : 'bg-slate-100 text-slate-600 dark:bg-darkmode-400'
                                             "
                                         >
-                                            {{ r.status_label }}
+                                            {{
+                                                friendlyReservationStatus(
+                                                    r.status,
+                                                    r.status_label,
+                                                )
+                                            }}
                                         </span>
                                     </Table.Td>
                                 </Table.Tr>
@@ -702,41 +866,62 @@ const hasVehicle =
                         </Table>
                         <div
                             v-else
-                            class="py-6 text-center text-sm text-slate-500"
+                            class="flex flex-col items-center gap-3 py-10 text-center text-sm text-slate-500"
                         >
-                            Sin reservas todavía.
+                            <div
+                                class="flex h-12 w-12 items-center justify-center rounded-full bg-info/10 text-info"
+                            >
+                                <Lucide icon="CalendarDays" class="h-6 w-6" />
+                            </div>
+                            Sin reservas registradas.
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- Modal eliminar -->
-        <Dialog :open="deleting" @close="deleting = false">
+        <!-- Modal archivar/eliminar -->
+        <Dialog size="lg" :open="deleting" @close="deleting = false">
             <Dialog.Panel>
                 <div class="p-6">
                     <div class="flex items-start gap-3.5">
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full"
+                            :class="
+                                hasHistory
+                                    ? 'bg-primary/10 text-primary'
+                                    : 'bg-danger/10 text-danger'
+                            "
                         >
-                            <Lucide icon="Trash2" class="h-5 w-5" />
+                            <Lucide
+                                :icon="hasHistory ? 'Archive' : 'Trash2'"
+                                class="h-7 w-7"
+                            />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
-                                ¿Eliminar a {{ guest.full_name }}?
+                            <h2 class="text-lg font-medium">
+                                {{
+                                    hasHistory
+                                        ? `¿Archivar a ${guest.full_name}?`
+                                        : `¿Eliminar a ${guest.full_name}?`
+                                }}
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">
-                                Se borran su ficha, fotos de INE y vehículo.
-                                Esta acción no se puede deshacer.
+                                {{
+                                    hasHistory
+                                        ? 'Tiene historial de reservas o estancias, así que no se borra: se archiva y desaparece del directorio y del buscador.'
+                                        : 'Se borran su ficha, fotos de INE y vehículo. Esta acción no se puede deshacer.'
+                                }}
                             </p>
                         </div>
                     </div>
                     <div
+                        v-if="hasHistory"
                         class="mt-4 flex items-center gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
                     >
-                        <Lucide icon="Info" class="h-4 w-4 shrink-0" /> Si el
-                        huésped tiene reservas o estancias, no podrá eliminarse
-                        (se conserva su historial).
+                        <Lucide icon="Info" class="h-4 w-4 shrink-0" /> Su
+                        historial se conserva y podrás restaurarlo cuando
+                        quieras desde Huéspedes, con el filtro Archivados.
                     </div>
                     <p
                         v-if="deleteError"
@@ -744,19 +929,32 @@ const hasVehicle =
                     >
                         {{ deleteError }}
                     </p>
-                    <div class="mt-6 flex justify-end gap-2">
+                    <div class="mt-6 flex justify-end gap-3">
                         <Button
                             variant="outline-secondary"
+                            class="min-h-11 px-5"
                             @click="deleting = false"
                             >Cancelar</Button
                         >
                         <Button
-                            variant="danger"
+                            :variant="hasHistory ? 'primary' : 'danger'"
+                            class="min-h-11 px-5"
                             :disabled="deleteBusy"
                             @click="submitDelete"
                         >
-                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
-                            {{ deleteBusy ? 'Eliminando…' : 'Sí, eliminar' }}
+                            <Lucide
+                                :icon="hasHistory ? 'Archive' : 'Trash2'"
+                                class="mr-2 h-5 w-5"
+                            />
+                            {{
+                                deleteBusy
+                                    ? hasHistory
+                                        ? 'Archivando…'
+                                        : 'Eliminando…'
+                                    : hasHistory
+                                      ? 'Sí, archivar'
+                                      : 'Sí, eliminar'
+                            }}
                         </Button>
                     </div>
                 </div>

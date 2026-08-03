@@ -228,9 +228,18 @@ class BookingController extends Controller
             'experiences' => ['sometimes', 'array', 'max:5'],
             'experiences.*.session_id' => ['required_with:experiences', 'integer'],
             'experiences.*.people' => ['required_with:experiences', 'integer', 'min:1', 'max:100'],
+            // Cupón (módulo cupones): CreateReservation lo REVALIDA y
+            // calcula el descuento server-side — nunca del cliente.
+            'coupon_code' => ['nullable', 'string', 'max:40'],
         ], [
             'room_id.exists' => 'Esa habitación ya no está disponible; vuelve a consultar la disponibilidad.',
         ]);
+
+        // Cupón sin el módulo activo: mejor decirlo que cobrar el total
+        // completo en silencio a quien esperaba descuento.
+        if (filled($data['coupon_code'] ?? null) && ! $this->couponsEnabled()) {
+            return response()->json(['message' => 'Los cupones no están disponibles en este hotel.'], 422);
+        }
 
         [$start, $end] = $this->resolveDates($data);
 
@@ -265,6 +274,7 @@ class BookingController extends Controller
                 'experiences' => $data['experiences'] ?? [],
                 'adults' => $data['adults'],
                 'children' => $this->isAdultsOnly() ? 0 : ($data['children'] ?? 0),
+                'coupon_code' => $data['coupon_code'] ?? null,
                 'notes' => $data['notes'] ?? 'Creada desde el wizard web',
             ]);
         } catch (NoAvailabilityException|\InvalidArgumentException $e) {
@@ -299,6 +309,10 @@ class BookingController extends Controller
             'extras_total' => $extrasTotal,
             'experiences' => $reservation->experiences ?? [],
             'experiences_total' => $experiencesTotal,
+            // Cupón aplicado (módulo cupones): el descuento YA vive dentro
+            // de total; estas líneas solo lo explican en la confirmación.
+            'coupon_code' => $reservation->coupon_code,
+            'discount' => (float) ($reservation->discount_amount ?? 0),
             'total' => (float) $reservation->total_amount,
             'requires_prepayment' => $requiresPrepayment,
             // Efectivo activo: el paso de pago ofrece también "pagar en el hotel".
@@ -473,32 +487,23 @@ class BookingController extends Controller
             return response()->json(['message' => 'No encontramos una reserva con ese código.'], 404);
         }
 
-        $deadline = now()->addMinutes(app(\App\Services\ReservationPolicy::class)->cashDeadlineMinutes());
-
-        if ($reservation->starts_at !== null && $reservation->starts_at->lt($deadline)) {
-            $deadline = $reservation->starts_at;
-        }
-
-        if (
-            $reservation->status === \App\Enums\ReservationStatus::Pending
-            && $reservation->hold_expires_at !== null
-            && $reservation->hold_expires_at->lt($deadline)
-        ) {
-            // La elección queda visible para recepción en las notas (una
-            // sola vez, aunque el huésped reintente).
-            $notes = (string) $reservation->notes;
-            $marca = 'Eligió pagar en el hotel (efectivo)';
-            $reservation->update([
-                'hold_expires_at' => $deadline,
-                'notes' => str_contains($notes, $marca)
-                    ? $reservation->notes
-                    : trim($notes === '' ? $marca : $notes.' — '.$marca),
-            ]);
-        }
+        $deadline = app(\App\Actions\Payments\ChooseCashPayment::class)->handle($reservation);
 
         return response()->json([
-            'hold_expires_at' => $reservation->fresh()->hold_expires_at?->toIso8601String(),
+            'hold_expires_at' => $deadline?->toIso8601String(),
         ]);
+    }
+
+    /**
+     * ¿El hotel tiene el módulo cupones? Sin contexto de tenant (tests que
+     * invocan el controller directo) se asume activo — en producción esta
+     * API siempre corre bajo tenancy y el módulo manda.
+     */
+    protected function couponsEnabled(): bool
+    {
+        $tenant = tenant();
+
+        return ! $tenant instanceof \App\Models\Tenant || $tenant->hasModule('cupones');
     }
 
     /**

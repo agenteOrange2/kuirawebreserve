@@ -151,11 +151,12 @@ y §13.3 arriba) y una lista corta de lo que quedó fuera a propósito:
   IPs ni contador; la única defensa hoy es el throttle de la ruta
   (20/min en `holds`) + honeypot + tiempo mínimo de llenado. Si se detecta
   abuso real, aquí es donde se refuerza.
-- **Fotos en la ficha mínima**: el wizard muestra nombre/descripción/
-  capacidad/amenidades pero sin imágenes — `RoomType` no tiene campo de
-  media todavía.
-- **QR descargable** en la tarjeta "Tu página de reservas": por ahora
-  solo URL + copiar.
+- **Fotos en la ficha mínima** — ✅ HECHO: `RoomType` es `HasMedia`
+  (colección `photos`, se suben en Catálogo), el wizard muestra la
+  galería y `/api/site/catalog` las expone.
+- **QR descargable** — ✅ HECHO (2026-07-23): botón "QR" en la tarjeta
+  "Tu página de reservas" de `/integracion`; genera el PNG (512px) en el
+  navegador (lib `qrcode`) y lo descarga listo para imprimir.
 - **`?conversation={uuid}`**: ver arriba.
 
 ---
@@ -331,7 +332,7 @@ reducido a contenido opcional y de baja frecuencia.
 
 | Orden | Entregable | Contenido | Para quién abre venta |
 |---|---|---|---|
-| E0 `P0` ✅ | **Wizard alojado `/reservar`** — IMPLEMENTADO 2026-07-10 | Página pública standalone (patrón webchat) con los 3 pasos; doble modalidad noche/bloque (§13.2); montos siempre recalculados en servidor; anti-abuso (honeypot + tiempo mínimo + throttle + idempotencia); tarjeta "Tu página de reservas" en **Integración** (URL + copiar; sin QR aún) | Los tres casos desde el día uno; **piloto: motellacupula**, ya operable sin plugin (solo falta pegar el botón en su WP) |
+| E0 `P0` ✅ | **Wizard alojado `/reservar`** — IMPLEMENTADO 2026-07-10 | Página pública standalone (patrón webchat) con los 3 pasos; doble modalidad noche/bloque (§13.2); montos siempre recalculados en servidor; anti-abuso (honeypot + tiempo mínimo + throttle + idempotencia); tarjeta "Tu página de reservas" en **Integración** (URL + copiar + QR descargable desde 2026-07-23) | Los tres casos desde el día uno; **piloto: motellacupula**, ya operable sin plugin (solo falta pegar el botón en su WP) |
 | E0.5 `P0` ✅ | **Temporadas y promos en Kuira** — IMPLEMENTADO 2026-07-10 | `rate_plan_seasons` (precio por rango de fechas con prioridad) + precio promocional; editable en el catálogo | Prerrequisito de paridad: `hotel-rooms` ya maneja temporadas — sin esto, realdelasierra no puede ceder los precios |
 | E1 `P1` | **Embed universal** | Script 1 línea + iframe auto-altura + parámetros de color; snippet copiable en /ajustes | Laravel y cualquier CMS, sin plugin |
 | E2 `P1` | **Booking API headless + site keys** | Tabla central `booking_site_keys` (CORS por dominio) + endpoints §7.2 + docs | El "modo conectado" de hotel-rooms la necesita; también tus Laravel a medida |

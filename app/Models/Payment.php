@@ -30,6 +30,14 @@ class Payment extends Model
 
     public const KIND_CONSUMPTION = 'consumption';
 
+    /**
+     * Fianza (depósito en garantía) cobrada al registrar la llegada: NO es
+     * ingreso, es un pasivo que se devuelve al registrar la salida (Refund
+     * manual) salvo retención explícita por daños. Stay::folio() y
+     * CashCutService la excluyen de los totales de hospedaje/venta.
+     */
+    public const KIND_GUARANTEE = 'guarantee';
+
     protected $fillable = [
         'reservation_id',
         'experience_booking_id',
@@ -69,6 +77,12 @@ class Payment extends Model
     public function receivedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'received_by');
+    }
+
+    /** La solicitud que originó este pago (transferencia o pasarela). */
+    public function paymentRequest(): BelongsTo
+    {
+        return $this->belongsTo(PaymentRequest::class);
     }
 
     public function refunds(): \Illuminate\Database\Eloquent\Relations\HasMany

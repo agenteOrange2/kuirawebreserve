@@ -89,6 +89,52 @@ class EvolutionApi
     }
 
     /**
+     * Descarga el binario de un mensaje multimedia (imagen/documento) por
+     * la API: Evolution lo devuelve en base64 a partir del id del mensaje.
+     * El webhook puede traer el base64 embebido (WEBHOOK_BASE64=true);
+     * esto es el camino para cuando NO viene.
+     *
+     * @return array{contents: string, mime: string}|null
+     */
+    public function mediaBase64(EvolutionChannelLink $link, string $messageKeyId): ?array
+    {
+        try {
+            $response = $this->http($link)->post(
+                $this->url($link, "/chat/getBase64FromMediaMessage/{$link->instance}"),
+                ['message' => ['key' => ['id' => $messageKeyId]], 'convertToMp4' => false],
+            );
+
+            if ($response->failed()) {
+                Log::warning('Evolution: descarga de media fallida', [
+                    'link_id' => $link->id,
+                    'tenant' => $link->tenant_id,
+                    'status' => $response->status(),
+                    'body' => $response->json(),
+                ]);
+
+                return null;
+            }
+
+            $base64 = (string) $response->json('base64', '');
+
+            if ($base64 === '') {
+                return null;
+            }
+
+            $contents = base64_decode($base64, true);
+
+            return $contents === false ? null : [
+                'contents' => $contents,
+                'mime' => (string) $response->json('mimetype', 'application/octet-stream'),
+            ];
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
      * Envía a la persona detrás de una conversación de un canal Evolution.
      * La instancia exacta se resuelve por channels.external_id (id del link
      * central), así cada conversación sale por el número que la recibió.

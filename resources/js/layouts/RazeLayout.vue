@@ -19,6 +19,7 @@ const tenant = computed(
             id: string;
             name: string;
             plan: string;
+            logo_url: string | null;
         } | null,
 );
 
@@ -178,18 +179,36 @@ const requestFullscreen = () => {
                         href="/"
                         class="flex items-center transition-[margin] duration-300 group-[.side-menu--collapsed]:xl:ml-2 group-[.side-menu--collapsed.side-menu--on-hover]:xl:ml-0"
                     >
+                        <!-- Logo del hotel (el del wizard); sin logo, icono genérico -->
                         <div
-                            class="flex h-[34px] w-[34px] items-center justify-center rounded-lg bg-white/8 transition-transform ease-in-out group-[.side-menu--collapsed.side-menu--on-hover]:xl:-rotate-180"
+                            class="flex h-[38px] w-[38px] shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white/8 transition-transform ease-in-out group-[.side-menu--collapsed.side-menu--on-hover]:xl:-rotate-180"
                         >
+                            <img
+                                v-if="tenant?.logo_url"
+                                :src="tenant.logo_url"
+                                :alt="brandName"
+                                class="h-full w-full rounded-lg bg-white object-contain p-0.5"
+                            />
                             <Lucide
+                                v-else
                                 icon="Building2"
                                 class="h-5 w-5 text-white"
                             />
                         </div>
                         <div
-                            class="ml-3.5 max-w-[160px] truncate font-medium text-white transition-opacity group-[.side-menu--collapsed]:xl:opacity-0 group-[.side-menu--collapsed.side-menu--on-hover]:xl:opacity-100"
+                            class="ml-3.5 min-w-0 transition-opacity group-[.side-menu--collapsed]:xl:opacity-0 group-[.side-menu--collapsed.side-menu--on-hover]:xl:opacity-100"
                         >
-                            {{ brandName }}
+                            <div
+                                class="max-w-[160px] truncate font-medium text-white"
+                            >
+                                {{ brandName }}
+                            </div>
+                            <div
+                                v-if="isTenantPanel && tenant"
+                                class="max-w-[160px] truncate text-[11px] leading-tight text-white/60 capitalize"
+                            >
+                                Plan {{ tenant.plan }}
+                            </div>
                         </div>
                     </Link>
                     <a
@@ -216,6 +235,64 @@ const requestFullscreen = () => {
                                 class="side-menu__divider"
                             >
                                 {{ item }}
+                            </li>
+                            <!-- Título de sección colapsable: el divider ES
+                                 el toggle (sin renglón duplicado debajo). -->
+                            <li
+                                v-else-if="item.subMenu && item.sectionToggle"
+                            >
+                                <a
+                                    href="#"
+                                    class="side-menu__divider flex cursor-pointer items-center justify-between uppercase transition-colors hover:text-white/70"
+                                    :class="
+                                        groupHasActive(item) &&
+                                        !openGroups[item.title]
+                                            ? '!text-white/80'
+                                            : ''
+                                    "
+                                    @click.prevent="toggleGroup(item.title)"
+                                >
+                                    {{ item.title }}
+                                    <Lucide
+                                        icon="ChevronDown"
+                                        :class="[
+                                            'h-3.5 w-3.5 stroke-[1.3] transition-transform',
+                                            {
+                                                'rotate-180':
+                                                    openGroups[item.title],
+                                            },
+                                        ]"
+                                    />
+                                </a>
+                                <ul v-show="openGroups[item.title]">
+                                    <li
+                                        v-for="(sub, subIndex) in item.subMenu"
+                                        :key="subIndex"
+                                    >
+                                        <Link
+                                            :href="
+                                                sub.pageName
+                                                    ? route(sub.pageName)
+                                                    : '#'
+                                            "
+                                            :class="[
+                                                'side-menu__link',
+                                                {
+                                                    'side-menu__link--active':
+                                                        isActive(sub.pageName),
+                                                },
+                                            ]"
+                                        >
+                                            <Lucide
+                                                :icon="sub.icon"
+                                                class="side-menu__link__icon"
+                                            />
+                                            <div class="side-menu__link__title">
+                                                {{ sub.title }}
+                                            </div>
+                                        </Link>
+                                    </li>
+                                </ul>
                             </li>
                             <!-- Grupo con submenu -->
                             <li v-else-if="item.subMenu">

@@ -1,0 +1,61 @@
+/* Scrollbar global por defecto: riel invisible y pulgar delgado redondeado
+   en tono neutro, con hover más marcado y variante para modo oscuro. Aplica
+   a TODO (página, modales, tablas, áreas con overflow). Va en @layer
+   components como los demás: así .scrollbar-slim (menú lateral, pulgar
+   blanco) y .scrollbar-hidden — misma capa, más específicos o posteriores —
+   siguen ganando donde se usan. */
+@layer components {
+    /* Chrome / Safari / Edge: pseudo-elementos webkit. El borde transparente
+       con background-clip deja el pulgar como una píldora flotante de 4px. */
+    @supports selector(::-webkit-scrollbar) {
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+            background-color: transparent;
+        }
+
+        ::-webkit-scrollbar-track {
+            background-color: transparent;
+        }
+
+        ::-webkit-scrollbar-corner {
+            background-color: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            border-radius: 9999px;
+            border: 2px solid transparent;
+            background-clip: padding-box;
+            /* slate-400 translúcido */
+            background-color: rgb(148 163 184 / 0.55);
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            /* slate-500 */
+            background-color: rgb(100 116 139 / 0.75);
+        }
+
+        .dark ::-webkit-scrollbar-thumb {
+            background-color: rgb(255 255 255 / 0.18);
+        }
+
+        .dark ::-webkit-scrollbar-thumb:hover {
+            background-color: rgb(255 255 255 / 0.3);
+        }
+    }
+
+    /* Firefox: no soporta los pseudo-elementos webkit; ahí van las
+       propiedades estándar (que NO se ponen en Chromium 121+, porque
+       desactivarían los estilos webkit de arriba). */
+    @supports not selector(::-webkit-scrollbar) {
+        * {
+            scrollbar-width: thin;
+            scrollbar-color: rgb(148 163 184 / 0.55) transparent;
+        }
+
+        .dark,
+        .dark * {
+            scrollbar-color: rgb(255 255 255 / 0.18) transparent;
+        }
+    }
+}

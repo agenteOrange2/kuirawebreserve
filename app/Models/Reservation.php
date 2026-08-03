@@ -42,6 +42,8 @@ class Reservation extends Model
         'extras',
         'experiences',
         'deposit_amount',
+        'coupon_code',
+        'discount_amount',
         'payment_status',
         'payment_due_at',
         'notes',
@@ -65,6 +67,7 @@ class Reservation extends Model
             'extras' => 'array',
             'experiences' => 'array',
             'deposit_amount' => 'decimal:2',
+            'discount_amount' => 'decimal:2',
             'payment_status' => \App\Enums\PaymentStatus::class,
             'payment_due_at' => 'datetime',
         ];
@@ -101,7 +104,8 @@ class Reservation extends Model
 
     public function guest(): BelongsTo
     {
-        return $this->belongsTo(Guest::class);
+        // withTrashed: un huésped archivado sigue visible en su historial.
+        return $this->belongsTo(Guest::class)->withTrashed();
     }
 
     public function stay(): HasOne
@@ -136,16 +140,17 @@ class Reservation extends Model
     }
 
     /**
-     * Reembolso sugerido por la política de cancelación de la tarifa
-     * (spec-pagos F4): lo pagado no reembolsado, menos la penalidad si se
-     * cancela fuera de la ventana. null = la tarifa no define política
-     * (decisión humana, como siempre). Es SUGERENCIA: el staff decide.
+     * Reembolso sugerido por la política de cancelación efectiva — la de la
+     * tarifa si define una, o la default del hotel (spec-pagos F4): lo
+     * pagado no reembolsado, menos la penalidad si se cancela fuera de la
+     * ventana. null = sin política (decisión humana, como siempre). Es
+     * SUGERENCIA: el staff decide.
      */
     public function suggestedRefund(?\DateTimeInterface $at = null): ?float
     {
-        $plan = $this->ratePlan;
+        $policy = app(\App\Services\ReservationPolicy::class)->cancellationPolicyFor($this->ratePlan);
 
-        if (! $plan || ! $plan->hasCancellationPolicy()) {
+        if ($policy === null) {
             return null;
         }
 
@@ -155,16 +160,14 @@ class Reservation extends Model
             return null;
         }
 
-        $deadline = $plan->cancelFreeDeadlineFor($this->starts_at);
+        $deadline = $policy['unit']->subtractFrom($this->starts_at, $policy['value']);
         $moment = $at ? \Carbon\Carbon::instance(\Carbon\Carbon::parse($at)) : now();
 
-        if ($deadline !== null && $moment->lte($deadline)) {
+        if ($moment->lte($deadline)) {
             return $refundable; // dentro de la ventana: se devuelve todo
         }
 
-        $penalty = $plan->cancel_penalty_percent !== null ? (float) $plan->cancel_penalty_percent : 100.0;
-
-        return max(0, round($refundable * (1 - $penalty / 100), 2));
+        return max(0, round($refundable * (1 - $policy['penalty'] / 100), 2));
     }
 
     public function paidTotal(): float

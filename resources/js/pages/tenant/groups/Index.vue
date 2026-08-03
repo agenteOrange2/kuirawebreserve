@@ -1,17 +1,19 @@
 <script setup lang="ts">
-import { router } from '@inertiajs/vue3';
+import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, nextTick, reactive, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormHelp,
     FormInput,
+    FormLabel,
     FormSelect,
     FormSwitch,
     FormTextarea,
 } from '@/components/Base/Form';
-import { Dialog } from '@/components/Base/Headless';
+import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import type { Icon } from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
@@ -27,7 +29,6 @@ interface GroupReservationRow {
     status_label: string;
 }
 
-// Experiencia colgada del grupo (tour comprado como plus del GRP-).
 interface GroupExperienceRow {
     id: number;
     code: string;
@@ -62,41 +63,6 @@ interface RoomTypeOption {
     has_block: boolean;
 }
 
-const props = defineProps<{
-    groups: GroupRow[];
-    roomTypes: RoomTypeOption[];
-    canManage: boolean;
-}>();
-
-const toast = useToasts();
-const money = (n: number) =>
-    `$${n.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
-const formatDateTime = (iso: string) =>
-    new Date(iso).toLocaleString('es-MX', {
-        day: '2-digit',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-    });
-
-const expanded = ref<Set<number>>(new Set());
-function toggle(id: number) {
-    const next = new Set(expanded.value);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
-    expanded.value = next;
-}
-
-const statusClass: Record<string, string> = {
-    pending: 'bg-warning/10 text-warning',
-    confirmed: 'bg-success/10 text-success',
-    checked_in: 'bg-primary/10 text-primary',
-    completed: 'bg-slate-100 text-slate-500 dark:bg-darkmode-400',
-    cancelled: 'bg-danger/10 text-danger',
-    no_show: 'bg-danger/10 text-danger',
-};
-
-// ── Alta de grupo ──
 interface LineForm {
     room_type_id: number | '';
     rooms: number;
@@ -104,9 +70,244 @@ interface LineForm {
     children: number;
 }
 
+type GroupStatus =
+    | 'pending'
+    | 'confirmed'
+    | 'checked_in'
+    | 'completed'
+    | 'cancelled';
+type FormStep = 'stay' | 'rooms' | 'contact';
+type PhoneCountry = 'mx' | 'us' | 'other';
+
+const props = defineProps<{
+    groups: GroupRow[];
+    roomTypes: RoomTypeOption[];
+    canManage: boolean;
+}>();
+
+const toast = useToasts();
+const liveReservationStatuses = ['pending', 'confirmed', 'checked_in'];
+const expanded = ref<Set<number>>(new Set());
+
+const money = (amount: number) =>
+    `$${Number(amount).toLocaleString('es-MX', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    })}`;
+
+const formatDateTime = (iso: string) =>
+    new Date(iso).toLocaleString('es-MX', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+
+const normalizeSearch = (value: string | null | undefined) =>
+    (value ?? '')
+        .toLocaleLowerCase('es')
+        .normalize('NFD')
+        .replace(/\p{Diacritic}/gu, '');
+
+const statusMeta: Record<
+    GroupStatus,
+    { label: string; icon: Icon; class: string }
+> = {
+    pending: {
+        label: 'Por confirmar',
+        icon: 'AlarmClock',
+        class: 'bg-pending/10 text-pending',
+    },
+    confirmed: {
+        label: 'Confirmado',
+        icon: 'CircleCheck',
+        class: 'bg-success/10 text-success',
+    },
+    checked_in: {
+        label: 'Alojado',
+        icon: 'DoorOpen',
+        class: 'bg-primary/10 text-primary',
+    },
+    completed: {
+        label: 'Finalizado',
+        icon: 'History',
+        class: 'bg-slate-100 text-slate-500 dark:bg-darkmode-400',
+    },
+    cancelled: {
+        label: 'Cancelado',
+        icon: 'Ban',
+        class: 'bg-danger/10 text-danger',
+    },
+};
+
+const reservationStatusClass: Record<string, string> = {
+    pending: 'bg-pending/10 text-pending',
+    confirmed: 'bg-success/10 text-success',
+    checked_in: 'bg-primary/10 text-primary',
+    completed: 'bg-slate-100 text-slate-500 dark:bg-darkmode-400',
+    cancelled: 'bg-danger/10 text-danger',
+    no_show: 'bg-danger/10 text-danger',
+};
+
+function groupStatus(group: GroupRow): GroupStatus {
+    const statuses = group.reservations.map(
+        (reservation) => reservation.status,
+    );
+
+    if (statuses.includes('checked_in')) {
+        return 'checked_in';
+    }
+
+    if (statuses.includes('confirmed')) {
+        return 'confirmed';
+    }
+
+    if (statuses.includes('pending')) {
+        return 'pending';
+    }
+
+    if (
+        statuses.length > 0 &&
+        statuses.every(
+            (status) => status === 'cancelled' || status === 'no_show',
+        )
+    ) {
+        return 'cancelled';
+    }
+
+    return 'completed';
+}
+
+const groupIsLive = (group: GroupRow) =>
+    group.reservations.some((reservation) =>
+        liveReservationStatuses.includes(reservation.status),
+    );
+
+const groupCanCancel = (group: GroupRow) =>
+    group.reservations.some((reservation) =>
+        ['pending', 'confirmed'].includes(reservation.status),
+    );
+
+const peopleInGroup = (group: GroupRow) =>
+    group.reservations.reduce(
+        (total, reservation) =>
+            total + reservation.adults + reservation.children,
+        0,
+    );
+
+function toggleDetails(groupId: number): void {
+    const next = new Set(expanded.value);
+
+    if (next.has(groupId)) {
+        next.delete(groupId);
+    } else {
+        next.add(groupId);
+    }
+
+    expanded.value = next;
+}
+
+const listFilters = reactive({
+    query: '',
+    status: '' as '' | GroupStatus,
+    from: '',
+    to: '',
+});
+
+const listFiltersActive = computed(
+    () =>
+        listFilters.query !== '' ||
+        listFilters.status !== '' ||
+        listFilters.from !== '' ||
+        listFilters.to !== '',
+);
+
+const filteredGroups = computed(() =>
+    props.groups.filter((group) => {
+        const query = normalizeSearch(listFilters.query.trim());
+        const searchableGroup = normalizeSearch(
+            [
+                group.code,
+                group.guest_name,
+                group.notes,
+                ...group.reservations.flatMap((reservation) => [
+                    reservation.code,
+                    reservation.room,
+                    reservation.room_type,
+                ]),
+                ...group.experiences.flatMap((experience) => [
+                    experience.code,
+                    experience.name,
+                ]),
+            ]
+                .filter(Boolean)
+                .join(' '),
+        );
+
+        if (query && !searchableGroup.includes(query)) {
+            return false;
+        }
+
+        if (listFilters.status && groupStatus(group) !== listFilters.status) {
+            return false;
+        }
+
+        const arrivalDate = group.starts_at?.slice(0, 10) ?? '';
+
+        if (
+            listFilters.from &&
+            (!arrivalDate || arrivalDate < listFilters.from)
+        ) {
+            return false;
+        }
+
+        if (listFilters.to && (!arrivalDate || arrivalDate > listFilters.to)) {
+            return false;
+        }
+
+        return true;
+    }),
+);
+
+const activeGroupsCount = computed(
+    () => props.groups.filter((group) => groupIsLive(group)).length,
+);
+const pendingGroupsCount = computed(
+    () =>
+        props.groups.filter((group) => groupStatus(group) === 'pending').length,
+);
+const activeRoomsCount = computed(() =>
+    props.groups.reduce(
+        (total, group) =>
+            total +
+            group.reservations.filter((reservation) =>
+                liveReservationStatuses.includes(reservation.status),
+            ).length,
+        0,
+    ),
+);
+const activeGroupsValue = computed(() =>
+    props.groups
+        .filter((group) => groupIsLive(group))
+        .reduce((total, group) => total + group.total, 0),
+);
+
+function clearListFilters(): void {
+    listFilters.query = '';
+    listFilters.status = '';
+    listFilters.from = '';
+    listFilters.to = '';
+}
+
 const showForm = ref(false);
+const activeFormStep = ref<FormStep>('stay');
+const formScrollContainer = ref<HTMLElement | null>(null);
 const saving = ref(false);
 const errors = reactive<Record<string, string>>({});
+const phoneCountry = ref<PhoneCountry>('mx');
+const phoneDialCode = ref('+52');
+const phoneNationalNumber = ref('');
 const form = reactive({
     mode: 'night' as 'night' | 'block',
     arrive_date: '',
@@ -122,16 +323,50 @@ const form = reactive({
     ] as LineForm[],
 });
 
+const formSteps: Array<{
+    key: FormStep;
+    number: number;
+    label: string;
+    description: string;
+    icon: Icon;
+}> = [
+    {
+        key: 'stay',
+        number: 1,
+        label: 'Estancia',
+        description: 'Fechas y modalidad',
+        icon: 'CalendarDays',
+    },
+    {
+        key: 'rooms',
+        number: 2,
+        label: 'Habitaciones',
+        description: 'Tipos y personas',
+        icon: 'BedDouble',
+    },
+    {
+        key: 'contact',
+        number: 3,
+        label: 'Responsable',
+        description: 'Contacto y estado',
+        icon: 'UserRound',
+    },
+];
+
+const activeFormStepIndex = computed(() =>
+    formSteps.findIndex((step) => step.key === activeFormStep.value),
+);
+
 const modeAvailable = computed(() => ({
-    night: props.roomTypes.some((t) => t.has_night),
-    block: props.roomTypes.some((t) => t.has_block),
+    night: props.roomTypes.some((roomType) => roomType.has_night),
+    block: props.roomTypes.some((roomType) => roomType.has_block),
 }));
 
 const typesForMode = computed(() =>
     props.roomTypes.filter(
-        (t) =>
-            t.rooms_count > 0 &&
-            (form.mode === 'night' ? t.has_night : t.has_block),
+        (roomType) =>
+            roomType.rooms_count > 0 &&
+            (form.mode === 'night' ? roomType.has_night : roomType.has_block),
     ),
 );
 
@@ -140,10 +375,66 @@ const hasModeChoice = computed(
 );
 
 const totalRooms = computed(() =>
-    form.lines.reduce((sum, l) => sum + (Number(l.rooms) || 0), 0),
+    form.lines.reduce((total, line) => total + (Number(line.rooms) || 0), 0),
 );
 
-function openForm() {
+const totalGuests = computed(() =>
+    form.lines.reduce(
+        (total, line) =>
+            total +
+            (Number(line.rooms) || 0) *
+                ((Number(line.adults) || 0) + (Number(line.children) || 0)),
+        0,
+    ),
+);
+
+const stayStepComplete = computed(() =>
+    form.mode === 'night'
+        ? Boolean(form.arrive_date && form.depart_date)
+        : Boolean(form.arrive_at),
+);
+
+const roomsStepComplete = computed(
+    () =>
+        totalRooms.value >= 2 &&
+        totalRooms.value <= 30 &&
+        form.lines.every((line) => line.room_type_id !== ''),
+);
+
+const contactStepComplete = computed(() => Boolean(form.guest_name.trim()));
+
+const guestPhonePreview = computed(() => {
+    const number = phoneNationalNumber.value.replace(/\D/g, '');
+
+    if (!number) {
+        return '';
+    }
+
+    const dialCode =
+        phoneCountry.value === 'mx'
+            ? '52'
+            : phoneCountry.value === 'us'
+              ? '1'
+              : phoneDialCode.value.replace(/\D/g, '');
+
+    return dialCode ? `+${dialCode}${number}` : `+${number}`;
+});
+
+function syncGuestPhone(): void {
+    form.guest_phone = guestPhonePreview.value;
+}
+
+function changePhoneCountry(): void {
+    phoneDialCode.value =
+        phoneCountry.value === 'mx'
+            ? '+52'
+            : phoneCountry.value === 'us'
+              ? '+1'
+              : '';
+    syncGuestPhone();
+}
+
+function openForm(): void {
     form.mode = modeAvailable.value.night ? 'night' : 'block';
     form.arrive_date = '';
     form.depart_date = '';
@@ -154,19 +445,27 @@ function openForm() {
     form.notes = '';
     form.confirmed = false;
     form.lines = [{ room_type_id: '', rooms: 2, adults: 2, children: 0 }];
-    Object.keys(errors).forEach((k) => delete errors[k]);
+    phoneCountry.value = 'mx';
+    phoneDialCode.value = '+52';
+    phoneNationalNumber.value = '';
+    activeFormStep.value = 'stay';
+    Object.keys(errors).forEach((key) => delete errors[key]);
     showForm.value = true;
 }
 
-function addLine() {
-    form.lines.push({ room_type_id: '', rooms: 1, adults: 2, children: 0 });
+function addLine(): void {
+    form.lines.push({
+        room_type_id: '',
+        rooms: 1,
+        adults: 2,
+        children: 0,
+    });
 }
 
-// Topes reales por línea (mismos clamps que el wizard de grupos): cuartos
-// físicos del tipo y capacidad por habitación. El servidor los vuelve a
-// validar; aquí solo evitamos capturar combinaciones imposibles.
 function typeFor(line: LineForm): RoomTypeOption | undefined {
-    return props.roomTypes.find((t) => t.id === line.room_type_id);
+    return props.roomTypes.find(
+        (roomType) => roomType.id === line.room_type_id,
+    );
 }
 
 function maxRoomsFor(line: LineForm): number {
@@ -177,19 +476,55 @@ function capacityFor(line: LineForm): number {
     return typeFor(line)?.capacity || 20;
 }
 
-function setRooms(line: LineForm, n: number) {
-    line.rooms = Math.max(1, Math.min(n, maxRoomsFor(line)));
+function setRooms(line: LineForm, amount: number): void {
+    line.rooms = Math.max(1, Math.min(amount, maxRoomsFor(line)));
 }
 
-function setAdults(line: LineForm, n: number) {
-    line.adults = Math.max(1, Math.min(n, capacityFor(line) - line.children));
+function setAdults(line: LineForm, amount: number): void {
+    line.adults = Math.max(
+        1,
+        Math.min(amount, capacityFor(line) - line.children),
+    );
 }
 
-function setChildren(line: LineForm, n: number) {
-    line.children = Math.max(0, Math.min(n, capacityFor(line) - line.adults));
+function setChildren(line: LineForm, amount: number): void {
+    line.children = Math.max(
+        0,
+        Math.min(amount, capacityFor(line) - line.adults),
+    );
 }
 
-// Al elegir o cambiar el tipo, los contadores se reajustan a sus topes.
+function goToFormStep(step: FormStep): void {
+    if (step === 'rooms' && !stayStepComplete.value) {
+        return;
+    }
+
+    if (
+        step === 'contact' &&
+        (!stayStepComplete.value || !roomsStepComplete.value)
+    ) {
+        return;
+    }
+
+    activeFormStep.value = step;
+}
+
+function nextFormStep(): void {
+    if (activeFormStep.value === 'stay' && stayStepComplete.value) {
+        activeFormStep.value = 'rooms';
+    } else if (activeFormStep.value === 'rooms' && roomsStepComplete.value) {
+        activeFormStep.value = 'contact';
+    }
+}
+
+function previousFormStep(): void {
+    if (activeFormStep.value === 'contact') {
+        activeFormStep.value = 'rooms';
+    } else if (activeFormStep.value === 'rooms') {
+        activeFormStep.value = 'stay';
+    }
+}
+
 watch(
     () => form.lines.map((line) => line.room_type_id),
     () => {
@@ -201,49 +536,81 @@ watch(
     },
 );
 
-async function submit() {
+watch(activeFormStep, async () => {
+    await nextTick();
+    formScrollContainer.value?.scrollTo({ top: 0, behavior: 'auto' });
+});
+
+async function submit(): Promise<void> {
     saving.value = true;
-    Object.keys(errors).forEach((k) => delete errors[k]);
+    Object.keys(errors).forEach((key) => delete errors[key]);
+
     const startsAt =
         form.mode === 'night' ? `${form.arrive_date}T15:00` : form.arrive_at;
     const endsAt =
         form.mode === 'night' && form.depart_date
             ? `${form.depart_date}T12:00`
             : null;
+
     try {
-        const { data } = await axios.post<GroupRow>('/api/group-reservations', {
-            mode: form.mode,
-            starts_at: startsAt,
-            ends_at: endsAt,
-            guest_name: form.guest_name,
-            guest_phone: form.guest_phone || null,
-            guest_email: form.guest_email || null,
-            notes: form.notes || null,
-            confirmed: form.confirmed,
-            lines: form.lines.filter((l) => l.room_type_id !== ''),
-        });
+        const { data } = await axios.post<GroupRow>(
+            route('tenant.group-reservations.store'),
+            {
+                mode: form.mode,
+                starts_at: startsAt,
+                ends_at: endsAt,
+                guest_name: form.guest_name,
+                guest_phone: form.guest_phone || null,
+                guest_email: form.guest_email || null,
+                notes: form.notes || null,
+                confirmed: form.confirmed,
+                lines: form.lines.filter((line) => line.room_type_id !== ''),
+            },
+        );
+
         showForm.value = false;
         toast.success(
             'Grupo creado',
-            `Folio ${data.code}: ${data.rooms} habitaciones por ${money(data.total)}.`,
+            `${data.code}: ${data.rooms} habitaciones por ${money(data.total)}.`,
         );
         router.reload({ only: ['groups'] });
-    } catch (e: any) {
-        const data = e.response?.data;
-        if (data?.errors) {
-            Object.entries(data.errors).forEach(
-                ([key, msgs]) => (errors[key] = (msgs as string[])[0]),
+    } catch (error: any) {
+        const responseData = error.response?.data;
+
+        if (responseData?.errors) {
+            Object.entries(responseData.errors).forEach(
+                ([key, messages]) => (errors[key] = (messages as string[])[0]),
             );
+
+            const errorKeys = Object.keys(responseData.errors);
+
+            if (
+                errorKeys.some((key) =>
+                    ['mode', 'starts_at', 'ends_at'].includes(key),
+                )
+            ) {
+                activeFormStep.value = 'stay';
+            } else if (
+                errorKeys.some(
+                    (key) => key === 'lines' || key.startsWith('lines.'),
+                )
+            ) {
+                activeFormStep.value = 'rooms';
+            } else {
+                activeFormStep.value = 'contact';
+            }
+
             toast.error(
-                'Revisa el formulario',
+                'Revisa la información',
                 Object.values(
-                    data.errors as Record<string, string[]>,
+                    responseData.errors as Record<string, string[]>,
                 )[0]?.[0] ?? '',
             );
         } else {
             toast.error(
                 'No se pudo crear el grupo',
-                data?.message ?? 'Nada se reservó: revisa disponibilidad.',
+                responseData?.message ??
+                    'No se apartó ninguna habitación. Revisa la disponibilidad.',
             );
         }
     } finally {
@@ -251,90 +618,101 @@ async function submit() {
     }
 }
 
-// ── Cancelar grupo ──
 const cancelling = ref<GroupRow | null>(null);
 const cancelBusy = ref(false);
 
-async function cancelGroup() {
-    if (!cancelling.value) return;
+async function cancelGroup(): Promise<void> {
+    if (!cancelling.value) {
+        return;
+    }
+
     cancelBusy.value = true;
+
     try {
         const { data } = await axios.post(
-            `/api/group-reservations/${cancelling.value.id}/cancel`,
+            route('tenant.group-reservations.cancel', cancelling.value.id),
         );
+
         toast.success(
             'Grupo cancelado',
-            `${data.cancelled} reserva(s) canceladas; las que ya avanzaron no se tocan.`,
+            `${data.cancelled} reserva(s) canceladas. Las habitaciones quedaron libres.`,
         );
         cancelling.value = null;
         router.reload({ only: ['groups'] });
-    } catch (e: any) {
+    } catch (error: any) {
         toast.error(
-            'Error',
-            e.response?.data?.message ?? 'No se pudo cancelar el grupo.',
+            'No se pudo cancelar',
+            error.response?.data?.message ?? 'Intenta de nuevo.',
         );
     } finally {
         cancelBusy.value = false;
     }
 }
 
-const groupIsLive = (group: GroupRow) =>
-    group.reservations.some(
-        (r) => r.status === 'pending' || r.status === 'confirmed',
-    );
-
-// ── Editar grupo (responsable y notas; los cuartos se operan en /reservas) ──
 const editingGroup = ref<GroupRow | null>(null);
 const editForm = reactive({ guest_name: '', notes: '' });
 const editBusy = ref(false);
 
-function openEdit(group: GroupRow) {
+function openEdit(group: GroupRow): void {
     editingGroup.value = group;
     editForm.guest_name = group.guest_name ?? '';
     editForm.notes = group.notes ?? '';
 }
 
-async function submitEdit() {
-    if (!editingGroup.value) return;
+async function submitEdit(): Promise<void> {
+    if (!editingGroup.value) {
+        return;
+    }
+
     editBusy.value = true;
+
     try {
-        await axios.patch(`/api/group-reservations/${editingGroup.value.id}`, {
-            guest_name: editForm.guest_name,
-            notes: editForm.notes || null,
-        });
-        toast.success('Grupo actualizado');
+        await axios.patch(
+            route('tenant.group-reservations.update', editingGroup.value.id),
+            {
+                guest_name: editForm.guest_name,
+                notes: editForm.notes || null,
+            },
+        );
+
+        toast.success('Datos del grupo actualizados');
         editingGroup.value = null;
         router.reload({ only: ['groups'] });
-    } catch (e: any) {
+    } catch (error: any) {
         toast.error(
-            'Error',
-            e.response?.data?.message ?? 'No se pudo actualizar el grupo.',
+            'No se pudo actualizar',
+            error.response?.data?.message ?? 'Intenta de nuevo.',
         );
     } finally {
         editBusy.value = false;
     }
 }
 
-// ── Eliminar grupo muerto (sin reservas vivas ni pagos): limpieza del
-// listado; sus reservas canceladas siguen visibles en /reservas ──
 const deletingGroup = ref<GroupRow | null>(null);
 const deleteBusy = ref(false);
 
-async function deleteGroup() {
-    if (!deletingGroup.value) return;
+async function deleteGroup(): Promise<void> {
+    if (!deletingGroup.value) {
+        return;
+    }
+
     deleteBusy.value = true;
+
     try {
-        await axios.delete(`/api/group-reservations/${deletingGroup.value.id}`);
+        await axios.delete(
+            route('tenant.group-reservations.destroy', deletingGroup.value.id),
+        );
+
         toast.success(
-            'Grupo eliminado',
-            'Sus reservas canceladas siguen visibles en Reservas.',
+            'Folio eliminado',
+            'Las reservas canceladas siguen visibles en Reservas.',
         );
         deletingGroup.value = null;
         router.reload({ only: ['groups'] });
-    } catch (e: any) {
+    } catch (error: any) {
         toast.error(
             'No se pudo eliminar',
-            e.response?.data?.message ?? 'Cancela el grupo primero.',
+            error.response?.data?.message ?? 'Cancela el grupo primero.',
         );
     } finally {
         deleteBusy.value = false;
@@ -345,332 +723,858 @@ async function deleteGroup() {
 <template>
     <RazeLayout title="Reservas grupales">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Reservas grupales</h1>
-                    <p class="mt-0.5 text-sm text-slate-500">
-                        Varias habitaciones de un jalón bajo un folio de grupo.
-                        Todo o nada: si falta una, no se aparta ninguna.
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                    >
+                        <Lucide
+                            icon="UsersRound"
+                            class="h-5 w-5 sm:h-7 sm:w-7"
+                        />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-lg font-medium sm:text-xl">
+                            Reservas grupales
+                        </h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            Administra varias habitaciones bajo un mismo folio
+                            y responsable.
+                        </p>
+                    </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
+                >
                     <Button
                         as="a"
-                        href="/reservar/grupos"
+                        :href="route('tenant.booking.groups')"
                         target="_blank"
-                        variant="outline-primary"
-                        class="rounded-[0.5rem] bg-white"
+                        variant="outline-secondary"
+                        class="min-h-11 rounded-[0.5rem] bg-white"
                     >
                         <Lucide
                             icon="ExternalLink"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                            class="mr-2 h-5 w-5 stroke-[1.5]"
                         />
-                        Ver wizard de grupos
+                        Abrir reserva pública
                     </Button>
                     <Button
                         v-if="canManage"
                         variant="primary"
-                        class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                        class="min-h-11 rounded-[0.5rem] shadow-md shadow-primary/20"
+                        :disabled="!roomTypes.length"
                         @click="openForm"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Nuevo grupo
+                        <Lucide icon="Plus" class="mr-2 h-5 w-5" />
+                        Nuevo grupo
                     </Button>
                 </div>
             </div>
 
-            <div v-if="groups.length" class="mt-5 space-y-4">
-                <div
-                    v-for="group in groups"
-                    :key="group.id"
-                    class="box box--stacked"
-                >
-                    <button
-                        type="button"
-                        class="flex w-full flex-wrap items-center gap-4 px-5 py-4 text-left"
-                        @click="toggle(group.id)"
-                    >
-                        <div
-                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
-                        >
-                            <Lucide
-                                icon="UsersRound"
-                                class="h-5 w-5 text-primary"
-                            />
-                        </div>
-                        <div class="min-w-0 flex-1">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="font-medium">{{
-                                    group.code
-                                }}</span>
-                                <span class="text-sm text-slate-500">{{
-                                    group.guest_name
-                                }}</span>
-                            </div>
-                            <div class="mt-0.5 text-xs text-slate-500">
-                                {{ group.rooms }} habitaciones ·
-                                <template v-if="group.starts_at"
-                                    >{{ formatDateTime(group.starts_at)
-                                    }}<template v-if="group.ends_at">
-                                        →
-                                        {{
-                                            formatDateTime(group.ends_at)
-                                        }}</template
-                                    ></template
-                                >
-                            </div>
-                        </div>
-                        <div class="text-right">
-                            <div class="font-semibold">
-                                {{ money(group.total) }}
-                            </div>
-                            <div class="text-xs text-slate-400">
-                                total del grupo
-                            </div>
-                        </div>
-                        <Lucide
-                            :icon="
-                                expanded.has(group.id)
-                                    ? 'ChevronUp'
-                                    : 'ChevronDown'
-                            "
-                            class="h-4 w-4 shrink-0 text-slate-400"
-                        />
-                    </button>
+            <div
+                v-if="!roomTypes.length"
+                class="box mt-5 border-l-4 border-l-warning p-5"
+            >
+                <div class="flex items-start gap-3">
+                    <Lucide
+                        icon="TriangleAlert"
+                        class="mt-0.5 h-5 w-5 shrink-0 text-warning"
+                    />
+                    <div>
+                        <p class="text-sm font-medium">
+                            No hay tipos de habitación disponibles
+                        </p>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Activa habitaciones y tarifas antes de crear una
+                            reserva grupal.
+                        </p>
+                    </div>
+                </div>
+            </div>
 
+            <div class="mt-5 grid grid-cols-12 gap-5">
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                >
                     <div
-                        v-if="expanded.has(group.id)"
-                        class="border-t border-dashed border-slate-300/70 px-5 py-4 dark:border-darkmode-400"
+                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <div class="space-y-2">
-                            <div
-                                v-for="reservation in group.reservations"
-                                :key="reservation.id"
-                                class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200/70 px-3 py-2.5 text-sm dark:border-darkmode-400"
-                            >
-                                <div class="min-w-0">
-                                    <span class="font-medium">{{
-                                        reservation.code
-                                    }}</span>
-                                    <span class="ml-2 text-slate-500"
-                                        >{{ reservation.room_type
-                                        }}<template v-if="reservation.room">
-                                            · Hab.
-                                            {{ reservation.room }}</template
-                                        ></span
-                                    >
-                                    <span class="ml-2 text-xs text-slate-400"
-                                        >{{ reservation.adults }}A{{
-                                            reservation.children
-                                                ? ` + ${reservation.children}N`
-                                                : ''
-                                        }}</span
-                                    >
-                                </div>
-                                <div class="flex shrink-0 items-center gap-3">
-                                    <span class="text-sm font-medium">{{
-                                        money(reservation.total)
-                                    }}</span>
-                                    <span
-                                        class="rounded-full px-2.5 py-1 text-xs font-medium"
-                                        :class="
-                                            statusClass[reservation.status] ??
-                                            'bg-slate-100 text-slate-500'
-                                        "
-                                    >
-                                        {{ reservation.status_label }}
-                                    </span>
-                                </div>
-                            </div>
+                        <Lucide icon="UsersRound" class="h-6 w-6" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-xl font-medium">
+                            {{ activeGroupsCount }}
                         </div>
-                        <!-- Tours del grupo: mismo apartado, mismo cobro consolidado -->
-                        <div
-                            v-if="group.experiences?.length"
-                            class="mt-2 space-y-2"
-                        >
-                            <div
-                                v-for="exp in group.experiences"
-                                :key="exp.id"
-                                class="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200/70 px-3 py-2.5 text-sm dark:border-darkmode-400"
-                            >
-                                <div class="flex min-w-0 items-center gap-2">
-                                    <Lucide
-                                        icon="Compass"
-                                        class="h-4 w-4 shrink-0 text-slate-400"
-                                    />
-                                    <span class="font-medium">{{
-                                        exp.code
-                                    }}</span>
-                                    <span class="text-slate-500">{{
-                                        exp.name
-                                    }}</span>
-                                    <span class="text-xs text-slate-400"
-                                        >{{ exp.people }} persona(s)<template
-                                            v-if="exp.starts_at"
-                                        >
-                                            ·
-                                            {{
-                                                formatDateTime(exp.starts_at)
-                                            }}</template
-                                        ></span
-                                    >
-                                </div>
-                                <div class="flex shrink-0 items-center gap-3">
-                                    <span class="text-sm font-medium">{{
-                                        money(exp.total)
-                                    }}</span>
-                                    <span
-                                        class="rounded-full px-2.5 py-1 text-xs font-medium"
-                                        :class="
-                                            statusClass[exp.status] ??
-                                            'bg-slate-100 text-slate-500'
-                                        "
-                                    >
-                                        {{ exp.status_label }}
-                                    </span>
-                                </div>
-                            </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Grupos activos
                         </div>
-                        <div
-                            v-if="group.notes"
-                            class="mt-3 text-xs text-slate-500"
-                        >
-                            Notas: {{ group.notes }}
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
+                    >
+                        <Lucide icon="AlarmClock" class="h-6 w-6" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-xl font-medium">
+                            {{ pendingGroupsCount }}
                         </div>
-                        <div
-                            v-if="canManage"
-                            class="mt-4 flex flex-wrap justify-end gap-2"
-                        >
-                            <Button
-                                as="a"
-                                :href="`/grupos/${group.id}`"
-                                variant="outline-primary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
-                            >
-                                <Lucide
-                                    icon="Eye"
-                                    class="mr-1.5 h-3.5 w-3.5"
-                                />
-                                Ver detalle
-                            </Button>
-                            <Button
-                                variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
-                                @click="openEdit(group)"
-                            >
-                                <Lucide
-                                    icon="Pencil"
-                                    class="mr-1.5 h-3.5 w-3.5"
-                                />
-                                Editar
-                            </Button>
-                            <Button
-                                v-if="groupIsLive(group)"
-                                variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white text-danger"
-                                @click="cancelling = group"
-                            >
-                                <Lucide icon="Ban" class="mr-1.5 h-3.5 w-3.5" />
-                                Cancelar grupo completo
-                            </Button>
-                            <Button
-                                v-else
-                                variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white text-danger"
-                                @click="deletingGroup = group"
-                            >
-                                <Lucide
-                                    icon="Trash2"
-                                    class="mr-1.5 h-3.5 w-3.5"
-                                />
-                                Eliminar grupo
-                            </Button>
+                        <div class="truncate text-xs text-slate-500">
+                            Por confirmar
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                    >
+                        <Lucide icon="BedDouble" class="h-6 w-6" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-xl font-medium">
+                            {{ activeRoomsCount }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Habitaciones en grupos
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                    >
+                        <Lucide icon="Wallet" class="h-6 w-6" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="truncate text-xl font-medium">
+                            {{ money(activeGroupsValue) }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Valor de grupos activos
                         </div>
                     </div>
                 </div>
             </div>
-            <div
-                v-else
-                class="box box--stacked mt-5 flex flex-col items-center gap-3 px-5 py-12 text-center"
-            >
-                <Lucide icon="UsersRound" class="h-10 w-10 text-slate-300" />
-                <div>
-                    <p class="text-sm font-medium text-slate-600">
-                        Aún no hay reservas grupales
-                    </p>
-                    <p class="mt-0.5 text-xs text-slate-500">
-                        Cuando llegue una familia grande o un evento, crea el
-                        grupo aquí: todas las habitaciones de un jalón.
-                    </p>
-                </div>
-                <Button
-                    v-if="canManage"
-                    variant="primary"
-                    class="rounded-[0.5rem]"
-                    @click="openForm"
+
+            <div class="box box--stacked mt-5">
+                <div
+                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
                 >
-                    <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Nuevo grupo
-                </Button>
+                    <div class="flex items-center gap-2 font-medium">
+                        <Lucide
+                            icon="CalendarRange"
+                            class="h-5 w-5 text-slate-400"
+                        />
+                        Reservas de grupo
+                        <span
+                            class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
+                        >
+                            {{ groups.length }}
+                        </span>
+                    </div>
+                    <div
+                        v-if="listFiltersActive"
+                        class="ml-auto flex items-center gap-2 text-xs text-slate-500"
+                    >
+                        Mostrando {{ filteredGroups.length }} de
+                        {{ groups.length }}
+                        <button
+                            type="button"
+                            class="font-medium text-primary hover:underline"
+                            @click="clearListFilters"
+                        >
+                            Limpiar filtros
+                        </button>
+                    </div>
+                </div>
+
+                <div
+                    v-if="groups.length"
+                    class="border-b border-slate-200/60 bg-slate-50/70 px-5 py-4 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                >
+                    <div class="mb-3 flex items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="Filter" class="h-5 w-5" />
+                        </div>
+                        <div>
+                            <div class="text-sm font-medium">
+                                Encuentra un grupo
+                            </div>
+                            <div class="text-xs text-slate-500">
+                                Busca por responsable, folio, habitación o tipo.
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(15rem,1.5fr)_12rem_12rem_12rem_auto]"
+                    >
+                        <div>
+                            <FormLabel htmlFor="group-search">
+                                Búsqueda rápida
+                            </FormLabel>
+                            <div class="relative">
+                                <Lucide
+                                    icon="Search"
+                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3.5 h-5 w-5 text-slate-400"
+                                />
+                                <FormInput
+                                    id="group-search"
+                                    v-model="listFilters.query"
+                                    type="search"
+                                    class="h-11 pl-11 text-sm"
+                                    placeholder="Responsable, folio o habitación"
+                                />
+                            </div>
+                        </div>
+                        <div>
+                            <FormLabel htmlFor="group-status">Estado</FormLabel>
+                            <FormSelect
+                                id="group-status"
+                                v-model="listFilters.status"
+                                class="h-11"
+                            >
+                                <option value="">Todos los estados</option>
+                                <option value="pending">Por confirmar</option>
+                                <option value="confirmed">Confirmados</option>
+                                <option value="checked_in">Alojados</option>
+                                <option value="completed">Finalizados</option>
+                                <option value="cancelled">Cancelados</option>
+                            </FormSelect>
+                        </div>
+                        <div>
+                            <FormLabel htmlFor="group-from">
+                                Llegada desde
+                            </FormLabel>
+                            <FormInput
+                                id="group-from"
+                                v-model="listFilters.from"
+                                type="date"
+                                class="h-11"
+                            />
+                        </div>
+                        <div>
+                            <FormLabel htmlFor="group-to">
+                                Llegada hasta
+                            </FormLabel>
+                            <FormInput
+                                id="group-to"
+                                v-model="listFilters.to"
+                                type="date"
+                                class="h-11"
+                            />
+                        </div>
+                        <div class="flex items-end">
+                            <Button
+                                v-if="listFiltersActive"
+                                type="button"
+                                variant="outline-secondary"
+                                class="h-11 w-full whitespace-nowrap xl:w-auto"
+                                @click="clearListFilters"
+                            >
+                                <Lucide icon="X" class="mr-2 h-5 w-5" />
+                                Limpiar
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+
+                <div v-if="filteredGroups.length" class="space-y-3 p-5">
+                    <article
+                        v-for="group in filteredGroups"
+                        :key="group.id"
+                        class="rounded-xl border border-slate-200/80 bg-white shadow-sm dark:border-darkmode-400 dark:bg-darkmode-600"
+                    >
+                        <div
+                            class="grid gap-4 px-4 py-4 sm:px-5 lg:grid-cols-[minmax(15rem,1.4fr)_minmax(13rem,1.1fr)_minmax(10rem,0.8fr)_minmax(8rem,0.65fr)_auto] lg:items-center"
+                        >
+                            <div class="flex min-w-0 items-center gap-3">
+                                <div
+                                    class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                                >
+                                    <Lucide icon="UsersRound" class="h-6 w-6" />
+                                </div>
+                                <div class="min-w-0">
+                                    <div
+                                        class="flex flex-wrap items-center gap-2"
+                                    >
+                                        <span
+                                            class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-darkmode-400"
+                                        >
+                                            {{ group.code }}
+                                        </span>
+                                        <span
+                                            class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium"
+                                            :class="
+                                                statusMeta[groupStatus(group)]
+                                                    .class
+                                            "
+                                        >
+                                            <Lucide
+                                                :icon="
+                                                    statusMeta[
+                                                        groupStatus(group)
+                                                    ].icon
+                                                "
+                                                class="h-4 w-4"
+                                            />
+                                            {{
+                                                statusMeta[groupStatus(group)]
+                                                    .label
+                                            }}
+                                        </span>
+                                    </div>
+                                    <div class="mt-1.5 truncate font-medium">
+                                        {{
+                                            group.guest_name ??
+                                            'Sin responsable'
+                                        }}
+                                    </div>
+                                    <div
+                                        v-if="group.notes"
+                                        class="mt-0.5 truncate text-xs text-slate-500"
+                                        :title="group.notes"
+                                    >
+                                        {{ group.notes }}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="min-w-0">
+                                <div
+                                    class="flex items-center gap-2 text-xs font-medium text-slate-400"
+                                >
+                                    <Lucide
+                                        icon="CalendarDays"
+                                        class="h-4 w-4"
+                                    />
+                                    ESTANCIA
+                                </div>
+                                <div
+                                    v-if="group.starts_at"
+                                    class="mt-1 text-sm font-medium"
+                                >
+                                    {{ formatDateTime(group.starts_at) }}
+                                </div>
+                                <div
+                                    v-if="group.ends_at"
+                                    class="mt-0.5 text-xs text-slate-500"
+                                >
+                                    Sale {{ formatDateTime(group.ends_at) }}
+                                </div>
+                                <div
+                                    v-else-if="!group.starts_at"
+                                    class="mt-1 text-sm text-slate-400"
+                                >
+                                    Sin fecha registrada
+                                </div>
+                            </div>
+
+                            <div>
+                                <div
+                                    class="flex items-center gap-2 text-xs font-medium text-slate-400"
+                                >
+                                    <Lucide icon="BedDouble" class="h-4 w-4" />
+                                    OCUPACIÓN
+                                </div>
+                                <div class="mt-1 text-sm font-medium">
+                                    {{ group.rooms }}
+                                    {{
+                                        group.rooms === 1
+                                            ? 'habitación'
+                                            : 'habitaciones'
+                                    }}
+                                </div>
+                                <div class="mt-0.5 text-xs text-slate-500">
+                                    {{ peopleInGroup(group) }}
+                                    {{
+                                        peopleInGroup(group) === 1
+                                            ? 'persona'
+                                            : 'personas'
+                                    }}
+                                </div>
+                            </div>
+
+                            <div>
+                                <div class="text-xs font-medium text-slate-400">
+                                    TOTAL
+                                </div>
+                                <div class="mt-1 text-base font-semibold">
+                                    {{ money(group.total) }}
+                                </div>
+                                <div
+                                    v-if="group.experiences.length"
+                                    class="mt-0.5 text-xs text-slate-500"
+                                >
+                                    Incluye
+                                    {{ group.experiences.length }}
+                                    {{
+                                        group.experiences.length === 1
+                                            ? 'experiencia'
+                                            : 'experiencias'
+                                    }}
+                                </div>
+                            </div>
+
+                            <div class="flex items-center gap-2 lg:justify-end">
+                                <Button
+                                    :as="Link"
+                                    :href="
+                                        route('tenant.groups.show', group.id)
+                                    "
+                                    variant="outline-primary"
+                                    class="min-h-10 flex-1 whitespace-nowrap lg:flex-none"
+                                >
+                                    <Lucide icon="Eye" class="mr-2 h-5 w-5" />
+                                    Ver grupo
+                                </Button>
+                                <Menu>
+                                    <Menu.Button
+                                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                        title="Más acciones"
+                                    >
+                                        <Lucide
+                                            icon="EllipsisVertical"
+                                            class="h-5 w-5"
+                                        />
+                                    </Menu.Button>
+                                    <Menu.Items class="w-56">
+                                        <Menu.Item
+                                            as="button"
+                                            type="button"
+                                            @click="toggleDetails(group.id)"
+                                        >
+                                            <Lucide
+                                                :icon="
+                                                    expanded.has(group.id)
+                                                        ? 'ChevronUp'
+                                                        : 'ChevronDown'
+                                                "
+                                                class="mr-2 h-4 w-4"
+                                            />
+                                            {{
+                                                expanded.has(group.id)
+                                                    ? 'Ocultar habitaciones'
+                                                    : 'Ver habitaciones aquí'
+                                            }}
+                                        </Menu.Item>
+                                        <template v-if="canManage">
+                                            <Menu.Item
+                                                as="button"
+                                                type="button"
+                                                @click="openEdit(group)"
+                                            >
+                                                <Lucide
+                                                    icon="Pencil"
+                                                    class="mr-2 h-4 w-4"
+                                                />
+                                                Editar responsable
+                                            </Menu.Item>
+                                            <Menu.Divider
+                                                v-if="
+                                                    groupCanCancel(group) ||
+                                                    !groupIsLive(group)
+                                                "
+                                            />
+                                            <Menu.Item
+                                                v-if="groupCanCancel(group)"
+                                                as="button"
+                                                type="button"
+                                                class="text-danger"
+                                                @click="cancelling = group"
+                                            >
+                                                <Lucide
+                                                    icon="Ban"
+                                                    class="mr-2 h-4 w-4"
+                                                />
+                                                Cancelar grupo completo
+                                            </Menu.Item>
+                                            <Menu.Item
+                                                v-else-if="!groupIsLive(group)"
+                                                as="button"
+                                                type="button"
+                                                class="text-danger"
+                                                @click="deletingGroup = group"
+                                            >
+                                                <Lucide
+                                                    icon="Trash2"
+                                                    class="mr-2 h-4 w-4"
+                                                />
+                                                Eliminar folio
+                                            </Menu.Item>
+                                        </template>
+                                    </Menu.Items>
+                                </Menu>
+                            </div>
+                        </div>
+
+                        <!-- rounded-b propio: la card ya NO usa overflow-hidden
+                             (recortaba el dropdown de tres puntos). -->
+                        <div
+                            v-if="expanded.has(group.id)"
+                            class="rounded-b-xl border-t border-dashed border-slate-300/70 bg-slate-50/60 px-4 py-4 sm:px-5 dark:border-darkmode-400 dark:bg-darkmode-700/40"
+                        >
+                            <div
+                                class="mb-3 flex flex-wrap items-center justify-between gap-2"
+                            >
+                                <div>
+                                    <div class="text-sm font-medium">
+                                        Habitaciones del grupo
+                                    </div>
+                                    <div class="text-xs text-slate-500">
+                                        Consulta rápida; abre el grupo para
+                                        editar personas, cobros o habitaciones.
+                                    </div>
+                                </div>
+                                <Button
+                                    :as="Link"
+                                    :href="
+                                        route('tenant.groups.show', group.id)
+                                    "
+                                    variant="outline-secondary"
+                                    size="sm"
+                                    class="bg-white"
+                                >
+                                    Administrar grupo
+                                    <Lucide
+                                        icon="ArrowRight"
+                                        class="ml-2 h-4 w-4"
+                                    />
+                                </Button>
+                            </div>
+                            <div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
+                                <div
+                                    v-for="reservation in group.reservations"
+                                    :key="reservation.id"
+                                    class="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white px-3.5 py-3 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                >
+                                    <div
+                                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
+                                    >
+                                        <Lucide
+                                            icon="BedDouble"
+                                            class="h-5 w-5"
+                                        />
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <div
+                                            class="flex flex-wrap items-center gap-2"
+                                        >
+                                            <span class="text-sm font-medium">
+                                                {{
+                                                    reservation.room ??
+                                                    reservation.code
+                                                }}
+                                            </span>
+                                            <span
+                                                class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                                :class="
+                                                    reservationStatusClass[
+                                                        reservation.status
+                                                    ] ??
+                                                    'bg-slate-100 text-slate-500'
+                                                "
+                                            >
+                                                {{ reservation.status_label }}
+                                            </span>
+                                        </div>
+                                        <div
+                                            class="mt-0.5 truncate text-xs text-slate-500"
+                                        >
+                                            {{ reservation.room_type }} ·
+                                            {{ reservation.adults }}
+                                            {{
+                                                reservation.adults === 1
+                                                    ? 'adulto'
+                                                    : 'adultos'
+                                            }}
+                                            <template
+                                                v-if="reservation.children"
+                                            >
+                                                +
+                                                {{ reservation.children }}
+                                                {{
+                                                    reservation.children === 1
+                                                        ? 'niño'
+                                                        : 'niños'
+                                                }}
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <div class="shrink-0 text-sm font-medium">
+                                        {{ money(reservation.total) }}
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div v-if="group.experiences.length" class="mt-4">
+                                <div class="mb-2 text-sm font-medium">
+                                    Experiencias incluidas
+                                </div>
+                                <div
+                                    class="grid grid-cols-1 gap-2 lg:grid-cols-2"
+                                >
+                                    <div
+                                        v-for="experience in group.experiences"
+                                        :key="experience.id"
+                                        class="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white px-3.5 py-3 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                    >
+                                        <div
+                                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                                        >
+                                            <Lucide
+                                                icon="Compass"
+                                                class="h-5 w-5"
+                                            />
+                                        </div>
+                                        <div class="min-w-0 flex-1">
+                                            <div
+                                                class="truncate text-sm font-medium"
+                                            >
+                                                {{
+                                                    experience.name ??
+                                                    experience.code
+                                                }}
+                                            </div>
+                                            <div
+                                                class="mt-0.5 text-xs text-slate-500"
+                                            >
+                                                {{ experience.people }}
+                                                {{
+                                                    experience.people === 1
+                                                        ? 'persona'
+                                                        : 'personas'
+                                                }}
+                                                <template
+                                                    v-if="experience.starts_at"
+                                                >
+                                                    ·
+                                                    {{
+                                                        formatDateTime(
+                                                            experience.starts_at,
+                                                        )
+                                                    }}
+                                                </template>
+                                            </div>
+                                        </div>
+                                        <div
+                                            class="shrink-0 text-sm font-medium"
+                                        >
+                                            {{ money(experience.total) }}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </article>
+                </div>
+
+                <div
+                    v-else-if="groups.length"
+                    class="flex flex-col items-center gap-3 px-5 py-12 text-center"
+                >
+                    <div
+                        class="flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
+                    >
+                        <Lucide icon="SearchX" class="h-7 w-7" />
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium">
+                            Ningún grupo coincide con los filtros
+                        </p>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Cambia la búsqueda, el estado o el rango de fechas.
+                        </p>
+                    </div>
+                    <Button
+                        variant="outline-secondary"
+                        @click="clearListFilters"
+                    >
+                        <Lucide icon="X" class="mr-2 h-5 w-5" />
+                        Limpiar filtros
+                    </Button>
+                </div>
+
+                <div
+                    v-else
+                    class="flex flex-col items-center gap-3 px-5 py-12 text-center"
+                >
+                    <div
+                        class="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="UsersRound" class="h-7 w-7" />
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium">
+                            Aún no hay reservas grupales
+                        </p>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Crea un grupo cuando una familia o evento necesite
+                            dos habitaciones o más.
+                        </p>
+                    </div>
+                    <Button
+                        v-if="canManage"
+                        variant="primary"
+                        :disabled="!roomTypes.length"
+                        @click="openForm"
+                    >
+                        <Lucide icon="Plus" class="mr-2 h-5 w-5" />
+                        Crear primer grupo
+                    </Button>
+                </div>
             </div>
         </div>
 
-        <!-- Modal alta de grupo -->
         <Dialog :open="showForm" size="xl" @close="showForm = false">
-            <Dialog.Panel>
-                <form class="flex flex-col" @submit.prevent="submit">
+            <Dialog.Panel
+                class="h-[calc(100dvh-4.5rem)] max-h-[calc(100dvh-4.5rem)] overflow-hidden sm:h-auto sm:max-h-[calc(100dvh-5rem)] sm:w-[94vw] lg:w-[980px]"
+            >
+                <form
+                    class="flex h-full min-h-0 flex-col sm:max-h-[calc(100dvh-5rem)]"
+                    @submit.prevent="submit"
+                >
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-7 py-5 dark:border-darkmode-400"
+                        class="flex shrink-0 items-start gap-3 border-b border-slate-200/70 px-4 py-3 sm:gap-4 sm:px-7 sm:py-5 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
                         >
                             <Lucide
                                 icon="UsersRound"
-                                class="h-5 w-5 text-primary"
+                                class="h-5 w-5 sm:h-7 sm:w-7"
                             />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">Nuevo grupo</h2>
-                            <p class="mt-0.5 text-xs text-slate-500">
-                                Todo o nada: si alguna habitación no tiene
-                                disponibilidad, no se aparta ninguna.
+                            <h2 class="text-base font-medium sm:text-lg">
+                                Nueva reserva grupal
+                            </h2>
+                            <p
+                                class="mt-0.5 text-xs leading-4 text-slate-500 sm:text-sm sm:leading-5"
+                            >
+                                Fechas, habitaciones y responsable en tres
+                                pasos.
                             </p>
                         </div>
-                        <button
+                        <Button
                             type="button"
-                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            variant="outline-secondary"
+                            class="!h-9 !w-9 shrink-0 rounded-full !p-0 sm:!h-10 sm:!w-10"
+                            title="Cerrar"
                             @click="showForm = false"
                         >
                             <Lucide icon="X" class="h-5 w-5" />
-                        </button>
+                        </Button>
                     </div>
 
                     <div
-                        class="max-h-[70vh] space-y-6 overflow-y-auto px-7 py-6"
+                        class="grid shrink-0 grid-cols-3 gap-1.5 border-b border-slate-200/70 bg-slate-50/70 px-4 py-2.5 sm:gap-2 sm:px-7 sm:py-4 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                     >
-                        <!-- Fechas -->
-                        <section>
-                            <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        <Button
+                            v-for="step in formSteps"
+                            :key="step.key"
+                            type="button"
+                            :variant="
+                                activeFormStep === step.key
+                                    ? 'primary'
+                                    : 'outline-secondary'
+                            "
+                            class="min-h-11 justify-center rounded-[0.65rem] px-1.5 text-center sm:min-h-14 sm:justify-start sm:px-3 sm:text-left"
+                            :disabled="
+                                (step.key === 'rooms' && !stayStepComplete) ||
+                                (step.key === 'contact' &&
+                                    (!stayStepComplete || !roomsStepComplete))
+                            "
+                            @click="goToFormStep(step.key)"
+                        >
+                            <span
+                                class="mr-3 hidden h-9 w-9 shrink-0 items-center justify-center rounded-full sm:flex"
+                                :class="
+                                    activeFormStep === step.key
+                                        ? 'bg-white/15'
+                                        : 'bg-primary/10 text-primary'
+                                "
                             >
-                                <Lucide
-                                    icon="CalendarDays"
-                                    class="h-3.5 w-3.5"
-                                />
-                                Fechas
+                                <Lucide :icon="step.icon" class="h-5 w-5" />
+                            </span>
+                            <span class="min-w-0">
+                                <span
+                                    class="block truncate text-xs font-medium sm:text-sm"
+                                >
+                                    {{ step.number }}. {{ step.label }}
+                                </span>
+                                <span
+                                    class="hidden truncate text-xs sm:block"
+                                    :class="
+                                        activeFormStep === step.key
+                                            ? 'text-white/75'
+                                            : 'text-slate-500'
+                                    "
+                                >
+                                    {{ step.description }}
+                                </span>
+                            </span>
+                        </Button>
+                    </div>
+
+                    <div
+                        ref="formScrollContainer"
+                        class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-4 py-4 [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable] sm:px-7 sm:py-6"
+                    >
+                        <section
+                            v-if="activeFormStep === 'stay'"
+                            class="space-y-5"
+                        >
+                            <div
+                                class="rounded-xl border border-info/20 bg-info/5 p-4"
+                            >
+                                <div class="flex items-start gap-3">
+                                    <div
+                                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
+                                    >
+                                        <Lucide
+                                            icon="CalendarDays"
+                                            class="h-6 w-6"
+                                        />
+                                    </div>
+                                    <div>
+                                        <h3 class="text-base font-medium">
+                                            ¿Cuándo se hospedará el grupo?
+                                        </h3>
+                                        <p
+                                            class="mt-0.5 text-sm text-slate-500"
+                                        >
+                                            Todos los cuartos compartirán estas
+                                            fechas.
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
+
                             <div class="grid grid-cols-12 gap-5">
                                 <div
                                     v-if="hasModeChoice"
                                     class="col-span-12 sm:col-span-4"
                                 >
-                                    <label class="mb-1 block text-sm"
-                                        >Modalidad</label
+                                    <FormLabel htmlFor="group-mode">
+                                        Tipo de estancia
+                                    </FormLabel>
+                                    <FormSelect
+                                        id="group-mode"
+                                        v-model="form.mode"
+                                        class="h-11"
                                     >
-                                    <FormSelect v-model="form.mode">
                                         <option value="night">Por noche</option>
                                         <option value="block">
                                             Por periodo
@@ -679,35 +1583,35 @@ async function deleteGroup() {
                                 </div>
                                 <template v-if="form.mode === 'night'">
                                     <div
-                                        class="col-span-6"
+                                        class="col-span-12 sm:col-span-4"
                                         :class="
-                                            hasModeChoice
-                                                ? 'sm:col-span-4'
-                                                : 'sm:col-span-6'
+                                            hasModeChoice ? '' : 'sm:col-span-6'
                                         "
                                     >
-                                        <label class="mb-1 block text-sm"
-                                            >Llegada</label
-                                        >
+                                        <FormLabel htmlFor="group-arrival">
+                                            Fecha de llegada
+                                        </FormLabel>
                                         <FormInput
+                                            id="group-arrival"
                                             v-model="form.arrive_date"
                                             type="date"
+                                            class="h-11"
                                         />
                                     </div>
                                     <div
-                                        class="col-span-6"
+                                        class="col-span-12 sm:col-span-4"
                                         :class="
-                                            hasModeChoice
-                                                ? 'sm:col-span-4'
-                                                : 'sm:col-span-6'
+                                            hasModeChoice ? '' : 'sm:col-span-6'
                                         "
                                     >
-                                        <label class="mb-1 block text-sm"
-                                            >Salida</label
-                                        >
+                                        <FormLabel htmlFor="group-departure">
+                                            Fecha de salida
+                                        </FormLabel>
                                         <FormInput
+                                            id="group-departure"
                                             v-model="form.depart_date"
                                             type="date"
+                                            class="h-11"
                                             :min="form.arrive_date"
                                         />
                                     </div>
@@ -719,126 +1623,162 @@ async function deleteGroup() {
                                         hasModeChoice ? 'sm:col-span-8' : ''
                                     "
                                 >
-                                    <label class="mb-1 block text-sm"
-                                        >Fecha y hora de llegada</label
-                                    >
+                                    <FormLabel htmlFor="group-arrival-time">
+                                        Fecha y hora de llegada
+                                    </FormLabel>
                                     <FormInput
+                                        id="group-arrival-time"
                                         v-model="form.arrive_at"
                                         type="datetime-local"
+                                        class="h-11"
                                     />
                                 </div>
                             </div>
-                            <FormHelp
-                                v-if="errors.starts_at"
-                                class="text-danger"
-                                >{{ errors.starts_at }}</FormHelp
+
+                            <div
+                                class="flex items-start gap-3 rounded-xl border border-dashed border-slate-300/70 p-4 dark:border-darkmode-400"
                             >
+                                <Lucide
+                                    icon="ShieldCheck"
+                                    class="mt-0.5 h-5 w-5 shrink-0 text-success"
+                                />
+                                <div class="text-sm">
+                                    <div class="font-medium">
+                                        El grupo se reserva completo
+                                    </div>
+                                    <p class="mt-0.5 text-xs text-slate-500">
+                                        Si falta disponibilidad para alguna
+                                        habitación, no se apartará ninguna.
+                                    </p>
+                                </div>
+                            </div>
+
+                            <FormHelp
+                                v-if="errors.starts_at || errors.ends_at"
+                                class="text-danger"
+                            >
+                                {{ errors.starts_at ?? errors.ends_at }}
+                            </FormHelp>
                         </section>
 
-                        <!-- Habitaciones -->
                         <section
-                            class="border-t border-dashed border-slate-300/70 pt-5"
+                            v-else-if="activeFormStep === 'rooms'"
+                            class="space-y-5"
                         >
                             <div
-                                class="mb-4 flex items-center justify-between gap-2"
+                                class="flex flex-wrap items-center justify-between gap-3"
                             >
-                                <div
-                                    class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                                >
-                                    <Lucide
-                                        icon="BedDouble"
-                                        class="h-3.5 w-3.5"
-                                    />
-                                    Habitaciones ({{ totalRooms }} en total)
+                                <div>
+                                    <h3 class="text-base font-medium">
+                                        Elige las habitaciones
+                                    </h3>
+                                    <p class="mt-0.5 text-sm text-slate-500">
+                                        Captura cuántos cuartos y personas
+                                        necesita cada tipo.
+                                    </p>
                                 </div>
-                                <Button
-                                    type="button"
-                                    variant="outline-secondary"
-                                    size="sm"
-                                    class="rounded-[0.5rem] bg-white"
-                                    :disabled="form.lines.length >= 10"
-                                    @click="addLine"
-                                >
-                                    <Lucide
-                                        icon="Plus"
-                                        class="mr-1.5 h-3.5 w-3.5"
-                                    />
-                                    Otro tipo
-                                </Button>
+                                <div class="flex flex-wrap gap-2">
+                                    <span
+                                        class="rounded-full bg-info/10 px-3 py-1.5 text-xs font-medium text-info"
+                                    >
+                                        {{ totalRooms }} habitaciones
+                                    </span>
+                                    <span
+                                        class="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary"
+                                    >
+                                        {{ totalGuests }} personas
+                                    </span>
+                                </div>
                             </div>
+
                             <div class="space-y-3">
                                 <div
                                     v-for="(line, index) in form.lines"
                                     :key="index"
-                                    class="rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400"
+                                    class="rounded-xl border border-slate-200/80 p-4 dark:border-darkmode-400"
                                 >
                                     <div
-                                        v-if="form.lines.length > 1"
-                                        class="mb-3 flex items-center justify-between"
+                                        class="mb-4 flex items-center justify-between gap-3"
                                     >
-                                        <span
-                                            class="text-xs font-medium tracking-wide text-slate-400 uppercase"
-                                            >Tipo {{ index + 1 }}</span
-                                        >
-                                        <button
+                                        <div class="flex items-center gap-3">
+                                            <div
+                                                class="flex h-10 w-10 items-center justify-center rounded-full bg-info/10 text-info"
+                                            >
+                                                <Lucide
+                                                    icon="BedDouble"
+                                                    class="h-5 w-5"
+                                                />
+                                            </div>
+                                            <div>
+                                                <div
+                                                    class="text-sm font-medium"
+                                                >
+                                                    Tipo de habitación
+                                                    {{ index + 1 }}
+                                                </div>
+                                                <div
+                                                    class="text-xs text-slate-500"
+                                                >
+                                                    Una línea por cada tipo de
+                                                    cuarto.
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <Button
+                                            v-if="form.lines.length > 1"
                                             type="button"
-                                            class="rounded p-1.5 text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                            title="Quitar línea"
+                                            variant="outline-danger"
+                                            class="!h-10 !w-10 rounded-full !p-0"
+                                            title="Quitar este tipo"
                                             @click="form.lines.splice(index, 1)"
                                         >
                                             <Lucide
                                                 icon="Trash2"
-                                                class="h-4 w-4"
+                                                class="h-5 w-5"
                                             />
-                                        </button>
+                                        </Button>
                                     </div>
+
                                     <div
-                                        class="grid grid-cols-12 items-end gap-4"
+                                        class="grid grid-cols-1 gap-4 md:grid-cols-[minmax(15rem,1.4fr)_repeat(3,minmax(8rem,0.75fr))]"
                                     >
-                                        <div class="col-span-12 sm:col-span-6">
-                                            <label
-                                                class="mb-1 block text-sm whitespace-nowrap"
-                                                >Tipo de habitación</label
+                                        <div>
+                                            <FormLabel
+                                                :htmlFor="`group-room-type-${index}`"
                                             >
+                                                Tipo
+                                            </FormLabel>
                                             <FormSelect
+                                                :id="`group-room-type-${index}`"
                                                 v-model="line.room_type_id"
+                                                class="h-11"
                                             >
                                                 <option value="" disabled>
                                                     Elige un tipo
                                                 </option>
                                                 <option
-                                                    v-for="type in typesForMode"
-                                                    :key="type.id"
-                                                    :value="type.id"
+                                                    v-for="roomType in typesForMode"
+                                                    :key="roomType.id"
+                                                    :value="roomType.id"
                                                 >
-                                                    {{ type.name }} ({{
-                                                        type.rooms_count
-                                                    }}
-                                                    {{
-                                                        type.rooms_count === 1
-                                                            ? 'cuarto'
-                                                            : 'cuartos'
-                                                    }}, hasta
-                                                    {{ type.capacity }}
-                                                    {{
-                                                        type.capacity === 1
-                                                            ? 'persona'
-                                                            : 'personas'
-                                                    }})
+                                                    {{ roomType.name }} ·
+                                                    {{ roomType.rooms_count }}
+                                                    disponibles · hasta
+                                                    {{ roomType.capacity }}
+                                                    personas
                                                 </option>
                                             </FormSelect>
                                         </div>
-                                        <div class="col-span-4 sm:col-span-2">
-                                            <label
-                                                class="mb-1 block text-sm whitespace-nowrap"
-                                                >Cuartos</label
-                                            >
+
+                                        <div>
+                                            <FormLabel>Habitaciones</FormLabel>
                                             <div
-                                                class="flex h-[38px] items-center gap-2"
+                                                class="flex h-11 items-center justify-between gap-2 rounded-[0.375rem] border border-slate-200 bg-white px-1.5 shadow-sm dark:border-darkmode-400 dark:bg-darkmode-800"
                                             >
-                                                <button
+                                                <Button
                                                     type="button"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                                    variant="outline-secondary"
+                                                    class="!h-8 !w-8 rounded-full !p-0"
                                                     :disabled="line.rooms <= 1"
                                                     @click="
                                                         setRooms(
@@ -849,21 +1789,23 @@ async function deleteGroup() {
                                                 >
                                                     <Lucide
                                                         icon="Minus"
-                                                        class="h-3.5 w-3.5"
+                                                        class="h-4 w-4"
                                                     />
-                                                </button>
+                                                </Button>
                                                 <span
-                                                    class="w-6 text-center text-sm font-medium"
-                                                    >{{ line.rooms }}</span
+                                                    class="text-sm font-medium"
                                                 >
-                                                <button
+                                                    {{ line.rooms }}
+                                                </span>
+                                                <Button
                                                     type="button"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                                    variant="outline-secondary"
+                                                    class="!h-8 !w-8 rounded-full !p-0"
                                                     :disabled="
                                                         line.rooms >=
                                                         maxRoomsFor(line)
                                                     "
-                                                    :title="`Solo hay ${maxRoomsFor(line)} de este tipo`"
+                                                    :title="`Hay ${maxRoomsFor(line)} cuartos físicos de este tipo`"
                                                     @click="
                                                         setRooms(
                                                             line,
@@ -873,22 +1815,23 @@ async function deleteGroup() {
                                                 >
                                                     <Lucide
                                                         icon="Plus"
-                                                        class="h-3.5 w-3.5"
+                                                        class="h-4 w-4"
                                                     />
-                                                </button>
+                                                </Button>
                                             </div>
                                         </div>
-                                        <div class="col-span-4 sm:col-span-2">
-                                            <label
-                                                class="mb-1 block text-sm whitespace-nowrap"
-                                                >Adultos c/u</label
-                                            >
+
+                                        <div>
+                                            <FormLabel>
+                                                Adultos por cuarto
+                                            </FormLabel>
                                             <div
-                                                class="flex h-[38px] items-center gap-2"
+                                                class="flex h-11 items-center justify-between gap-2 rounded-[0.375rem] border border-slate-200 bg-white px-1.5 shadow-sm dark:border-darkmode-400 dark:bg-darkmode-800"
                                             >
-                                                <button
+                                                <Button
                                                     type="button"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                                    variant="outline-secondary"
+                                                    class="!h-8 !w-8 rounded-full !p-0"
                                                     :disabled="line.adults <= 1"
                                                     @click="
                                                         setAdults(
@@ -899,22 +1842,23 @@ async function deleteGroup() {
                                                 >
                                                     <Lucide
                                                         icon="Minus"
-                                                        class="h-3.5 w-3.5"
+                                                        class="h-4 w-4"
                                                     />
-                                                </button>
+                                                </Button>
                                                 <span
-                                                    class="w-6 text-center text-sm font-medium"
-                                                    >{{ line.adults }}</span
+                                                    class="text-sm font-medium"
                                                 >
-                                                <button
+                                                    {{ line.adults }}
+                                                </span>
+                                                <Button
                                                     type="button"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                                    variant="outline-secondary"
+                                                    class="!h-8 !w-8 rounded-full !p-0"
                                                     :disabled="
                                                         line.adults +
                                                             line.children >=
                                                         capacityFor(line)
                                                     "
-                                                    :title="`Capacidad: hasta ${capacityFor(line)} personas por habitación`"
                                                     @click="
                                                         setAdults(
                                                             line,
@@ -924,22 +1868,23 @@ async function deleteGroup() {
                                                 >
                                                     <Lucide
                                                         icon="Plus"
-                                                        class="h-3.5 w-3.5"
+                                                        class="h-4 w-4"
                                                     />
-                                                </button>
+                                                </Button>
                                             </div>
                                         </div>
-                                        <div class="col-span-4 sm:col-span-2">
-                                            <label
-                                                class="mb-1 block text-sm whitespace-nowrap"
-                                                >Niños c/u</label
-                                            >
+
+                                        <div>
+                                            <FormLabel>
+                                                Niños por cuarto
+                                            </FormLabel>
                                             <div
-                                                class="flex h-[38px] items-center gap-2"
+                                                class="flex h-11 items-center justify-between gap-2 rounded-[0.375rem] border border-slate-200 bg-white px-1.5 shadow-sm dark:border-darkmode-400 dark:bg-darkmode-800"
                                             >
-                                                <button
+                                                <Button
                                                     type="button"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                                    variant="outline-secondary"
+                                                    class="!h-8 !w-8 rounded-full !p-0"
                                                     :disabled="
                                                         line.children <= 0
                                                     "
@@ -952,22 +1897,23 @@ async function deleteGroup() {
                                                 >
                                                     <Lucide
                                                         icon="Minus"
-                                                        class="h-3.5 w-3.5"
+                                                        class="h-4 w-4"
                                                     />
-                                                </button>
+                                                </Button>
                                                 <span
-                                                    class="w-6 text-center text-sm font-medium"
-                                                    >{{ line.children }}</span
+                                                    class="text-sm font-medium"
                                                 >
-                                                <button
+                                                    {{ line.children }}
+                                                </span>
+                                                <Button
                                                     type="button"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                                    variant="outline-secondary"
+                                                    class="!h-8 !w-8 rounded-full !p-0"
                                                     :disabled="
                                                         line.adults +
                                                             line.children >=
                                                         capacityFor(line)
                                                     "
-                                                    :title="`Capacidad: hasta ${capacityFor(line)} personas por habitación`"
                                                     @click="
                                                         setChildren(
                                                             line,
@@ -977,97 +1923,258 @@ async function deleteGroup() {
                                                 >
                                                     <Lucide
                                                         icon="Plus"
-                                                        class="h-3.5 w-3.5"
+                                                        class="h-4 w-4"
                                                     />
-                                                </button>
+                                                </Button>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                            <FormHelp v-if="totalRooms > 30" class="text-danger"
-                                >Máximo 30 habitaciones por grupo.</FormHelp
+
+                            <div
+                                class="flex flex-wrap items-center justify-between gap-3"
                             >
+                                <Button
+                                    type="button"
+                                    variant="outline-secondary"
+                                    :disabled="form.lines.length >= 10"
+                                    @click="addLine"
+                                >
+                                    <Lucide icon="Plus" class="mr-2 h-5 w-5" />
+                                    Agregar otro tipo
+                                </Button>
+                                <p class="text-xs text-slate-500">
+                                    Mínimo 2 y máximo 30 habitaciones por grupo.
+                                </p>
+                            </div>
+
                             <FormHelp
-                                >El precio por habitación lo pone la tarifa
-                                activa más barata de la modalidad elegida, igual
-                                que en el wizard.</FormHelp
+                                v-if="
+                                    errors.lines ||
+                                    Object.keys(errors).some((key) =>
+                                        key.startsWith('lines.'),
+                                    )
+                                "
+                                class="text-danger"
                             >
+                                {{
+                                    errors.lines ??
+                                    errors[
+                                        Object.keys(errors).find((key) =>
+                                            key.startsWith('lines.'),
+                                        ) ?? ''
+                                    ]
+                                }}
+                            </FormHelp>
                         </section>
 
-                        <!-- Responsable -->
-                        <section
-                            class="border-t border-dashed border-slate-300/70 pt-5"
-                        >
+                        <section v-else class="space-y-5">
                             <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                class="rounded-xl border border-primary/20 bg-primary/5 p-4"
                             >
-                                <Lucide icon="User" class="h-3.5 w-3.5" />
-                                Responsable del grupo
+                                <div class="flex items-start gap-3">
+                                    <div
+                                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                                    >
+                                        <Lucide
+                                            icon="UserRound"
+                                            class="h-6 w-6"
+                                        />
+                                    </div>
+                                    <div>
+                                        <h3 class="text-base font-medium">
+                                            ¿Quién responde por el grupo?
+                                        </h3>
+                                        <p
+                                            class="mt-0.5 text-sm text-slate-500"
+                                        >
+                                            El nombre es obligatorio; teléfono,
+                                            correo y notas son opcionales.
+                                        </p>
+                                    </div>
+                                </div>
                             </div>
+
                             <div class="grid grid-cols-12 gap-5">
                                 <div class="col-span-12 sm:col-span-6">
-                                    <label class="mb-1 block text-sm"
-                                        >Nombre</label
-                                    >
-                                    <FormInput
-                                        v-model="form.guest_name"
-                                        type="text"
-                                        placeholder="Quien responde por el grupo"
-                                    />
+                                    <FormLabel htmlFor="group-guest-name">
+                                        Nombre del responsable
+                                    </FormLabel>
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="User"
+                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3.5 h-5 w-5 text-slate-400"
+                                        />
+                                        <FormInput
+                                            id="group-guest-name"
+                                            v-model="form.guest_name"
+                                            type="text"
+                                            class="h-11 pl-11"
+                                            placeholder="Nombre completo"
+                                        />
+                                    </div>
                                     <FormHelp
                                         v-if="errors.guest_name"
                                         class="text-danger"
-                                        >{{ errors.guest_name }}</FormHelp
                                     >
+                                        {{ errors.guest_name }}
+                                    </FormHelp>
                                 </div>
-                                <div class="col-span-12 sm:col-span-3">
-                                    <label class="mb-1 block text-sm"
-                                        >Teléfono</label
+
+                                <div class="col-span-12 sm:col-span-6">
+                                    <FormLabel htmlFor="group-email">
+                                        Correo electrónico
+                                    </FormLabel>
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="Mail"
+                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3.5 h-5 w-5 text-slate-400"
+                                        />
+                                        <FormInput
+                                            id="group-email"
+                                            v-model="form.guest_email"
+                                            type="email"
+                                            class="h-11 pl-11"
+                                            placeholder="correo@ejemplo.com"
+                                        />
+                                    </div>
+                                    <FormHelp
+                                        v-if="errors.guest_email"
+                                        class="text-danger"
                                     >
-                                    <FormInput
-                                        v-model="form.guest_phone"
-                                        type="tel"
-                                        placeholder="10 dígitos"
-                                    />
+                                        {{ errors.guest_email }}
+                                    </FormHelp>
                                 </div>
-                                <div class="col-span-12 sm:col-span-3">
-                                    <label class="mb-1 block text-sm"
-                                        >Email</label
-                                    >
-                                    <FormInput
-                                        v-model="form.guest_email"
-                                        type="email"
-                                        placeholder="opcional"
-                                    />
-                                </div>
+
                                 <div class="col-span-12">
-                                    <label class="mb-1 block text-sm"
-                                        >Notas</label
+                                    <FormLabel htmlFor="group-phone-country">
+                                        Teléfono
+                                    </FormLabel>
+                                    <div
+                                        class="grid gap-2"
+                                        :class="
+                                            phoneCountry === 'other'
+                                                ? 'grid-cols-1 sm:grid-cols-[13rem_7rem_minmax(0,1fr)]'
+                                                : 'grid-cols-1 sm:grid-cols-[13rem_minmax(0,1fr)]'
+                                        "
                                     >
+                                        <FormSelect
+                                            id="group-phone-country"
+                                            v-model="phoneCountry"
+                                            class="h-11"
+                                            aria-label="País de la lada"
+                                            @change="changePhoneCountry"
+                                        >
+                                            <option value="mx">
+                                                +52 · México
+                                            </option>
+                                            <option value="us">
+                                                +1 · Estados Unidos / Canadá
+                                            </option>
+                                            <option value="other">
+                                                Otro país · escribir lada
+                                            </option>
+                                        </FormSelect>
+                                        <FormInput
+                                            v-if="phoneCountry === 'other'"
+                                            v-model="phoneDialCode"
+                                            type="tel"
+                                            inputmode="numeric"
+                                            class="h-11"
+                                            placeholder="+34"
+                                            aria-label="Lada internacional"
+                                            @input="syncGuestPhone"
+                                        />
+                                        <div class="relative">
+                                            <Lucide
+                                                icon="Phone"
+                                                class="absolute inset-y-0 left-0 z-10 my-auto ml-3.5 h-5 w-5 text-slate-400"
+                                            />
+                                            <FormInput
+                                                v-model="phoneNationalNumber"
+                                                type="tel"
+                                                inputmode="tel"
+                                                autocomplete="tel-national"
+                                                class="h-11 pl-11"
+                                                placeholder="Número telefónico"
+                                                @input="syncGuestPhone"
+                                            />
+                                        </div>
+                                    </div>
+                                    <FormHelp>
+                                        {{
+                                            guestPhonePreview
+                                                ? `Se guardará como ${guestPhonePreview}`
+                                                : 'La lada se guardará junto con el número.'
+                                        }}
+                                    </FormHelp>
+                                    <FormHelp
+                                        v-if="errors.guest_phone"
+                                        class="text-danger"
+                                    >
+                                        {{ errors.guest_phone }}
+                                    </FormHelp>
+                                </div>
+
+                                <div class="col-span-12">
+                                    <FormLabel htmlFor="group-notes">
+                                        Notas para el personal
+                                    </FormLabel>
                                     <FormTextarea
+                                        id="group-notes"
                                         v-model="form.notes"
-                                        rows="2"
-                                        placeholder="Boda García, llegan en autobús a las 4pm…"
+                                        rows="3"
+                                        placeholder="Nombre del evento, hora aproximada de llegada o acuerdos importantes..."
                                     />
                                 </div>
                             </div>
+
                             <div
-                                class="mt-4 flex items-center justify-between gap-4 rounded-lg border border-dashed border-slate-300/70 px-4 py-3 dark:border-darkmode-400"
+                                class="flex flex-col gap-4 rounded-xl border border-slate-200/80 p-4 sm:flex-row sm:items-center sm:justify-between dark:border-darkmode-400"
                             >
-                                <div class="text-sm">
-                                    <div class="font-medium">
-                                        Confirmar de una vez
+                                <div class="flex items-start gap-3">
+                                    <div
+                                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                                        :class="
+                                            form.confirmed
+                                                ? 'bg-success/10 text-success'
+                                                : 'bg-pending/10 text-pending'
+                                        "
+                                    >
+                                        <Lucide
+                                            :icon="
+                                                form.confirmed
+                                                    ? 'CircleCheck'
+                                                    : 'AlarmClock'
+                                            "
+                                            class="h-6 w-6"
+                                        />
                                     </div>
-                                    <p class="mt-0.5 text-xs text-slate-500">
-                                        Apagado: quedan como apartado pendiente
-                                        que expira solo si nadie lo confirma.
-                                    </p>
+                                    <div>
+                                        <div class="text-sm font-medium">
+                                            {{
+                                                form.confirmed
+                                                    ? 'Crear como confirmado'
+                                                    : 'Crear por confirmar'
+                                            }}
+                                        </div>
+                                        <p
+                                            class="mt-0.5 text-xs text-slate-500"
+                                        >
+                                            {{
+                                                form.confirmed
+                                                    ? 'Las habitaciones quedarán confirmadas de inmediato.'
+                                                    : 'Quedarán apartadas temporalmente hasta confirmar el grupo.'
+                                            }}
+                                        </p>
+                                    </div>
                                 </div>
                                 <FormSwitch>
                                     <FormSwitch.Input
                                         :checked="form.confirmed"
                                         type="checkbox"
+                                        aria-label="Cambiar estado inicial"
                                         @change="
                                             form.confirmed = !form.confirmed
                                         "
@@ -1078,167 +2185,253 @@ async function deleteGroup() {
                     </div>
 
                     <div
-                        class="flex justify-end gap-2 border-t border-slate-200/70 px-7 py-4 dark:border-darkmode-400"
+                        class="flex shrink-0 flex-col gap-2 border-t border-slate-200/70 bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-7 sm:py-4 dark:border-darkmode-400 dark:bg-darkmode-600"
                     >
+                        <div class="text-xs text-slate-500">
+                            Paso {{ activeFormStepIndex + 1 }} de
+                            {{ formSteps.length }}
+                        </div>
+                        <div
+                            class="grid w-full gap-2 sm:flex sm:w-auto sm:flex-row"
+                            :class="
+                                activeFormStepIndex > 0
+                                    ? 'grid-cols-2'
+                                    : 'grid-cols-1'
+                            "
+                        >
+                            <Button
+                                v-if="activeFormStepIndex > 0"
+                                type="button"
+                                variant="outline-secondary"
+                                class="min-h-10 w-full px-3 sm:min-h-11 sm:px-5"
+                                @click="previousFormStep"
+                            >
+                                <Lucide
+                                    icon="ArrowLeft"
+                                    class="mr-1.5 h-4 w-4 sm:h-5 sm:w-5"
+                                />
+                                Anterior
+                            </Button>
+                            <Button
+                                v-if="activeFormStep !== 'contact'"
+                                type="button"
+                                variant="primary"
+                                class="min-h-10 w-full px-3 sm:min-h-11 sm:px-5"
+                                :disabled="
+                                    activeFormStep === 'stay'
+                                        ? !stayStepComplete
+                                        : !roomsStepComplete
+                                "
+                                @click="nextFormStep"
+                            >
+                                Siguiente
+                                <Lucide
+                                    icon="ArrowRight"
+                                    class="ml-1.5 h-4 w-4 sm:h-5 sm:w-5"
+                                />
+                            </Button>
+                            <Button
+                                v-else
+                                type="submit"
+                                variant="primary"
+                                class="min-h-10 w-full px-3 sm:min-h-11 sm:px-5"
+                                :disabled="
+                                    saving ||
+                                    !stayStepComplete ||
+                                    !roomsStepComplete ||
+                                    !contactStepComplete
+                                "
+                            >
+                                <Lucide
+                                    icon="CircleCheck"
+                                    class="mr-2 h-5 w-5"
+                                />
+                                {{
+                                    saving
+                                        ? 'Reservando...'
+                                        : `Reservar ${totalRooms} habitaciones`
+                                }}
+                            </Button>
+                        </div>
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
+
+        <Dialog
+            :open="editingGroup !== null"
+            size="lg"
+            @close="editingGroup = null"
+        >
+            <Dialog.Panel>
+                <form @submit.prevent="submitEdit">
+                    <div class="flex items-start gap-4 px-6 py-5">
+                        <div
+                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="UserPen" class="h-7 w-7" />
+                        </div>
+                        <div>
+                            <h2 class="text-lg font-medium">
+                                Editar responsable
+                            </h2>
+                            <p class="mt-0.5 text-sm text-slate-500">
+                                Grupo {{ editingGroup?.code }}. Las habitaciones
+                                se administran desde la ficha del grupo.
+                            </p>
+                        </div>
+                    </div>
+                    <div
+                        class="space-y-5 border-y border-slate-200/70 px-6 py-5 dark:border-darkmode-400"
+                    >
+                        <div>
+                            <FormLabel htmlFor="edit-group-guest">
+                                Nombre del responsable
+                            </FormLabel>
+                            <FormInput
+                                id="edit-group-guest"
+                                v-model="editForm.guest_name"
+                                type="text"
+                                class="h-11"
+                                placeholder="Nombre completo"
+                            />
+                        </div>
+                        <div>
+                            <FormLabel htmlFor="edit-group-notes">
+                                Notas para el personal
+                            </FormLabel>
+                            <FormTextarea
+                                id="edit-group-notes"
+                                v-model="editForm.notes"
+                                rows="4"
+                                placeholder="Evento, hora de llegada o acuerdos importantes..."
+                            />
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-3 px-6 py-4">
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            @click="showForm = false"
-                            >Cancelar</Button
+                            class="min-h-11 px-5"
+                            @click="editingGroup = null"
                         >
+                            Cancelar
+                        </Button>
                         <Button
                             type="submit"
                             variant="primary"
-                            :disabled="
-                                saving ||
-                                totalRooms < 2 ||
-                                totalRooms > 30 ||
-                                !form.guest_name.trim() ||
-                                (form.mode === 'night'
-                                    ? !form.arrive_date || !form.depart_date
-                                    : !form.arrive_at)
-                            "
+                            class="min-h-11 px-5"
+                            :disabled="editBusy || !editForm.guest_name.trim()"
                         >
-                            {{
-                                saving
-                                    ? 'Reservando…'
-                                    : `Reservar ${totalRooms} habitaciones`
-                            }}
+                            <Lucide icon="Check" class="mr-2 h-5 w-5" />
+                            {{ editBusy ? 'Guardando...' : 'Guardar cambios' }}
                         </Button>
                     </div>
                 </form>
             </Dialog.Panel>
         </Dialog>
 
-        <!-- Confirmar cancelación de grupo -->
-        <Dialog :open="cancelling !== null" @close="cancelling = null">
+        <Dialog
+            :open="cancelling !== null"
+            size="lg"
+            @close="cancelling = null"
+        >
             <Dialog.Panel>
-                <div class="p-5 text-center">
-                    <Lucide
-                        icon="AlertTriangle"
-                        class="mx-auto mb-3 h-12 w-12 text-danger"
-                    />
-                    <h2 class="text-base font-medium">
-                        ¿Cancelar el grupo {{ cancelling?.code }}?
+                <div class="px-6 py-6 text-center">
+                    <div
+                        class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-danger/10 text-danger"
+                    >
+                        <Lucide icon="TriangleAlert" class="h-8 w-8" />
+                    </div>
+                    <h2 class="mt-4 text-lg font-medium">
+                        ¿Cancelar todo el grupo {{ cancelling?.code }}?
                     </h2>
-                    <p class="mt-2 text-sm text-slate-500">
-                        Se cancelan sus
-                        {{
-                            cancelling?.reservations.filter(
-                                (r) =>
-                                    r.status === 'pending' ||
-                                    r.status === 'confirmed',
-                            ).length
-                        }}
-                        reserva(s) vivas y se liberan las habitaciones. Las que
-                        ya hicieron check-in no se tocan.
+                    <p class="mx-auto mt-2 max-w-lg text-sm text-slate-500">
+                        Se liberarán las habitaciones pendientes o confirmadas.
+                        Las que ya tienen un huésped alojado conservarán su
+                        estado.
                     </p>
-                    <div class="mt-5 flex justify-center gap-2">
+                    <div
+                        class="mt-4 rounded-xl border border-danger/20 bg-danger/5 px-4 py-3 text-left text-sm"
+                    >
+                        <span class="font-medium">
+                            {{
+                                cancelling?.reservations.filter(
+                                    (reservation) =>
+                                        reservation.status === 'pending' ||
+                                        reservation.status === 'confirmed',
+                                ).length
+                            }}
+                            reservas se cancelarán.
+                        </span>
+                        <span class="text-slate-500">
+                            Esta acción deja historial.
+                        </span>
+                    </div>
+                    <div class="mt-6 flex justify-center gap-3">
                         <Button
                             variant="outline-secondary"
+                            class="min-h-11 px-5"
                             @click="cancelling = null"
-                            >Conservar</Button
                         >
+                            Conservar grupo
+                        </Button>
                         <Button
                             variant="danger"
+                            class="min-h-11 px-5"
                             :disabled="cancelBusy"
                             @click="cancelGroup"
-                            >{{
-                                cancelBusy ? 'Cancelando…' : 'Sí, cancelar todo'
-                            }}</Button
                         >
+                            <Lucide icon="Ban" class="mr-2 h-5 w-5" />
+                            {{
+                                cancelBusy
+                                    ? 'Cancelando...'
+                                    : 'Cancelar todo el grupo'
+                            }}
+                        </Button>
                     </div>
                 </div>
             </Dialog.Panel>
         </Dialog>
 
-        <!-- Editar grupo (responsable y notas) -->
-        <Dialog :open="editingGroup !== null" @close="editingGroup = null">
+        <Dialog
+            :open="deletingGroup !== null"
+            size="lg"
+            @close="deletingGroup = null"
+        >
             <Dialog.Panel>
-                <form class="p-5" @submit.prevent="submitEdit">
-                    <div class="mb-4 flex items-center gap-3">
-                        <div
-                            class="flex h-10 w-10 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
-                        >
-                            <Lucide icon="Pencil" class="h-5 w-5 text-primary" />
-                        </div>
-                        <div>
-                            <h2 class="text-base font-medium">
-                                Editar grupo {{ editingGroup?.code }}
-                            </h2>
-                            <p class="text-xs text-slate-500">
-                                Responsable y notas. Las habitaciones se operan
-                                una por una en Reservas.
-                            </p>
-                        </div>
+                <div class="px-6 py-6 text-center">
+                    <div
+                        class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-danger/10 text-danger"
+                    >
+                        <Lucide icon="Trash2" class="h-8 w-8" />
                     </div>
-                    <div class="space-y-4">
-                        <div>
-                            <label class="mb-1 block text-sm"
-                                >Responsable del grupo</label
-                            >
-                            <FormInput
-                                v-model="editForm.guest_name"
-                                type="text"
-                                placeholder="Quien responde por el grupo"
-                            />
-                        </div>
-                        <div>
-                            <label class="mb-1 block text-sm">Notas</label>
-                            <FormTextarea
-                                v-model="editForm.notes"
-                                rows="2"
-                                placeholder="Boda, evento, hora de llegada del grupo…"
-                            />
-                        </div>
-                    </div>
-                    <div class="mt-5 flex justify-end gap-2">
-                        <Button
-                            type="button"
-                            variant="outline-secondary"
-                            @click="editingGroup = null"
-                            >Cancelar</Button
-                        >
-                        <Button
-                            type="submit"
-                            variant="primary"
-                            :disabled="editBusy || !editForm.guest_name.trim()"
-                        >
-                            {{ editBusy ? 'Guardando…' : 'Guardar cambios' }}
-                        </Button>
-                    </div>
-                </form>
-            </Dialog.Panel>
-        </Dialog>
-
-        <!-- Confirmar eliminación de grupo muerto -->
-        <Dialog :open="deletingGroup !== null" @close="deletingGroup = null">
-            <Dialog.Panel>
-                <div class="p-5 text-center">
-                    <Lucide
-                        icon="AlertTriangle"
-                        class="mx-auto mb-3 h-12 w-12 text-danger"
-                    />
-                    <h2 class="text-base font-medium">
-                        ¿Eliminar el grupo {{ deletingGroup?.code }}?
+                    <h2 class="mt-4 text-lg font-medium">
+                        ¿Eliminar el folio {{ deletingGroup?.code }}?
                     </h2>
-                    <p class="mt-2 text-sm text-slate-500">
-                        Solo desaparece el folio del grupo de esta lista; sus
-                        reservas canceladas siguen visibles en Reservas. Si
-                        tiene pagos registrados no se puede eliminar.
+                    <p class="mx-auto mt-2 max-w-lg text-sm text-slate-500">
+                        El grupo desaparecerá de esta lista. Sus reservas
+                        canceladas seguirán en Reservas y los grupos con pagos
+                        no pueden eliminarse.
                     </p>
-                    <div class="mt-5 flex justify-center gap-2">
+                    <div class="mt-6 flex justify-center gap-3">
                         <Button
                             variant="outline-secondary"
+                            class="min-h-11 px-5"
                             @click="deletingGroup = null"
-                            >Conservar</Button
                         >
+                            Conservar folio
+                        </Button>
                         <Button
                             variant="danger"
+                            class="min-h-11 px-5"
                             :disabled="deleteBusy"
                             @click="deleteGroup"
                         >
-                            {{ deleteBusy ? 'Eliminando…' : 'Sí, eliminar' }}
+                            <Lucide icon="Trash2" class="mr-2 h-5 w-5" />
+                            {{
+                                deleteBusy ? 'Eliminando...' : 'Eliminar folio'
+                            }}
                         </Button>
                     </div>
                 </div>

@@ -187,6 +187,15 @@ class Room extends Model
         return $this->hasMany(RoomStatusLog::class);
     }
 
+    /**
+     * Último movimiento del semáforo: su created_at dice desde cuándo la
+     * habitación está en el estado actual (lo usa la limpieza automática).
+     */
+    public function latestStatusLog(): HasOne
+    {
+        return $this->hasOne(RoomStatusLog::class)->latestOfMany('id');
+    }
+
     public function reservations(): HasMany
     {
         return $this->hasMany(Reservation::class);
@@ -197,22 +206,84 @@ class Room extends Model
         return $this->hasMany(Stay::class);
     }
 
+    /**
+     * Bloqueos por fechas (mantenimiento programado): descuentan
+     * disponibilidad futura sin tocar el semáforo presente.
+     */
+    public function blocks(): HasMany
+    {
+        return $this->hasMany(RoomBlock::class);
+    }
+
+    /**
+     * GOTCHA ofMany: los where encadenados a la relación NO entran al
+     * subquery de agregación (MIN/MAX se calculaba sobre TODAS las filas de
+     * la habitación, el join elegía una vieja y el filtro exterior la
+     * descartaba → null en cuanto había historial). Las restricciones deben
+     * ir en el closure de ofMany para aplicar también dentro del agregado.
+     */
     public function activeStay(): HasOne
     {
-        return $this->hasOne(Stay::class)
-            ->where('status', Stay::STATUS_ACTIVE)
-            ->latestOfMany('check_in_at');
+        return $this->hasOne(Stay::class)->ofMany(
+            ['check_in_at' => 'max', 'id' => 'max'],
+            fn ($query) => $query->where('status', Stay::STATUS_ACTIVE),
+        );
     }
 
     public function upcomingReservation(): HasOne
     {
-        return $this->hasOne(Reservation::class)
-            ->whereIn('status', [
-                ReservationStatus::Pending->value,
-                ReservationStatus::Confirmed->value,
-            ])
-            ->where('ends_at', '>=', now())
-            ->oldestOfMany('starts_at');
+        return $this->hasOne(Reservation::class)->ofMany(
+            ['starts_at' => 'min', 'id' => 'min'],
+            fn ($query) => $query
+                ->whereIn('status', [
+                    ReservationStatus::Pending->value,
+                    ReservationStatus::Confirmed->value,
+                ])
+                ->where('ends_at', '>=', now()),
+        );
+    }
+
+    /**
+     * Transiciones que el panel sí permite a mano. "Reservada" y "ocupada"
+     * nacen de reservas reales (Reservar / Walk-in / Check-in), nunca de un
+     * botón — marcarlas sin reserva deja el semáforo mintiendo sobre quién
+     * viene o quién está adentro. Y una reservada con reserva viva solo se
+     * libera cancelando esa reserva, no soltando el semáforo por debajo.
+     * (Una reservada VENCIDA — sin reserva viva — sí se puede soltar a mano
+     * a disponible o sucia; el cierre de día automático hace lo mismo.)
+     *
+     * En modo de limpieza "automático" puro (/ajustes/limpieza) los pasos
+     * sucia → limpieza y limpieza → disponible los da el reloj, no un botón.
+     *
+     * @return array<int, string>
+     */
+    public function manualStatusTransitions(): array
+    {
+        $blocked = [RoomStatus::Reserved->value, RoomStatus::Occupied->value];
+        $current = $this->status->getMorphClass();
+
+        if ($current === RoomStatus::Reserved->value && $this->hasLiveReservation()) {
+            $blocked[] = RoomStatus::Available->value;
+            $blocked[] = RoomStatus::Dirty->value;
+        }
+
+        if (in_array($current, [RoomStatus::Dirty->value, RoomStatus::Cleaning->value], true)
+            && ! app(\App\Services\HousekeepingPolicy::class)->manualAllowed()) {
+            $blocked[] = $current === RoomStatus::Dirty->value
+                ? RoomStatus::Cleaning->value
+                : RoomStatus::Available->value;
+        }
+
+        return array_values(array_diff($this->status->transitionableStates(), $blocked));
+    }
+
+    public function hasLiveReservation(): bool
+    {
+        if ($this->relationLoaded('upcomingReservation')) {
+            return $this->getRelation('upcomingReservation') !== null;
+        }
+
+        return $this->upcomingReservation()->exists();
     }
 
     /**
@@ -300,7 +371,7 @@ class Room extends Model
             'status' => $this->status->getMorphClass(),
             'color' => $this->status->color(),
             'label' => $this->status->label(),
-            'transitions' => $this->status->transitionableStates(),
+            'transitions' => $this->manualStatusTransitions(),
             'pos_x' => $this->pos_x,
             'pos_y' => $this->pos_y,
             'width' => $this->width,

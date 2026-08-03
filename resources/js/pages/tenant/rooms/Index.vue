@@ -73,6 +73,7 @@ const props = defineProps<{
     bedTypes: Record<string, string>;
     maxRooms: number | null;
     canManage: boolean;
+    canBlock: boolean;
 }>();
 
 // Guarda de precio único: tipos sin tarifa activa no son reservables.
@@ -400,6 +401,126 @@ async function duplicateRoom(room: RoomRow) {
     }
 }
 
+// ── Bloqueos por fechas (mantenimiento programado): los días marcados no
+// se ofrecen al reservar; el semáforo presente no se toca. ──
+interface BlockRow {
+    id: number;
+    starts_at: string;
+    ends_at: string;
+    reason: string | null;
+    created_by: string | null;
+}
+
+interface BlockConflict {
+    id: number;
+    code: string;
+    guest_name: string | null;
+    starts_at: string;
+    ends_at: string;
+}
+
+const blockingRoom = ref<RoomRow | null>(null);
+const roomBlocks = ref<BlockRow[]>([]);
+const loadingBlocks = ref(false);
+const savingBlock = ref(false);
+const blockConflicts = ref<BlockConflict[]>([]);
+// Confirmación inline: el primer clic arma la pregunta, el segundo borra.
+const confirmingBlockId = ref<number | null>(null);
+const blockForm = reactive({ starts_at: '', ends_at: '', reason: '' });
+
+const blockRangeInvalid = computed(
+    () =>
+        blockForm.starts_at !== '' &&
+        blockForm.ends_at !== '' &&
+        blockForm.ends_at < blockForm.starts_at,
+);
+
+async function openBlocks(room: RoomRow) {
+    blockingRoom.value = room;
+    blockForm.starts_at = '';
+    blockForm.ends_at = '';
+    blockForm.reason = '';
+    blockConflicts.value = [];
+    confirmingBlockId.value = null;
+    clearErrors();
+    loadingBlocks.value = true;
+    try {
+        const { data } = await axios.get<BlockRow[]>(
+            `/api/rooms/${room.id}/blocks`,
+        );
+        roomBlocks.value = data;
+    } catch {
+        toast.error('No se pudieron cargar los bloqueos');
+    } finally {
+        loadingBlocks.value = false;
+    }
+}
+
+async function submitBlock() {
+    if (!blockingRoom.value || blockRangeInvalid.value) return;
+    savingBlock.value = true;
+    clearErrors();
+    try {
+        const { data } = await axios.post<
+            BlockRow & { conflicts: BlockConflict[] }
+        >(`/api/rooms/${blockingRoom.value.id}/blocks`, {
+            starts_at: blockForm.starts_at,
+            ends_at: blockForm.ends_at,
+            reason:
+                blockForm.reason.trim() === '' ? null : blockForm.reason.trim(),
+        });
+        const { conflicts, ...row } = data;
+        blockConflicts.value = conflicts;
+        roomBlocks.value = [...roomBlocks.value, row].sort((a, b) =>
+            a.starts_at.localeCompare(b.starts_at),
+        );
+        blockForm.starts_at = '';
+        blockForm.ends_at = '';
+        blockForm.reason = '';
+        if (conflicts.length) {
+            toast.info(
+                'Bloqueo creado con reservas encima',
+                `Reubica o cancela: ${data.conflicts.map((c) => c.code).join(', ')}.`,
+            );
+        } else {
+            toast.success(
+                'Fechas bloqueadas',
+                `La ${blockingRoom.value.number} no se ofrecerá en esos días.`,
+            );
+        }
+    } catch (error) {
+        handleError(error);
+    } finally {
+        savingBlock.value = false;
+    }
+}
+
+async function deleteBlock(block: BlockRow) {
+    if (confirmingBlockId.value !== block.id) {
+        confirmingBlockId.value = block.id;
+        return;
+    }
+    if (!blockingRoom.value) return;
+    try {
+        await axios.delete(
+            `/api/rooms/${blockingRoom.value.id}/blocks/${block.id}`,
+        );
+        roomBlocks.value = roomBlocks.value.filter((b) => b.id !== block.id);
+        confirmingBlockId.value = null;
+        toast.success(
+            'Bloqueo eliminado',
+            'Esas fechas vuelven a estar disponibles para reservar.',
+        );
+    } catch (error) {
+        handleError(error);
+    }
+}
+
+function formatBlockDate(date: string): string {
+    const [y, m, d] = date.split('-');
+    return `${d}/${m}/${y}`;
+}
+
 const dotColor: Record<string, string> = {
     green: 'bg-success',
     cyan: 'bg-info',
@@ -652,16 +773,33 @@ async function submitDelete() {
 <template>
     <RazeLayout title="Habitaciones">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Habitaciones</h1>
-                    <p class="text-sm text-slate-500">
-                        {{ rooms.length
-                        }}<span v-if="maxRooms"> de {{ maxRooms }}</span>
-                        habitaciones · {{ property.name }}
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                    >
+                        <Lucide
+                            icon="BedDouble"
+                            class="h-5 w-5 sm:h-7 sm:w-7"
+                        />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-lg font-medium sm:text-xl">
+                            Habitaciones
+                        </h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            {{ rooms.length
+                            }}<span v-if="maxRooms"> de {{ maxRooms }}</span>
+                            habitaciones · {{ property.name }}
+                        </p>
+                    </div>
                 </div>
-                <div v-if="canManage" class="flex flex-wrap gap-2">
+                <div
+                    v-if="canManage"
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
+                >
                     <Button
                         variant="outline-secondary"
                         title="Crea el tipo, su tarifa y la habitación en un paso"
@@ -681,6 +819,7 @@ async function submitDelete() {
                     </Button>
                     <Button
                         variant="primary"
+                        class="col-span-2 md:col-auto"
                         :disabled="!roomTypes.length"
                         @click="openCreate"
                     >
@@ -840,8 +979,139 @@ async function submitDelete() {
                     </template>
                 </div>
 
-                <div class="overflow-x-auto p-5">
-                    <Table v-if="filteredRooms.length" striped>
+                <div class="p-5">
+                    <!-- Móvil: tarjetas apiladas (la tabla no es responsiva
+                         en pantallas chicas — patrón de catalog/Index.vue). -->
+                    <div
+                        v-if="filteredRooms.length"
+                        class="space-y-2.5 sm:hidden"
+                    >
+                        <div
+                            v-for="room in filteredRooms"
+                            :key="`room-card-${room.id}`"
+                            class="rounded-lg border border-slate-200/70 bg-white p-3.5 dark:border-darkmode-400 dark:bg-darkmode-600"
+                        >
+                            <div
+                                class="flex items-center justify-between gap-2"
+                            >
+                                <div
+                                    class="flex min-w-0 items-center gap-2.5"
+                                >
+                                    <FormCheck.Input
+                                        v-if="canManage"
+                                        type="checkbox"
+                                        :checked="
+                                            selectedIds.includes(room.id)
+                                        "
+                                        @change="toggleRow(room.id)"
+                                    />
+                                    <Link
+                                        :href="
+                                            route('tenant.rooms.show', room.id)
+                                        "
+                                        class="truncate font-medium"
+                                    >
+                                        {{ room.number
+                                        }}<template v-if="room.name">
+                                            · {{ room.name }}</template
+                                        >
+                                    </Link>
+                                </div>
+                                <span
+                                    class="inline-flex shrink-0 items-center gap-1.5 text-xs"
+                                >
+                                    <span
+                                        class="h-2 w-2 rounded-full"
+                                        :class="dotColor[room.status_color]"
+                                    />
+                                    {{ room.status_label }}
+                                </span>
+                            </div>
+                            <div
+                                class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
+                            >
+                                <span>{{ room.room_type }}</span>
+                                <span
+                                    v-if="
+                                        typesWithoutRate.has(room.room_type_id)
+                                    "
+                                    class="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-warning"
+                                    title="El tipo no tiene tarifa activa; agrégala en Zonas y tipos"
+                                >
+                                    Sin tarifa
+                                </span>
+                                <span
+                                    v-if="room.zone"
+                                    class="inline-flex items-center gap-2 sm:gap-1.5"
+                                >
+                                    <span
+                                        v-if="room.zone_color"
+                                        class="h-2 w-2 shrink-0 rounded-full"
+                                        :style="{
+                                            backgroundColor: room.zone_color,
+                                        }"
+                                    />
+                                    {{ room.zone }}
+                                </span>
+                            </div>
+                            <div
+                                v-if="canManage || canBlock"
+                                class="mt-3 flex items-center gap-2 border-t border-dashed border-slate-200/70 pt-2.5 dark:border-darkmode-400"
+                            >
+                                <Link
+                                    :href="route('tenant.rooms.show', room.id)"
+                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 text-slate-500 dark:border-darkmode-400"
+                                    title="Ver ficha y uso"
+                                >
+                                    <Lucide icon="Eye" class="h-4 w-4" />
+                                </Link>
+                                <button
+                                    v-if="canManage"
+                                    type="button"
+                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 text-slate-500 dark:border-darkmode-400"
+                                    title="Editar"
+                                    @click="openEdit(room)"
+                                >
+                                    <Lucide icon="Pencil" class="h-4 w-4" />
+                                </button>
+                                <button
+                                    v-if="canManage"
+                                    type="button"
+                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 text-slate-500 dark:border-darkmode-400"
+                                    title="Duplicar con el siguiente número libre"
+                                    @click="duplicateRoom(room)"
+                                >
+                                    <Lucide icon="Copy" class="h-4 w-4" />
+                                </button>
+                                <button
+                                    v-if="canBlock"
+                                    type="button"
+                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 text-slate-500 dark:border-darkmode-400"
+                                    title="Bloquear fechas por mantenimiento"
+                                    @click="openBlocks(room)"
+                                >
+                                    <Lucide
+                                        icon="CalendarOff"
+                                        class="h-4 w-4"
+                                    />
+                                </button>
+                                <button
+                                    v-if="canManage"
+                                    type="button"
+                                    class="ml-auto flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 text-danger dark:border-darkmode-400"
+                                    title="Eliminar"
+                                    @click="deleting = room"
+                                >
+                                    <Lucide icon="Trash2" class="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        v-if="filteredRooms.length"
+                        class="hidden overflow-x-auto sm:block"
+                    >
+                    <Table striped class="min-w-[720px]">
                         <Table.Thead>
                             <Table.Tr>
                                 <Table.Th v-if="canManage" class="w-10">
@@ -852,13 +1122,27 @@ async function submitDelete() {
                                         @change="toggleAllRooms"
                                     />
                                 </Table.Th>
-                                <Table.Th>Número</Table.Th>
-                                <Table.Th>Tipo</Table.Th>
-                                <Table.Th>Camas / Capacidad</Table.Th>
-                                <Table.Th>Zona</Table.Th>
-                                <Table.Th>Estado</Table.Th>
-                                <Table.Th>Notas</Table.Th>
-                                <Table.Th v-if="canManage" class="text-right"
+                                <Table.Th class="whitespace-nowrap"
+                                    >Número</Table.Th
+                                >
+                                <Table.Th class="whitespace-nowrap"
+                                    >Tipo</Table.Th
+                                >
+                                <Table.Th class="whitespace-nowrap"
+                                    >Camas / Capacidad</Table.Th
+                                >
+                                <Table.Th class="whitespace-nowrap"
+                                    >Zona</Table.Th
+                                >
+                                <Table.Th class="whitespace-nowrap"
+                                    >Estado</Table.Th
+                                >
+                                <Table.Th class="whitespace-nowrap"
+                                    >Notas</Table.Th
+                                >
+                                <Table.Th
+                                    v-if="canManage || canBlock"
+                                    class="text-right whitespace-nowrap"
                                     >Acciones</Table.Th
                                 >
                             </Table.Tr>
@@ -918,7 +1202,7 @@ async function submitDelete() {
                                 </Table.Td>
                                 <Table.Td>
                                     <span
-                                        class="inline-flex items-center gap-1.5"
+                                        class="inline-flex items-center gap-2 sm:gap-1.5"
                                     >
                                         <span
                                             v-if="room.zone_color"
@@ -933,7 +1217,7 @@ async function submitDelete() {
                                 </Table.Td>
                                 <Table.Td>
                                     <span
-                                        class="inline-flex items-center gap-1.5"
+                                        class="inline-flex items-center gap-2 sm:gap-1.5"
                                     >
                                         <span
                                             class="h-2 w-2 rounded-full"
@@ -947,7 +1231,7 @@ async function submitDelete() {
                                             room.accessible ||
                                             room.price_modifier
                                         "
-                                        class="mt-1 flex items-center gap-1.5"
+                                        class="mt-1 flex items-center gap-2 sm:gap-1.5"
                                     >
                                         <span
                                             v-if="room.smoking"
@@ -989,7 +1273,7 @@ async function submitDelete() {
                                     class="max-w-[200px] truncate text-slate-500"
                                     >{{ room.notes ?? '—' }}</Table.Td
                                 >
-                                <Table.Td v-if="canManage">
+                                <Table.Td v-if="canManage || canBlock">
                                     <div
                                         class="flex items-center justify-end gap-2"
                                     >
@@ -1009,6 +1293,7 @@ async function submitDelete() {
                                             />
                                         </Link>
                                         <button
+                                            v-if="canManage"
                                             type="button"
                                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
                                             title="Editar"
@@ -1020,6 +1305,7 @@ async function submitDelete() {
                                             />
                                         </button>
                                         <button
+                                            v-if="canManage"
                                             type="button"
                                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
                                             title="Duplicar con el siguiente número libre"
@@ -1031,6 +1317,19 @@ async function submitDelete() {
                                             />
                                         </button>
                                         <button
+                                            v-if="canBlock"
+                                            type="button"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-warning/10 hover:text-warning"
+                                            title="Bloquear fechas por mantenimiento"
+                                            @click="openBlocks(room)"
+                                        >
+                                            <Lucide
+                                                icon="CalendarOff"
+                                                class="h-4 w-4"
+                                            />
+                                        </button>
+                                        <button
+                                            v-if="canManage"
                                             type="button"
                                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
                                             title="Eliminar"
@@ -1046,6 +1345,7 @@ async function submitDelete() {
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
+                    </div>
                     <div
                         v-else-if="rooms.length"
                         class="flex flex-col items-center gap-2 py-8 text-center text-slate-500"
@@ -1072,11 +1372,10 @@ async function submitDelete() {
 
         <!-- Modal: crear / editar -->
         <Dialog :open="showForm" size="xl" @close="showForm = false">
-            <Dialog.Panel>
-                <form
-                    class="flex max-h-[85vh] flex-col"
-                    @submit.prevent="submit"
-                >
+            <Dialog.Panel
+                class="w-screen max-w-none rounded-none sm:w-[92vw] sm:max-w-[92vw] sm:rounded-lg lg:w-[920px]"
+            >
+                <form class="flex flex-col" @submit.prevent="submit">
                     <!-- Header -->
                     <div
                         class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
@@ -1110,8 +1409,11 @@ async function submitDelete() {
                         </button>
                     </div>
 
-                    <!-- Body -->
-                    <div class="flex-1 space-y-7 overflow-y-auto px-6 py-6">
+                    <!-- Body: max-h propio para que header y footer (botón
+                         guardar) queden siempre visibles, también en móvil. -->
+                    <div
+                        class="max-h-[calc(100dvh-12.5rem)] space-y-7 overflow-y-auto px-5 py-5 sm:max-h-[70vh] sm:px-7 sm:py-6"
+                    >
                         <!-- Identificación -->
                         <div class="space-y-4">
                             <div
@@ -1306,7 +1608,7 @@ async function submitDelete() {
                                         type="button"
                                         variant="outline-secondary"
                                         size="sm"
-                                        class="rounded-[0.5rem]"
+                                        class="min-h-11 rounded-[0.5rem] sm:min-h-0"
                                         @click="addBed"
                                     >
                                         <Lucide
@@ -1469,7 +1771,7 @@ async function submitDelete() {
                                 </div>
                                 <div
                                     v-if="form.amenities.length"
-                                    class="mt-2.5 flex flex-wrap gap-1.5"
+                                    class="mt-2.5 flex flex-wrap gap-2 sm:gap-1.5"
                                 >
                                     <span
                                         v-for="(
@@ -1490,14 +1792,14 @@ async function submitDelete() {
                                     </span>
                                 </div>
                                 <!-- Sugerencias comunes: un clic agrega (extras propios de ESTA habitación) -->
-                                <div class="mt-2.5 flex flex-wrap gap-1.5">
+                                <div class="mt-2.5 flex flex-wrap gap-2 sm:gap-1.5">
                                     <button
                                         v-for="suggestion in AMENITY_SUGGESTIONS.filter(
                                             (a) => !form.amenities.includes(a),
                                         )"
                                         :key="suggestion"
                                         type="button"
-                                        class="rounded-full border border-dashed border-slate-300 px-2 py-0.5 text-xs text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
+                                        class="rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:border-primary hover:text-primary sm:px-2 sm:py-0.5 sm:text-xs sm:text-slate-500 dark:border-darkmode-400 dark:text-slate-300"
                                         @click="form.amenities.push(suggestion)"
                                     >
                                         + {{ suggestion }}
@@ -1746,7 +2048,7 @@ async function submitDelete() {
                                         type="button"
                                         variant="outline-secondary"
                                         size="sm"
-                                        class="rounded-[0.5rem]"
+                                        class="min-h-11 rounded-[0.5rem] sm:min-h-0"
                                         @click="addOptionalCharge"
                                     >
                                         <Lucide
@@ -1900,13 +2202,14 @@ async function submitDelete() {
                         <Button
                             type="button"
                             variant="outline-secondary"
+                            class="min-h-11"
                             @click="showForm = false"
                             >Cancelar</Button
                         >
                         <Button
                             type="submit"
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="min-h-11 shadow-md shadow-primary/20"
                             :disabled="saving"
                         >
                             <Lucide icon="Check" class="mr-2 h-4 w-4" />
@@ -2382,6 +2685,270 @@ async function submitDelete() {
         </Dialog>
 
         <!-- Modal: eliminar -->
+        <!-- Modal bloqueos por fechas (mantenimiento programado) -->
+        <Dialog
+            :open="blockingRoom !== null"
+            size="lg"
+            @close="blockingRoom = null"
+        >
+            <Dialog.Panel>
+                <div
+                    class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                >
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10 text-warning"
+                    >
+                        <Lucide icon="CalendarOff" class="h-5 w-5" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h2 class="text-base font-medium">
+                            Bloquear fechas — {{ blockingRoom?.number }}
+                        </h2>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Mantenimiento programado: los días bloqueados no se
+                            ofrecen al reservar. El estado actual en el plano
+                            no cambia.
+                        </p>
+                    </div>
+                    <button
+                        type="button"
+                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                        @click="blockingRoom = null"
+                    >
+                        <Lucide icon="X" class="h-5 w-5" />
+                    </button>
+                </div>
+
+                <div class="max-h-[60vh] space-y-5 overflow-y-auto p-5">
+                    <div
+                        v-if="blockConflicts.length"
+                        class="rounded-lg border border-warning/20 bg-warning/10 p-3.5 text-sm"
+                    >
+                        <div
+                            class="flex items-center gap-2 font-medium text-warning"
+                        >
+                            <Lucide
+                                icon="AlertTriangle"
+                                class="h-4 w-4 shrink-0"
+                            />
+                            Hay reservas vivas dentro del bloqueo
+                        </div>
+                        <p
+                            class="mt-1 text-xs text-slate-600 dark:text-slate-300"
+                        >
+                            El bloqueo quedó guardado, pero estas reservas
+                            siguen asignadas a la habitación; reubícalas o
+                            cancélalas en Reservas:
+                        </p>
+                        <ul class="mt-2 space-y-1 text-xs">
+                            <li
+                                v-for="conflict in blockConflicts"
+                                :key="conflict.id"
+                                class="flex flex-wrap items-center gap-x-2"
+                            >
+                                <span class="font-medium">{{
+                                    conflict.code
+                                }}</span>
+                                <span
+                                    v-if="conflict.guest_name"
+                                    class="text-slate-500"
+                                    >{{ conflict.guest_name }}</span
+                                >
+                                <span class="text-slate-500"
+                                    >{{ conflict.starts_at }} →
+                                    {{ conflict.ends_at }}</span
+                                >
+                            </li>
+                        </ul>
+                    </div>
+
+                    <div>
+                        <h3
+                            class="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            Bloqueos vigentes y futuros
+                        </h3>
+                        <div
+                            v-if="loadingBlocks"
+                            class="py-4 text-center text-sm text-slate-500"
+                        >
+                            Cargando…
+                        </div>
+                        <div v-else-if="roomBlocks.length" class="space-y-2">
+                            <div
+                                v-for="block in roomBlocks"
+                                :key="block.id"
+                                class="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-200/70 p-3 text-sm dark:border-darkmode-400"
+                            >
+                                <div class="min-w-0">
+                                    <div class="font-medium">
+                                        {{ formatBlockDate(block.starts_at) }}
+                                        →
+                                        {{ formatBlockDate(block.ends_at) }}
+                                    </div>
+                                    <div class="mt-0.5 text-xs text-slate-500">
+                                        {{ block.reason ?? 'Sin motivo'
+                                        }}<template v-if="block.created_by">
+                                            · {{ block.created_by }}</template
+                                        >
+                                    </div>
+                                </div>
+                                <div class="flex shrink-0 items-center gap-2">
+                                    <template
+                                        v-if="confirmingBlockId === block.id"
+                                    >
+                                        <span class="text-xs text-slate-500"
+                                            >¿Eliminar?</span
+                                        >
+                                        <Button
+                                            variant="danger"
+                                            size="sm"
+                                            type="button"
+                                            class="min-h-8"
+                                            @click="deleteBlock(block)"
+                                            >Sí</Button
+                                        >
+                                        <Button
+                                            variant="outline-secondary"
+                                            size="sm"
+                                            type="button"
+                                            class="min-h-8"
+                                            @click="confirmingBlockId = null"
+                                            >No</Button
+                                        >
+                                    </template>
+                                    <button
+                                        v-else
+                                        type="button"
+                                        class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                        title="Eliminar bloqueo"
+                                        @click="deleteBlock(block)"
+                                    >
+                                        <Lucide
+                                            icon="Trash2"
+                                            class="h-4 w-4"
+                                        />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        <div
+                            v-else
+                            class="rounded-md border border-dashed border-slate-200 px-4 py-3 text-center text-xs text-slate-500 dark:border-darkmode-400"
+                        >
+                            Sin bloqueos — la habitación se ofrece con
+                            normalidad.
+                        </div>
+                    </div>
+
+                    <form
+                        class="space-y-3 border-t border-slate-200/60 pt-4 dark:border-darkmode-400"
+                        @submit.prevent="submitBlock"
+                    >
+                        <h3
+                            class="text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            Nuevo bloqueo
+                        </h3>
+                        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                            <div>
+                                <FormLabel htmlFor="block-starts"
+                                    >Desde</FormLabel
+                                >
+                                <FormInput
+                                    id="block-starts"
+                                    v-model="blockForm.starts_at"
+                                    type="date"
+                                />
+                                <FormHelp
+                                    v-if="errors.starts_at"
+                                    class="text-danger"
+                                    >{{ errors.starts_at }}</FormHelp
+                                >
+                            </div>
+                            <div>
+                                <FormLabel htmlFor="block-ends"
+                                    >Hasta</FormLabel
+                                >
+                                <FormInput
+                                    id="block-ends"
+                                    v-model="blockForm.ends_at"
+                                    type="date"
+                                />
+                                <FormHelp
+                                    v-if="blockRangeInvalid"
+                                    class="text-danger"
+                                    >La fecha final debe ser igual o posterior
+                                    a la inicial.</FormHelp
+                                >
+                                <FormHelp
+                                    v-else-if="errors.ends_at"
+                                    class="text-danger"
+                                    >{{ errors.ends_at }}</FormHelp
+                                >
+                            </div>
+                        </div>
+                        <div>
+                            <FormLabel htmlFor="block-reason"
+                                >Motivo (opcional)</FormLabel
+                            >
+                            <FormInput
+                                id="block-reason"
+                                v-model="blockForm.reason"
+                                type="text"
+                                placeholder="Pintura y cambio de colchón"
+                            />
+                            <FormHelp
+                                v-if="errors.reason"
+                                class="text-danger"
+                                >{{ errors.reason }}</FormHelp
+                            >
+                        </div>
+                        <FormHelp
+                            >Ambos días son inclusivos: esas noches no se
+                            venden. El check-out en la mañana del primer día
+                            bloqueado sí se permite.</FormHelp
+                        >
+                        <div class="flex justify-end">
+                            <Button
+                                type="submit"
+                                variant="primary"
+                                class="min-h-11 sm:min-h-0"
+                                :disabled="
+                                    savingBlock ||
+                                    blockRangeInvalid ||
+                                    !blockForm.starts_at ||
+                                    !blockForm.ends_at
+                                "
+                            >
+                                <Lucide
+                                    icon="CalendarOff"
+                                    class="mr-2 h-4 w-4"
+                                />
+                                {{
+                                    savingBlock
+                                        ? 'Guardando…'
+                                        : 'Bloquear fechas'
+                                }}
+                            </Button>
+                        </div>
+                    </form>
+                </div>
+
+                <div
+                    class="flex justify-end border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                >
+                    <Button
+                        type="button"
+                        variant="outline-secondary"
+                        class="min-h-11 sm:min-h-0"
+                        @click="blockingRoom = null"
+                        >Cerrar</Button
+                    >
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
         <Dialog :open="deleting !== null" @close="deleting = null">
             <Dialog.Panel>
                 <div class="p-5 text-center">

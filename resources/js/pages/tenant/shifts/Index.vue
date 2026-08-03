@@ -150,6 +150,60 @@ const activeUserIds = computed(
     () => new Set(props.activeShifts.map((s) => s.user_id)),
 );
 
+// Indicadores del encabezado: el pulso de la operación antes de entrar al
+// detalle de cada pestaña.
+const stats = computed(() => {
+    const scheduledInShift = props.scheduledToday.filter((a) =>
+        activeUserIds.value.has(a.user_id),
+    ).length;
+    const weekAssignments = Object.values(props.schedule).reduce(
+        (sum, chips) => sum + chips.length,
+        0,
+    );
+    const withCut = props.history.filter((s) => s.has_cut).length;
+
+    return [
+        {
+            key: 'active',
+            label: 'En turno ahora',
+            value: props.activeShifts.length,
+            hint: props.activeShifts.length
+                ? props.activeShifts.map((s) => s.user).join(', ')
+                : 'Nadie a cargo en este momento',
+            icon: 'UserCheck' as Icon,
+            tint: 'border-success/10 bg-success/10 text-success',
+        },
+        {
+            key: 'today',
+            label: 'Programados hoy',
+            value: props.scheduledToday.length,
+            hint: props.scheduledToday.length
+                ? `${scheduledInShift} de ${props.scheduledToday.length} ya en turno`
+                : 'Sin rol armado para hoy',
+            icon: 'CalendarDays' as Icon,
+            tint: 'border-primary/10 bg-primary/10 text-primary',
+        },
+        {
+            key: 'week',
+            label: 'Turnos esta semana',
+            value: weekAssignments,
+            hint: `${props.worked.length} ${props.worked.length === 1 ? 'día cubierto' : 'días cubiertos'} con turno abierto`,
+            icon: 'CalendarRange' as Icon,
+            tint: 'border-info/10 bg-info/10 text-info',
+        },
+        {
+            key: 'closed',
+            label: 'Turnos cerrados',
+            value: props.history.length,
+            hint: props.history.length
+                ? `${withCut} de ${props.history.length} con su corte hecho`
+                : 'Aún no hay turnos cerrados',
+            icon: 'History' as Icon,
+            tint: 'border-pending/10 bg-pending/10 text-pending',
+        },
+    ];
+});
+
 function goWeek(start: string) {
     router.get(
         route('tenant.shifts'),
@@ -368,7 +422,8 @@ async function submitType() {
     } catch (e: any) {
         const firstError = (
             Object.values(e.response?.data?.errors ?? {})[0] as
-                string[] | undefined
+                | string[]
+                | undefined
         )?.[0];
         typeError.value =
             e.response?.data?.message ?? firstError ?? 'No se pudo guardar.';
@@ -436,15 +491,26 @@ async function createSuggested() {
     <RazeLayout title="Turnos">
         <div class="mt-2">
             <!-- Encabezado -->
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Turnos</h1>
-                    <p class="text-sm text-slate-500">
-                        {{ property.name }} · rol semanal, quién está a cargo y
-                        su corte
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                    >
+                        <Lucide icon="Clock" class="h-5 w-5 sm:h-7 sm:w-7" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-lg font-medium sm:text-xl">Turnos</h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            {{ property.name }} · rol semanal, quién está a
+                            cargo y su corte
+                        </p>
+                    </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
+                >
                     <Button
                         v-if="canSchedule"
                         variant="outline-secondary"
@@ -474,7 +540,7 @@ async function createSuggested() {
                     </Button>
                     <Button
                         variant="primary"
-                        class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                        class="col-span-2 rounded-[0.5rem] shadow-md shadow-primary/20 md:col-auto"
                         @click="askOpen()"
                     >
                         <Lucide
@@ -483,6 +549,36 @@ async function createSuggested() {
                         />
                         Abrir turno
                     </Button>
+                </div>
+            </div>
+
+            <!-- Indicadores -->
+            <div class="mt-5 grid grid-cols-12 gap-5">
+                <div
+                    v-for="stat in stats"
+                    :key="stat.key"
+                    class="box box--stacked col-span-12 flex flex-col p-5 sm:col-span-6 xl:col-span-3"
+                >
+                    <div class="flex items-center justify-between">
+                        <div
+                            class="flex h-11 w-11 items-center justify-center rounded-full border"
+                            :class="stat.tint"
+                        >
+                            <Lucide :icon="stat.icon" class="h-5 w-5" />
+                        </div>
+                        <div class="text-2xl leading-none font-medium">
+                            {{ stat.value }}
+                        </div>
+                    </div>
+                    <div class="mt-4 text-sm font-medium">
+                        {{ stat.label }}
+                    </div>
+                    <div
+                        class="mt-1 truncate text-xs text-slate-500"
+                        :title="stat.hint"
+                    >
+                        {{ stat.hint }}
+                    </div>
                 </div>
             </div>
 
@@ -516,72 +612,8 @@ async function createSuggested() {
 
             <!-- ============ TAB HOY ============ -->
             <div v-show="tab === 'hoy'" class="mt-5 grid grid-cols-12 gap-6">
-                <!-- Programados hoy -->
-                <div class="col-span-12 xl:col-span-4">
-                    <div class="flex items-center md:h-10">
-                        <div class="text-base font-medium">Programados hoy</div>
-                    </div>
-                    <div class="box box--stacked mt-2 p-5">
-                        <div v-if="scheduledToday.length" class="space-y-3">
-                            <div
-                                v-for="a in scheduledToday"
-                                :key="a.id"
-                                class="flex items-center gap-3 rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
-                            >
-                                <div
-                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
-                                >
-                                    {{ initials(a.user) }}
-                                </div>
-                                <div class="min-w-0 flex-1">
-                                    <div class="truncate text-sm font-medium">
-                                        {{ a.user }}
-                                    </div>
-                                    <span
-                                        class="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] font-medium"
-                                        :class="chipColor[a.color]"
-                                    >
-                                        {{ a.type }} · {{ a.time }}
-                                    </span>
-                                </div>
-                                <span
-                                    v-if="activeUserIds.has(a.user_id)"
-                                    class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
-                                >
-                                    <span
-                                        class="h-1.5 w-1.5 rounded-full bg-success"
-                                    />
-                                    En turno
-                                </span>
-                                <button
-                                    v-else
-                                    type="button"
-                                    title="Abrir su turno"
-                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
-                                    @click="askOpen(a.user_id)"
-                                >
-                                    <Lucide
-                                        icon="AlarmClockPlus"
-                                        class="h-4 w-4"
-                                    />
-                                </button>
-                            </div>
-                        </div>
-                        <div
-                            v-else
-                            class="flex flex-col items-center gap-2 py-8 text-center text-slate-400"
-                        >
-                            <Lucide icon="CalendarDays" class="h-7 w-7" />
-                            <p class="text-xs">
-                                Nadie programado hoy. Arma el rol en la pestaña
-                                "Rol semanal".
-                            </p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- En turno ahora -->
-                <div class="col-span-12 xl:col-span-8">
+                <!-- En turno ahora (columna principal) -->
+                <div class="col-span-12 flex flex-col xl:col-span-8">
                     <div class="flex items-center md:h-10">
                         <div
                             class="flex items-center gap-2 text-base font-medium"
@@ -610,7 +642,7 @@ async function createSuggested() {
                         <div
                             v-for="s in activeShifts"
                             :key="s.id"
-                            class="box box--stacked col-span-12 p-5 sm:col-span-6"
+                            class="box box--stacked col-span-12 flex flex-col p-5 sm:col-span-6"
                         >
                             <div class="flex items-center gap-3">
                                 <div
@@ -628,7 +660,7 @@ async function createSuggested() {
                                 </div>
                             </div>
                             <div
-                                class="mt-4 grid grid-cols-2 gap-3 border-t border-dashed border-slate-300/70 pt-4 text-sm dark:border-darkmode-400"
+                                class="mt-4 grid flex-1 grid-cols-2 gap-3 border-t border-dashed border-slate-300/70 pt-4 text-sm dark:border-darkmode-400"
                             >
                                 <div>
                                     <div
@@ -690,7 +722,7 @@ async function createSuggested() {
                     </div>
                     <div
                         v-else
-                        class="box box--stacked mt-2 flex flex-col items-center gap-3 py-12 text-center"
+                        class="box box--stacked mt-2 flex flex-1 flex-col items-center justify-center gap-3 py-12 text-center"
                     >
                         <div
                             class="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
@@ -712,6 +744,70 @@ async function createSuggested() {
                             />
                             Abrir turno
                         </Button>
+                    </div>
+                </div>
+
+                <!-- Programados hoy (lateral) -->
+                <div class="col-span-12 flex flex-col xl:col-span-4">
+                    <div class="flex items-center md:h-10">
+                        <div class="text-base font-medium">Programados hoy</div>
+                    </div>
+                    <div class="box box--stacked mt-2 flex-1 p-5">
+                        <div v-if="scheduledToday.length" class="space-y-3">
+                            <div
+                                v-for="a in scheduledToday"
+                                :key="a.id"
+                                class="flex items-center gap-3 rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
+                            >
+                                <div
+                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
+                                >
+                                    {{ initials(a.user) }}
+                                </div>
+                                <div class="min-w-0 flex-1">
+                                    <div class="truncate text-sm font-medium">
+                                        {{ a.user }}
+                                    </div>
+                                    <span
+                                        class="inline-flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] font-medium"
+                                        :class="chipColor[a.color]"
+                                    >
+                                        {{ a.type }} · {{ a.time }}
+                                    </span>
+                                </div>
+                                <span
+                                    v-if="activeUserIds.has(a.user_id)"
+                                    class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+                                >
+                                    <span
+                                        class="h-1.5 w-1.5 rounded-full bg-success"
+                                    />
+                                    En turno
+                                </span>
+                                <button
+                                    v-else
+                                    type="button"
+                                    title="Abrir su turno"
+                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
+                                    @click="askOpen(a.user_id)"
+                                >
+                                    <Lucide
+                                        icon="AlarmClockPlus"
+                                        class="h-4 w-4"
+                                    />
+                                </button>
+                            </div>
+                        </div>
+                        <div
+                            v-else
+                            class="flex flex-col items-center gap-2 py-8 text-center text-slate-400"
+                        >
+                            <Lucide icon="CalendarDays" class="h-7 w-7" />
+                            <p class="text-xs">
+                                Nadie programado hoy. Arma el rol en la pestaña
+                                "Rol semanal".
+                            </p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -756,19 +852,6 @@ async function createSuggested() {
                         >
                     </div>
                     <div class="ml-auto flex flex-wrap items-center gap-2">
-                        <div class="mr-2 hidden items-center gap-3 lg:flex">
-                            <span
-                                v-for="t in shiftTypes"
-                                :key="t.id"
-                                class="flex items-center gap-1.5 text-xs text-slate-500"
-                            >
-                                <span
-                                    class="h-2 w-2 rounded-full"
-                                    :class="dotColor[t.color]"
-                                />
-                                {{ t.name }} {{ t.time }}
-                            </span>
-                        </div>
                         <Button
                             v-if="canSchedule"
                             variant="outline-primary"
@@ -780,6 +863,30 @@ async function createSuggested() {
                             semana anterior
                         </Button>
                     </div>
+                </div>
+
+                <!-- Leyenda de tipos -->
+                <div
+                    v-if="shiftTypes.length"
+                    class="mt-4 flex flex-wrap items-center gap-2"
+                >
+                    <span
+                        class="text-xs font-medium tracking-wide text-slate-400 uppercase"
+                    >
+                        Tipos de turno
+                    </span>
+                    <span
+                        v-for="t in shiftTypes"
+                        :key="t.id"
+                        class="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium"
+                        :class="chipColor[t.color]"
+                    >
+                        <span
+                            class="h-2 w-2 shrink-0 rounded-full"
+                            :class="dotColor[t.color]"
+                        />
+                        {{ t.name }} · {{ t.time }}
+                    </span>
                 </div>
 
                 <!-- Sin tipos aún -->
@@ -945,16 +1052,17 @@ async function createSuggested() {
                 </div>
                 <p
                     v-if="shiftTypes.length"
-                    class="mt-3 flex items-center gap-2 text-xs text-slate-400"
+                    class="mt-3 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-xs text-slate-400"
                 >
-                    <Lucide icon="Info" class="h-3.5 w-3.5" />
+                    <Lucide icon="Info" class="h-3.5 w-3.5 shrink-0" />
                     {{
                         canSchedule
                             ? 'Haz clic en una celda para asignar o quitar turnos.'
                             : 'Solo un gerente o el propietario pueden editar el rol.'
                     }}
-                    La palomita ✓ marca los días en que la persona sí abrió
-                    turno.
+                    La palomita
+                    <Lucide icon="Check" class="h-3.5 w-3.5 shrink-0" />
+                    marca los días en que la persona sí abrió turno.
                 </p>
             </div>
 
@@ -1403,41 +1511,58 @@ async function createSuggested() {
                     </div>
                     <div class="flex-1 space-y-5 overflow-y-auto px-6 py-5">
                         <!-- Existentes -->
-                        <div v-if="shiftTypes.length" class="space-y-2">
+                        <div v-if="shiftTypes.length">
                             <div
-                                v-for="t in shiftTypes"
-                                :key="t.id"
-                                class="flex items-center gap-3 rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
+                                class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
                             >
-                                <span
-                                    class="h-3 w-3 shrink-0 rounded-full"
-                                    :class="dotColor[t.color]"
-                                />
-                                <div class="min-w-0 flex-1">
-                                    <div class="text-sm font-medium">
+                                <Lucide icon="Clock" class="h-3.5 w-3.5" />
+                                Tus tipos ({{ shiftTypes.length }})
+                            </div>
+                            <div class="space-y-2">
+                                <div
+                                    v-for="t in shiftTypes"
+                                    :key="t.id"
+                                    class="flex items-center gap-3 rounded-lg border p-3 transition"
+                                    :class="
+                                        typeForm.id === t.id
+                                            ? 'border-primary/40 bg-primary/5'
+                                            : 'border-slate-200/70 dark:border-darkmode-400'
+                                    "
+                                >
+                                    <span
+                                        class="h-3 w-3 shrink-0 rounded-full"
+                                        :class="dotColor[t.color]"
+                                    />
+                                    <div
+                                        class="min-w-0 flex-1 truncate text-sm font-medium"
+                                    >
                                         {{ t.name }}
                                     </div>
-                                    <div class="text-xs text-slate-500">
+                                    <span
+                                        class="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap"
+                                        :class="chipColor[t.color]"
+                                    >
+                                        <Lucide icon="Clock" class="h-3 w-3" />
                                         {{ t.time }}
-                                    </div>
+                                    </span>
+                                    <button
+                                        type="button"
+                                        title="Editar"
+                                        class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                        @click="editType(t)"
+                                    >
+                                        <Lucide icon="Pencil" class="h-4 w-4" />
+                                    </button>
+                                    <button
+                                        type="button"
+                                        title="Eliminar"
+                                        class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                        :disabled="saving"
+                                        @click="deleteType(t)"
+                                    >
+                                        <Lucide icon="Trash2" class="h-4 w-4" />
+                                    </button>
                                 </div>
-                                <button
-                                    type="button"
-                                    title="Editar"
-                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
-                                    @click="editType(t)"
-                                >
-                                    <Lucide icon="Pencil" class="h-4 w-4" />
-                                </button>
-                                <button
-                                    type="button"
-                                    title="Eliminar"
-                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
-                                    :disabled="saving"
-                                    @click="deleteType(t)"
-                                >
-                                    <Lucide icon="Trash2" class="h-4 w-4" />
-                                </button>
                             </div>
                         </div>
                         <div
@@ -1462,7 +1587,7 @@ async function createSuggested() {
 
                         <!-- Formulario -->
                         <div
-                            class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
+                            class="rounded-xl border border-slate-200/70 bg-slate-50/80 p-4 dark:border-darkmode-400 dark:bg-darkmode-700/50"
                         >
                             <div
                                 class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"

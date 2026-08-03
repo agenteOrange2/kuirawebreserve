@@ -111,7 +111,10 @@ class CreateGroupReservation
                         'adults' => $line['adults'] ?? 1,
                         'children' => $line['children'] ?? 0,
                         'notes' => $data['notes'] ?? null,
-                    ], $user);
+                        // El grupo consolida sus propios avisos (uno por GRP-,
+                        // no uno por cuarto); además esto corre dentro de la
+                        // transacción del grupo, que aún puede reventar.
+                    ], $user, notifyGuest: false);
 
                     $reservation->forceFill(['reservation_group_id' => $group->id])->saveQuietly();
                     $guestId ??= $reservation->guest_id;

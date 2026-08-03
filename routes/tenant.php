@@ -157,8 +157,8 @@ Route::middleware([
             ->name('reservations.history');
 
         // Apariencia del wizard público (logo, colores, modo oscuro de
-        // /reservar) — área aislada bajo /reservas, separada a propósito
-        // del comportamiento que vive en /ajustes/wizard.
+        // /reservar) — se entra desde /ajustes/wizard (botón Apariencia);
+        // el comportamiento vive en /ajustes/wizard.
         Route::get('/reservas/ajustes', \App\Http\Controllers\Tenant\WizardAppearancePageController::class)
             ->middleware(['can:properties.manage', 'module:motor-web'])
             ->name('reservations.settings');
@@ -186,6 +186,19 @@ Route::middleware([
             ->middleware(['can:reservations.view', 'module:experiencias'])
             ->name('experiences');
 
+        // Módulo Lista de espera: interesados sin disponibilidad que dejan
+        // contacto en el wizard; se les avisa cuando una cancelación libera
+        // sus fechas.
+        Route::get('/lista-espera', \App\Http\Controllers\Tenant\WaitlistPageController::class)
+            ->middleware(['can:reservations.manage', 'module:lista-espera'])
+            ->name('waitlist');
+
+        // Módulo Cupones: códigos de descuento que acepta el wizard.
+        // Mismo permiso que Extras: es catálogo/config del hotel.
+        Route::get('/cupones', \App\Http\Controllers\Tenant\CouponsPageController::class)
+            ->middleware(['can:properties.manage', 'module:cupones'])
+            ->name('coupons');
+
         // Módulo Reservas grupales: varias habitaciones bajo un folio GRP-.
         Route::get('/grupos', \App\Http\Controllers\Tenant\GroupsPageController::class)
             ->middleware(['can:reservations.view', 'module:grupos'])
@@ -200,7 +213,9 @@ Route::middleware([
         // CRM de huéspedes.
         Route::middleware('can:guests.view')->group(function () {
             Route::get('/huespedes', [GuestsPageController::class, 'index'])->name('guests');
-            Route::get('/huespedes/{guest}', [GuestsPageController::class, 'show'])->name('guests.show');
+            Route::get('/huespedes/{guest}', [GuestsPageController::class, 'show'])
+                ->withTrashed() // el perfil de un huésped archivado sigue visible
+                ->name('guests.show');
         });
         Route::get('/huespedes/{guest}/documentos/{media}', [GuestController::class, 'showDocument'])
             ->middleware('can:guests.view-documents')
@@ -253,6 +268,13 @@ Route::middleware([
         Route::get('/ajustes/mails', \App\Http\Controllers\Tenant\MailSettingsPageController::class)
             ->middleware('can:properties.manage')
             ->name('mail-settings');
+
+        // Área aislada de limpieza y cierre de día: flujo sucia → limpieza
+        // → disponible (manual/automático/ambos) y qué pasa con reservadas
+        // cuya salida venció sin check-in.
+        Route::get('/ajustes/limpieza', \App\Http\Controllers\Tenant\HousekeepingSettingsPageController::class)
+            ->middleware('can:properties.manage')
+            ->name('housekeeping-settings');
 
         // Integración con sitios (spec-integracion-sitios): tokens, catálogo
         // vivo e importador. Detrás del módulo motor-web.
@@ -382,6 +404,19 @@ Route::middleware([
             });
         });
 
+        // Módulo Lista de espera: seguimiento desde el panel (convertida /
+        // eliminar). El alta viene del wizard público.
+        Route::middleware(['can:reservations.manage', 'module:lista-espera'])->group(function () {
+            Route::patch('waitlist-entries/{entry}/convert', [\App\Http\Controllers\Tenant\WaitlistEntryController::class, 'convert'])->name('waitlist-entries.convert');
+            Route::delete('waitlist-entries/{entry}', [\App\Http\Controllers\Tenant\WaitlistEntryController::class, 'destroy'])->name('waitlist-entries.destroy');
+        });
+
+        // Módulo Cupones: CRUD del catálogo de códigos de descuento.
+        Route::middleware(['can:properties.manage', 'module:cupones'])->group(function () {
+            Route::apiResource('coupons', \App\Http\Controllers\Tenant\CouponController::class)
+                ->only(['index', 'store', 'update', 'destroy']);
+        });
+
         // Módulo Reservas grupales: alta todo-o-nada y cancelación de grupo.
         Route::middleware(['can:reservations.manage', 'module:grupos'])->group(function () {
             Route::post('group-reservations', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'store'])->name('group-reservations.store');
@@ -413,6 +448,12 @@ Route::middleware([
         Route::patch('rooms/{room}/status', [RoomController::class, 'updateStatus'])
             ->middleware('can:rooms.update-status')
             ->name('rooms.update-status');
+
+        // Bloqueos por fechas (mantenimiento programado): mismo permiso que
+        // mover el semáforo — front-desk y housekeeping los programan.
+        Route::apiResource('rooms.blocks', \App\Http\Controllers\Tenant\RoomBlockController::class)
+            ->only(['index', 'store', 'destroy'])
+            ->middleware('can:rooms.update-status');
 
         // Tarifas (noche / bloque).
         Route::apiResource('rate-plans', RatePlanController::class)
@@ -535,8 +576,14 @@ Route::middleware([
         // Bandeja unificada de conversaciones.
         Route::middleware('can:reservations.view')->group(function () {
             Route::get('inbox/{conversation}', [InboxController::class, 'show'])->name('inbox.show');
+            // Adjuntos entrantes de WhatsApp (privados: solo staff logueado).
+            Route::get('inbox/{conversation}/attachments/{media}', [InboxController::class, 'attachment'])->name('inbox.attachment');
         });
         Route::middleware('can:reservations.manage')->group(function () {
+            Route::post('inbox/archive-resolved', [InboxController::class, 'archiveResolved'])->name('inbox.archive-resolved');
+            // Antes de inbox/{conversation} para que 'archived' no se
+            // intente resolver como id de conversación.
+            Route::delete('inbox/archived', [InboxController::class, 'destroyArchived'])->name('inbox.archived.destroy');
             Route::post('inbox/{conversation}/reply', [InboxController::class, 'reply'])->name('inbox.reply');
             Route::post('inbox/{conversation}/suggest', [InboxController::class, 'suggest'])->name('inbox.suggest');
             Route::patch('inbox/{conversation}', [InboxController::class, 'update'])->name('inbox.update');
@@ -545,8 +592,11 @@ Route::middleware([
 
             // Cola de verificación de pagos (transferencias, spec-pagos §7.4).
             Route::get('payment-requests', [PaymentRequestController::class, 'index'])->name('payment-requests.index');
+            Route::get('payment-requests/{paymentRequest}', [PaymentRequestController::class, 'show'])->name('payment-requests.show');
+            Route::get('payment-requests/{paymentRequest}/receipt', [PaymentRequestController::class, 'receipt'])->name('payment-requests.receipt');
             Route::post('payment-requests/{paymentRequest}/approve', [PaymentRequestController::class, 'approve'])->name('payment-requests.approve');
             Route::post('payment-requests/{paymentRequest}/reject', [PaymentRequestController::class, 'reject'])->name('payment-requests.reject');
+            Route::post('payment-requests/{paymentRequest}/reissue', [PaymentRequestController::class, 'reissue'])->name('payment-requests.reissue');
             // Cancelar cualquier cobro vivo desde el centro de pagos
             // (reserva, grupo o experiencia).
             Route::delete('payment-requests/{paymentRequest}', [PaymentRequestController::class, 'cancel'])->name('payment-requests.cancel');
@@ -560,7 +610,12 @@ Route::middleware([
             Route::post('guests', [GuestController::class, 'store'])->name('guests.store');
             Route::delete('guests', [GuestController::class, 'destroyBulk'])->name('guests.destroy-bulk');
             Route::patch('guests/{guest}', [GuestController::class, 'update'])->name('guests.update');
-            Route::delete('guests/{guest}', [GuestController::class, 'destroy'])->name('guests.destroy');
+            Route::delete('guests/{guest}', [GuestController::class, 'destroy'])
+                ->withTrashed()
+                ->name('guests.destroy');
+            Route::post('guests/{guest}/restore', [GuestController::class, 'restore'])
+                ->withTrashed()
+                ->name('guests.restore');
             Route::post('guests/{guest}/documents', [GuestController::class, 'storeDocument'])->name('guests.documents.store');
             Route::delete('guests/{guest}/documents/{media}', [GuestController::class, 'destroyDocument'])->name('guests.documents.destroy');
         });
@@ -653,6 +708,16 @@ Route::middleware([
     Route::get('payment-options', [\App\Http\Controllers\Tenant\BookingExtrasController::class, 'paymentOptions'])
         ->middleware('throttle:60,1')
         ->name('payment-options');
+    // Cupones (módulo cupones): validación previa para mostrar el
+    // descuento; la verdad se revalida al crear el hold.
+    Route::post('coupons/check', [\App\Http\Controllers\Tenant\BookingCouponController::class, 'check'])
+        ->middleware(['module:cupones', 'throttle:30,1'])
+        ->name('coupons.check');
+    // Lista de espera (módulo lista-espera): captura pública cuando el
+    // wizard no encontró disponibilidad.
+    Route::post('waitlist', [\App\Http\Controllers\Tenant\WaitlistPublicController::class, 'store'])
+        ->middleware(['module:lista-espera', 'throttle:10,1'])
+        ->name('waitlist.store');
     // Búsqueda de reserva del huésped (código + teléfono): throttle corto,
     // es la superficie más golpeable por curiosos.
     Route::get('reservation', [\App\Http\Controllers\Tenant\BookingLookupController::class, 'find'])
@@ -663,6 +728,11 @@ Route::middleware([
     Route::post('reservation/cancel', [\App\Http\Controllers\Tenant\BookingLookupController::class, 'cancel'])
         ->middleware('throttle:10,1')
         ->name('reservation.cancel');
+    // Pre-registro en línea: el huésped completa sus datos (correo,
+    // vehículo, hora estimada, notas) antes de llegar — mismas llaves.
+    Route::post('reservation/pre-register', [\App\Http\Controllers\Tenant\BookingLookupController::class, 'preRegister'])
+        ->middleware('throttle:10,1')
+        ->name('reservation.pre-register');
 });
 
 // API pública del wizard de experiencias — módulo propio, independiente

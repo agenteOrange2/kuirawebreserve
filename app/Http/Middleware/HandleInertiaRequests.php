@@ -53,6 +53,11 @@ class HandleInertiaRequests extends Middleware
                 'id' => tenant('id'),
                 'name' => tenant('name'),
                 'plan' => tenant('plan'),
+                // Logo del hotel (el mismo del wizard) para el encabezado
+                // del menú lateral; null = icono genérico.
+                'logo_url' => ($logo = \App\Models\Property::query()->first()?->getFirstMedia('wizard_logo'))
+                    ? '/fotos/logo?v='.$logo->id
+                    : null,
                 // Módulos activos del hotel (plan + overrides): el menú
                 // lateral oculta los items de módulos apagados.
                 'modules' => tenant()->enabledModules(),

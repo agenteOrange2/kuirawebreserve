@@ -317,6 +317,10 @@ it('la idempotencia devuelve la misma respuesta sin crear una segunda reserva', 
 });
 
 it('con tarifa que exige anticipo, el pago devuelve instrucciones de transferencia y extiende el hold', function () {
+    $this->property->update(['settings' => array_merge($this->property->settings ?? [], [
+        'transfer_whatsapps' => [['code' => '52', 'number' => '614 123 4567']],
+    ])]);
+
     $plan = RatePlan::factory()->block(720, 900)->create([
         'property_id' => $this->property->id,
         'room_type_id' => $this->roomType->id,
@@ -340,6 +344,9 @@ it('con tarifa que exige anticipo, el pago devuelve instrucciones de transferenc
     $data = $response->getData(true);
     expect($data['method'])->toBe('transfer')
         ->and($data['bank_accounts'])->toHaveCount(1)
+        // spec-reservas-avanzado §1.2: números listos para el botón wa.me
+        // "Enviar comprobante por WhatsApp" de la pantalla de transferencia.
+        ->and($data['whatsapps'])->toBe(['526141234567'])
         ->and($reservation->refresh()->hold_expires_at->gt($originalHoldExpiry))->toBeTrue();
 });
 

@@ -85,6 +85,53 @@ class PaymentGuestNotifier
         $this->push($request->reservation_id, $body, wonLead: $confirmed, subject: 'Pago recibido', withCalendar: $confirmed);
     }
 
+    /**
+     * El staff generó un cobro desde el panel de reservas: el link o las
+     * instrucciones de transferencia viajan solos al huésped (conversación
+     * o WhatsApp/correo directo), no se quedan en la pantalla de recepción.
+     * El bot y payments:collect-balance NO pasan por aquí — cada uno arma
+     * y manda su propio mensaje por su canal.
+     */
+    public function paymentRequestIssued(PaymentRequest $request): void
+    {
+        // Solo cobros de reservas de habitación; experiencias y grupos
+        // tienen sus propios flujos de aviso.
+        if (! $request->reservation_id || $request->isForExperience() || $request->isForGroup()) {
+            return;
+        }
+
+        $reservation = $request->reservation()->first();
+
+        if (! $reservation) {
+            return;
+        }
+
+        $body = "Tenemos listo el cobro de tu reserva {$reservation->displayCode()}: {$request->conceptLabel()} de {$request->amountLabel()}.";
+
+        $body .= $request->checkout_url
+            ? " Puedes pagarlo en este link seguro: {$request->checkout_url}. Al completar el pago, tu reserva se confirma sola."
+            : $this->transferInstructions();
+
+        $this->push($request->reservation_id, $body, subject: 'Opciones de pago de tu reserva');
+    }
+
+    /**
+     * Cuentas activas del hotel para transferencia (mismo formato que el
+     * cobro automático de saldos); sin cuentas capturadas, se invita a
+     * responder para recibir las opciones.
+     */
+    protected function transferInstructions(): string
+    {
+        $accounts = collect(\App\Models\Property::query()->first()?->settings['bank_accounts'] ?? [])
+            ->filter(fn (array $account) => ! empty($account['active']))
+            ->map(fn (array $account) => sprintf('%s, titular %s, cuenta %s', $account['bank'] ?? '', $account['holder'] ?? '', $account['clabe'] ?? ''))
+            ->implode(' | ');
+
+        return $accounts === ''
+            ? ' Respóndenos por aquí y te compartimos las opciones de pago.'
+            : " Puedes transferir a: {$accounts}. En cuanto lo hagas, mándanos tu comprobante para verificarlo y dejar todo listo.";
+    }
+
     public function paymentRejected(PaymentRequest $request, string $reason): void
     {
         if ($request->isForExperience()) {
@@ -139,6 +186,21 @@ class PaymentGuestNotifier
     }
 
     /**
+     * Aviso el día de la llegada (scheduler, horas antes de la entrada):
+     * su habitación lo espera hoy, con código y hora.
+     */
+    public function arrivalSoonReminder(Reservation $reservation): void
+    {
+        $time = $reservation->starts_at->format('H:i');
+
+        $this->push(
+            $reservation->id,
+            "Hoy es el día: tu habitación ({$reservation->roomType?->name}) te espera a partir de las {$time}. Presenta tu código {$reservation->displayCode()} en recepción. Te esperamos.",
+            subject: 'Tu habitación te espera hoy',
+        );
+    }
+
+    /**
      * Reserva confirmada (sin pago de por medio o confirmación manual del
      * staff): el huésped se entera, no solo el panel.
      */
@@ -146,13 +208,85 @@ class PaymentGuestNotifier
     {
         $arrival = $reservation->starts_at->locale('es')->isoFormat('dddd D [de] MMMM [a las] HH:mm');
 
+        $body = "Tu reserva {$reservation->displayCode()} está confirmada: {$reservation->roomType?->name}, llegada el {$arrival}. Te esperamos.";
+
+        // Invitación al pre-registro (consulta pública /reserva): con sus
+        // datos completos desde antes, la llegada es entregar la llave.
+        if ($lookup = $this->bookingLookupUrl()) {
+            $body .= " Si quieres agilizar tu llegada, completa tu pre-registro en {$lookup} — entra con tu código y el teléfono con el que reservaste.";
+        }
+
         $this->push(
             $reservation->id,
-            "Tu reserva {$reservation->displayCode()} está confirmada: {$reservation->roomType?->name}, llegada el {$arrival}. Te esperamos.",
+            $body,
             wonLead: true,
             subject: 'Reserva confirmada',
             withCalendar: true,
         );
+    }
+
+    /**
+     * Agradecimiento al completar la estancia (check-out manual o
+     * automático, TransitionReservation::checkOut): despedida cálida y, si
+     * el hotel capturó su URL de reseñas (/ajustes/metodos-pago), la
+     * invitación a dejar una.
+     */
+    public function postStayThanks(\App\Models\Stay $stay): void
+    {
+        $hotel = \App\Models\Property::query()->first()?->name;
+
+        $body = 'Gracias por hospedarte'.($hotel ? " en {$hotel}" : ' con nosotros')
+            .'. Fue un gusto atenderte y esperamos que hayas disfrutado tu estancia.';
+
+        if ($review = app(\App\Services\ReservationPolicy::class)->reviewUrl()) {
+            $body .= " Si tienes un minuto, tu opinión nos ayuda mucho: puedes dejarnos una reseña aquí: {$review}.";
+        }
+
+        $body .= ' Te esperamos pronto de vuelta.';
+
+        // Con reserva de por medio, el aviso sigue el hilo o el canal
+        // directo de siempre; un walk-in sin reserva sale directo al
+        // contacto del Guest. Sin contacto no hay a quién agradecer.
+        if ($stay->reservation_id) {
+            $this->push($stay->reservation_id, $body, subject: 'Gracias por tu visita');
+
+            return;
+        }
+
+        $guest = $stay->guest;
+
+        if (! $guest || (blank($guest->phone) && blank($guest->email))) {
+            return;
+        }
+
+        $this->direct->sendToGuestFull($guest, 'Gracias por tu visita', $body);
+    }
+
+    /**
+     * URL pública de la consulta de reserva (/reserva), SIEMPRE en el
+     * dominio del hotel — mismo criterio que PaymentRequest::publicReturnUrl
+     * (los avisos también salen de webhooks y schedulers, donde route() a
+     * secas hereda un host equivocado). null si el hotel no tiene el módulo
+     * motor-web: la página respondería 403.
+     */
+    protected function bookingLookupUrl(): ?string
+    {
+        $tenant = tenant();
+
+        if (! $tenant || ! $tenant->hasModule('motor-web')) {
+            return null;
+        }
+
+        $relative = route('tenant.booking.lookup', [], false);
+        $domain = $tenant->domains()->value('domain');
+
+        if (! $domain) {
+            return url($relative);
+        }
+
+        $scheme = parse_url((string) config('app.url'), PHP_URL_SCHEME) ?: 'https';
+
+        return "{$scheme}://{$domain}{$relative}";
     }
 
     protected function push(int $reservationId, string $body, bool $wonLead = false, string $subject = 'Sobre tu reserva', bool $withCalendar = false): void

@@ -47,11 +47,13 @@ class EvolutionWebhookController extends Controller
 
     /**
      * Normaliza el payload de Evolution (v1/v2, evento suelto o lote) a
-     * mensajes entrantes de texto. Ignora ecos propios (fromMe), grupos y
-     * estados de difusión.
+     * mensajes entrantes. Ignora ecos propios (fromMe), grupos y estados
+     * de difusión. Imagen y documento viajan en `media`: el base64 si el
+     * webhook lo trae embebido (WEBHOOK_BASE64=true), o el id del mensaje
+     * para pedirlo a la API después.
      *
      * @param  array<string, mixed>  $payload
-     * @return array<int, array{from: string, name: string|null, body: string, externalId: string|null}>
+     * @return array<int, array{from: string, name: string|null, body: string, externalId: string|null, media: array{base64: string|null, mime: string|null, filename: string|null}|null}>
      */
     public static function extractMessages(array $payload): array
     {
@@ -82,13 +84,28 @@ class EvolutionWebhookController extends Controller
             $body = $content['conversation']
                 ?? $content['extendedTextMessage']['text']
                 ?? $content['imageMessage']['caption']
+                ?? $content['documentMessage']['caption']
                 ?? null;
+
+            $media = null;
+
+            if (isset($content['imageMessage']) || isset($content['documentMessage'])) {
+                $descriptor = $content['imageMessage'] ?? $content['documentMessage'];
+                $media = [
+                    // Evolution con WEBHOOK_BASE64 embebe el binario aquí.
+                    'base64' => $content['base64'] ?? $item['base64'] ?? null,
+                    'mime' => $descriptor['mimetype'] ?? null,
+                    'filename' => $descriptor['fileName'] ?? null,
+                ];
+                $body ??= isset($content['imageMessage']) ? '[Imagen]' : '[Documento]';
+            }
 
             $messages[] = [
                 'from' => strstr($jid, '@', true) ?: $jid,
                 'name' => $item['pushName'] ?? null,
                 'body' => $body ?? '['.($item['messageType'] ?? 'mensaje').' no soportado todavía]',
                 'externalId' => $key['id'] ?? null,
+                'media' => $media,
             ];
         }
 
@@ -97,8 +114,10 @@ class EvolutionWebhookController extends Controller
 
     /**
      * Mismo camino que Meta/webchat, dentro del tenant dueño de la instancia.
+     *
+     * @param  array{base64: string|null, mime: string|null, filename: string|null}|null  $media
      */
-    protected function handleInbound(EvolutionChannelLink $link, string $from, ?string $name, string $body, ?string $externalId): void
+    protected function handleInbound(EvolutionChannelLink $link, string $from, ?string $name, string $body, ?string $externalId, ?array $media = null): void
     {
         $tenant = Tenant::find($link->tenant_id);
 
@@ -106,7 +125,7 @@ class EvolutionWebhookController extends Controller
             return;
         }
 
-        $tenant->run(function () use ($link, $from, $name, $body, $externalId) {
+        $tenant->run(function () use ($link, $from, $name, $body, $externalId, $media) {
             // Evolution puede reintentar webhooks: no duplicar mensajes.
             if ($externalId && Message::query()->where('meta->external_id', $externalId)->exists()) {
                 return;
@@ -137,7 +156,11 @@ class EvolutionWebhookController extends Controller
                 $conversation->update(['status' => Conversation::STATUS_OPEN]);
             }
 
-            $conversation->messages()->create([
+            // Si reservó por el wizard público y ahora escribe (p. ej. su
+            // comprobante), ligar su reserva pendiente por teléfono.
+            $conversation->linkReservationByPhone();
+
+            $message = $conversation->messages()->create([
                 'direction' => 'in',
                 'sender_type' => 'visitor',
                 'body' => $body,
@@ -146,9 +169,44 @@ class EvolutionWebhookController extends Controller
             ]);
             $conversation->update(['last_message_at' => now()]);
 
+            // Imagen/documento: bajar el binario (embebido o vía API) y
+            // dejar que el servicio decida su destino (adjunto/comprobante).
+            $mediaOutcome = null;
+
+            if ($media !== null) {
+                $binary = null;
+
+                if (! empty($media['base64'])) {
+                    $decoded = base64_decode((string) $media['base64'], true);
+                    $binary = $decoded === false ? null : ['contents' => $decoded, 'mime' => $media['mime'] ?? 'application/octet-stream'];
+                } elseif ($externalId) {
+                    $binary = $this->api->mediaBase64($link, $externalId);
+                }
+
+                if ($binary) {
+                    $mediaOutcome = app(\App\Services\Channels\InboundMediaService::class)->handle(
+                        $conversation,
+                        $message,
+                        $binary['contents'],
+                        $media['mime'] ?? $binary['mime'],
+                        $media['filename'] ?? null,
+                    );
+                }
+            }
+
+            // Comprobante detectado: el acuse ya salió y el staff lo verá
+            // en /pagos — ni bot ni cola de "espera humano".
+            if ($mediaOutcome === \App\Services\Channels\InboundMediaService::OUTCOME_RECEIPT) {
+                return;
+            }
+
             $brain = app(AgentBrain::class);
 
-            if ($channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
+            // El bot no ve imágenes: una foto sin texto espera a un humano
+            // (el servicio ya dejó la conversación en pendiente).
+            $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true);
+
+            if (! $noCaption && $channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
                 $reply = $brain->reply($conversation);
 
                 if ($reply?->body) {

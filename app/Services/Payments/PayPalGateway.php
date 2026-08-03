@@ -21,7 +21,7 @@ class PayPalGateway implements PaymentGateway
     public function createCheckout(PaymentRequest $request, PaymentGatewayLink $link): array
     {
         $token = $this->token($link);
-        $returnUrl = route('tenant.payment.return', $request->uuid);
+        $returnUrl = $request->publicReturnUrl();
 
         $response = Http::withToken($token)
             ->post($this->base($link).'/v2/checkout/orders', [

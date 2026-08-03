@@ -26,9 +26,18 @@ class InboxController extends Controller
         $property = Property::firstOrFail();
         Channel::webchat(); // garantiza el canal base
 
+        // La bandeja activa excluye lo archivado; ?archived=1 muestra el
+        // archivo (histórico consultable, restaurable).
+        $archived = $request->boolean('archived');
+
         $conversations = Conversation::query()
             ->with(['channel:id,type,name,mode', 'guest:id,first_name,last_name', 'assignee:id,name', 'reservation:id,code,payment_status'])
             ->withCount(['messages as unread_count' => fn ($q) => $q->where('direction', 'in')->whereNull('read_at')])
+            ->when(
+                $archived,
+                fn ($q) => $q->whereNotNull('archived_at'),
+                fn ($q) => $q->whereNull('archived_at'),
+            )
             ->orderByDesc('last_message_at')
             ->take(100)
             ->get()
@@ -37,6 +46,14 @@ class InboxController extends Controller
         return Inertia::render('tenant/inbox/Index', [
             'property' => $property->only(['id', 'name']),
             'conversations' => $conversations,
+            'filters' => ['archived' => $archived],
+            'counts' => [
+                'active' => Conversation::query()->whereNull('archived_at')
+                    ->whereIn('status', [Conversation::STATUS_OPEN, Conversation::STATUS_PENDING])->count(),
+                'resolved' => Conversation::query()->whereNull('archived_at')
+                    ->where('status', Conversation::STATUS_RESOLVED)->count(),
+                'archived' => Conversation::query()->whereNotNull('archived_at')->count(),
+            ],
             // Solo canales vivos: los desconectados conservan su historial en
             // la lista, pero no ofrecen selector de modo que "desconfigurar".
             'channels' => Channel::query()->where('active', true)->get()->map(fn (Channel $ch) => [
@@ -68,15 +85,31 @@ class InboxController extends Controller
                 $conversation->fresh(['channel:id,type,name,mode', 'guest:id,first_name,last_name', 'assignee:id,name'])
                     ->loadCount(['messages as unread_count' => fn ($q) => $q->where('direction', 'in')->whereNull('read_at')]),
             ),
-            'messages' => $conversation->messages()->with('sender:id,name')->orderBy('id')->get()->map(fn (Message $m) => [
+            'messages' => $conversation->messages()->with(['sender:id,name', 'media'])->orderBy('id')->get()->map(fn (Message $m) => [
                 'id' => $m->id,
                 'direction' => $m->direction,
                 'sender_type' => $m->sender_type,
                 'sender' => $m->sender?->name,
                 'body' => $m->body,
+                'attachments' => $m->attachmentsPayload(),
                 'at' => $m->created_at->format('d/m H:i'),
             ]),
         ]);
+    }
+
+    /**
+     * Adjunto entrante de WhatsApp (imagen/PDF): privado — se valida que
+     * el archivo pertenezca a un mensaje de ESTA conversación.
+     */
+    public function attachment(Conversation $conversation, \Spatie\MediaLibrary\MediaCollections\Models\Media $media): \Symfony\Component\HttpFoundation\BinaryFileResponse
+    {
+        $belongsToConversation = $media->model_type === (new Message)->getMorphClass()
+            && $media->collection_name === 'attachments'
+            && $conversation->messages()->whereKey($media->model_id)->exists();
+
+        abort_unless($belongsToConversation, 404);
+
+        return response()->file($media->getPath());
     }
 
     /**
@@ -121,6 +154,7 @@ class InboxController extends Controller
             'bot_enabled' => false, // el humano tomó la conversación
             'assigned_to' => $conversation->assigned_to ?? $request->user()?->id,
             'last_message_at' => now(),
+            'archived_at' => null, // responder la regresa a la bandeja activa
         ]);
 
         // El mensaje sale por el transporte del canal (Meta o Evolution;
@@ -130,18 +164,41 @@ class InboxController extends Controller
         return response()->json(['id' => $message->id], 201);
     }
 
-    /** Estado, asignación y devolución al bot. */
+    /** Estado, asignación, devolución al bot y archivado. */
     public function update(Request $request, Conversation $conversation): JsonResponse
     {
         $data = $request->validate([
             'status' => ['sometimes', Rule::in([Conversation::STATUS_OPEN, Conversation::STATUS_PENDING, Conversation::STATUS_RESOLVED])],
             'assigned_to' => ['sometimes', 'nullable', 'exists:users,id'],
             'bot_enabled' => ['sometimes', 'boolean'],
+            'archived' => ['sometimes', 'boolean'],
         ]);
+
+        if (array_key_exists('archived', $data)) {
+            // Archivar implica cerrar; al desarchivar conserva su estado.
+            $data['archived_at'] = $data['archived'] ? now() : null;
+
+            if ($data['archived']) {
+                $data['status'] ??= Conversation::STATUS_RESOLVED;
+            }
+
+            unset($data['archived']);
+        }
 
         $conversation->update($data);
 
         return response()->json(['ok' => true]);
+    }
+
+    /** Archiva de golpe todas las conversaciones ya resueltas. */
+    public function archiveResolved(): JsonResponse
+    {
+        $archived = Conversation::query()
+            ->where('status', Conversation::STATUS_RESOLVED)
+            ->whereNull('archived_at')
+            ->update(['archived_at' => now()]);
+
+        return response()->json(['archived' => $archived]);
     }
 
     /** Elimina la conversación; los mensajes caen en cascada (FK). */
@@ -150,6 +207,24 @@ class InboxController extends Controller
         $conversation->delete();
 
         return response()->json(['ok' => true]);
+    }
+
+    /** Vacía el archivo: borra definitivamente todas las archivadas. */
+    public function destroyArchived(): JsonResponse
+    {
+        $deleted = 0;
+
+        Conversation::query()
+            ->whereNotNull('archived_at')
+            ->orderBy('id')
+            ->chunkById(100, function ($conversations) use (&$deleted): void {
+                foreach ($conversations as $conversation) {
+                    $conversation->delete();
+                    $deleted++;
+                }
+            });
+
+        return response()->json(['deleted' => $deleted]);
     }
 
     /** Modo del canal: auto / copilot / off. */
@@ -177,6 +252,7 @@ class InboxController extends Controller
             'name' => $c->guest?->full_name ?? $c->contact_name ?? 'Visitante',
             'guest_id' => $c->guest_id,
             'status' => $c->status,
+            'archived' => $c->archived_at !== null,
             'lead_status' => $c->lead_status,
             'summary' => $c->summary,
             'bot_enabled' => $c->bot_enabled,

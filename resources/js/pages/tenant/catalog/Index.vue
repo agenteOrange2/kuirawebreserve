@@ -84,8 +84,9 @@ interface SeasonRow {
     rate_plan_id: number;
     name: string;
     kind: 'season' | 'promo';
-    starts_on: string;
-    ends_on: string;
+    starts_on: string | null;
+    ends_on: string | null;
+    weekdays: number[] | null;
     price: string | number;
     priority: number;
     active: boolean;
@@ -214,8 +215,28 @@ function submitZone() {
     );
 }
 
+// Confirmación de borrado (zona/tipo/tarifa): nada se elimina a un clic.
+const confirmDelete = ref<{
+    title: string;
+    detail: string;
+    run: () => void;
+} | null>(null);
+
+function runConfirmedDelete() {
+    confirmDelete.value?.run();
+    confirmDelete.value = null;
+}
+
 function deleteZone(zone: ZoneRow) {
-    mutate(() => axios.delete(`/api/zones/${zone.id}`), 'Zona eliminada');
+    confirmDelete.value = {
+        title: `¿Eliminar la zona "${zone.name}"?`,
+        detail: 'Sus habitaciones quedarán sin zona asignada. Esta acción no se puede deshacer.',
+        run: () =>
+            mutate(
+                () => axios.delete(`/api/zones/${zone.id}`),
+                'Zona eliminada',
+            ),
+    };
 }
 
 // Tipos de habitación. El precio se captura UNA sola vez al crear (se
@@ -401,10 +422,15 @@ function submitType() {
 }
 
 function deleteType(type: RoomTypeRow) {
-    mutate(
-        () => axios.delete(`/api/room-types/${type.id}`),
-        'Tipo de habitación eliminado',
-    );
+    confirmDelete.value = {
+        title: `¿Eliminar el tipo "${type.name}"?`,
+        detail: 'Se elimina con sus tarifas y deja de ofrecerse en el wizard y el asistente. Esta acción no se puede deshacer.',
+        run: () =>
+            mutate(
+                () => axios.delete(`/api/room-types/${type.id}`),
+                'Tipo de habitación eliminado',
+            ),
+    };
 }
 
 function duplicateType(type: RoomTypeRow) {
@@ -561,10 +587,15 @@ function submitPlan() {
 }
 
 function deletePlan(plan: RatePlanRow) {
-    mutate(
-        () => axios.delete(`/api/rate-plans/${plan.id}`),
-        'Tarifa eliminada',
-    );
+    confirmDelete.value = {
+        title: `¿Eliminar la tarifa "${plan.name}"?`,
+        detail: 'Deja de ofrecerse al reservar; las reservas ya hechas con ella no cambian. Esta acción no se puede deshacer.',
+        run: () =>
+            mutate(
+                () => axios.delete(`/api/rate-plans/${plan.id}`),
+                'Tarifa eliminada',
+            ),
+    };
 }
 
 // Temporadas y promos por tarifa (spec-motor-reservas-web E0.5): un rango
@@ -581,9 +612,34 @@ const seasonForm = reactive({
     kind: 'season' as 'season' | 'promo',
     starts_on: '',
     ends_on: '',
+    weekdays: [] as number[],
     price: '' as string | number,
     priority: 0 as number | string,
 });
+
+// Chips de días (0=domingo..6=sábado, misma convención que el backend).
+const WEEKDAY_CHIPS = [
+    { value: 0, label: 'D', title: 'Domingo' },
+    { value: 1, label: 'L', title: 'Lunes' },
+    { value: 2, label: 'M', title: 'Martes' },
+    { value: 3, label: 'M', title: 'Miércoles' },
+    { value: 4, label: 'J', title: 'Jueves' },
+    { value: 5, label: 'V', title: 'Viernes' },
+    { value: 6, label: 'S', title: 'Sábado' },
+];
+
+const WEEKDAY_SHORT = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+function toggleWeekday(day: number) {
+    seasonForm.weekdays = seasonForm.weekdays.includes(day)
+        ? seasonForm.weekdays.filter((d) => d !== day)
+        : [...seasonForm.weekdays, day].sort((a, b) => a - b);
+}
+
+function weekdaysLabel(weekdays: number[] | null): string | null {
+    if (!weekdays || weekdays.length === 0) return null;
+    return weekdays.map((day) => WEEKDAY_SHORT[day] ?? day).join(', ');
+}
 
 function resetSeasonForm() {
     editingSeason.value = null;
@@ -591,6 +647,7 @@ function resetSeasonForm() {
     seasonForm.kind = 'season';
     seasonForm.starts_on = '';
     seasonForm.ends_on = '';
+    seasonForm.weekdays = [];
     seasonForm.price = '';
     seasonForm.priority = 0;
 }
@@ -617,8 +674,9 @@ function editSeason(season: SeasonRow) {
     editingSeason.value = season;
     seasonForm.name = season.name;
     seasonForm.kind = season.kind;
-    seasonForm.starts_on = season.starts_on;
-    seasonForm.ends_on = season.ends_on;
+    seasonForm.starts_on = season.starts_on ?? '';
+    seasonForm.ends_on = season.ends_on ?? '';
+    seasonForm.weekdays = [...(season.weekdays ?? [])];
     seasonForm.price = season.price;
     seasonForm.priority = season.priority;
     clearErrors();
@@ -627,7 +685,13 @@ function editSeason(season: SeasonRow) {
 function submitSeason() {
     if (!seasonsPlan.value) return;
     const planId = seasonsPlan.value.id;
-    const payload = { ...seasonForm };
+    const payload = {
+        ...seasonForm,
+        // Sin fechas + días marcados = regla recurrente todo el año.
+        starts_on: seasonForm.starts_on === '' ? null : seasonForm.starts_on,
+        ends_on: seasonForm.ends_on === '' ? null : seasonForm.ends_on,
+        weekdays: seasonForm.weekdays.length ? seasonForm.weekdays : null,
+    };
 
     mutate(
         () =>
@@ -662,10 +726,21 @@ async function deleteSeason(season: SeasonRow) {
 <template>
     <RazeLayout title="Zonas, tipos y tarifas">
         <div class="mt-2">
-            <h1 class="text-lg font-medium">
-                Zonas, tipos de habitación y tarifas
-            </h1>
-            <p class="text-sm text-slate-500">{{ property.name }}</p>
+            <div class="box box--stacked flex items-center gap-3.5 p-5 sm:gap-4">
+                <div
+                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                >
+                    <Lucide icon="Shapes" class="h-5 w-5 sm:h-7 sm:w-7" />
+                </div>
+                <div class="min-w-0">
+                    <h1 class="text-lg font-medium sm:text-xl">
+                        Zonas, tipos de habitación y tarifas
+                    </h1>
+                    <p class="mt-1 text-sm text-slate-500">
+                        {{ property.name }}
+                    </p>
+                </div>
+            </div>
 
             <div
                 v-if="generalError"
@@ -914,7 +989,7 @@ async function deleteSeason(season: SeasonRow) {
                                 Agregar
                             </Button>
                         </div>
-                        <div class="p-5">
+                        <div class="overflow-x-auto p-5">
                             <Table v-if="zones.length">
                                 <Table.Tbody>
                                     <Table.Tr
@@ -941,17 +1016,21 @@ async function deleteSeason(season: SeasonRow) {
                                                 {{ zone.kind_label }}
                                             </span>
                                         </Table.Td>
-                                        <Table.Td class="text-slate-500"
+                                        <Table.Td
+                                            class="whitespace-nowrap text-slate-500"
                                             >{{
                                                 zone.rooms_count
                                             }}
                                             hab.</Table.Td
                                         >
                                         <Table.Td v-if="canManage">
-                                            <div class="flex justify-end gap-3">
+                                            <div
+                                                class="flex justify-end gap-2 sm:gap-3"
+                                            >
                                                 <a
                                                     href="#"
-                                                    class="text-primary"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-primary sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                    title="Editar zona"
                                                     @click.prevent="
                                                         openZone(zone)
                                                     "
@@ -963,7 +1042,8 @@ async function deleteSeason(season: SeasonRow) {
                                                 </a>
                                                 <a
                                                     href="#"
-                                                    class="text-danger"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-danger sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                    title="Eliminar zona"
                                                     @click.prevent="
                                                         deleteZone(zone)
                                                     "
@@ -1061,9 +1141,12 @@ async function deleteSeason(season: SeasonRow) {
                                 class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
                             >
                                 <div v-for="type in roomTypes" :key="type.id">
-                                    <!-- Fila del tipo -->
+                                    <!-- Fila del tipo. Móvil: nombre a lo
+                                         ancho y precio + acciones en su
+                                         propio renglón (compartir fila
+                                         aplastaba el nombre en tiritas). -->
                                     <div
-                                        class="flex cursor-pointer items-center gap-3 px-5 py-3.5 transition-colors hover:bg-slate-50/70 dark:hover:bg-darkmode-600/40"
+                                        class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3.5 transition-colors hover:bg-slate-50/70 sm:px-5 dark:hover:bg-darkmode-600/40"
                                         :class="!type.active && 'opacity-60'"
                                         @click="toggleTypeRow(type.id)"
                                     >
@@ -1118,23 +1201,28 @@ async function deleteSeason(season: SeasonRow) {
                                                 tarifa(s)
                                             </div>
                                         </div>
-                                        <div class="shrink-0 text-right">
-                                            <div
-                                                v-if="type.price_from !== null"
-                                                class="text-sm font-medium"
-                                            >
-                                                Desde
-                                                {{ money(type.price_from) }}
-                                            </div>
-                                        </div>
                                         <div
-                                            v-if="canManage"
-                                            class="flex shrink-0 gap-2.5"
-                                            @click.stop
+                                            class="flex w-full items-center justify-between gap-2 sm:ml-auto sm:w-auto sm:justify-end sm:gap-4"
                                         >
+                                            <div class="shrink-0 text-right">
+                                                <div
+                                                    v-if="
+                                                        type.price_from !== null
+                                                    "
+                                                    class="text-sm font-medium"
+                                                >
+                                                    Desde
+                                                    {{ money(type.price_from) }}
+                                                </div>
+                                            </div>
+                                            <div
+                                                v-if="canManage"
+                                                class="flex shrink-0 gap-1.5 sm:gap-2.5"
+                                                @click.stop
+                                            >
                                             <a
                                                 href="#"
-                                                class="text-success"
+                                                class="text-success flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
                                                 title="Agregar tarifa"
                                                 @click.prevent="
                                                     openPlanForType(type.id)
@@ -1147,7 +1235,7 @@ async function deleteSeason(season: SeasonRow) {
                                             </a>
                                             <a
                                                 href="#"
-                                                class="text-slate-500"
+                                                class="text-slate-500 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
                                                 title="Duplicar tipo con sus tarifas"
                                                 @click.prevent="
                                                     duplicateType(type)
@@ -1160,7 +1248,7 @@ async function deleteSeason(season: SeasonRow) {
                                             </a>
                                             <a
                                                 href="#"
-                                                class="text-primary"
+                                                class="text-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
                                                 title="Editar tipo"
                                                 @click.prevent="openType(type)"
                                             >
@@ -1171,7 +1259,7 @@ async function deleteSeason(season: SeasonRow) {
                                             </a>
                                             <a
                                                 href="#"
-                                                class="text-danger"
+                                                class="text-danger flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
                                                 title="Eliminar tipo"
                                                 @click.prevent="
                                                     deleteType(type)
@@ -1182,6 +1270,7 @@ async function deleteSeason(season: SeasonRow) {
                                                     class="h-4 w-4"
                                                 />
                                             </a>
+                                        </div>
                                         </div>
                                     </div>
 
@@ -1232,11 +1321,154 @@ async function deleteSeason(season: SeasonRow) {
                                                 >Integración</Link
                                             >.
                                         </div>
+                                        <!-- Móvil: tarjetas apiladas (una
+                                             tabla con scroll lateral NO es
+                                             responsivo aquí). -->
                                         <div
                                             v-if="plansForType(type.id).length"
-                                            class="overflow-x-auto"
+                                            class="space-y-2.5 sm:hidden"
                                         >
-                                            <Table>
+                                            <div
+                                                v-for="plan in plansForType(
+                                                    type.id,
+                                                )"
+                                                :key="`plan-card-${plan.id}`"
+                                                class="rounded-lg border border-slate-200/70 bg-white p-3.5 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                            >
+                                                <div
+                                                    class="flex flex-wrap items-center justify-between gap-2"
+                                                >
+                                                    <span class="font-medium">{{
+                                                        plan.name
+                                                    }}</span>
+                                                    <span
+                                                        class="rounded-full px-2 py-0.5 text-xs"
+                                                        :class="
+                                                            plan.active
+                                                                ? 'bg-success/10 text-success'
+                                                                : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                                        "
+                                                    >
+                                                        {{
+                                                            plan.active
+                                                                ? 'Activa'
+                                                                : 'Inactiva'
+                                                        }}
+                                                    </span>
+                                                </div>
+                                                <div
+                                                    class="mt-2 flex flex-wrap items-center gap-2"
+                                                >
+                                                    <span
+                                                        class="rounded-full px-2 py-0.5 text-xs whitespace-nowrap"
+                                                        :class="
+                                                            plan.type ===
+                                                            'night'
+                                                                ? 'bg-primary/10 text-primary'
+                                                                : 'bg-pending/10 text-pending'
+                                                        "
+                                                    >
+                                                        {{
+                                                            plan.duration_label
+                                                        }}
+                                                    </span>
+                                                    <span
+                                                        class="text-sm font-medium"
+                                                        >{{
+                                                            money(plan.price)
+                                                        }}</span
+                                                    >
+                                                    <button
+                                                        type="button"
+                                                        class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 hover:bg-slate-200 dark:bg-darkmode-400 dark:hover:bg-darkmode-300"
+                                                        title="Temporadas y promos"
+                                                        @click="
+                                                            openSeasons(plan)
+                                                        "
+                                                    >
+                                                        <Lucide
+                                                            icon="CalendarRange"
+                                                            class="h-3 w-3"
+                                                        />
+                                                        {{
+                                                            plan.seasons_count ||
+                                                            'Temporadas'
+                                                        }}
+                                                    </button>
+                                                </div>
+                                                <div
+                                                    class="mt-2 text-xs text-slate-500"
+                                                >
+                                                    Anticipo:
+                                                    <template
+                                                        v-if="
+                                                            plan.deposit_percent
+                                                        "
+                                                        >{{
+                                                            Number(
+                                                                plan.deposit_percent,
+                                                            )
+                                                        }}%<template
+                                                            v-if="
+                                                                plan.payment_due_label
+                                                            "
+                                                        >
+                                                            (liquidar
+                                                            {{
+                                                                plan.payment_due_label
+                                                            }})</template
+                                                        ></template
+                                                    >
+                                                    <template v-else
+                                                        >no requiere</template
+                                                    >
+                                                    · Antelación:
+                                                    {{
+                                                        plan.min_advance_label ??
+                                                        'sin restricción'
+                                                    }}
+                                                </div>
+                                                <div
+                                                    v-if="canManage"
+                                                    class="mt-3 flex items-center gap-5 border-t border-dashed border-slate-200/70 pt-2.5 dark:border-darkmode-400"
+                                                >
+                                                    <a
+                                                        href="#"
+                                                        class="inline-flex items-center gap-1.5 text-sm text-primary"
+                                                        @click.prevent="
+                                                            openPlan(plan)
+                                                        "
+                                                    >
+                                                        <Lucide
+                                                            icon="Pencil"
+                                                            class="h-4 w-4"
+                                                        />
+                                                        Editar
+                                                    </a>
+                                                    <a
+                                                        href="#"
+                                                        class="inline-flex items-center gap-1.5 text-sm text-danger"
+                                                        @click.prevent="
+                                                            deletePlan(plan)
+                                                        "
+                                                    >
+                                                        <Lucide
+                                                            icon="Trash2"
+                                                            class="h-4 w-4"
+                                                        />
+                                                        Eliminar
+                                                    </a>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div
+                                            v-if="plansForType(type.id).length"
+                                            class="hidden overflow-x-auto sm:block"
+                                        >
+                                            <!-- min-w fuerza scroll interno en
+                                                 móvil; sin él las 7 columnas
+                                                 se aplastaban en tiritas. -->
+                                            <Table class="min-w-[640px]">
                                                 <Table.Thead>
                                                     <Table.Tr>
                                                         <Table.Th
@@ -1244,18 +1476,23 @@ async function deleteSeason(season: SeasonRow) {
                                                             >Tarifa</Table.Th
                                                         >
                                                         <Table.Th
+                                                            class="whitespace-nowrap"
                                                             >Duración</Table.Th
                                                         >
                                                         <Table.Th
+                                                            class="whitespace-nowrap"
                                                             >Precio</Table.Th
                                                         >
                                                         <Table.Th
+                                                            class="whitespace-nowrap"
                                                             >Anticipo</Table.Th
                                                         >
                                                         <Table.Th
+                                                            class="whitespace-nowrap"
                                                             >Antelación</Table.Th
                                                         >
                                                         <Table.Th
+                                                            class="whitespace-nowrap"
                                                             >Estado</Table.Th
                                                         >
                                                         <Table.Th
@@ -1960,9 +2197,25 @@ async function deleteSeason(season: SeasonRow) {
                                         </span>
                                     </div>
                                     <div class="mt-0.5 text-xs text-slate-500">
-                                        {{ season.starts_on }} →
-                                        {{ season.ends_on }} ·
-                                        {{ money(season.price) }} · prioridad
+                                        <template v-if="season.starts_on"
+                                            >{{ season.starts_on }} →
+                                            {{ season.ends_on }}</template
+                                        >
+                                        <template v-else
+                                            >Todo el año</template
+                                        >
+                                        <template
+                                            v-if="
+                                                weekdaysLabel(season.weekdays)
+                                            "
+                                        >
+                                            · solo
+                                            {{
+                                                weekdaysLabel(season.weekdays)
+                                            }}</template
+                                        >
+                                        · {{ money(season.price) }} ·
+                                        prioridad
                                         {{ season.priority }}
                                     </div>
                                 </div>
@@ -2007,7 +2260,7 @@ async function deleteSeason(season: SeasonRow) {
                                         : 'Agregar temporada o promo'
                                 }}
                             </h3>
-                            <div class="grid grid-cols-2 gap-3">
+                            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
                                     <FormLabel htmlFor="season-name"
                                         >Nombre</FormLabel
@@ -2039,7 +2292,7 @@ async function deleteSeason(season: SeasonRow) {
                                     </FormSelect>
                                 </div>
                             </div>
-                            <div class="grid grid-cols-2 gap-3">
+                            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
                                     <FormLabel htmlFor="season-starts"
                                         >Desde</FormLabel
@@ -2071,7 +2324,39 @@ async function deleteSeason(season: SeasonRow) {
                                     >
                                 </div>
                             </div>
-                            <div class="grid grid-cols-2 gap-3">
+                            <div>
+                                <FormLabel>Días de la semana</FormLabel>
+                                <div class="flex flex-wrap gap-1.5">
+                                    <button
+                                        v-for="chip in WEEKDAY_CHIPS"
+                                        :key="chip.value"
+                                        type="button"
+                                        :title="chip.title"
+                                        class="flex h-9 w-9 items-center justify-center rounded-full border text-sm font-medium transition"
+                                        :class="
+                                            seasonForm.weekdays.includes(
+                                                chip.value,
+                                            )
+                                                ? 'border-primary bg-primary text-white'
+                                                : 'border-slate-200/80 text-slate-500 hover:border-primary/40 hover:text-primary dark:border-darkmode-400'
+                                        "
+                                        @click="toggleWeekday(chip.value)"
+                                    >
+                                        {{ chip.label }}
+                                    </button>
+                                </div>
+                                <FormHelp
+                                    >Sin días marcados aplica toda la semana;
+                                    sin fechas, aplica todo el año esos
+                                    días.</FormHelp
+                                >
+                                <FormHelp
+                                    v-if="errors.weekdays"
+                                    class="text-danger"
+                                    >{{ errors.weekdays }}</FormHelp
+                                >
+                            </div>
+                            <div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
                                 <div>
                                     <FormLabel htmlFor="season-price"
                                         >Precio ($)</FormLabel
@@ -2257,7 +2542,7 @@ async function deleteSeason(season: SeasonRow) {
 
         <!-- Modal tipo -->
         <Dialog :open="showTypeForm" size="lg" @close="showTypeForm = false">
-            <Dialog.Panel>
+            <Dialog.Panel class="w-screen max-w-none rounded-none sm:w-[92vw] sm:max-w-[92vw] sm:rounded-lg lg:w-[920px]">
                 <form class="flex flex-col" @submit.prevent="submitType">
                     <div
                         class="flex items-center gap-3.5 border-b border-slate-200/70 px-7 py-5 dark:border-darkmode-400"
@@ -2278,7 +2563,9 @@ async function deleteSeason(season: SeasonRow) {
                                         : 'Nuevo tipo de habitación'
                                 }}
                             </h2>
-                            <p class="mt-0.5 text-xs text-slate-500">
+                            <p
+                                class="mt-0.5 hidden text-xs text-slate-500 sm:block"
+                            >
                                 Es la ficha que el widget web y los bots usan
                                 para vender.
                             </p>
@@ -2293,7 +2580,7 @@ async function deleteSeason(season: SeasonRow) {
                     </div>
 
                     <div
-                        class="max-h-[70vh] space-y-6 overflow-y-auto px-7 py-6"
+                        class="max-h-[calc(100dvh-12.5rem)] space-y-7 overflow-y-auto px-5 py-5 sm:max-h-[70vh] sm:px-7 sm:py-6"
                     >
                         <!-- Identidad -->
                         <section>
@@ -2435,7 +2722,7 @@ async function deleteSeason(season: SeasonRow) {
                                     <Button
                                         type="button"
                                         variant="outline-secondary"
-                                        class="rounded-[0.5rem] bg-white"
+                                        class="min-h-11 w-full justify-center rounded-[0.5rem] bg-white whitespace-nowrap sm:w-auto"
                                         :disabled="
                                             photoBusy || typePhotos.length >= 12
                                         "
@@ -2456,7 +2743,8 @@ async function deleteSeason(season: SeasonRow) {
                                                 : 'Agregar fotos'
                                         }}
                                     </Button>
-                                    <span class="text-xs text-slate-400"
+                                    <span
+                                        class="text-sm text-slate-500 sm:text-xs sm:text-slate-400"
                                         >{{ typePhotos.length }} de 12 · JPG,
                                         PNG o WebP, máx. 6 MB</span
                                     >
@@ -2726,14 +3014,14 @@ async function deleteSeason(season: SeasonRow) {
                                 </span>
                             </div>
                             <!-- Sugerencias comunes (spec-integracion-sitios §5): un clic agrega -->
-                            <div class="mt-2.5 flex flex-wrap gap-1.5">
+                            <div class="mt-3 flex flex-wrap gap-2 sm:gap-1.5">
                                 <button
                                     v-for="suggestion in AMENITY_SUGGESTIONS.filter(
                                         (a) => !typeForm.amenities.includes(a),
                                     )"
                                     :key="suggestion"
                                     type="button"
-                                    class="rounded-full border border-dashed border-slate-300 px-2 py-0.5 text-xs text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
+                                    class="rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:border-primary hover:text-primary sm:px-2 sm:py-0.5 sm:text-xs sm:text-slate-500 dark:border-darkmode-400 dark:text-slate-300"
                                     @click="typeForm.amenities.push(suggestion)"
                                 >
                                     + {{ suggestion }}
@@ -2823,6 +3111,44 @@ async function deleteSeason(season: SeasonRow) {
                         </Button>
                     </div>
                 </form>
+            </Dialog.Panel>
+        </Dialog>
+        <!-- Confirmación de borrado: zona, tipo o tarifa -->
+        <Dialog
+            :open="confirmDelete !== null"
+            @close="confirmDelete = null"
+        >
+            <Dialog.Panel>
+                <div class="p-6 text-center sm:p-7">
+                    <div
+                        class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
+                    >
+                        <Lucide icon="Trash2" class="h-6 w-6" />
+                    </div>
+                    <div class="mt-4 text-base font-medium">
+                        {{ confirmDelete?.title }}
+                    </div>
+                    <p class="mt-1.5 text-sm text-slate-500">
+                        {{ confirmDelete?.detail }}
+                    </p>
+                    <div class="mt-6 grid grid-cols-2 gap-2.5">
+                        <Button
+                            variant="outline-secondary"
+                            class="min-h-11 justify-center rounded-[0.5rem] bg-white"
+                            @click="confirmDelete = null"
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            variant="danger"
+                            class="min-h-11 justify-center rounded-[0.5rem]"
+                            @click="runConfirmedDelete"
+                        >
+                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            Eliminar
+                        </Button>
+                    </div>
+                </div>
             </Dialog.Panel>
         </Dialog>
     </RazeLayout>

@@ -21,7 +21,7 @@ class MercadoPagoGateway implements PaymentGateway
 
     public function createCheckout(PaymentRequest $request, PaymentGatewayLink $link): array
     {
-        $returnUrl = route('tenant.payment.return', $request->uuid);
+        $returnUrl = $request->publicReturnUrl();
 
         $response = Http::withToken($link->secret_key)
             ->post(self::BASE.'/checkout/preferences', [

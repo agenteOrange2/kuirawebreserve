@@ -60,4 +60,16 @@ return [
         'description' => 'Varias habitaciones en una sola reserva: un folio de grupo, todo-o-nada.',
         'available' => true,
     ],
+
+    'lista-espera' => [
+        'label' => 'Lista de espera',
+        'description' => 'Sin disponibilidad, el wizard captura al interesado y se le avisa solo cuando una cancelación libera sus fechas.',
+        'available' => true,
+    ],
+
+    'cupones' => [
+        'label' => 'Cupones',
+        'description' => 'Códigos de descuento (porcentaje o monto) que el huésped aplica al reservar en línea.',
+        'available' => true,
+    ],
 ];

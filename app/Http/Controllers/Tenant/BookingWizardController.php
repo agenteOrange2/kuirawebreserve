@@ -61,6 +61,13 @@ class BookingWizardController extends Controller
             // Cuánto dura el apartado (para el aviso previo a crear el hold —
             // antes se mostraba por error la duración de la ESTANCIA).
             'holdMinutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
+            // Política de cancelación default del hotel: el huésped la ve
+            // ANTES de reservar (una tarifa con política propia manda, pero
+            // la general es la que aplica al resto).
+            'cancellationPolicy' => [
+                'label' => app(\App\Services\ReservationPolicy::class)->cancellationPolicyLabel(),
+                'text' => app(\App\Services\ReservationPolicy::class)->cancellationPolicyText(),
+            ],
             // Enlace cruzado al wizard de experiencias, solo si el módulo
             // está activo Y hay algo reservable.
             'hasExperiences' => (bool) tenant()?->hasModule('experiencias')
@@ -68,6 +75,11 @@ class BookingWizardController extends Controller
             // Aviso "¿vienen en grupo?": el alta grupal vive en el panel
             // (recepción/teléfono); el wizard invita a llamar.
             'hasGroups' => (bool) tenant()?->hasModule('grupos'),
+            // Lista de espera: sin disponibilidad, el wizard ofrece dejar
+            // contacto para avisar cuando se libere espacio.
+            'hasWaitlist' => (bool) tenant()?->hasModule('lista-espera'),
+            // Cupones: input "¿Tienes un código?" antes de apartar.
+            'hasCoupons' => (bool) tenant()?->hasModule('cupones'),
         ]);
     }
 }

@@ -107,6 +107,33 @@ it('el historial completo pagina, filtra por estado y busca por huésped y códi
         ->and($porCodigo['reservations']['data'][0]['id'])->toBe($cancelada->id);
 });
 
+it('marca la reserva con transferencia esperando verificación (aviso del modal Confirmar)', function () {
+    $conTransfer = makeHistoryReservation([
+        'guest_name' => 'Espera Verificación',
+        'status' => ReservationStatus::Pending,
+        'starts_at' => now()->addDay(),
+        'ends_at' => now()->addDays(2),
+    ]);
+    \App\Models\PaymentRequest::create([
+        'reservation_id' => $conTransfer->id,
+        'concept' => 'deposit',
+        'amount' => 300,
+        'method' => \App\Models\PaymentRequest::METHOD_TRANSFER,
+        'status' => \App\Models\PaymentRequest::STATUS_PENDING,
+    ]);
+    makeHistoryReservation([
+        'guest_name' => 'Sin Cobro',
+        'status' => ReservationStatus::Pending,
+        'starts_at' => now()->addDay(),
+        'ends_at' => now()->addDays(2),
+    ]);
+
+    $rows = collect(inertiaProps(ReservationsPageController::class)['reservations']);
+
+    expect($rows->firstWhere('guest_name', 'Espera Verificación')['pending_transfer_request'])->toBeTrue()
+        ->and($rows->firstWhere('guest_name', 'Sin Cobro')['pending_transfer_request'])->toBeFalse();
+});
+
 it('la apariencia del wizard resuelve defaults y respeta la personalización', function () {
     expect($this->property->wizardAppearance())->toBe([
         'bg_from' => '#03045e',

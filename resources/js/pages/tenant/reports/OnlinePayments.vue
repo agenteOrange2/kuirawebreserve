@@ -119,15 +119,29 @@ const funnelTiles: {
     <RazeLayout title="Cobros en línea">
         <div class="mt-2">
             <!-- Encabezado -->
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Cobros en línea</h1>
-                    <p class="text-sm text-slate-500">
-                        {{ property.name }} · pasarelas y transferencias
-                        verificadas, para conciliar (no entran a cortes de caja)
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                    >
+                        <Lucide icon="Landmark" class="h-5 w-5 sm:h-7 sm:w-7" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-lg font-medium sm:text-xl">
+                            Cobros en línea
+                        </h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            {{ property.name }} · pasarelas y transferencias
+                            verificadas, para conciliar (no entran a cortes de
+                            caja)
+                        </p>
+                    </div>
                 </div>
-                <div class="flex flex-wrap items-end gap-2">
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-end md:gap-2.5"
+                >
                     <div>
                         <label class="mb-1 block text-xs text-slate-500"
                             >Desde</label

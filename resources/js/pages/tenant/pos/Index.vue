@@ -127,16 +127,32 @@ async function submit() {
 <template>
     <RazeLayout title="POS">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Punto de venta</h1>
-                    <p class="text-sm text-slate-500">{{ property.name }}</p>
+            <div
+                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                    >
+                        <Lucide
+                            icon="ShoppingCart"
+                            class="h-5 w-5 sm:h-7 sm:w-7"
+                        />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-lg font-medium sm:text-xl">
+                            Punto de venta
+                        </h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            {{ property.name }}
+                        </p>
+                    </div>
                 </div>
                 <Button
                     as="a"
                     :href="route('tenant.inventory')"
                     variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white"
+                    class="w-full rounded-[0.5rem] bg-white md:w-auto"
                 >
                     <Lucide icon="Package" class="mr-2 h-4 w-4 stroke-[1.3]" />
                     Inventario

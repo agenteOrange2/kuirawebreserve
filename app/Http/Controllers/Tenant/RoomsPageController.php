@@ -79,6 +79,9 @@ class RoomsPageController extends Controller
             'bedTypes' => Room::BED_TYPES,
             'maxRooms' => tenant()->planLimit('max_rooms'),
             'canManage' => $request->user()->can('rooms.manage'),
+            // Bloqueos por fechas: mismo permiso que mover el semáforo, así
+            // front-desk y housekeeping también pueden programarlos.
+            'canBlock' => $request->user()->can('rooms.update-status'),
         ]);
     }
 }

@@ -22,7 +22,7 @@ interface PlanModuleRow {
     requested: boolean;
 }
 
-const props = defineProps<{
+defineProps<{
     plan: string;
     planCard: {
         label: string;
@@ -116,7 +116,9 @@ async function requestModule(mod: PlanModuleRow) {
                         >
                             <Lucide icon="Gauge" class="h-3.5 w-3.5" /> Límites
                         </div>
-                        <div class="flex flex-1 flex-col justify-between gap-3.5">
+                        <div
+                            class="flex flex-1 flex-col justify-between gap-3.5"
+                        >
                             <div v-for="l in planCard.limits" :key="l.label">
                                 <div
                                     class="mb-1 flex items-center justify-between text-sm"
@@ -154,7 +156,9 @@ async function requestModule(mod: PlanModuleRow) {
                                                   ? 'bg-warning'
                                                   : 'bg-primary'
                                         "
-                                        :style="{ width: `${limitPercent(l)}%` }"
+                                        :style="{
+                                            width: `${limitPercent(l)}%`,
+                                        }"
                                     />
                                 </div>
                             </div>
@@ -191,7 +195,9 @@ async function requestModule(mod: PlanModuleRow) {
                                     />
                                 </div>
                                 <div class="min-w-0 flex-1">
-                                    <div class="flex flex-wrap items-center gap-2">
+                                    <div
+                                        class="flex flex-wrap items-center gap-2"
+                                    >
                                         <span
                                             class="text-sm font-medium"
                                             :class="
@@ -251,7 +257,8 @@ async function requestModule(mod: PlanModuleRow) {
                         <div class="font-medium">Wizard de reservas</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: modalidad y huéspedes, extras del punto
-                            de venta, resumen de métodos de pago.
+                            de venta, apariencia (logo y colores) y resumen de
+                            métodos de pago.
                         </p>
                     </div>
                     <Lucide
@@ -287,8 +294,8 @@ async function requestModule(mod: PlanModuleRow) {
                         >
                             {{ paymentSummary.active_gateways }} pasarela(s)
                             activa(s) ·
-                            {{ paymentSummary.transfer_accounts }} cuenta(s) para
-                            transferencia
+                            {{ paymentSummary.transfer_accounts }} cuenta(s)
+                            para transferencia
                         </p>
                     </div>
                     <Lucide
@@ -310,7 +317,8 @@ async function requestModule(mod: PlanModuleRow) {
                         <div class="font-medium">Correo saliente</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: SMTP propio del hotel para que
-                            confirmaciones y avisos al huésped salgan por correo.
+                            confirmaciones y avisos al huésped salgan por
+                            correo.
                         </p>
                         <p
                             class="mt-1 text-xs"
@@ -325,6 +333,30 @@ async function requestModule(mod: PlanModuleRow) {
                                     ? `SMTP configurado · remitente ${mailSummary.from_address || 'sin definir'}`
                                     : 'Sin configurar — los avisos solo salen por WhatsApp'
                             }}
+                        </p>
+                    </div>
+                    <Lucide
+                        icon="ArrowRight"
+                        class="h-4 w-4 shrink-0 text-slate-400"
+                    />
+                </Link>
+
+                <!-- Operación del día: check-in automático, limpieza y cierre -->
+                <Link
+                    :href="route('tenant.housekeeping-settings')"
+                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                >
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Brush" class="h-5 w-5" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="font-medium">Operación del día</div>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Área aparte: check-in automático a la hora de
+                            llegada, flujo de limpieza (manual, automático o
+                            ambos) y cierre de día para reservadas vencidas.
                         </p>
                     </div>
                     <Lucide

@@ -151,20 +151,31 @@ const previewDark = computed(() => form.theme === 'dark');
     <RazeLayout title="Apariencia del wizard">
         <div class="mt-2">
             <!-- Encabezado -->
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">
-                        Apariencia del wizard de reservas
-                    </h1>
-                    <p class="text-sm text-slate-500">
-                        {{ property.name }} · aplica a todas las páginas
-                        públicas: reservas, experiencias, grupos y consulta
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                    >
+                        <Lucide icon="Palette" class="h-5 w-5 sm:h-7 sm:w-7" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-lg font-medium sm:text-xl">
+                            Apariencia del wizard de reservas
+                        </h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            {{ property.name }} · aplica a todas las páginas
+                            públicas: reservas, experiencias, grupos y consulta
+                        </p>
+                    </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
+                >
                     <Button
-                        :as="Link"
-                        :href="route('tenant.reservations')"
+                        as="a"
+                        :href="route('tenant.wizard-settings')"
                         variant="outline-secondary"
                         class="rounded-[0.5rem] bg-white"
                     >
@@ -172,7 +183,7 @@ const previewDark = computed(() => form.theme === 'dark');
                             icon="ArrowLeft"
                             class="mr-2 h-4 w-4 stroke-[1.3]"
                         />
-                        Volver a reservas
+                        Ajustes del wizard
                     </Button>
                     <Button
                         as="a"
@@ -189,6 +200,7 @@ const previewDark = computed(() => form.theme === 'dark');
                     </Button>
                     <Button
                         variant="primary"
+                        class="col-span-2 md:col-auto"
                         :disabled="!dirty || busy || !canManage"
                         @click="save"
                     >
@@ -213,11 +225,7 @@ const previewDark = computed(() => form.theme === 'dark');
                                     alt="Logo del hotel"
                                     class="h-full w-full object-contain p-1"
                                 />
-                                <Lucide
-                                    v-else
-                                    icon="ImageUp"
-                                    class="h-5 w-5"
-                                />
+                                <Lucide v-else icon="ImageUp" class="h-5 w-5" />
                             </div>
                             <div class="min-w-0 flex-1">
                                 <div class="font-medium">Logo del hotel</div>
@@ -319,7 +327,9 @@ const previewDark = computed(() => form.theme === 'dark');
                                 <Lucide icon="Moon" class="h-5 w-5" />
                             </div>
                             <div>
-                                <div class="font-medium">Modo de la tarjeta</div>
+                                <div class="font-medium">
+                                    Modo de la tarjeta
+                                </div>
                                 <div class="text-xs text-slate-500">
                                     Cómo se ve el interior de las páginas
                                     públicas (fechas, habitaciones, datos).
@@ -479,7 +489,10 @@ const previewDark = computed(() => form.theme === 'dark');
                                     </div>
                                     <div class="mt-3 grid grid-cols-2 gap-2">
                                         <div
-                                            v-for="fake in ['Llegada', 'Salida']"
+                                            v-for="fake in [
+                                                'Llegada',
+                                                'Salida',
+                                            ]"
                                             :key="fake"
                                             class="rounded-md border px-2.5 py-2 text-xs"
                                             :class="

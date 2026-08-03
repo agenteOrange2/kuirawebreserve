@@ -67,8 +67,31 @@ class PaymentMethodsPageController extends Controller
                 'balance_due_enabled' => (bool) ($settings['balance_due_enabled'] ?? true),
                 'balance_due_value' => (int) ($settings['balance_due_value'] ?? 5),
                 'balance_due_unit' => $settings['balance_due_unit'] ?? 'day',
+                // Política de cancelación default del hotel: apagada, todo
+                // sigue como siempre (sin política = decisión humana).
+                'cancel_policy_enabled' => (bool) ($settings['cancel_policy_enabled'] ?? false),
+                'cancel_free_value' => (int) ($settings['cancel_free_value'] ?? 2),
+                'cancel_free_unit' => $settings['cancel_free_unit'] ?? 'day',
+                'cancel_penalty_percent' => is_numeric($settings['cancel_penalty_percent'] ?? null)
+                    ? (float) $settings['cancel_penalty_percent']
+                    : 100.0,
+                'cancel_policy_text' => $settings['cancel_policy_text'] ?? '',
+                // Walk-ins: cuenta final al salir (default) o cobro al llegar.
+                'walkin_charge' => $settings['walkin_charge'] ?? 'checkout',
+                // Fianza (depósito en garantía): se cobra al registrar la
+                // llegada y se devuelve al registrar la salida.
+                'guarantee_enabled' => (bool) ($settings['guarantee_enabled'] ?? false),
+                'guarantee_amount' => round((float) ($settings['guarantee_amount'] ?? 0), 2),
                 'direct_notify_channel' => $settings['direct_notify_channel'] ?? 'auto',
                 'arrival_reminder_enabled' => (bool) ($settings['arrival_reminder_enabled'] ?? true),
+                // Aviso el día de la llegada (segundo recordatorio, N horas
+                // antes de la entrada) — ver ReservationPolicy::arrivalSoon*.
+                'arrival_soon_enabled' => (bool) ($settings['arrival_soon_enabled'] ?? true),
+                'arrival_soon_hours' => (int) ($settings['arrival_soon_hours'] ?? 2),
+                // Agradecimiento al salir (post-estancia), con el link de
+                // reseñas del hotel si lo capturó.
+                'post_stay_thanks_enabled' => (bool) ($settings['post_stay_thanks_enabled'] ?? true),
+                'review_url' => $settings['review_url'] ?? '',
             ],
             // Qué canales de WhatsApp existen de verdad, para que el selector
             // de avisos directos avise si eliges uno que no está conectado.
@@ -95,6 +118,13 @@ class PaymentMethodsPageController extends Controller
                 ->where('deposit_percent', '>', 0)
                 ->count(),
             'activeRatePlans' => RatePlan::query()->where('active', true)->count(),
+            // Tarifas con política de cancelación propia: mandan sobre la
+            // default del hotel — la UI lo avisa para evitar sorpresas.
+            'ratePlansWithCancelPolicy' => RatePlan::query()
+                ->where('active', true)
+                ->whereNotNull('cancel_free_unit')
+                ->whereNotNull('cancel_free_value')
+                ->count(),
         ]);
     }
 }

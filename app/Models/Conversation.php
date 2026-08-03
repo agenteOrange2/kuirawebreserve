@@ -41,6 +41,7 @@ class Conversation extends Model
         'bot_enabled',
         'assigned_to',
         'last_message_at',
+        'archived_at',
     ];
 
     protected function casts(): array
@@ -49,6 +50,7 @@ class Conversation extends Model
             'bot_enabled' => 'boolean',
             'followups' => 'array',
             'last_message_at' => 'datetime',
+            'archived_at' => 'datetime',
         ];
     }
 
@@ -82,6 +84,55 @@ class Conversation extends Model
         $this->update(['followups' => ($this->followups ?? []) + [$key => now()->toDateTimeString()]]);
     }
 
+    /**
+     * spec-reservas-avanzado §1.3: el huésped que reservó por el wizard
+     * público no tiene conversación previa; cuando escribe por WhatsApp
+     * (p. ej. con el botón "Enviar comprobante") se liga aquí su reserva
+     * pendiente más reciente comparando los últimos 10 dígitos del
+     * teléfono — el huésped teclea "614 123 4567" en el wizard pero llega
+     * como 5216141234567 desde el webhook. Así el staff ve el código y el
+     * estado de pago directo en la bandeja sin preguntar.
+     */
+    public function linkReservationByPhone(): void
+    {
+        if ($this->reservation_id !== null) {
+            return;
+        }
+
+        $digits = preg_replace('/\D+/', '', (string) $this->contact_phone);
+
+        if (strlen($digits) < 10) {
+            return;
+        }
+
+        $tail = substr($digits, -10);
+
+        // Solo pendientes recientes (la ventana en la que se espera un
+        // comprobante); acotado para no barrer la tabla completa.
+        $reservation = Reservation::query()
+            ->where('status', \App\Enums\ReservationStatus::Pending)
+            ->where('created_at', '>=', now()->subDays(7))
+            ->with('guest:id,phone')
+            ->latest('id')
+            ->limit(50)
+            ->get()
+            ->first(function (Reservation $candidate) use ($tail): bool {
+                $phone = preg_replace('/\D+/', '', (string) $candidate->guest?->phone);
+
+                return strlen($phone) >= 10 && substr($phone, -10) === $tail;
+            });
+
+        if (! $reservation) {
+            return;
+        }
+
+        $this->update(array_filter([
+            'reservation_id' => $reservation->id,
+            'guest_id' => $reservation->guest_id,
+        ]));
+        $this->markLead(self::LEAD_HOLD);
+    }
+
     protected static function booted(): void
     {
         static::creating(function (self $conversation) {
@@ -96,7 +147,8 @@ class Conversation extends Model
 
     public function guest(): BelongsTo
     {
-        return $this->belongsTo(Guest::class);
+        // withTrashed: un huésped archivado sigue visible en su historial.
+        return $this->belongsTo(Guest::class)->withTrashed();
     }
 
     public function reservation(): BelongsTo

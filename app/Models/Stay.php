@@ -33,6 +33,7 @@ class Stay extends Model
         'check_in_at',
         'planned_end_at',
         'check_out_at',
+        'thanks_sent_at',
         'status',
         'amount',
         'extra_charges',
@@ -47,6 +48,7 @@ class Stay extends Model
             'check_in_at' => 'datetime',
             'planned_end_at' => 'datetime',
             'check_out_at' => 'datetime',
+            'thanks_sent_at' => 'datetime',
             'amount' => 'decimal:2',
             'extra_charges' => 'array',
         ];
@@ -78,7 +80,8 @@ class Stay extends Model
 
     public function guest(): BelongsTo
     {
-        return $this->belongsTo(Guest::class);
+        // withTrashed: un huésped archivado sigue visible en su historial.
+        return $this->belongsTo(Guest::class)->withTrashed();
     }
 
     public function orders(): HasMany

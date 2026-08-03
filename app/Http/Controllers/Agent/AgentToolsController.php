@@ -15,6 +15,7 @@ use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 /**
  * Herramientas (tools) que consumen los agentes IA vía tool-calling
@@ -45,6 +46,10 @@ class AgentToolsController extends Controller
             'currency' => $settings['currency'] ?? 'MXN',
             // Fuente única de verdad: si no está aquí, el agente no lo sabe.
             'policies' => $settings['policies'] ?? null,
+            // Política de cancelación default del hotel (una tarifa puede
+            // definir la suya; el bot responde con la general).
+            'cancellation_policy' => app(\App\Services\ReservationPolicy::class)->cancellationPolicyLabel(),
+            'cancellation_policy_notes' => app(\App\Services\ReservationPolicy::class)->cancellationPolicyText(),
             'faqs' => \App\Models\Faq::query()->active()->ordered()
                 ->get()
                 ->map(fn (\App\Models\Faq $faq) => [
@@ -178,11 +183,60 @@ class AgentToolsController extends Controller
      * calcula el servidor; el bot solo pasa el código. Marcarla pagada es
      * asunto del staff (verificación) o del webhook (F1) — nunca del bot.
      */
+    /**
+     * Métodos de cobro que este hotel puede ofrecer DE VERDAD, para que el
+     * bot pregunte "¿cómo prefieres pagar?" solo con opciones reales:
+     * pasarelas conectadas y activas, transferencia (cuentas activas) y
+     * efectivo al llegar (doble llave de ReservationPolicy).
+     *
+     * @return array{pasarelas: array<int, array{provider: string, label: string}>, transferencia: bool, efectivo: bool}
+     */
+    protected function paymentOptionsSummary(): array
+    {
+        $enabled = app(\App\Services\Payments\PaymentMethodGate::class)->methodsFor((string) tenant('id'));
+
+        $settings = Property::firstOrFail()->settings ?? [];
+        $hasAccounts = $enabled['transfer'] && collect($settings['bank_accounts'] ?? [])
+            ->filter(fn (array $account) => ! empty($account['active']))
+            ->isNotEmpty();
+
+        $enabledProviders = array_keys(array_filter([
+            'stripe' => $enabled['stripe'],
+            'mercadopago' => $enabled['mercadopago'],
+            'paypal' => $enabled['paypal'],
+        ]));
+        $gateways = \App\Models\Central\PaymentGatewayLink::query()
+            ->where('tenant_id', (string) tenant('id'))
+            ->where('active', true)
+            ->whereIn('provider', $enabledProviders)
+            ->orderBy('id')
+            ->get()
+            ->map(fn (\App\Models\Central\PaymentGatewayLink $link) => [
+                'provider' => $link->provider,
+                'label' => $link->providerLabel(),
+            ])
+            ->values()
+            ->all();
+
+        return [
+            'pasarelas' => $gateways,
+            'transferencia' => $hasAccounts,
+            'efectivo' => app(\App\Services\ReservationPolicy::class)->cashPaymentEnabled(),
+        ];
+    }
+
     public function requestPayment(Request $request, \App\Actions\Payments\IssuePaymentRequest $action): JsonResponse
     {
         $data = $request->validate([
             'code' => ['required', 'string', 'max:30'],
+            // Elección del huésped (spec-reservas-avanzado §1.4 aplicado al
+            // bot): sin metodo, el sistema decide como siempre (pasarela
+            // primero, transferencia de respaldo).
+            'metodo' => ['nullable', 'string', Rule::in(['pasarela', 'transferencia', 'efectivo'])],
+            'proveedor' => ['nullable', 'string', Rule::in(['stripe', 'mercadopago', 'paypal'])],
         ]);
+
+        $metodo = $data['metodo'] ?? null;
 
         $reservation = Reservation::query()
             ->where('code', strtoupper(trim($data['code'])))
@@ -190,6 +244,23 @@ class AgentToolsController extends Controller
 
         if (! $reservation) {
             return response()->json(['message' => 'No encontramos una reserva con ese código.'], 404);
+        }
+
+        // Efectivo: no se emite ningún cobro — el apartado se extiende al
+        // plazo de efectivo del hotel y recepción cobra en el check-in.
+        if ($metodo === 'efectivo') {
+            if (! app(\App\Services\ReservationPolicy::class)->cashPaymentEnabled()) {
+                return response()->json(['message' => 'El hotel no ofrece pagar en efectivo al llegar; ofrece las otras opciones de pago.'], 422);
+            }
+
+            $deadline = app(\App\Actions\Payments\ChooseCashPayment::class)->handle($reservation);
+
+            return response()->json([
+                'code' => $reservation->displayCode(),
+                'method' => 'efectivo',
+                'hold_expires_at' => $deadline?->toIso8601String(),
+                'instructions' => 'El huésped pagará al llegar al hotel. Dile hasta cuándo queda apartada su habitación (hold_expires_at) y que recepción cobra en el check-in. NUNCA lo des por pagado ni por confirmado.',
+            ], 201);
         }
 
         // Métodos habilitados por plataforma/hotel (admin manda): un método
@@ -209,17 +280,32 @@ class AgentToolsController extends Controller
 
         // Con pasarela activa el cobro sale como LINK (se confirma solo por
         // webhook); la transferencia queda de respaldo (spec-pagos §7.1/7.4).
+        // Si el huésped eligió transferencia, se respeta: nunca se le impone
+        // la pasarela (mismo principio que el wizard, §1.4).
         $enabledProviders = array_keys(array_filter([
             'stripe' => $enabled['stripe'],
             'mercadopago' => $enabled['mercadopago'],
             'paypal' => $enabled['paypal'],
         ]));
-        $link = \App\Models\Central\PaymentGatewayLink::query()
+        $link = $metodo === 'transferencia' ? null : \App\Models\Central\PaymentGatewayLink::query()
             ->where('tenant_id', (string) tenant('id'))
             ->where('active', true)
             ->whereIn('provider', $enabledProviders)
+            ->when(! empty($data['proveedor']), fn ($q) => $q->where('provider', $data['proveedor']))
             ->orderBy('id')
             ->first();
+
+        if ($metodo === 'pasarela' && ! $link) {
+            return response()->json([
+                'message' => ! empty($data['proveedor'])
+                    ? 'Esa pasarela no está disponible en este hotel; ofrece las opciones que sí existen.'
+                    : 'El hotel no tiene pasarela de pago conectada; ofrece transferencia o efectivo si están disponibles.',
+            ], 422);
+        }
+
+        if ($metodo === 'transferencia' && $accounts->isEmpty()) {
+            return response()->json(['message' => 'El hotel no tiene cuentas bancarias activas para transferencia; ofrece las otras opciones de pago.'], 422);
+        }
 
         if (! $link && $accounts->isEmpty()) {
             return response()->json([
@@ -245,7 +331,9 @@ class AgentToolsController extends Controller
             } catch (\InvalidArgumentException $e) {
                 return response()->json(['message' => $e->getMessage()], 422);
             } catch (\RuntimeException $e) {
-                if ($accounts->isEmpty()) {
+                // Con elección explícita de pasarela no se sustituye en
+                // silencio por transferencia: se informa y el huésped decide.
+                if ($accounts->isEmpty() || $metodo === 'pasarela') {
                     return response()->json(['message' => $e->getMessage()], 422);
                 }
                 // La pasarela falló pero hay cuentas: cae a transferencia.
@@ -354,8 +442,12 @@ class AgentToolsController extends Controller
             'requires_prepayment' => $requiresPrepayment,
             'hold_expires_at' => $reservation->hold_expires_at?->toIso8601String(),
             'hold_minutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
+            // Los métodos REALES del hotel: el bot pregunta "¿cómo prefieres
+            // pagar?" solo con opciones que existen, y llama solicitar_pago
+            // con la elección (metodo/proveedor).
+            'payment_options' => $this->paymentOptionsSummary(),
             'message' => $requiresPrepayment
-                ? 'Apartado creado; se confirma al recibir el pago. Usa solicitar_pago para dar las instrucciones de pago al huésped.'
+                ? 'Apartado creado; se confirma al recibir el pago. Ofrece al huésped elegir entre las opciones de payment_options y llama solicitar_pago con el metodo que elija.'
                 : 'Apartado creado; el hotel lo confirmará. Si no se confirma, expira solo.',
         ];
 

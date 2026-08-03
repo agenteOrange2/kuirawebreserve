@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Support\Str;
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\InteractsWithMedia;
 
 /**
  * Solicitud de cobro (spec-pagos §4.1): el puente entre "apartado creado" y
@@ -13,8 +15,10 @@ use Illuminate\Support\Str;
  * verifica la transferencia (F0) o el webhook firmado de la pasarela (F1).
  * El LLM nunca la marca pagada.
  */
-class PaymentRequest extends Model
+class PaymentRequest extends Model implements HasMedia
 {
+    use InteractsWithMedia;
+
     public const CONCEPT_DEPOSIT = 'deposit';
 
     public const CONCEPT_BALANCE = 'balance';
@@ -71,6 +75,49 @@ class PaymentRequest extends Model
         static::creating(function (self $request) {
             $request->uuid ??= (string) Str::uuid();
         });
+    }
+
+    /**
+     * URL pública de aterrizaje del pago (/pago/{uuid}), SIEMPRE en el
+     * dominio del hotel. route() a secas hereda el host del request en
+     * curso — y los checkouts también se emiten desde el webhook de
+     * WhatsApp (dominio central) o el scheduler (APP_URL): ahí generaba
+     * kuirawebreserve.com/pago/... que es 404 (bug real 2026-07-24, pago
+     * Stripe desde el bot).
+     */
+    public function publicReturnUrl(): string
+    {
+        $relative = route('tenant.payment.return', $this->uuid, false);
+        $domain = tenant()?->domains()->value('domain');
+
+        if (! $domain) {
+            return url($relative);
+        }
+
+        $scheme = parse_url((string) config('app.url'), PHP_URL_SCHEME) ?: 'https';
+
+        return "{$scheme}://{$domain}{$relative}";
+    }
+
+    /**
+     * Comprobante de la transferencia que el staff sube al aprobar
+     * (privado, como los documentos de huéspedes): uno por solicitud.
+     */
+    public function registerMediaCollections(): void
+    {
+        $this->addMediaCollection('receipt')->useDisk('local')->singleFile();
+    }
+
+    /** @return array{url: string, name: string, is_image: bool}|null */
+    public function receiptPayload(): ?array
+    {
+        $media = $this->getFirstMedia('receipt');
+
+        return $media ? [
+            'url' => route('tenant.payment-requests.receipt', $this),
+            'name' => $media->file_name,
+            'is_image' => str_starts_with((string) $media->mime_type, 'image/'),
+        ] : null;
     }
 
     public function reservation(): BelongsTo

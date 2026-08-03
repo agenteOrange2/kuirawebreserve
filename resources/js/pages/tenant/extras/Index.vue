@@ -143,19 +143,30 @@ async function destroy() {
 <template>
     <RazeLayout title="Extras de reserva">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Extras de reserva</h1>
-                    <p class="mt-0.5 text-sm text-slate-500">
-                        Add-ons que el huésped agrega a su reserva y suman al
-                        total: decoración, desayuno, late checkout. El anticipo
-                        y el saldo los incluyen solos.
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                    >
+                        <Lucide icon="Gift" class="h-5 w-5 sm:h-7 sm:w-7" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-lg font-medium sm:text-xl">
+                            Extras de reserva
+                        </h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            Add-ons que el huésped agrega a su reserva y suman
+                            al total: decoración, desayuno, late checkout. El
+                            anticipo y el saldo los incluyen solos.
+                        </p>
+                    </div>
                 </div>
                 <Button
                     v-if="canManage"
                     variant="primary"
-                    class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                    class="min-h-11 w-full rounded-[0.5rem] shadow-md shadow-primary/20 md:w-auto"
                     @click="openForm()"
                 >
                     <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Nuevo extra

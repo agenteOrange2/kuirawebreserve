@@ -15,6 +15,54 @@ use Throwable;
  */
 class MetaApi
 {
+    /**
+     * Descarga un medio entrante de WhatsApp Cloud API en dos pasos:
+     * GET /{media_id} da la URL firmada (vive ~5 min) y esa URL se baja
+     * con el mismo token en el header — sin token, el CDN regresa 404.
+     *
+     * @return array{contents: string, mime: string}|null
+     */
+    public function downloadMedia(MetaChannelLink $link, string $mediaId): ?array
+    {
+        $graph = rtrim(config('meta.graph_url'), '/');
+
+        try {
+            $meta = Http::withToken($link->access_token)->get("{$graph}/{$mediaId}");
+
+            if ($meta->failed() || ! $meta->json('url')) {
+                Log::warning('Meta: descarga de media fallida (lookup)', [
+                    'tenant' => $link->tenant_id,
+                    'media_id' => $mediaId,
+                    'status' => $meta->status(),
+                    'body' => $meta->json(),
+                ]);
+
+                return null;
+            }
+
+            $binary = Http::withToken($link->access_token)->get((string) $meta->json('url'));
+
+            if ($binary->failed() || $binary->body() === '') {
+                Log::warning('Meta: descarga de media fallida (binario)', [
+                    'tenant' => $link->tenant_id,
+                    'media_id' => $mediaId,
+                    'status' => $binary->status(),
+                ]);
+
+                return null;
+            }
+
+            return [
+                'contents' => $binary->body(),
+                'mime' => (string) ($meta->json('mime_type') ?? $binary->header('Content-Type') ?? 'application/octet-stream'),
+            ];
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
     public function sendText(MetaChannelLink $link, string $to, string $text): bool
     {
         $graph = rtrim(config('meta.graph_url'), '/');

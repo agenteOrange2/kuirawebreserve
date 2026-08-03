@@ -60,7 +60,8 @@ class ExperienceBooking extends Model
 
     public function guest(): BelongsTo
     {
-        return $this->belongsTo(Guest::class);
+        // withTrashed: un huésped archivado sigue visible en su historial.
+        return $this->belongsTo(Guest::class)->withTrashed();
     }
 
     public function reservation(): BelongsTo

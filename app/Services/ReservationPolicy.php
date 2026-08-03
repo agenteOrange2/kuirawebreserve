@@ -147,6 +147,145 @@ class ReservationPolicy
             && app(\App\Services\Payments\PaymentMethodGate::class)->enabledFor((string) tenant('id'), 'cash');
     }
 
+    /**
+     * ¿El walk-in (mostrador) se cobra al registrar la llegada? Default:
+     * no — la cuenta final se cobra al registrar la salida, como siempre.
+     * Con esto prendido, el modal de llegada pide el método de pago y el
+     * hospedaje queda pagado desde el inicio (al salir solo consumos).
+     */
+    public function walkinChargeOnCheckIn(): bool
+    {
+        return ($this->settings()['walkin_charge'] ?? 'checkout') === 'checkin';
+    }
+
+    /**
+     * Política de cancelación efectiva para una tarifa: la tarifa manda si
+     * define la suya (spec-pagos F4); si no, la default del hotel cuando
+     * está prendida en /ajustes/metodos-pago. null = sin política — con
+     * dinero pagado nadie cancela solo y el reembolso queda a criterio.
+     *
+     * @return array{value: int, unit: RateDurationUnit, penalty: float}|null
+     */
+    public function cancellationPolicyFor(?RatePlan $plan): ?array
+    {
+        if ($plan && $plan->hasCancellationPolicy()) {
+            return [
+                'value' => (int) $plan->cancel_free_value,
+                'unit' => $plan->cancel_free_unit,
+                'penalty' => $plan->cancel_penalty_percent !== null ? (float) $plan->cancel_penalty_percent : 100.0,
+            ];
+        }
+
+        if (! ($this->settings()['cancel_policy_enabled'] ?? false)) {
+            return null;
+        }
+
+        $value = (int) ($this->settings()['cancel_free_value'] ?? 0);
+        $unit = RateDurationUnit::tryFrom((string) ($this->settings()['cancel_free_unit'] ?? ''));
+
+        if ($value < 1 || $unit === null) {
+            return null;
+        }
+
+        $penalty = $this->settings()['cancel_penalty_percent'] ?? null;
+
+        return [
+            'value' => $value,
+            'unit' => $unit,
+            'penalty' => is_numeric($penalty) ? min(100.0, max(0.0, (float) $penalty)) : 100.0,
+        ];
+    }
+
+    /** Último momento para cancelar con reembolso completo: llegada − ventana. */
+    public function cancelFreeDeadlineFor(?RatePlan $plan, CarbonInterface $start): ?CarbonInterface
+    {
+        $policy = $this->cancellationPolicyFor($plan);
+
+        return $policy === null ? null : $policy['unit']->subtractFrom($start, $policy['value']);
+    }
+
+    /**
+     * La política efectiva en palabras, para el wizard, la consulta pública
+     * y el asistente. Mismo formato que la etiqueta por tarifa.
+     */
+    public function cancellationPolicyLabel(?RatePlan $plan = null): ?string
+    {
+        $policy = $this->cancellationPolicyFor($plan);
+
+        if ($policy === null) {
+            return null;
+        }
+
+        $after = $policy['penalty'] >= 100
+            ? 'después no hay reembolso'
+            : 'después se retiene el '.rtrim(rtrim(number_format($policy['penalty'], 2), '0'), '.').'% de lo pagado';
+
+        return 'Cancelación sin costo hasta '.$policy['unit']->label($policy['value'])
+            .' antes de la llegada; '.$after.'.';
+    }
+
+    /** Nota libre del hotel que acompaña a la política (condiciones propias). */
+    public function cancellationPolicyText(): ?string
+    {
+        $text = trim((string) ($this->settings()['cancel_policy_text'] ?? ''));
+
+        return $text === '' ? null : $text;
+    }
+
+    /**
+     * ¿El hotel cobra fianza (depósito en garantía) por estancia? Doble
+     * condición: el interruptor prendido Y un monto mayor a cero — una
+     * fianza de $0 no garantiza nada. Se cobra al registrar la llegada
+     * (walk-in o check-in de reserva) y se devuelve al registrar la salida;
+     * NO es ingreso del hotel, es un pasivo (ver CashCutService).
+     */
+    public function guaranteeEnabled(): bool
+    {
+        return (bool) ($this->settings()['guarantee_enabled'] ?? false)
+            && $this->guaranteeAmount() > 0;
+    }
+
+    /** Monto fijo de la fianza por estancia. */
+    public function guaranteeAmount(): float
+    {
+        return max(0.0, round((float) ($this->settings()['guarantee_amount'] ?? 0), 2));
+    }
+
+    /**
+     * ¿Se manda el aviso el día de la llegada? (segundo recordatorio,
+     * horas antes de la hora de entrada; el de 24 h tiene su propio
+     * interruptor arrival_reminder_enabled).
+     */
+    public function arrivalSoonEnabled(): bool
+    {
+        return (bool) ($this->settings()['arrival_soon_enabled'] ?? true);
+    }
+
+    /** Cuántas horas antes de la llegada sale ese aviso. Default: 2. */
+    public function arrivalSoonHours(): int
+    {
+        $hours = (int) ($this->settings()['arrival_soon_hours'] ?? 2);
+
+        return min(24, max(1, $hours ?: 2));
+    }
+
+    /**
+     * ¿Se agradece al huésped al completar su estancia? (mensaje al
+     * check-out, manual o automático, con el link de reseñas si existe).
+     */
+    public function postStayThanksEnabled(): bool
+    {
+        return (bool) ($this->settings()['post_stay_thanks_enabled'] ?? true);
+    }
+
+    /** URL de reseñas del hotel (Google/Tripadvisor); null si no la capturó. */
+    public function reviewUrl(): ?string
+    {
+        $url = trim((string) ($this->settings()['review_url'] ?? ''));
+
+        return $url === '' ? null : $url;
+    }
+
     /** Valor+unidad de settings traducido a minutos; null si no está configurado. */
     protected function minutesFrom(string $valueKey, string $unitKey): ?int
     {
