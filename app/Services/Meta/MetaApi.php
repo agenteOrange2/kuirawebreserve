@@ -395,18 +395,130 @@ class MetaApi
      */
     public function pushToConversation(Conversation $conversation, string $text): bool
     {
-        $type = $conversation->channel?->type;
+        $link = $this->linkForConversation($conversation);
 
-        if (! in_array($type, MetaChannelLink::TYPES, true) || ! tenant() || ! $conversation->contact_phone) {
+        return $link ? $this->sendText($link, $conversation->contact_phone, $text) : false;
+    }
+
+    /**
+     * Adjunto saliente por WhatsApp Cloud API: primero se sube el archivo a
+     * /{phone_number_id}/media y luego se manda por su id.
+     *
+     * Se hace en dos pasos a propósito, aunque la API acepte una URL: los
+     * adjuntos de una conversación se sirven tras autenticación y exponerlos
+     * en una URL pública para que Meta los baje sería filtrarlos.
+     *
+     * Messenger e Instagram todavía no: su Send API tiene otra mecánica y no
+     * se puede probar a ciegas. Devuelve false y el staff ve el aviso.
+     */
+    public function sendMedia(
+        MetaChannelLink $link,
+        string $to,
+        string $path,
+        string $mime,
+        string $fileName,
+        ?string $caption = null,
+    ): bool {
+        if ($link->type !== 'whatsapp') {
             return false;
         }
 
-        $link = MetaChannelLink::query()
+        $graph = rtrim(config('meta.graph_url'), '/');
+        $to = $this->normalizeWhatsappNumber($link, $to);
+
+        try {
+            $upload = Http::withToken($link->access_token)
+                ->attach('file', file_get_contents($path), $fileName, ['Content-Type' => $mime])
+                ->post("{$graph}/{$link->external_id}/media", [
+                    'messaging_product' => 'whatsapp',
+                    'type' => $mime,
+                ]);
+
+            $mediaId = $upload->json('id');
+
+            if ($upload->failed() || ! $mediaId) {
+                Log::warning('Meta: subida de adjunto fallida', [
+                    'tenant' => $link->tenant_id,
+                    'status' => $upload->status(),
+                    'body' => $upload->json(),
+                ]);
+
+                return false;
+            }
+
+            $isImage = str_starts_with($mime, 'image/');
+            $payload = array_filter([
+                'id' => $mediaId,
+                'caption' => $caption,
+                'filename' => $isImage ? null : $fileName,
+            ], fn ($value) => $value !== null && $value !== '');
+
+            $response = Http::withToken($link->access_token)
+                ->post("{$graph}/{$link->external_id}/messages", [
+                    'messaging_product' => 'whatsapp',
+                    'to' => $to,
+                    'type' => $isImage ? 'image' : 'document',
+                    $isImage ? 'image' : 'document' => $payload,
+                ]);
+
+            if ($response->failed()) {
+                Log::warning('Meta: adjunto no enviado', [
+                    'tenant' => $link->tenant_id,
+                    'status' => $response->status(),
+                    'body' => $response->json(),
+                ]);
+
+                return false;
+            }
+
+            return true;
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
+    }
+
+    public function pushMediaToConversation(
+        Conversation $conversation,
+        string $path,
+        string $mime,
+        string $fileName,
+        ?string $caption = null,
+    ): bool {
+        $link = $this->linkForConversation($conversation);
+
+        return $link
+            ? $this->sendMedia($link, $conversation->contact_phone, $path, $mime, $fileName, $caption)
+            : false;
+    }
+
+    /** Canal conectado del tenant para esta conversación, si lo hay. */
+    protected function linkForConversation(Conversation $conversation): ?MetaChannelLink
+    {
+        $type = $conversation->channel?->type;
+
+        if (! in_array($type, MetaChannelLink::TYPES, true) || ! tenant() || ! $conversation->contact_phone) {
+            return null;
+        }
+
+        return MetaChannelLink::query()
             ->where('tenant_id', tenant('id'))
             ->where('type', $type)
             ->where('active', true)
             ->first();
+    }
 
-        return $link ? $this->sendText($link, $conversation->contact_phone, $text) : false;
+    /**
+     * México: el wa_id entrante trae el "1" heredado (52 1 + 10 dígitos)
+     * pero la Cloud API espera 52 + 10.
+     */
+    protected function normalizeWhatsappNumber(MetaChannelLink $link, string $to): string
+    {
+        if ($link->type === 'whatsapp' && str_starts_with($to, '521') && strlen($to) === 13) {
+            return '52'.substr($to, 3);
+        }
+
+        return $to;
     }
 }

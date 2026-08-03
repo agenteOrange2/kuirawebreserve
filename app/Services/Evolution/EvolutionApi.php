@@ -139,6 +139,84 @@ class EvolutionApi
      * La instancia exacta se resuelve por channels.external_id (id del link
      * central), así cada conversación sale por el número que la recibió.
      */
+    /**
+     * Adjunto saliente (foto o PDF que manda el staff desde la bandeja).
+     * Evolution v2 recibe el archivo en base64 dentro del propio POST, así
+     * que no hace falta exponer el archivo públicamente — que es justo lo
+     * que NO queremos con los adjuntos de una conversación.
+     */
+    public function sendMedia(
+        EvolutionChannelLink $link,
+        string $to,
+        string $path,
+        string $mime,
+        string $fileName,
+        ?string $caption = null,
+    ): bool {
+        try {
+            $binary = @file_get_contents($path);
+
+            if ($binary === false) {
+                Log::warning('Evolution: adjunto ilegible', ['path' => $path]);
+
+                return false;
+            }
+
+            $response = $this->http($link)->post(
+                $this->url($link, "/message/sendMedia/{$link->instance}"),
+                array_filter([
+                    'number' => $to,
+                    'mediatype' => str_starts_with($mime, 'image/') ? 'image' : 'document',
+                    'mimetype' => $mime,
+                    'media' => base64_encode($binary),
+                    'fileName' => $fileName,
+                    'caption' => $caption,
+                ], fn ($value) => $value !== null && $value !== ''),
+            );
+
+            if ($response->failed()) {
+                Log::warning('Evolution: adjunto no enviado', [
+                    'link_id' => $link->id,
+                    'tenant' => $link->tenant_id,
+                    'status' => $response->status(),
+                    'body' => $response->json(),
+                ]);
+
+                return false;
+            }
+
+            return true;
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
+    }
+
+    /** Adjunto por conversación (resuelve la instancia del canal). */
+    public function pushMediaToConversation(
+        Conversation $conversation,
+        string $path,
+        string $mime,
+        string $fileName,
+        ?string $caption = null,
+    ): bool {
+        $channel = $conversation->channel;
+
+        if ($channel?->type !== Channel::TYPE_WHATSAPP_EVOLUTION || ! $conversation->contact_phone) {
+            return false;
+        }
+
+        $link = EvolutionChannelLink::query()
+            ->whereKey($channel->external_id)
+            ->where('active', true)
+            ->first();
+
+        return $link
+            ? $this->sendMedia($link, $conversation->contact_phone, $path, $mime, $fileName, $caption)
+            : false;
+    }
+
     public function pushToConversation(Conversation $conversation, string $text, ?int $delayMs = null): bool
     {
         $channel = $conversation->channel;

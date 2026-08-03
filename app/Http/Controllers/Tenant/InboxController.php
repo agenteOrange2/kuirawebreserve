@@ -134,19 +134,31 @@ class InboxController extends Controller
     public function reply(Request $request, Conversation $conversation): JsonResponse
     {
         $data = $request->validate([
-            'body' => ['required', 'string', 'max:2000'],
+            // Con adjunto el texto es opcional: mandar solo la foto es
+            // legítimo (el comprobante, la habitación, el mapa).
+            'body' => [$request->hasFile('attachment') ? 'nullable' : 'required', 'string', 'max:2000'],
             'copilot' => ['sometimes', 'boolean'],
+            'attachment' => ['sometimes', 'file', 'mimes:jpeg,png,webp,pdf', 'max:6144'],
+        ], [
+            'attachment.max' => 'El archivo puede pesar máximo 6 MB.',
+            'attachment.mimes' => 'Se pueden mandar imágenes (JPG, PNG, WebP) o PDF.',
         ]);
 
         $message = $conversation->messages()->create([
             'direction' => 'out',
             'sender_type' => 'staff',
             'sender_id' => $request->user()?->id,
-            'body' => $data['body'],
+            'body' => $data['body'] ?? '',
             // Trazabilidad: la respuesta nació como borrador del copiloto.
             'meta' => ($data['copilot'] ?? false) ? ['copilot' => true] : null,
             'created_at' => now(),
         ]);
+
+        $attachment = $request->file('attachment');
+
+        if ($attachment !== null) {
+            $message->addMedia($attachment)->toMediaCollection('attachments');
+        }
 
         $conversation->update([
             'status' => Conversation::STATUS_OPEN,
@@ -158,9 +170,29 @@ class InboxController extends Controller
 
         // El mensaje sale por el transporte del canal (Meta o Evolution;
         // webchat no necesita: el visitante lee por polling).
-        app(\App\Services\Channels\OutboundMessenger::class)->pushToConversation($conversation, $data['body']);
+        $messenger = app(\App\Services\Channels\OutboundMessenger::class);
+        $delivered = true;
 
-        return response()->json(['id' => $message->id], 201);
+        if ($attachment !== null) {
+            $media = $message->getFirstMedia('attachments');
+
+            $delivered = $media !== null && $messenger->pushMediaToConversation(
+                $conversation,
+                $media->getPath(),
+                (string) $media->mime_type,
+                $media->file_name,
+                $data['body'] ?: null,
+            );
+        } elseif ($data['body'] !== null && $data['body'] !== '') {
+            $messenger->pushToConversation($conversation, $data['body']);
+        }
+
+        return response()->json([
+            'id' => $message->id,
+            // El adjunto queda en el hilo aunque el canal no lo soporte; el
+            // staff necesita saber que al huésped no le llegó.
+            'delivered' => $delivered,
+        ], 201);
     }
 
     /** Estado, asignación, devolución al bot y archivado. */

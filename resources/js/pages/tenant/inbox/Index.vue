@@ -8,6 +8,7 @@ import { FormSelect, FormTextarea } from '@/components/Base/Form';
 import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
+import { useInboxAlerts } from '@/composables/useInboxAlerts';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
@@ -67,6 +68,9 @@ const props = defineProps<{
 }>();
 
 const toast = useToasts();
+// Aviso de mensaje nuevo: tono, notificación del navegador y contador en
+// el título de la pestaña.
+const alerts = useInboxAlerts();
 const initials = (name: string) =>
     name
         .trim()
@@ -267,6 +271,7 @@ function closeThread(): void {
 }
 
 async function open(c: ConversationRow) {
+    alerts.clearBadge();
     selected.value = c;
     showSummary.value = false;
     suggestion.value = null;
@@ -292,17 +297,49 @@ async function refreshThread() {
     }
 }
 
+// Adjunto saliente: una foto o un PDF por mensaje.
+const attachmentInput = ref<HTMLInputElement | null>(null);
+const attachment = ref<File | null>(null);
+
+function pickAttachment(event: Event) {
+    attachment.value = (event.target as HTMLInputElement).files?.[0] ?? null;
+}
+
+function clearAttachment() {
+    attachment.value = null;
+    if (attachmentInput.value) attachmentInput.value.value = '';
+}
+
 async function sendReply() {
     const body = reply.value.trim();
-    if (!body || !selected.value || sending.value) return;
+    // Con adjunto el texto sobra: mandar solo la foto es legítimo.
+    if ((!body && !attachment.value) || !selected.value || sending.value)
+        return;
+
     sending.value = true;
     try {
-        await axios.post(`/api/inbox/${selected.value.id}/reply`, {
-            body,
-            copilot: usedCopilot.value,
-        });
+        const form = new FormData();
+        form.append('body', body);
+        form.append('copilot', usedCopilot.value ? '1' : '0');
+        if (attachment.value) form.append('attachment', attachment.value);
+
+        const { data } = await axios.post(
+            `/api/inbox/${selected.value.id}/reply`,
+            form,
+        );
+
+        // El adjunto queda en el hilo aunque el canal no sepa mandarlo; se
+        // dice de frente en vez de dejar creer que el huésped ya lo tiene.
+        if (attachment.value && data?.delivered === false) {
+            toast.error(
+                'El archivo no salió',
+                'Quedó en el hilo, pero este canal todavía no manda adjuntos. Por ahora solo WhatsApp.',
+            );
+        }
+
         reply.value = '';
         usedCopilot.value = false;
+        clearAttachment();
         autosizeReply();
         await refreshThread();
     } catch (e: any) {
@@ -548,7 +585,33 @@ function refreshInbox(conversationId?: number) {
 useEcho<{ conversation_id: number; direction: string; at: string }>(
     `tenant.${props.tenantId}.inbox`,
     '.conversation.activity',
-    (payload) => refreshInbox(payload.conversation_id),
+    (payload) => {
+        refreshInbox(payload.conversation_id);
+
+        // Solo avisa de lo que ENTRA: las respuestas del propio staff (o del
+        // bot) no son algo a lo que haya que voltear.
+        if (payload.direction !== 'in') return;
+
+        // Si el hilo de esa conversación ya está abierto a la vista, el
+        // mensaje se está leyendo: sonar sería ruido.
+        if (
+            selected.value?.id === payload.conversation_id &&
+            !document.hidden
+        ) {
+            return;
+        }
+
+        const from = props.conversations.find(
+            (c) => c.id === payload.conversation_id,
+        );
+
+        alerts.announce(
+            'Mensaje nuevo',
+            from
+                ? `${from.name} escribió al hotel`
+                : 'Alguien escribió al hotel',
+        );
+    },
 );
 
 // Red de seguridad por si el websocket se cae: un repaso cada minuto y al
@@ -605,6 +668,40 @@ onBeforeUnmount(() => {
                     </div>
                 </div>
                 <div class="flex flex-wrap items-center gap-2.5">
+                    <!-- Permiso de notificaciones: solo se pide con un clic,
+                         que es lo que exigen los navegadores. -->
+                    <Button
+                        v-if="
+                            alerts.canNotify.value &&
+                            alerts.permission.value === 'default'
+                        "
+                        variant="outline-primary"
+                        class="min-h-11 rounded-[0.5rem] bg-white"
+                        title="Avisar aunque la pestaña esté en segundo plano"
+                        @click="alerts.requestPermission"
+                    >
+                        <Lucide
+                            icon="BellRing"
+                            class="mr-2 h-4 w-4 stroke-[1.5]"
+                        />
+                        Activar avisos
+                    </Button>
+                    <Button
+                        variant="outline-secondary"
+                        class="min-h-11 rounded-[0.5rem] bg-white"
+                        :title="
+                            alerts.muted.value
+                                ? 'Los mensajes nuevos no suenan'
+                                : 'Suena al llegar un mensaje nuevo'
+                        "
+                        @click="alerts.toggleMute"
+                    >
+                        <Lucide
+                            :icon="alerts.muted.value ? 'BellOff' : 'Bell'"
+                            class="h-4 w-4 stroke-[1.5]"
+                            :class="alerts.muted.value ? 'text-slate-400' : ''"
+                        />
+                    </Button>
                     <Button
                         variant="outline-secondary"
                         class="min-h-11 rounded-[0.5rem] bg-white"
@@ -1610,11 +1707,30 @@ onBeforeUnmount(() => {
                                     @input="autosizeReply"
                                     @keydown.enter.exact.prevent="sendReply"
                                 />
+                                <input
+                                    ref="attachmentInput"
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp,application/pdf"
+                                    class="hidden"
+                                    @change="pickAttachment"
+                                />
+                                <Button
+                                    variant="outline-secondary"
+                                    class="h-11 rounded-[0.5rem] bg-white px-3"
+                                    title="Adjuntar foto o PDF"
+                                    :disabled="sending"
+                                    @click="attachmentInput?.click()"
+                                >
+                                    <Lucide icon="Paperclip" class="h-5 w-5" />
+                                </Button>
                                 <Button
                                     variant="primary"
                                     class="h-11 rounded-[0.5rem] px-4 shadow-md shadow-primary/20"
                                     title="Enviar (Enter)"
-                                    :disabled="sending || !reply.trim()"
+                                    :disabled="
+                                        sending ||
+                                        (!reply.trim() && !attachment)
+                                    "
                                     @click="sendReply"
                                 >
                                     <Lucide
@@ -1622,6 +1738,28 @@ onBeforeUnmount(() => {
                                         class="h-5 w-5"
                                     />
                                 </Button>
+                            </div>
+
+                            <!-- Archivo elegido, antes de mandarlo -->
+                            <div
+                                v-if="attachment"
+                                class="mt-2 flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm dark:bg-darkmode-400"
+                            >
+                                <Lucide
+                                    icon="Paperclip"
+                                    class="h-4 w-4 shrink-0 text-slate-500"
+                                />
+                                <span class="min-w-0 flex-1 truncate">{{
+                                    attachment.name
+                                }}</span>
+                                <button
+                                    type="button"
+                                    title="Quitar el archivo"
+                                    class="shrink-0 text-slate-400 transition hover:text-danger"
+                                    @click="clearAttachment"
+                                >
+                                    <Lucide icon="X" class="h-4 w-4" />
+                                </button>
                             </div>
                         </div>
                     </template>
