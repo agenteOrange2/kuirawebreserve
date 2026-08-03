@@ -10,6 +10,7 @@ import axios from 'axios';
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import type { Ref } from 'vue';
 import Button from '@/components/Base/Button';
+import { FormInput, FormSelect } from '@/components/Base/Form';
 import { Slideover } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
@@ -68,6 +69,14 @@ interface UpcomingReservationSummary {
     children: number;
 }
 
+interface RoomBlockEntry {
+    id: number;
+    starts_at: string;
+    ends_at: string;
+    reason: string | null;
+    active: boolean;
+}
+
 interface HistoryEntry {
     id: number;
     from_status: string | null;
@@ -115,6 +124,7 @@ interface RoomData {
     rate_plans: RatePlanSummary[];
     active_stay: ActiveStaySummary | null;
     upcoming_reservation: UpcomingReservationSummary | null;
+    blocks: RoomBlockEntry[];
     today_history: HistoryEntry[];
 }
 
@@ -369,6 +379,105 @@ const selectedRoom = computed<RoomData | null>(() => {
     );
     return (node?.data as RoomData) ?? null;
 });
+
+/* --- Buscador y filtros ------------------------------------------------
+ * Con 40 cuartos el canvas se vuelve un "búscalo a ojo". El buscador mira
+ * número, nombre y el huésped de la estancia o de la llegada; los filtros
+ * acotan por estado y zona. Sobre el plano NO se oculta nada: se apaga lo
+ * que no coincide para que el acomodo físico siga siendo legible.
+ */
+const search = ref('');
+const statusFilter = ref('');
+const zoneFilter = ref<string>('');
+
+const zoneOptions = computed(() => {
+    const seen = new Map<number, string>();
+    props.rooms.forEach((room) => {
+        if (room.zone_id !== null && room.zone)
+            seen.set(room.zone_id, room.zone);
+    });
+    return [...seen.entries()].map(([id, name]) => ({ id, name }));
+});
+
+const statusOptions = computed(() => {
+    const counts = new Map<string, number>();
+    props.rooms.forEach((room) => {
+        counts.set(room.status, (counts.get(room.status) ?? 0) + 1);
+    });
+    return Object.entries(statusLabels)
+        .filter(([status]) => counts.has(status))
+        .map(([status, meta]) => ({
+            status,
+            label: meta.label,
+            color: meta.color,
+            count: counts.get(status) ?? 0,
+        }));
+});
+
+function matchesFilters(room: RoomData): boolean {
+    if (statusFilter.value && room.status !== statusFilter.value) return false;
+    if (zoneFilter.value && String(room.zone_id ?? '') !== zoneFilter.value)
+        return false;
+
+    const term = search.value.trim().toLowerCase();
+    if (!term) return true;
+
+    return [
+        room.number,
+        room.name,
+        room.room_type,
+        room.active_stay?.guest_name,
+        room.upcoming_reservation?.guest_name,
+        room.upcoming_reservation?.code,
+    ].some((value) => (value ?? '').toLowerCase().includes(term));
+}
+
+const filtersActive = computed(
+    () =>
+        search.value.trim() !== '' ||
+        statusFilter.value !== '' ||
+        zoneFilter.value !== '',
+);
+
+const matchingRooms = computed(() => props.rooms.filter(matchesFilters));
+
+function clearFilters() {
+    search.value = '';
+    statusFilter.value = '';
+    zoneFilter.value = '';
+}
+
+/** Sobre el canvas: opaca los cuartos que no cumplen el filtro. */
+function isDimmed(room: RoomData): boolean {
+    return filtersActive.value && !matchesFilters(room);
+}
+
+/**
+ * Texto del distintivo de mantenimiento. Un bloqueo vigente impide vender
+ * hoy; uno futuro avisa con tiempo — el semáforo no distingue ninguno de
+ * los dos porque los bloqueos no lo mueven.
+ */
+function blockBadge(room: RoomData): string | null {
+    const blocks = room.blocks ?? [];
+    if (!blocks.length) return null;
+
+    const active = blocks.find((block) => block.active);
+    const shown = active ?? blocks[0];
+    const rango = `${shown.starts_at} al ${shown.ends_at}`;
+
+    return active
+        ? `Bloqueada del ${rango}${shown.reason ? ` · ${shown.reason}` : ''}`
+        : `Mantenimiento programado del ${rango}${shown.reason ? ` · ${shown.reason}` : ''}`;
+}
+
+/** Bloqueada HOY (no se puede vender ahora) vs. programada a futuro. */
+function isBlockedNow(room: RoomData): boolean {
+    return (room.blocks ?? []).some((block) => block.active);
+}
+
+function blockLabel(room: RoomData): string {
+    return isBlockedNow(room) ? 'Bloqueada' : 'Programada';
+}
 
 const fichaItems = computed<{ icon: Icon; label: string; text: string }[]>(
     () => {
@@ -912,7 +1021,7 @@ useEcho<RoomStatusChangedPayload>(
                 <span
                     v-for="(meta, status) in statusLabels"
                     :key="status"
-                    class="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-400"
+                    class="hidden items-center gap-1 text-xs text-slate-600 lg:flex dark:text-slate-400"
                 >
                     <span
                         class="h-2.5 w-2.5 rounded-full"
@@ -969,8 +1078,76 @@ useEcho<RoomStatusChangedPayload>(
             {{ lastEvent }}
         </div>
 
+        <!-- Buscador y filtros -->
+        <div class="box box--stacked mt-4 p-4">
+            <div class="flex flex-col gap-3 lg:flex-row lg:items-center">
+                <div class="relative min-w-0 flex-1">
+                    <Lucide
+                        icon="Search"
+                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                    />
+                    <FormInput
+                        v-model="search"
+                        type="text"
+                        class="pl-9"
+                        placeholder="Buscar por habitación, huésped, tipo o código de reserva"
+                    />
+                </div>
+                <div class="flex flex-col gap-3 sm:flex-row">
+                    <FormSelect
+                        v-model="statusFilter"
+                        class="sm:w-48"
+                        aria-label="Filtrar por estado"
+                    >
+                        <option value="">Todos los estados</option>
+                        <option
+                            v-for="option in statusOptions"
+                            :key="option.status"
+                            :value="option.status"
+                        >
+                            {{ option.label }} ({{ option.count }})
+                        </option>
+                    </FormSelect>
+                    <FormSelect
+                        v-if="zoneOptions.length > 1"
+                        v-model="zoneFilter"
+                        class="sm:w-44"
+                        aria-label="Filtrar por zona"
+                    >
+                        <option value="">Todas las zonas</option>
+                        <option
+                            v-for="zone in zoneOptions"
+                            :key="zone.id"
+                            :value="String(zone.id)"
+                        >
+                            {{ zone.name }}
+                        </option>
+                    </FormSelect>
+                    <Button
+                        v-if="filtersActive"
+                        variant="outline-secondary"
+                        class="rounded-[0.5rem] whitespace-nowrap"
+                        @click="clearFilters"
+                    >
+                        <Lucide icon="X" class="mr-2 h-4 w-4" />
+                        Limpiar
+                    </Button>
+                </div>
+            </div>
+            <p v-if="filtersActive" class="mt-3 text-sm text-slate-500">
+                {{ matchingRooms.length }} de {{ rooms.length }}
+                {{ rooms.length === 1 ? 'habitación' : 'habitaciones' }}.
+                <span class="hidden lg:inline"
+                    >En el plano las demás se ven atenuadas para no perder el
+                    acomodo.</span
+                >
+            </p>
+        </div>
+
+        <!-- Plano (canvas) — en móvil el arrastre y el zoom son hostiles, así
+             que ahí se muestra la lista de abajo. -->
         <div
-            class="box relative mt-4 overflow-hidden"
+            class="box relative mt-4 hidden overflow-hidden lg:block"
             style="height: calc(100vh - 230px)"
         >
             <VueFlow
@@ -1023,6 +1200,9 @@ useEcho<RoomStatusChangedPayload>(
                                 ? `${statusStyles[data.color]?.ring} ring-4`
                                 : 'ring-white/40',
                             data.active_stay?.is_overdue ? 'animate-pulse' : '',
+                            isDimmed(data)
+                                ? 'opacity-20 grayscale'
+                                : 'opacity-100',
                         ]"
                         :style="{
                             width: `${data.width}px`,
@@ -1030,6 +1210,14 @@ useEcho<RoomStatusChangedPayload>(
                         }"
                         :title="nodeTooltip(data)"
                     >
+                        <span
+                            v-if="blockBadge(data)"
+                            class="absolute -top-2 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-slate-950 px-2 py-0.5 text-[9px] font-semibold text-white shadow-lg"
+                            :title="blockBadge(data) ?? ''"
+                        >
+                            <Lucide icon="Wrench" class="h-3 w-3" />
+                            {{ blockLabel(data) }}
+                        </span>
                         <span
                             v-if="data.upcoming_reservation?.starts_today"
                             class="absolute -top-2 -left-2 inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-info px-1.5 text-[10px] font-semibold text-white shadow-lg"
@@ -1079,6 +1267,72 @@ useEcho<RoomStatusChangedPayload>(
                     </div>
                 </template>
             </VueFlow>
+        </div>
+
+        <!-- Vista de lista: la única en móvil (arrastrar y hacer zoom en el
+             canvas desde el teléfono es un castigo, y el mostrador y el ama
+             de llaves viven ahí). Abre la misma ficha que el plano. -->
+        <div class="mt-4 space-y-2.5 lg:hidden">
+            <button
+                v-for="room in matchingRooms"
+                :key="room.id"
+                type="button"
+                class="box box--stacked flex w-full items-center gap-3.5 p-4 text-left transition active:scale-[0.99]"
+                @click="selectedId = room.id"
+            >
+                <span
+                    class="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl text-white shadow-sm"
+                    :class="statusStyles[room.color]?.bg ?? 'bg-slate-400'"
+                >
+                    <span class="text-base leading-none font-bold">{{
+                        room.number
+                    }}</span>
+                </span>
+                <span class="min-w-0 flex-1">
+                    <span class="flex flex-wrap items-center gap-1.5">
+                        <span class="font-medium">{{ room.label }}</span>
+                        <span
+                            v-if="room.blocks.length"
+                            class="inline-flex items-center gap-1 rounded-full bg-slate-950 px-2 py-0.5 text-[10px] font-medium text-white"
+                        >
+                            <Lucide icon="Wrench" class="h-3 w-3" />
+                            {{ blockLabel(room) }}
+                        </span>
+                        <span
+                            v-if="room.active_stay?.is_overdue"
+                            class="rounded-full bg-danger/10 px-2 py-0.5 text-[10px] font-medium text-danger"
+                            >Excedida</span
+                        >
+                        <span
+                            v-else-if="room.upcoming_reservation?.starts_today"
+                            class="rounded-full bg-info/10 px-2 py-0.5 text-[10px] font-medium text-info"
+                            >Llega hoy</span
+                        >
+                        <span
+                            v-else-if="endsToday(room)"
+                            class="rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning"
+                            >Sale hoy</span
+                        >
+                    </span>
+                    <span
+                        class="mt-0.5 block truncate text-sm text-slate-500 dark:text-slate-400"
+                    >
+                        {{ room.room_type ?? 'Sin tipo' }} ·
+                        {{ nodeHint(room) }}
+                    </span>
+                </span>
+                <Lucide
+                    icon="ChevronRight"
+                    class="h-5 w-5 shrink-0 text-slate-300"
+                />
+            </button>
+
+            <p
+                v-if="!matchingRooms.length"
+                class="box box--stacked p-8 text-center text-sm text-slate-500"
+            >
+                Ninguna habitación coincide con la búsqueda.
+            </p>
         </div>
 
         <p v-if="errorMessage" class="mt-3 text-sm text-danger">
@@ -1447,6 +1701,54 @@ useEcho<RoomStatusChangedPayload>(
                                     class="mt-2 text-sm whitespace-pre-line text-slate-600 dark:text-slate-300"
                                 >
                                     {{ selectedRoom.notes }}
+                                </p>
+                            </div>
+
+                            <!-- Mantenimiento programado: el semáforo no lo
+                                 refleja, así que se dice aquí explícitamente. -->
+                            <div
+                                v-if="selectedRoom.blocks.length"
+                                class="mt-4 border-t border-slate-200/70 pt-4 dark:border-darkmode-400"
+                            >
+                                <div
+                                    class="text-sm font-semibold text-slate-900 dark:text-slate-100"
+                                >
+                                    Mantenimiento programado
+                                </div>
+                                <div class="mt-3 space-y-2">
+                                    <div
+                                        v-for="block in selectedRoom.blocks"
+                                        :key="block.id"
+                                        class="rounded-xl px-3.5 py-3 text-sm"
+                                        :class="
+                                            block.active
+                                                ? 'bg-danger/10 text-danger'
+                                                : 'bg-white text-slate-600 shadow-sm dark:bg-darkmode-600 dark:text-slate-300'
+                                        "
+                                    >
+                                        <div
+                                            class="flex items-center gap-2 font-medium"
+                                        >
+                                            <Lucide
+                                                icon="Wrench"
+                                                class="h-4 w-4 shrink-0"
+                                            />
+                                            {{ block.starts_at }} al
+                                            {{ block.ends_at }}
+                                            <span
+                                                v-if="block.active"
+                                                class="rounded-full bg-danger/15 px-2 py-0.5 text-[10px]"
+                                                >En curso</span
+                                            >
+                                        </div>
+                                        <p v-if="block.reason" class="mt-1">
+                                            {{ block.reason }}
+                                        </p>
+                                    </div>
+                                </div>
+                                <p class="mt-2 text-xs text-slate-500">
+                                    Estas fechas no se pueden vender. El
+                                    semáforo no cambia por un bloqueo.
                                 </p>
                             </div>
                         </section>

@@ -44,6 +44,12 @@ class FloorPlanController extends Controller
                     ->latest('created_at')
                     ->limit(8)
                     ->with('changedBy:id,name'),
+                // Mantenimiento programado: no mueve el semáforo, así que sin
+                // traerlo el plano pinta como libre un cuarto que no se puede
+                // vender esas fechas.
+                'blocks' => fn ($query) => $query
+                    ->currentOrFuture()
+                    ->orderBy('starts_at'),
             ])
             ->orderBy('number')
             ->get()

@@ -338,6 +338,10 @@ class Room extends Model
         $todayHistory = $this->relationLoaded('statusLogs')
             ? $this->getRelation('statusLogs')
             : collect();
+        $blocks = $this->relationLoaded('blocks')
+            ? $this->getRelation('blocks')
+            : collect();
+        $today = now()->toDateString();
 
         return [
             'id' => $this->id,
@@ -430,6 +434,23 @@ class Room extends Model
                 'adults' => $upcomingReservation->adults,
                 'children' => $upcomingReservation->children,
             ] : null,
+            // Bloqueos por fechas vigentes o futuros. El semáforo NO los
+            // refleja (un cuarto bloqueado la semana que entra hoy sigue
+            // disponible), así que sin esto el plano lo pinta libre y el
+            // mostrador se entera hasta que la venta falla.
+            'blocks' => $blocks
+                ->sortBy('starts_at')
+                ->values()
+                ->map(fn (RoomBlock $block) => [
+                    'id' => $block->id,
+                    'starts_at' => $block->starts_at->format('d/m/Y'),
+                    'ends_at' => $block->ends_at->format('d/m/Y'),
+                    'reason' => $block->reason,
+                    // Activo hoy: el cuarto no se puede vender ahora mismo.
+                    'active' => $block->starts_at->toDateString() <= $today
+                        && $block->ends_at->toDateString() >= $today,
+                ])
+                ->all(),
             'today_history' => $todayHistory
                 ->sortByDesc('created_at')
                 ->values()
