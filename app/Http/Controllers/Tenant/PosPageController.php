@@ -17,6 +17,7 @@ class PosPageController extends Controller
         $property = Property::firstOrFail();
 
         $products = Product::query()
+            ->with('media')
             ->where('active', true)
             ->orderBy('category')
             ->orderBy('name')
@@ -33,6 +34,7 @@ class PosPageController extends Controller
                 'price' => $p->price,
                 'track_stock' => $p->track_stock,
                 'stock_qty' => (float) $p->stock_qty,
+                'photo' => $p->photoPayload(),
             ]),
             'activeStays' => Stay::query()
                 ->active()

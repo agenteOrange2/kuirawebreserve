@@ -17,7 +17,9 @@ class InventoryPageController extends Controller
         $property = Property::firstOrFail();
 
         $ingredients = Ingredient::orderBy('name')->get();
-        $products = Product::with('recipeItems.ingredient:id,name,unit')->orderBy('name')->get();
+        $products = Product::with(['recipeItems.ingredient:id,name,unit', 'media'])
+            ->orderBy('name')
+            ->get();
 
         // Valor del inventario: solo cuenta lo que lleva stock (productos
         // simples con track_stock + insumos).
@@ -81,6 +83,7 @@ class InventoryPageController extends Controller
                 'reorder_point' => $p->reorder_point !== null ? (float) $p->reorder_point : null,
                 'active' => $p->active,
                 'low_stock' => $p->isLowStock(),
+                'photo' => $p->photoPayload(),
                 'recipe' => $p->recipeItems->map(fn ($item) => [
                     'ingredient_id' => $item->ingredient_id,
                     'ingredient' => $item->ingredient?->name,

@@ -6,11 +6,16 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\Relations\MorphMany;
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\InteractsWithMedia;
+use Spatie\MediaLibrary\MediaCollections\Models\Media;
 
-class Product extends Model
+class Product extends Model implements HasMedia
 {
     /** @use HasFactory<\Database\Factories\ProductFactory> */
     use HasFactory;
+
+    use InteractsWithMedia;
 
     public const TYPE_SIMPLE = 'simple';
 
@@ -46,6 +51,42 @@ class Product extends Model
             'reorder_point' => 'decimal:3',
             'active' => 'boolean',
             'available_in_wizard' => 'boolean',
+        ];
+    }
+
+    /**
+     * Una sola foto por producto: el POS se usa de un vistazo y con prisa,
+     * y una galería no aporta nada ahí. singleFile() hace que subir una
+     * nueva reemplace la anterior sin dejar basura.
+     */
+    public function registerMediaCollections(): void
+    {
+        $this->addMediaCollection('photo')->singleFile()->useDisk('public');
+    }
+
+    public function registerMediaConversions(?Media $media = null): void
+    {
+        // Sin cola para que la foto aparezca al instante tras subirla,
+        // igual que en las fotos de tipos de habitación.
+        $this->addMediaConversion('thumb')
+            ->width(400)
+            ->nonQueued()
+            ->performOnCollections('photo');
+    }
+
+    /** @return array{id: int, url: string, thumb_url: string}|null */
+    public function photoPayload(): ?array
+    {
+        $media = $this->getFirstMedia('photo');
+
+        if ($media === null) {
+            return null;
+        }
+
+        return [
+            'id' => $media->id,
+            'url' => route('tenant.product-photo', ['mediaId' => $media->id]),
+            'thumb_url' => route('tenant.product-photo', ['mediaId' => $media->id, 'v' => 'thumb']),
         ];
     }
 

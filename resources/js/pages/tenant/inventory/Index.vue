@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
 import axios from 'axios';
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormCheck,
@@ -37,6 +37,7 @@ interface ProductRow {
     reorder_point: number | null;
     active: boolean;
     low_stock: boolean;
+    photo: { id: number; url: string; thumb_url: string } | null;
     recipe: RecipeItem[];
 }
 interface IngredientRow {
@@ -132,6 +133,54 @@ function clearProductFilters() {
     search.value = '';
     categoryFilter.value = '';
 }
+
+/* --- Paginación --------------------------------------------------------
+ * Se pagina en el cliente a propósito: así el buscador sigue mirando el
+ * catálogo COMPLETO y no solo la página que está a la vista. Con catálogos
+ * de cientos de productos esto habría que moverlo al servidor.
+ */
+const PER_PAGE = 15;
+const productPage = ref(1);
+
+const productPages = computed(() =>
+    Math.max(1, Math.ceil(filteredProducts.value.length / PER_PAGE)),
+);
+
+const pagedProducts = computed(() =>
+    filteredProducts.value.slice(
+        (productPage.value - 1) * PER_PAGE,
+        productPage.value * PER_PAGE,
+    ),
+);
+
+// Al filtrar, volver a la primera página: si estabas en la 4 y el filtro
+// deja dos resultados, la vista quedaría vacía sin razón aparente.
+watch([search, categoryFilter], () => {
+    productPage.value = 1;
+});
+
+// Si se borra el último producto de la última página, retroceder.
+watch(productPages, (total) => {
+    if (productPage.value > total) productPage.value = total;
+});
+
+/** Ventana de páginas alrededor de la actual, para no pintar 40 botones. */
+const pageWindow = computed(() => {
+    const total = productPages.value;
+    const current = productPage.value;
+    const from = Math.max(1, Math.min(current - 2, total - 4));
+    const to = Math.min(total, Math.max(current + 2, 5));
+
+    return Array.from({ length: to - from + 1 }, (_, i) => from + i);
+});
+
+const productRangeLabel = computed(() => {
+    const total = filteredProducts.value.length;
+    if (!total) return '';
+    const from = (productPage.value - 1) * PER_PAGE + 1;
+
+    return `${from}–${Math.min(from + PER_PAGE - 1, total)} de ${total}`;
+});
 
 /** Margen sobre el precio de venta, que es como se lee en el mostrador. */
 function marginPercent(p: ProductRow): string {
@@ -252,6 +301,9 @@ function openProduct(product: ProductRow | null) {
             quantity: r.quantity,
         })) ?? [];
     clearErrors();
+    releasePreview();
+    photoFile.value = null;
+    savedPhoto.value = product?.photo ?? null;
     showProduct.value = true;
 }
 function addRecipeRow() {
@@ -260,7 +312,7 @@ function addRecipeRow() {
         quantity: 1,
     });
 }
-function submitProduct() {
+async function submitProduct() {
     const payload: Record<string, unknown> = {
         name: productForm.name,
         category: productForm.category || null,
@@ -275,19 +327,86 @@ function submitProduct() {
             productForm.reorder_point === '' ? null : productForm.reorder_point,
         recipe: productForm.type === 'composite' ? productForm.recipe : [],
     };
-    mutate(
-        () =>
-            editingProduct.value
-                ? axios.patch(
-                      `/api/products/${editingProduct.value.id}`,
-                      payload,
-                  )
-                : axios.post('/api/products', {
-                      ...payload,
-                      property_id: props.property.id,
-                  }),
-        () => (showProduct.value = false),
-    );
+
+    await mutate(async () => {
+        const { data } = editingProduct.value
+            ? await axios.patch(
+                  `/api/products/${editingProduct.value.id}`,
+                  payload,
+              )
+            : await axios.post('/api/products', {
+                  ...payload,
+                  property_id: props.property.id,
+              });
+
+        // La foto se sube DESPUÉS de guardar: al crear no hay id todavía.
+        if (photoFile.value) {
+            const form = new FormData();
+            form.append('photo', photoFile.value);
+            await axios.post(`/api/products/${data.id}/photo`, form);
+        }
+    }, closeProductModal);
+}
+
+// ── Foto del producto ────────────────────────────────────────
+const photoInput = ref<HTMLInputElement | null>(null);
+const photoFile = ref<File | null>(null);
+const photoPreview = ref<string | null>(null);
+const savedPhoto = ref<ProductRow['photo']>(null);
+const photoBusy = ref(false);
+
+/** Vista previa actual: la recién elegida manda sobre la ya guardada. */
+const photoUrl = computed(
+    () => photoPreview.value ?? savedPhoto.value?.thumb_url ?? null,
+);
+
+function releasePreview() {
+    if (photoPreview.value) {
+        URL.revokeObjectURL(photoPreview.value);
+        photoPreview.value = null;
+    }
+}
+
+function onPhotoPicked(event: Event) {
+    const file = (event.target as HTMLInputElement).files?.[0];
+    if (!file) return;
+
+    releasePreview();
+    photoFile.value = file;
+    photoPreview.value = URL.createObjectURL(file);
+}
+
+async function removePhoto() {
+    releasePreview();
+    photoFile.value = null;
+    if (photoInput.value) photoInput.value.value = '';
+
+    // Si ya estaba guardada hay que borrarla del servidor; si solo estaba
+    // elegida (aún sin guardar), basta con soltarla.
+    if (!savedPhoto.value || !editingProduct.value) {
+        savedPhoto.value = null;
+
+        return;
+    }
+
+    photoBusy.value = true;
+    try {
+        await axios.delete(`/api/products/${editingProduct.value.id}/photo`);
+        savedPhoto.value = null;
+        router.reload({ only: ['products'] });
+    } catch (error) {
+        handleError(error);
+    } finally {
+        photoBusy.value = false;
+    }
+}
+
+function closeProductModal() {
+    showProduct.value = false;
+    releasePreview();
+    photoFile.value = null;
+    savedPhoto.value = null;
+    if (photoInput.value) photoInput.value.value = '';
 }
 
 const deletingProduct = ref<ProductRow | null>(null);
@@ -693,42 +812,56 @@ const tabs = computed(() => [
                      hacer scroll horizontal para ver el precio. -->
                 <div class="mt-5 space-y-3 lg:hidden">
                     <div
-                        v-for="p in filteredProducts"
+                        v-for="p in pagedProducts"
                         :key="p.id"
                         class="box box--stacked p-4"
                     >
                         <div class="flex items-start justify-between gap-3">
-                            <div class="min-w-0">
-                                <div
-                                    class="font-medium"
-                                    :class="{
-                                        'text-slate-400 line-through':
-                                            !p.active,
-                                    }"
+                            <div class="flex min-w-0 gap-3">
+                                <img
+                                    v-if="p.photo"
+                                    :src="p.photo.thumb_url"
+                                    :alt="p.name"
+                                    class="h-12 w-12 shrink-0 rounded-lg object-cover"
+                                />
+                                <span
+                                    v-else
+                                    class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 dark:bg-darkmode-400"
                                 >
-                                    {{ p.name }}
-                                </div>
-                                <div
-                                    class="mt-1.5 flex flex-wrap items-center gap-1.5"
-                                >
-                                    <span
-                                        v-if="p.category"
-                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
-                                        >{{ p.category }}</span
+                                    <Lucide icon="Image" class="h-5 w-5" />
+                                </span>
+                                <div class="min-w-0">
+                                    <div
+                                        class="font-medium"
+                                        :class="{
+                                            'text-slate-400 line-through':
+                                                !p.active,
+                                        }"
                                     >
-                                    <span
-                                        class="rounded-full px-2 py-0.5 text-xs font-medium"
-                                        :class="
-                                            p.type === 'composite'
-                                                ? 'bg-pending/10 text-pending'
-                                                : 'bg-info/10 text-info'
-                                        "
-                                        >{{
-                                            p.type === 'composite'
-                                                ? 'Compuesto'
-                                                : 'Simple'
-                                        }}</span
+                                        {{ p.name }}
+                                    </div>
+                                    <div
+                                        class="mt-1.5 flex flex-wrap items-center gap-1.5"
                                     >
+                                        <span
+                                            v-if="p.category"
+                                            class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                                            >{{ p.category }}</span
+                                        >
+                                        <span
+                                            class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                            :class="
+                                                p.type === 'composite'
+                                                    ? 'bg-pending/10 text-pending'
+                                                    : 'bg-info/10 text-info'
+                                            "
+                                            >{{
+                                                p.type === 'composite'
+                                                    ? 'Compuesto'
+                                                    : 'Simple'
+                                            }}</span
+                                        >
+                                    </div>
                                 </div>
                             </div>
                             <div class="shrink-0 text-right">
@@ -834,9 +967,24 @@ const tabs = computed(() => [
                             </Table.Tr>
                         </Table.Thead>
                         <Table.Tbody>
-                            <Table.Tr v-for="p in filteredProducts" :key="p.id">
+                            <Table.Tr v-for="p in pagedProducts" :key="p.id">
                                 <Table.Td :class="cellClass">
-                                    <div class="flex items-center gap-2">
+                                    <div class="flex items-center gap-3">
+                                        <img
+                                            v-if="p.photo"
+                                            :src="p.photo.thumb_url"
+                                            :alt="p.name"
+                                            class="h-10 w-10 shrink-0 rounded-lg object-cover"
+                                        />
+                                        <span
+                                            v-else
+                                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 dark:bg-darkmode-400"
+                                        >
+                                            <Lucide
+                                                icon="Image"
+                                                class="h-4 w-4"
+                                            />
+                                        </span>
                                         <span
                                             class="font-medium"
                                             :class="{
@@ -974,6 +1122,56 @@ const tabs = computed(() => [
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
+                </div>
+
+                <!-- Paginación: sin ella la pantalla pintaba el catálogo
+                     entero de un jalón. Se pagina en cliente para que el
+                     buscador siga viendo todos los productos, no solo los
+                     de la página a la vista. -->
+                <div
+                    v-if="filteredProducts.length"
+                    class="mt-5 flex flex-col items-center justify-between gap-4 sm:flex-row"
+                >
+                    <p class="text-sm text-slate-500">
+                        {{ productRangeLabel }}
+                    </p>
+                    <nav
+                        v-if="productPages > 1"
+                        class="flex flex-wrap items-center justify-center gap-1.5"
+                    >
+                        <button
+                            type="button"
+                            class="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 dark:border-darkmode-400"
+                            title="Anterior"
+                            :disabled="productPage === 1"
+                            @click="productPage--"
+                        >
+                            <Lucide icon="ChevronLeft" class="h-4 w-4" />
+                        </button>
+                        <button
+                            v-for="n in pageWindow"
+                            :key="n"
+                            type="button"
+                            class="flex h-10 min-w-10 items-center justify-center rounded-lg border px-3 text-sm font-medium transition"
+                            :class="
+                                n === productPage
+                                    ? 'border-primary bg-primary text-white'
+                                    : 'border-slate-200 text-slate-500 hover:border-primary/40 hover:text-primary dark:border-darkmode-400'
+                            "
+                            @click="productPage = n"
+                        >
+                            {{ n }}
+                        </button>
+                        <button
+                            type="button"
+                            class="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-200 text-slate-500 transition hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-40 dark:border-darkmode-400"
+                            title="Siguiente"
+                            :disabled="productPage === productPages"
+                            @click="productPage++"
+                        >
+                            <Lucide icon="ChevronRight" class="h-4 w-4" />
+                        </button>
+                    </nav>
                 </div>
 
                 <!-- Vacío: fuera de la tabla para que también se vea en
@@ -1234,7 +1432,7 @@ const tabs = computed(() => [
         </div>
 
         <!-- Modal producto -->
-        <Dialog size="lg" :open="showProduct" @close="showProduct = false">
+        <Dialog size="lg" :open="showProduct" @close="closeProductModal">
             <Dialog.Panel>
                 <form
                     class="flex max-h-[85vh] flex-col"
@@ -1266,12 +1464,85 @@ const tabs = computed(() => [
                         <button
                             type="button"
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                            @click="showProduct = false"
+                            @click="closeProductModal"
                         >
                             <Lucide icon="X" class="h-5 w-5" />
                         </button>
                     </div>
                     <div class="flex-1 space-y-4 overflow-y-auto px-6 py-5">
+                        <!-- Foto: lo primero, porque en el POS es lo que el
+                             mostrador busca de un vistazo. -->
+                        <div
+                            class="mb-5 flex flex-col gap-4 rounded-xl border border-slate-200/70 p-4 sm:flex-row sm:items-center dark:border-darkmode-400"
+                        >
+                            <img
+                                v-if="photoUrl"
+                                :src="photoUrl"
+                                alt="Foto del producto"
+                                class="h-24 w-24 shrink-0 self-center rounded-xl object-cover sm:self-auto"
+                            />
+                            <span
+                                v-else
+                                class="flex h-24 w-24 shrink-0 items-center justify-center self-center rounded-xl bg-slate-100 text-slate-400 sm:self-auto dark:bg-darkmode-400"
+                            >
+                                <Lucide icon="Image" class="h-8 w-8" />
+                            </span>
+                            <div class="min-w-0 flex-1">
+                                <div class="text-sm font-medium">
+                                    Foto del producto
+                                </div>
+                                <p class="mt-1 text-xs text-slate-500">
+                                    Se muestra en el punto de venta para
+                                    encontrarlo más rápido. JPG, PNG o WebP,
+                                    hasta 6 MB.
+                                </p>
+                                <input
+                                    ref="photoInput"
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp"
+                                    class="hidden"
+                                    @change="onPhotoPicked"
+                                />
+                                <div class="mt-3 flex flex-wrap gap-2">
+                                    <Button
+                                        type="button"
+                                        variant="outline-secondary"
+                                        class="min-h-11 rounded-[0.5rem] bg-white"
+                                        :disabled="photoBusy"
+                                        @click="photoInput?.click()"
+                                    >
+                                        <Lucide
+                                            icon="ImagePlus"
+                                            class="mr-2 h-4 w-4"
+                                        />
+                                        {{
+                                            photoUrl ? 'Cambiar' : 'Subir foto'
+                                        }}
+                                    </Button>
+                                    <Button
+                                        v-if="photoUrl"
+                                        type="button"
+                                        variant="outline-danger"
+                                        class="min-h-11 rounded-[0.5rem] bg-white"
+                                        :disabled="photoBusy"
+                                        @click="removePhoto"
+                                    >
+                                        <Lucide
+                                            icon="Trash2"
+                                            class="mr-2 h-4 w-4"
+                                        />
+                                        Quitar
+                                    </Button>
+                                </div>
+                                <p
+                                    v-if="photoFile"
+                                    class="mt-2 text-xs text-slate-500"
+                                >
+                                    La foto se sube al guardar el producto.
+                                </p>
+                            </div>
+                        </div>
+
                         <div
                             class="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2"
                         >
@@ -1500,7 +1771,7 @@ const tabs = computed(() => [
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            @click="showProduct = false"
+                            @click="closeProductModal"
                             >Cancelar</Button
                         >
                         <Button

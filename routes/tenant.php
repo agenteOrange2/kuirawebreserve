@@ -97,6 +97,12 @@ Route::middleware([
     Route::get('/fotos/logo', [\App\Http\Controllers\Tenant\PropertyLogoController::class, 'show'])
         ->name('property-logo');
 
+    // Foto de producto del POS. Pública como las de habitaciones: el wizard
+    // ofrece productos al huésped sin login.
+    Route::get('/fotos/productos/{mediaId}', [\App\Http\Controllers\Tenant\ProductPhotoController::class, 'show'])
+        ->whereNumber('mediaId')
+        ->name('product-photo');
+
     // Wizard público de experiencias (tours con horario y cupo propios) y
     // sus fotos — módulo `experiencias`, independiente del motor-web.
     Route::get('/reservar/experiencias', [\App\Http\Controllers\Tenant\ExperienceWizardController::class, 'page'])
@@ -507,6 +513,9 @@ Route::middleware([
         Route::middleware(['can:inventory.manage', 'module:pos'])->group(function () {
             Route::apiResource('products', ProductController::class)->except(['show']);
             Route::post('products/{product}/movements', [ProductController::class, 'movement'])->name('products.movement');
+            // Foto del producto (una sola; subir reemplaza la anterior).
+            Route::post('products/{product}/photo', [\App\Http\Controllers\Tenant\ProductPhotoController::class, 'store'])->name('products.photo.store');
+            Route::delete('products/{product}/photo', [\App\Http\Controllers\Tenant\ProductPhotoController::class, 'destroy'])->name('products.photo.destroy');
             Route::apiResource('ingredients', IngredientController::class)->except(['show']);
             Route::post('ingredients/{ingredient}/movements', [IngredientController::class, 'movement'])->name('ingredients.movement');
         });

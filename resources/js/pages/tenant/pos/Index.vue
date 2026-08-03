@@ -16,6 +16,7 @@ interface PosProduct {
     price: string;
     track_stock: boolean;
     stock_qty: number;
+    photo: { id: number; url: string; thumb_url: string } | null;
 }
 
 interface CartLine {
@@ -294,6 +295,23 @@ async function confirmVoid() {
                             :class="{ 'opacity-40': isOutOfStock(p) }"
                             @click="add(p)"
                         >
+                            <!-- La foto es lo que el mostrador reconoce de un
+                                 vistazo; sin ella, la inicial del nombre. -->
+                            <div
+                                class="mb-3 flex aspect-square w-full items-center justify-center overflow-hidden rounded-lg bg-slate-100 dark:bg-darkmode-400"
+                            >
+                                <img
+                                    v-if="p.photo"
+                                    :src="p.photo.thumb_url"
+                                    :alt="p.name"
+                                    class="h-full w-full object-cover"
+                                />
+                                <span
+                                    v-else
+                                    class="text-2xl font-medium text-slate-300"
+                                    >{{ p.name.charAt(0).toUpperCase() }}</span
+                                >
+                            </div>
                             <div class="flex items-start justify-between gap-2">
                                 <div class="truncate font-medium">
                                     {{ p.name }}
