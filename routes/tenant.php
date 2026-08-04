@@ -231,6 +231,12 @@ Route::middleware([
             ->middleware(['can:orders.manage', 'module:pos'])
             ->name('pos');
 
+        // Historial completo de ventas: la pantalla del POS solo muestra
+        // las últimas diez.
+        Route::get('/pos/historial', \App\Http\Controllers\Tenant\SalesHistoryPageController::class)
+            ->middleware(['can:orders.manage', 'module:pos'])
+            ->name('pos.history');
+
         // Ticket imprimible de una venta (se abre en pestaña nueva y manda
         // solo el diálogo de impresión).
         Route::get('/pos/ticket/{order}', \App\Http\Controllers\Tenant\PosTicketController::class)
@@ -332,6 +338,7 @@ Route::middleware([
         Route::post('staff-notifications/{notification}/read', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'read'])->name('staff-notifications.read');
 
         // Push del panel: cada quien conecta y desconecta SUS dispositivos.
+        Route::get('push-subscriptions', [\App\Http\Controllers\Tenant\PushSubscriptionController::class, 'index'])->name('push-subscriptions.index');
         Route::post('push-subscriptions', [\App\Http\Controllers\Tenant\PushSubscriptionController::class, 'store'])->name('push-subscriptions.store');
         Route::delete('push-subscriptions', [\App\Http\Controllers\Tenant\PushSubscriptionController::class, 'destroy'])->name('push-subscriptions.destroy');
         Route::post('push-subscriptions/test', [\App\Http\Controllers\Tenant\PushSubscriptionController::class, 'test'])->name('push-subscriptions.test');

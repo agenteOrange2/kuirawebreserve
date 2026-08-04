@@ -204,6 +204,48 @@ onMounted(load);
                                 </p>
                             </div>
                         </div>
+
+                        <!-- Dispositivos conectados: se pueden quitar desde
+                             aquí, que es lo único que sirve cuando el aparato
+                             se perdió y ya no lo tienes a la mano. -->
+                        <div
+                            v-if="push.devices.value.length"
+                            class="mt-3 border-t border-slate-100 pt-3 dark:border-darkmode-400"
+                        >
+                            <p
+                                class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                Dispositivos conectados
+                            </p>
+                            <div class="mt-2 space-y-1.5">
+                                <div
+                                    v-for="device in push.devices.value"
+                                    :key="device.id"
+                                    class="flex items-center gap-2 text-xs"
+                                >
+                                    <Lucide
+                                        icon="Smartphone"
+                                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                                    />
+                                    <span class="min-w-0 flex-1 truncate">
+                                        {{ device.name }}
+                                        <span
+                                            v-if="device.last_used_at"
+                                            class="text-slate-400"
+                                            >· {{ device.last_used_at }}</span
+                                        >
+                                    </span>
+                                    <button
+                                        type="button"
+                                        title="Quitar este dispositivo"
+                                        class="shrink-0 text-slate-400 transition hover:text-danger"
+                                        @click="push.removeDevice(device.id)"
+                                    >
+                                        <Lucide icon="X" class="h-3.5 w-3.5" />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div

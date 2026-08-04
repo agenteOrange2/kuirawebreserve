@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
 import axios from 'axios';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormInput, FormSelect } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
@@ -41,7 +41,49 @@ const props = defineProps<{
     }[];
 }>();
 
-const cart = ref<CartLine[]>([]);
+const CART_KEY = 'kuira.pos.cart';
+
+/**
+ * El carrito sobrevive a recargar: en el mostrador una recarga accidental
+ * —o el celular descartando la pestaña— borraba la venta a medio armar.
+ * Se guardan ids y cantidades, no el producto entero: el precio siempre se
+ * vuelve a leer del catálogo para no cobrar uno viejo.
+ */
+function restoreCart(): CartLine[] {
+    try {
+        const raw = localStorage.getItem(CART_KEY);
+        if (!raw) return [];
+
+        return (JSON.parse(raw) as { id: number; qty: number }[])
+            .map(({ id, qty }) => {
+                const product = props.products.find((p) => p.id === id);
+
+                return product ? { product, qty } : null;
+            })
+            .filter((line): line is CartLine => line !== null);
+    } catch {
+        return [];
+    }
+}
+
+const cart = ref<CartLine[]>(restoreCart());
+
+watch(
+    cart,
+    (lines) => {
+        try {
+            localStorage.setItem(
+                CART_KEY,
+                JSON.stringify(
+                    lines.map((l) => ({ id: l.product.id, qty: l.qty })),
+                ),
+            );
+        } catch {
+            /* sin almacenamiento el carrito solo dura la sesión */
+        }
+    },
+    { deep: true },
+);
 const stayId = ref<string | number>('');
 const paymentMethod = ref<'cash' | 'card' | 'transfer'>('cash');
 const paymentReference = ref('');
@@ -235,15 +277,34 @@ async function confirmVoid() {
                         </p>
                     </div>
                 </div>
-                <Button
-                    as="a"
-                    :href="route('tenant.inventory')"
-                    variant="outline-secondary"
-                    class="w-full rounded-[0.5rem] bg-white md:w-auto"
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:gap-2.5"
                 >
-                    <Lucide icon="Package" class="mr-2 h-4 w-4 stroke-[1.3]" />
-                    Inventario
-                </Button>
+                    <Button
+                        as="a"
+                        :href="route('tenant.pos.history')"
+                        variant="outline-secondary"
+                        class="rounded-[0.5rem] bg-white"
+                    >
+                        <Lucide
+                            icon="Receipt"
+                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                        />
+                        Historial
+                    </Button>
+                    <Button
+                        as="a"
+                        :href="route('tenant.inventory')"
+                        variant="outline-secondary"
+                        class="rounded-[0.5rem] bg-white"
+                    >
+                        <Lucide
+                            icon="Package"
+                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                        />
+                        Inventario
+                    </Button>
+                </div>
             </div>
 
             <div class="mt-5 grid grid-cols-12 gap-6">

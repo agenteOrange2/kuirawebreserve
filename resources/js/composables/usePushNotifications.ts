@@ -26,11 +26,18 @@ function urlBase64ToBuffer(base64: string): ArrayBuffer {
     return bytes.buffer;
 }
 
+export interface PushDevice {
+    id: number;
+    name: string;
+    last_used_at: string | null;
+}
+
 export function usePushNotifications(vapidKey: string | null) {
     const supported = ref(false);
     const subscribed = ref(false);
     const busy = ref(false);
     const error = ref<string | null>(null);
+    const devices = ref<PushDevice[]>([]);
 
     function checkSupport(): boolean {
         return (
@@ -52,11 +59,35 @@ export function usePushNotifications(vapidKey: string | null) {
         return (await registration?.pushManager.getSubscription()) ?? null;
     }
 
+    async function loadDevices() {
+        try {
+            const { data } = await axios.get('/api/push-subscriptions');
+            devices.value = data.devices;
+        } catch {
+            devices.value = [];
+        }
+    }
+
     async function refresh() {
         supported.value = checkSupport();
         if (!supported.value) return;
 
         subscribed.value = (await currentSubscription()) !== null;
+        await loadDevices();
+    }
+
+    /**
+     * Quita un dispositivo por id, para el caso en que ya no lo tienes a la
+     * mano (se perdió el celular). Solo borra el registro del servidor: ese
+     * aparato deja de recibir en cuanto el navegador lo confirme.
+     */
+    async function removeDevice(id: number) {
+        try {
+            await axios.delete('/api/push-subscriptions', { data: { id } });
+            devices.value = devices.value.filter((d) => d.id !== id);
+        } catch {
+            error.value = 'No se pudo quitar el dispositivo.';
+        }
     }
 
     async function subscribe() {
@@ -87,6 +118,7 @@ export function usePushNotifications(vapidKey: string | null) {
 
             await axios.post('/api/push-subscriptions', subscription.toJSON());
             subscribed.value = true;
+            await loadDevices();
 
             // Uno de prueba: que el staff vea con sus ojos que sí llega.
             await axios.post('/api/push-subscriptions/test');
@@ -115,6 +147,7 @@ export function usePushNotifications(vapidKey: string | null) {
             }
 
             subscribed.value = false;
+            await loadDevices();
         } catch {
             error.value = 'No se pudieron desactivar los avisos.';
         } finally {
@@ -124,5 +157,14 @@ export function usePushNotifications(vapidKey: string | null) {
 
     onMounted(refresh);
 
-    return { supported, subscribed, busy, error, subscribe, unsubscribe };
+    return {
+        supported,
+        subscribed,
+        busy,
+        error,
+        devices,
+        subscribe,
+        unsubscribe,
+        removeDevice,
+    };
 }

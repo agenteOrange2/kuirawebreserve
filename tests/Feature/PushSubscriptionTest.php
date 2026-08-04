@@ -99,3 +99,54 @@ it('crear un aviso encola el push en vez de mandarlo en la petición', function 
     // El huésped que escribió no tiene por qué esperar a que Google conteste.
     Queue::assertPushed(SendStaffPush::class);
 });
+
+it('el nombre del dispositivo se lee, no es el user agent crudo', function () {
+    $request = subscribeRequest($this->user, 'https://fcm.googleapis.com/fcm/send/x');
+    $request->headers->set(
+        'User-Agent',
+        'Mozilla/5.0 (Linux; Android 13; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120 Mobile Safari/537.36',
+    );
+
+    app(PushSubscriptionController::class)->store($request, app(WebPushSender::class));
+
+    $listing = Request::create('/api/push-subscriptions', 'GET');
+    $listing->setUserResolver(fn () => $this->user);
+
+    $devices = app(PushSubscriptionController::class)->index($listing)->getData(true)['devices'];
+
+    expect($devices)->toHaveCount(1)
+        ->and($devices[0]['name'])->toBe('Android · Chrome');
+});
+
+it('se puede quitar un dispositivo por id, sin tenerlo a la mano', function () {
+    app(PushSubscriptionController::class)->store(
+        subscribeRequest($this->user, 'https://fcm.googleapis.com/fcm/send/perdido'),
+        app(WebPushSender::class),
+    );
+
+    $request = Request::create('/api/push-subscriptions', 'DELETE', [
+        'id' => PushSubscription::first()->id,
+    ]);
+    $request->setUserResolver(fn () => $this->user);
+
+    app(PushSubscriptionController::class)->destroy($request);
+
+    expect(PushSubscription::count())->toBe(0);
+});
+
+it('no se puede quitar por id el dispositivo de otra persona', function () {
+    $otro = User::factory()->create();
+    app(PushSubscriptionController::class)->store(
+        subscribeRequest($otro, 'https://fcm.googleapis.com/fcm/send/ajeno'),
+        app(WebPushSender::class),
+    );
+
+    $request = Request::create('/api/push-subscriptions', 'DELETE', [
+        'id' => PushSubscription::first()->id,
+    ]);
+    $request->setUserResolver(fn () => $this->user);
+
+    app(PushSubscriptionController::class)->destroy($request);
+
+    expect(PushSubscription::count())->toBe(1);
+});

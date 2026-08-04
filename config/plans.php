@@ -31,7 +31,12 @@ return [
 
     'pro' => [
         'label' => 'Pro',
-        'max_properties' => 3,
+        // 1 en TODOS los planes mientras el panel opere una sola propiedad
+        // por hotel (PropertyController::store lo hace cumplir). Anunciar
+        // más era prometer algo que choca contra ese bloqueo al intentarlo.
+        // Cuando exista multipropiedad de verdad, este número sube aquí y
+        // en la tabla central `plans`.
+        'max_properties' => 1,
         'max_rooms' => 150,
         'max_users' => 20,
         'max_channels' => 3,
