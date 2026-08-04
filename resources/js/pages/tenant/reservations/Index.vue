@@ -180,6 +180,8 @@ const props = defineProps<{
     view: 'list' | 'calendar';
     property: { id: number; name: string };
     reservations: ReservationRow[];
+    upcomingTotal: number;
+    upcomingDays: number;
     history: ReservationRow[];
     historyTotal: number;
     inHouse: ReservationRow[];
@@ -1817,6 +1819,20 @@ const modalDescription = computed(() => {
                         >
                             Limpiar filtros
                         </button>
+                    </div>
+                    <!-- Si hay más allá del horizonte se dice, en vez de
+                         ocultarlas en silencio. -->
+                    <div
+                        v-else-if="upcomingTotal > reservations.length"
+                        class="ml-auto text-xs text-slate-500"
+                    >
+                        Próximos {{ upcomingDays }} días ·
+                        {{ upcomingTotal - reservations.length }} más en el
+                        <Link
+                            :href="route('tenant.reservations.calendar')"
+                            class="font-medium text-primary hover:underline"
+                            >calendario</Link
+                        >
                     </div>
                 </div>
                 <!-- Filtros principales de la operación -->

@@ -21,6 +21,12 @@ class ReservationsPageController extends Controller
     /** Líneas de bitácora que muestra el detalle de cada reserva. */
     private const TIMELINE_LIMIT = 8;
 
+    /** Horizonte de la lista de próximas: más allá vive el calendario. */
+    private const UPCOMING_DAYS = 90;
+
+    /** Tope duro por si un hotel llena esos 90 días. */
+    private const UPCOMING_LIMIT = 200;
+
     public function __invoke(Request $request): Response
     {
         $property = Property::firstOrFail();
@@ -32,7 +38,19 @@ class ReservationsPageController extends Controller
             'guest:id,first_name,last_name,phone,email',
         ];
 
-        $reservationModels = Reservation::query()
+        // Próximas reservas: acotadas a un horizonte y con tope duro. Traer
+        // TODO lo futuro sin límite crecía sin freno con la operación, y el
+        // mostrador nunca necesita ver una reserva de dentro de ocho meses
+        // en esta lista (para eso está el calendario, que pide su propio
+        // rango, y /reservas/historial con buscador).
+        $upcomingQuery = Reservation::query()
+            ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
+            ->where('ends_at', '>=', now())
+            ->where('starts_at', '<=', now()->addDays(self::UPCOMING_DAYS));
+
+        $upcomingTotal = (clone $upcomingQuery)->count();
+
+        $reservationModels = $upcomingQuery
             ->with($relations)
             // ¿Hay transferencia esperando verificación? El modal de
             // confirmar avisa: confirmar a mano NO registra ese dinero —
@@ -40,9 +58,8 @@ class ReservationsPageController extends Controller
             ->withExists(['paymentRequests as pending_transfer_request' => fn ($q) => $q
                 ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
                 ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)])
-            ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
-            ->where('ends_at', '>=', now())
             ->orderBy('starts_at')
+            ->limit(self::UPCOMING_LIMIT)
             ->get();
 
         // Historial: lo que ya salió del flujo (en casa vive en "stays").
@@ -136,6 +153,10 @@ class ReservationsPageController extends Controller
             'view' => $request->routeIs('tenant.reservations.calendar') ? 'calendar' : 'list',
             'property' => $property->only(['id', 'name']),
             'reservations' => $reservations,
+            // Cuántas quedaron fuera del horizonte o del tope, para que la
+            // lista pueda decirlo en vez de ocultarlas en silencio.
+            'upcomingTotal' => $upcomingTotal,
+            'upcomingDays' => self::UPCOMING_DAYS,
             'history' => $history,
             'historyTotal' => $historyTotal,
             'inHouse' => $inHouse,

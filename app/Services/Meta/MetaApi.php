@@ -408,8 +408,12 @@ class MetaApi
      * adjuntos de una conversación se sirven tras autenticación y exponerlos
      * en una URL pública para que Meta los baje sería filtrarlos.
      *
-     * Messenger e Instagram todavía no: su Send API tiene otra mecánica y no
-     * se puede probar a ciegas. Devuelve false y el staff ve el aviso.
+     * Messenger sube el archivo en la misma llamada de envío (multipart).
+     *
+     * Instagram NO: su Send API solo acepta adjuntos por URL pública, y los
+     * de una conversación se sirven tras autenticación — publicarlos para
+     * que Meta los baje sería filtrarlos. Devuelve false y el staff ve el
+     * aviso en vez de creer que llegó.
      */
     public function sendMedia(
         MetaChannelLink $link,
@@ -419,6 +423,10 @@ class MetaApi
         string $fileName,
         ?string $caption = null,
     ): bool {
+        if ($link->type === 'messenger') {
+            return $this->sendMessengerMedia($link, $to, $path, $mime, $fileName);
+        }
+
         if ($link->type !== 'whatsapp') {
             return false;
         }
@@ -463,6 +471,51 @@ class MetaApi
 
             if ($response->failed()) {
                 Log::warning('Meta: adjunto no enviado', [
+                    'tenant' => $link->tenant_id,
+                    'status' => $response->status(),
+                    'body' => $response->json(),
+                ]);
+
+                return false;
+            }
+
+            return true;
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
+    }
+
+    /**
+     * Messenger: el archivo viaja en la MISMA llamada de envío, multipart,
+     * sin paso previo de subida ni URL pública de por medio.
+     */
+    protected function sendMessengerMedia(
+        MetaChannelLink $link,
+        string $to,
+        string $path,
+        string $mime,
+        string $fileName,
+    ): bool {
+        $graph = rtrim(config('meta.graph_url'), '/');
+
+        try {
+            $response = Http::withToken($link->access_token)
+                ->attach('filedata', file_get_contents($path), $fileName, ['Content-Type' => $mime])
+                ->post("{$graph}/me/messages", [
+                    'recipient' => json_encode(['id' => $to]),
+                    'messaging_type' => 'RESPONSE',
+                    'message' => json_encode([
+                        'attachment' => [
+                            'type' => str_starts_with($mime, 'image/') ? 'image' : 'file',
+                            'payload' => ['is_reusable' => false],
+                        ],
+                    ]),
+                ]);
+
+            if ($response->failed()) {
+                Log::warning('Meta: adjunto de Messenger no enviado', [
                     'tenant' => $link->tenant_id,
                     'status' => $response->status(),
                     'body' => $response->json(),

@@ -95,7 +95,9 @@ it('si la subida a Meta falla no se manda el mensaje', function () {
     Http::assertNotSent(fn ($req) => str_contains($req->url(), '/PN123/messages'));
 });
 
-it('Messenger e Instagram todavía no mandan adjuntos y lo dicen', function () {
+it('Messenger sube el archivo en la misma llamada, sin URL pública', function () {
+    Http::fake(['graph.facebook.com/*/me/messages' => Http::response(['message_id' => 'm_1'])]);
+
     $link = MetaChannelLink::create([
         'tenant_id' => 'demo',
         'type' => 'messenger',
@@ -112,7 +114,29 @@ it('Messenger e Instagram todavía no mandan adjuntos y lo dicen', function () {
         'foto.jpg',
     );
 
-    expect($ok)->toBeFalse();
+    expect($ok)->toBeTrue();
+    Http::assertSent(fn ($req) => str_contains($req->url(), '/me/messages')
+        && $req->isMultipart());
+});
+
+it('Instagram no manda adjuntos: exigiría publicar el archivo', function () {
+    $link = MetaChannelLink::create([
+        'tenant_id' => 'demo',
+        'type' => 'instagram',
+        'external_id' => 'IG1',
+        'access_token' => 'IGAA-token',
+        'active' => true,
+    ]);
+
+    // Su Send API solo acepta URL pública, y los adjuntos de una
+    // conversación se sirven tras autenticación.
+    expect(app(MetaApi::class)->sendMedia(
+        $link,
+        'IGSID1',
+        fakeAttachment(),
+        'image/jpeg',
+        'foto.jpg',
+    ))->toBeFalse();
 });
 
 it('Evolution manda el archivo en base64, sin exponerlo en una URL', function () {

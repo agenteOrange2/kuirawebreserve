@@ -127,3 +127,22 @@ it('cargar /reservas no cuesta más consultas por tener más bitácora', functio
 
     expect($withHistory)->toBe($baseline);
 });
+
+it('la lista de próximas se acota a un horizonte y dice cuántas quedan fuera', function () {
+    // Dentro del horizonte
+    upcomingReservation(['guest_name' => 'Cercana']);
+    // Muy a futuro: no debe salir en la lista, pero sí contarse aparte
+    upcomingReservation([
+        'guest_name' => 'Lejana',
+        'starts_at' => now()->addDays(200),
+        'ends_at' => now()->addDays(201),
+    ]);
+
+    $props = reservationProps();
+
+    expect($props['reservations'])->toHaveCount(1)
+        ->and($props['reservations'][0]['guest_name'])->toBe('Cercana')
+        // El total del horizonte no incluye la de dentro de 200 días.
+        ->and($props['upcomingTotal'])->toBe(1)
+        ->and($props['upcomingDays'])->toBe(90);
+});
