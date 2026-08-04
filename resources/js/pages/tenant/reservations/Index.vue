@@ -2646,8 +2646,8 @@ const modalDescription = computed(() => {
                                 <li v-if="guaranteeAmount > 0">
                                     Se cobra la
                                     <span class="font-medium">fianza</span>
-                                    de {{ money(guaranteeAmount) }}; se
-                                    devuelve al registrar la salida.
+                                    de {{ money(guaranteeAmount) }}; se devuelve
+                                    al registrar la salida.
                                 </li>
                             </template>
                             <template

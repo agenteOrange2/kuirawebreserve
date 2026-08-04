@@ -518,7 +518,9 @@ const holdCountdown = computed(() => {
                                     Completa tu pre-registro
                                 </span>
                                 <Lucide
-                                    :icon="preOpen ? 'ChevronUp' : 'ChevronDown'"
+                                    :icon="
+                                        preOpen ? 'ChevronUp' : 'ChevronDown'
+                                    "
                                     class="h-4 w-4 shrink-0 text-slate-400"
                                 />
                             </button>

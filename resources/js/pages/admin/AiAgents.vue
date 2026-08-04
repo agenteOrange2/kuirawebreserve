@@ -164,7 +164,8 @@ async function submitProvider() {
             e.response?.data?.message ??
             (
                 Object.values(e.response?.data?.errors ?? {})[0] as
-                    string[] | undefined
+                    | string[]
+                    | undefined
             )?.[0] ??
             'No se pudo guardar.';
     } finally {

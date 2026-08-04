@@ -289,7 +289,8 @@ async function saveInstructions() {
                         </div>
                         <pre
                             class="mt-4 max-h-[70vh] flex-1 overflow-auto rounded bg-slate-50 p-4 font-mono text-xs break-words whitespace-pre-wrap text-slate-600 dark:bg-darkmode-700 dark:text-slate-300"
-                            >{{ promptText }}</pre>
+                            >{{ promptText }}</pre
+                        >
                     </div>
                 </div>
             </div>

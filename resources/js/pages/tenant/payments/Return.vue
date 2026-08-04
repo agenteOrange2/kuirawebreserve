@@ -62,7 +62,9 @@ onBeforeUnmount(() => {
                 <p class="mt-2 text-sm text-slate-500">
                     Recibimos tu {{ payment.concept.toLowerCase() }} de
                     {{ payment.amount_label
-                    }}<template v-if="secondary"> ({{ secondary.label }})</template>.
+                    }}<template v-if="secondary">
+                        ({{ secondary.label }})</template
+                    >.
                     <template v-if="payment.reservation_confirmed">
                         Tu reserva {{ payment.reservation_code }} está
                         confirmada. Te esperamos en {{ hotel.name }}.
@@ -98,7 +100,9 @@ onBeforeUnmount(() => {
                     <Button
                         as="a"
                         :href="lookupUrl"
-                        :variant="hotel.website ? 'outline-secondary' : 'primary'"
+                        :variant="
+                            hotel.website ? 'outline-secondary' : 'primary'
+                        "
                         class="rounded-[0.5rem]"
                         :class="hotel.website ? 'bg-white' : ''"
                     >
@@ -113,7 +117,8 @@ onBeforeUnmount(() => {
                  ("¿quedó mi reserva?") en vez de girar para siempre. -->
             <template
                 v-else-if="
-                    payment.status === 'pending' && payment.reservation_confirmed
+                    payment.status === 'pending' &&
+                    payment.reservation_confirmed
                 "
             >
                 <div
@@ -195,7 +200,8 @@ onBeforeUnmount(() => {
                 <p class="mt-2 text-sm text-slate-500">
                     La solicitud de pago está
                     {{ payment.status_label.toLowerCase() }}. Escríbenos por el
-                    chat de {{ hotel.name }} y te generamos una nueva al momento.
+                    chat de {{ hotel.name }} y te generamos una nueva al
+                    momento.
                 </p>
             </template>
 
@@ -205,7 +211,9 @@ onBeforeUnmount(() => {
                 class="mt-6 border-t border-slate-200/70 pt-4 dark:border-darkmode-400"
             >
                 <p class="text-xs text-slate-400">Síguenos</p>
-                <div class="mt-2 flex flex-wrap items-center justify-center gap-2">
+                <div
+                    class="mt-2 flex flex-wrap items-center justify-center gap-2"
+                >
                     <a
                         v-for="social in hotel.socials"
                         :key="social.url"

@@ -994,15 +994,11 @@ async function submitDelete() {
                             <div
                                 class="flex items-center justify-between gap-2"
                             >
-                                <div
-                                    class="flex min-w-0 items-center gap-2.5"
-                                >
+                                <div class="flex min-w-0 items-center gap-2.5">
                                     <FormCheck.Input
                                         v-if="canManage"
                                         type="checkbox"
-                                        :checked="
-                                            selectedIds.includes(room.id)
-                                        "
+                                        :checked="selectedIds.includes(room.id)"
                                         @change="toggleRow(room.id)"
                                     />
                                     <Link
@@ -1111,172 +1107,57 @@ async function submitDelete() {
                         v-if="filteredRooms.length"
                         class="hidden overflow-x-auto sm:block"
                     >
-                    <Table striped class="min-w-[720px]">
-                        <Table.Thead>
-                            <Table.Tr>
-                                <Table.Th v-if="canManage" class="w-10">
-                                    <FormCheck.Input
-                                        type="checkbox"
-                                        :checked="allSelected"
-                                        title="Seleccionar las visibles"
-                                        @change="toggleAllRooms"
-                                    />
-                                </Table.Th>
-                                <Table.Th class="whitespace-nowrap"
-                                    >Número</Table.Th
-                                >
-                                <Table.Th class="whitespace-nowrap"
-                                    >Tipo</Table.Th
-                                >
-                                <Table.Th class="whitespace-nowrap"
-                                    >Camas / Capacidad</Table.Th
-                                >
-                                <Table.Th class="whitespace-nowrap"
-                                    >Zona</Table.Th
-                                >
-                                <Table.Th class="whitespace-nowrap"
-                                    >Estado</Table.Th
-                                >
-                                <Table.Th class="whitespace-nowrap"
-                                    >Notas</Table.Th
-                                >
-                                <Table.Th
-                                    v-if="canManage || canBlock"
-                                    class="text-right whitespace-nowrap"
-                                    >Acciones</Table.Th
-                                >
-                            </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                            <Table.Tr
-                                v-for="room in filteredRooms"
-                                :key="room.id"
-                            >
-                                <Table.Td v-if="canManage" class="w-10">
-                                    <FormCheck.Input
-                                        type="checkbox"
-                                        :checked="selectedIds.includes(room.id)"
-                                        @change="toggleRow(room.id)"
-                                    />
-                                </Table.Td>
-                                <Table.Td>
-                                    <Link
-                                        :href="
-                                            route('tenant.rooms.show', room.id)
-                                        "
-                                        class="font-medium text-primary hover:underline"
-                                        >{{ room.number }}</Link
-                                    >
-                                    <div
-                                        v-if="room.name"
-                                        class="text-xs text-slate-500"
-                                    >
-                                        {{ room.name }}
-                                    </div>
-                                </Table.Td>
-                                <Table.Td>
-                                    {{ room.room_type }}
-                                    <span
-                                        v-if="
-                                            typesWithoutRate.has(
-                                                room.room_type_id,
-                                            )
-                                        "
-                                        class="ml-1.5 rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-warning"
-                                        title="El tipo no tiene tarifa activa; agrégala en Zonas y tipos"
-                                    >
-                                        Sin tarifa
-                                    </span>
-                                </Table.Td>
-                                <Table.Td>
-                                    <span
-                                        class="text-slate-600 dark:text-slate-300"
-                                        >{{ room.beds_label ?? '—' }}</span
-                                    >
-                                    <span
-                                        v-if="room.capacity"
-                                        class="whitespace-nowrap text-slate-500"
-                                    >
-                                        · {{ room.capacity }} pers</span
-                                    >
-                                </Table.Td>
-                                <Table.Td>
-                                    <span
-                                        class="inline-flex items-center gap-2 sm:gap-1.5"
-                                    >
-                                        <span
-                                            v-if="room.zone_color"
-                                            class="h-2 w-2 shrink-0 rounded-full"
-                                            :style="{
-                                                backgroundColor:
-                                                    room.zone_color,
-                                            }"
+                        <Table striped class="min-w-[720px]">
+                            <Table.Thead>
+                                <Table.Tr>
+                                    <Table.Th v-if="canManage" class="w-10">
+                                        <FormCheck.Input
+                                            type="checkbox"
+                                            :checked="allSelected"
+                                            title="Seleccionar las visibles"
+                                            @change="toggleAllRooms"
                                         />
-                                        {{ room.zone ?? '—' }}
-                                    </span>
-                                </Table.Td>
-                                <Table.Td>
-                                    <span
-                                        class="inline-flex items-center gap-2 sm:gap-1.5"
+                                    </Table.Th>
+                                    <Table.Th class="whitespace-nowrap"
+                                        >Número</Table.Th
                                     >
-                                        <span
-                                            class="h-2 w-2 rounded-full"
-                                            :class="dotColor[room.status_color]"
-                                        />
-                                        {{ room.status_label }}
-                                    </span>
-                                    <div
-                                        v-if="
-                                            room.smoking ||
-                                            room.accessible ||
-                                            room.price_modifier
-                                        "
-                                        class="mt-1 flex items-center gap-2 sm:gap-1.5"
+                                    <Table.Th class="whitespace-nowrap"
+                                        >Tipo</Table.Th
                                     >
-                                        <span
-                                            v-if="room.smoking"
-                                            title="Se permite fumar"
-                                        >
-                                            <Lucide
-                                                icon="Cigarette"
-                                                class="h-4 w-4 text-slate-400"
-                                            />
-                                        </span>
-                                        <span
-                                            v-if="room.accessible"
-                                            title="Accesible / planta baja"
-                                        >
-                                            <Lucide
-                                                icon="Accessibility"
-                                                class="h-4 w-4 text-slate-400"
-                                            />
-                                        </span>
-                                        <span
-                                            v-if="room.price_modifier"
-                                            title="Ajuste de precio por unidad sobre la tarifa del tipo"
-                                            class="rounded-full px-1.5 py-0.5 text-xs font-medium"
-                                            :class="
-                                                room.price_modifier > 0
-                                                    ? 'bg-warning/10 text-warning'
-                                                    : 'bg-success/10 text-success'
+                                    <Table.Th class="whitespace-nowrap"
+                                        >Camas / Capacidad</Table.Th
+                                    >
+                                    <Table.Th class="whitespace-nowrap"
+                                        >Zona</Table.Th
+                                    >
+                                    <Table.Th class="whitespace-nowrap"
+                                        >Estado</Table.Th
+                                    >
+                                    <Table.Th class="whitespace-nowrap"
+                                        >Notas</Table.Th
+                                    >
+                                    <Table.Th
+                                        v-if="canManage || canBlock"
+                                        class="text-right whitespace-nowrap"
+                                        >Acciones</Table.Th
+                                    >
+                                </Table.Tr>
+                            </Table.Thead>
+                            <Table.Tbody>
+                                <Table.Tr
+                                    v-for="room in filteredRooms"
+                                    :key="room.id"
+                                >
+                                    <Table.Td v-if="canManage" class="w-10">
+                                        <FormCheck.Input
+                                            type="checkbox"
+                                            :checked="
+                                                selectedIds.includes(room.id)
                                             "
-                                        >
-                                            {{
-                                                priceModifierLabel(
-                                                    room.price_modifier,
-                                                )
-                                            }}
-                                        </span>
-                                    </div>
-                                </Table.Td>
-                                <Table.Td
-                                    class="max-w-[200px] truncate text-slate-500"
-                                    >{{ room.notes ?? '—' }}</Table.Td
-                                >
-                                <Table.Td v-if="canManage || canBlock">
-                                    <div
-                                        class="flex items-center justify-end gap-2"
-                                    >
+                                            @change="toggleRow(room.id)"
+                                        />
+                                    </Table.Td>
+                                    <Table.Td>
                                         <Link
                                             :href="
                                                 route(
@@ -1284,67 +1165,189 @@ async function submitDelete() {
                                                     room.id,
                                                 )
                                             "
-                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
-                                            title="Ver ficha y uso"
+                                            class="font-medium text-primary hover:underline"
+                                            >{{ room.number }}</Link
                                         >
-                                            <Lucide
-                                                icon="Eye"
-                                                class="h-4 w-4"
-                                            />
-                                        </Link>
-                                        <button
-                                            v-if="canManage"
-                                            type="button"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
-                                            title="Editar"
-                                            @click="openEdit(room)"
+                                        <div
+                                            v-if="room.name"
+                                            class="text-xs text-slate-500"
                                         >
-                                            <Lucide
-                                                icon="Pencil"
-                                                class="h-4 w-4"
-                                            />
-                                        </button>
-                                        <button
-                                            v-if="canManage"
-                                            type="button"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
-                                            title="Duplicar con el siguiente número libre"
-                                            @click="duplicateRoom(room)"
+                                            {{ room.name }}
+                                        </div>
+                                    </Table.Td>
+                                    <Table.Td>
+                                        {{ room.room_type }}
+                                        <span
+                                            v-if="
+                                                typesWithoutRate.has(
+                                                    room.room_type_id,
+                                                )
+                                            "
+                                            class="ml-1.5 rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-warning"
+                                            title="El tipo no tiene tarifa activa; agrégala en Zonas y tipos"
                                         >
-                                            <Lucide
-                                                icon="Copy"
-                                                class="h-4 w-4"
-                                            />
-                                        </button>
-                                        <button
-                                            v-if="canBlock"
-                                            type="button"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-warning/10 hover:text-warning"
-                                            title="Bloquear fechas por mantenimiento"
-                                            @click="openBlocks(room)"
+                                            Sin tarifa
+                                        </span>
+                                    </Table.Td>
+                                    <Table.Td>
+                                        <span
+                                            class="text-slate-600 dark:text-slate-300"
+                                            >{{ room.beds_label ?? '—' }}</span
                                         >
-                                            <Lucide
-                                                icon="CalendarOff"
-                                                class="h-4 w-4"
-                                            />
-                                        </button>
-                                        <button
-                                            v-if="canManage"
-                                            type="button"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
-                                            title="Eliminar"
-                                            @click="deleting = room"
+                                        <span
+                                            v-if="room.capacity"
+                                            class="whitespace-nowrap text-slate-500"
                                         >
-                                            <Lucide
-                                                icon="Trash2"
-                                                class="h-4 w-4"
+                                            · {{ room.capacity }} pers</span
+                                        >
+                                    </Table.Td>
+                                    <Table.Td>
+                                        <span
+                                            class="inline-flex items-center gap-2 sm:gap-1.5"
+                                        >
+                                            <span
+                                                v-if="room.zone_color"
+                                                class="h-2 w-2 shrink-0 rounded-full"
+                                                :style="{
+                                                    backgroundColor:
+                                                        room.zone_color,
+                                                }"
                                             />
-                                        </button>
-                                    </div>
-                                </Table.Td>
-                            </Table.Tr>
-                        </Table.Tbody>
-                    </Table>
+                                            {{ room.zone ?? '—' }}
+                                        </span>
+                                    </Table.Td>
+                                    <Table.Td>
+                                        <span
+                                            class="inline-flex items-center gap-2 sm:gap-1.5"
+                                        >
+                                            <span
+                                                class="h-2 w-2 rounded-full"
+                                                :class="
+                                                    dotColor[room.status_color]
+                                                "
+                                            />
+                                            {{ room.status_label }}
+                                        </span>
+                                        <div
+                                            v-if="
+                                                room.smoking ||
+                                                room.accessible ||
+                                                room.price_modifier
+                                            "
+                                            class="mt-1 flex items-center gap-2 sm:gap-1.5"
+                                        >
+                                            <span
+                                                v-if="room.smoking"
+                                                title="Se permite fumar"
+                                            >
+                                                <Lucide
+                                                    icon="Cigarette"
+                                                    class="h-4 w-4 text-slate-400"
+                                                />
+                                            </span>
+                                            <span
+                                                v-if="room.accessible"
+                                                title="Accesible / planta baja"
+                                            >
+                                                <Lucide
+                                                    icon="Accessibility"
+                                                    class="h-4 w-4 text-slate-400"
+                                                />
+                                            </span>
+                                            <span
+                                                v-if="room.price_modifier"
+                                                title="Ajuste de precio por unidad sobre la tarifa del tipo"
+                                                class="rounded-full px-1.5 py-0.5 text-xs font-medium"
+                                                :class="
+                                                    room.price_modifier > 0
+                                                        ? 'bg-warning/10 text-warning'
+                                                        : 'bg-success/10 text-success'
+                                                "
+                                            >
+                                                {{
+                                                    priceModifierLabel(
+                                                        room.price_modifier,
+                                                    )
+                                                }}
+                                            </span>
+                                        </div>
+                                    </Table.Td>
+                                    <Table.Td
+                                        class="max-w-[200px] truncate text-slate-500"
+                                        >{{ room.notes ?? '—' }}</Table.Td
+                                    >
+                                    <Table.Td v-if="canManage || canBlock">
+                                        <div
+                                            class="flex items-center justify-end gap-2"
+                                        >
+                                            <Link
+                                                :href="
+                                                    route(
+                                                        'tenant.rooms.show',
+                                                        room.id,
+                                                    )
+                                                "
+                                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
+                                                title="Ver ficha y uso"
+                                            >
+                                                <Lucide
+                                                    icon="Eye"
+                                                    class="h-4 w-4"
+                                                />
+                                            </Link>
+                                            <button
+                                                v-if="canManage"
+                                                type="button"
+                                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                                title="Editar"
+                                                @click="openEdit(room)"
+                                            >
+                                                <Lucide
+                                                    icon="Pencil"
+                                                    class="h-4 w-4"
+                                                />
+                                            </button>
+                                            <button
+                                                v-if="canManage"
+                                                type="button"
+                                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
+                                                title="Duplicar con el siguiente número libre"
+                                                @click="duplicateRoom(room)"
+                                            >
+                                                <Lucide
+                                                    icon="Copy"
+                                                    class="h-4 w-4"
+                                                />
+                                            </button>
+                                            <button
+                                                v-if="canBlock"
+                                                type="button"
+                                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-warning/10 hover:text-warning"
+                                                title="Bloquear fechas por mantenimiento"
+                                                @click="openBlocks(room)"
+                                            >
+                                                <Lucide
+                                                    icon="CalendarOff"
+                                                    class="h-4 w-4"
+                                                />
+                                            </button>
+                                            <button
+                                                v-if="canManage"
+                                                type="button"
+                                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                                title="Eliminar"
+                                                @click="deleting = room"
+                                            >
+                                                <Lucide
+                                                    icon="Trash2"
+                                                    class="h-4 w-4"
+                                                />
+                                            </button>
+                                        </div>
+                                    </Table.Td>
+                                </Table.Tr>
+                            </Table.Tbody>
+                        </Table>
                     </div>
                     <div
                         v-else-if="rooms.length"
@@ -1792,7 +1795,9 @@ async function submitDelete() {
                                     </span>
                                 </div>
                                 <!-- Sugerencias comunes: un clic agrega (extras propios de ESTA habitación) -->
-                                <div class="mt-2.5 flex flex-wrap gap-2 sm:gap-1.5">
+                                <div
+                                    class="mt-2.5 flex flex-wrap gap-2 sm:gap-1.5"
+                                >
                                     <button
                                         v-for="suggestion in AMENITY_SUGGESTIONS.filter(
                                             (a) => !form.amenities.includes(a),
@@ -2706,8 +2711,8 @@ async function submitDelete() {
                         </h2>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Mantenimiento programado: los días bloqueados no se
-                            ofrecen al reservar. El estado actual en el plano
-                            no cambia.
+                            ofrecen al reservar. El estado actual en el plano no
+                            cambia.
                         </p>
                     </div>
                     <button
@@ -2824,10 +2829,7 @@ async function submitDelete() {
                                         title="Eliminar bloqueo"
                                         @click="deleteBlock(block)"
                                     >
-                                        <Lucide
-                                            icon="Trash2"
-                                            class="h-4 w-4"
-                                        />
+                                        <Lucide icon="Trash2" class="h-4 w-4" />
                                     </button>
                                 </div>
                             </div>
@@ -2878,8 +2880,8 @@ async function submitDelete() {
                                 <FormHelp
                                     v-if="blockRangeInvalid"
                                     class="text-danger"
-                                    >La fecha final debe ser igual o posterior
-                                    a la inicial.</FormHelp
+                                    >La fecha final debe ser igual o posterior a
+                                    la inicial.</FormHelp
                                 >
                                 <FormHelp
                                     v-else-if="errors.ends_at"
@@ -2991,7 +2993,8 @@ async function submitDelete() {
                         </div>
                         <div>
                             <h2 class="text-base font-medium">
-                                Eliminar {{ selectedRows.length }} habitación(es)
+                                Eliminar
+                                {{ selectedRows.length }} habitación(es)
                             </h2>
                             <p class="text-xs text-slate-500">
                                 Las que tengan una estancia activa o reservas

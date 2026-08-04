@@ -245,7 +245,8 @@ async function uploadPhotos(event: Event) {
         reload();
     } catch (e: any) {
         const errs = e.response?.data?.errors as
-            Record<string, string[]> | undefined;
+            | Record<string, string[]>
+            | undefined;
         toast.error(
             'No se pudieron subir',
             e.response?.data?.message ??
@@ -1093,8 +1094,8 @@ async function bulkDelete() {
                             class="rounded-[0.5rem]"
                             @click="openBookingForm"
                         >
-                            <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Registrar
-                            reserva
+                            <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                            Registrar reserva
                         </Button>
                     </div>
                 </div>
@@ -1105,10 +1106,7 @@ async function bulkDelete() {
                     <Table>
                         <Table.Thead>
                             <Table.Tr>
-                                <Table.Th
-                                    v-if="canManage"
-                                    class="w-10"
-                                >
+                                <Table.Th v-if="canManage" class="w-10">
                                     <FormCheck.Input
                                         type="checkbox"
                                         :checked="allSelected"
@@ -1152,7 +1150,9 @@ async function bulkDelete() {
                                             booking.status === 'completed'
                                         "
                                         type="checkbox"
-                                        :checked="selectedIds.includes(booking.id)"
+                                        :checked="
+                                            selectedIds.includes(booking.id)
+                                        "
                                         @change="toggleRow(booking.id)"
                                     />
                                 </Table.Td>

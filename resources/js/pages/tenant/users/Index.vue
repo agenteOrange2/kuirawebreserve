@@ -347,7 +347,11 @@ async function submitDelete() {
                     </Table.Thead>
                     <Table.Tbody>
                         <Table.Tr v-for="u in filteredUsers" :key="u.id">
-                            <Table.Td v-if="canManage" :class="cellClass" class="w-10">
+                            <Table.Td
+                                v-if="canManage"
+                                :class="cellClass"
+                                class="w-10"
+                            >
                                 <FormCheck.Input
                                     v-if="!u.is_self"
                                     type="checkbox"

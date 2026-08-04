@@ -434,7 +434,8 @@ async function submitProvider() {
             e.response?.data?.message ??
             (
                 Object.values(e.response?.data?.errors ?? {})[0] as
-                    string[] | undefined
+                    | string[]
+                    | undefined
             )?.[0] ??
             'No se pudo guardar.';
     } finally {
@@ -598,7 +599,8 @@ async function submitChannel() {
             e.response?.data?.message ??
             (
                 Object.values(e.response?.data?.errors ?? {})[0] as
-                    string[] | undefined
+                    | string[]
+                    | undefined
             )?.[0] ??
             'No se pudo guardar.';
         channelError.value = msg;
@@ -1725,9 +1727,7 @@ async function copyMeta(key: string, value: string) {
                             class="grid grid-cols-1 gap-3 rounded-xl border border-dashed border-slate-300/70 bg-slate-50 p-4 sm:grid-cols-2 dark:border-darkmode-400 dark:bg-darkmode-700"
                         >
                             <div>
-                                <div
-                                    class="text-xs font-medium text-slate-500"
-                                >
+                                <div class="text-xs font-medium text-slate-500">
                                     URL del webhook (Callback URL)
                                 </div>
                                 <button
@@ -1751,9 +1751,7 @@ async function copyMeta(key: string, value: string) {
                                 </button>
                             </div>
                             <div>
-                                <div
-                                    class="text-xs font-medium text-slate-500"
-                                >
+                                <div class="text-xs font-medium text-slate-500">
                                     Token de verificación
                                 </div>
                                 <button
@@ -1855,7 +1853,8 @@ async function copyMeta(key: string, value: string) {
                                                             : 'bg-danger/10 text-danger'
                                                     "
                                                     >{{
-                                                        metaTests[ch.id].token_ok
+                                                        metaTests[ch.id]
+                                                            .token_ok
                                                             ? metaTests[ch.id]
                                                                   .phone ||
                                                               'token OK'
@@ -2092,7 +2091,8 @@ async function copyMeta(key: string, value: string) {
                             </div>
                             <pre
                                 class="overflow-x-auto rounded-lg bg-slate-800 px-3 py-2 font-mono text-xs leading-relaxed text-slate-100"
-                                >{{ curlExample }}</pre>
+                                >{{ curlExample }}</pre
+                            >
                         </div>
                         <div
                             class="flex items-start gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
@@ -2280,7 +2280,8 @@ async function copyMeta(key: string, value: string) {
                             </div>
                             <pre
                                 class="max-h-72 overflow-auto rounded-lg bg-slate-800 px-4 py-3 font-mono text-xs leading-relaxed text-slate-200"
-                                >{{ playResult }}</pre>
+                                >{{ playResult }}</pre
+                            >
                         </div>
                     </div>
 
@@ -2878,8 +2879,8 @@ async function copyMeta(key: string, value: string) {
                                 placeholder="1055XXXXXXXXXXX"
                             />
                             <FormHelp
-                                >El ID del número, en tu app de Meta →
-                                WhatsApp → Configuración de la API.</FormHelp
+                                >El ID del número, en tu app de Meta → WhatsApp
+                                → Configuración de la API.</FormHelp
                             >
                         </div>
                         <div>
@@ -2997,7 +2998,9 @@ async function copyMeta(key: string, value: string) {
                         >
                             <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
                             {{
-                                metaSaving ? 'Desconectando…' : 'Sí, desconectar'
+                                metaSaving
+                                    ? 'Desconectando…'
+                                    : 'Sí, desconectar'
                             }}
                         </Button>
                     </div>

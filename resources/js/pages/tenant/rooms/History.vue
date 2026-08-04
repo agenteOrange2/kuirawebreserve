@@ -646,9 +646,7 @@ const monthlyOptions = {
                                         class="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm"
                                     >
                                         <span class="font-medium">{{
-                                            fmtDuration(
-                                                period.duration_minutes,
-                                            )
+                                            fmtDuration(period.duration_minutes)
                                         }}</span>
                                         <span
                                             v-if="period.ongoing"

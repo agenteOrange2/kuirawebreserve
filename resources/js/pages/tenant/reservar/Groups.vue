@@ -419,7 +419,8 @@ async function submitHold() {
         if (data.requires_prepayment) preparePayment();
     } catch (error: any) {
         const errors = error.response?.data?.errors as
-            Record<string, string[]> | undefined;
+            | Record<string, string[]>
+            | undefined;
         submitError.value =
             error.response?.data?.message ??
             (errors ? Object.values(errors)[0]?.[0] : null) ??
@@ -439,7 +440,10 @@ const paymentError = ref<string | null>(null);
 // apartar (anticipos + tours) o liquidar todo el grupo de una vez.
 const payAmountChoice = ref<'deposit' | 'full'>('deposit');
 const depositApplies = computed(
-    () => !!hold.value && hold.value.deposit > 0 && hold.value.deposit < hold.value.total,
+    () =>
+        !!hold.value &&
+        hold.value.deposit > 0 &&
+        hold.value.deposit < hold.value.total,
 );
 // Modo "ambos": el responsable eligió pagar al llegar.
 const payLater = ref(false);

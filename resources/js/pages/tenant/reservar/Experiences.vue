@@ -293,7 +293,8 @@ async function submit() {
         preparePayment();
     } catch (error: any) {
         const errors = error.response?.data?.errors as
-            Record<string, string[]> | undefined;
+            | Record<string, string[]>
+            | undefined;
         submitError.value =
             error.response?.data?.message ??
             (errors ? Object.values(errors)[0]?.[0] : null) ??
@@ -957,9 +958,7 @@ async function requestPayment(
                         </div>
                     </div>
 
-                    <div
-                        class="mt-5 rounded-xl bg-slate-50 px-4 py-3"
-                    >
+                    <div class="mt-5 rounded-xl bg-slate-50 px-4 py-3">
                         <div class="flex items-center justify-between">
                             <span class="text-sm text-slate-500">Total</span>
                             <span
@@ -1107,7 +1106,6 @@ async function requestPayment(
                             </div>
                         </div>
                     </div>
-
                 </div>
             </div>
 

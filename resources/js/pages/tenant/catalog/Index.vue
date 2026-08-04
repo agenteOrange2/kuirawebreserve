@@ -305,7 +305,8 @@ async function uploadPhotos(event: Event) {
         router.reload({ only: ['roomTypes'] });
     } catch (e: any) {
         const errs = e.response?.data?.errors as
-            Record<string, string[]> | undefined;
+            | Record<string, string[]>
+            | undefined;
         toast.error(
             'No se pudieron subir',
             e.response?.data?.message ??
@@ -726,7 +727,9 @@ async function deleteSeason(season: SeasonRow) {
 <template>
     <RazeLayout title="Zonas, tipos y tarifas">
         <div class="mt-2">
-            <div class="box box--stacked flex items-center gap-3.5 p-5 sm:gap-4">
+            <div
+                class="box box--stacked flex items-center gap-3.5 p-5 sm:gap-4"
+            >
                 <div
                     class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
                 >
@@ -1220,57 +1223,59 @@ async function deleteSeason(season: SeasonRow) {
                                                 class="flex shrink-0 gap-1.5 sm:gap-2.5"
                                                 @click.stop
                                             >
-                                            <a
-                                                href="#"
-                                                class="text-success flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
-                                                title="Agregar tarifa"
-                                                @click.prevent="
-                                                    openPlanForType(type.id)
-                                                "
-                                            >
-                                                <Lucide
-                                                    icon="Tag"
-                                                    class="h-4 w-4"
-                                                />
-                                            </a>
-                                            <a
-                                                href="#"
-                                                class="text-slate-500 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
-                                                title="Duplicar tipo con sus tarifas"
-                                                @click.prevent="
-                                                    duplicateType(type)
-                                                "
-                                            >
-                                                <Lucide
-                                                    icon="Copy"
-                                                    class="h-4 w-4"
-                                                />
-                                            </a>
-                                            <a
-                                                href="#"
-                                                class="text-primary flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
-                                                title="Editar tipo"
-                                                @click.prevent="openType(type)"
-                                            >
-                                                <Lucide
-                                                    icon="Pencil"
-                                                    class="h-4 w-4"
-                                                />
-                                            </a>
-                                            <a
-                                                href="#"
-                                                class="text-danger flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
-                                                title="Eliminar tipo"
-                                                @click.prevent="
-                                                    deleteType(type)
-                                                "
-                                            >
-                                                <Lucide
-                                                    icon="Trash2"
-                                                    class="h-4 w-4"
-                                                />
-                                            </a>
-                                        </div>
+                                                <a
+                                                    href="#"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-success sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                    title="Agregar tarifa"
+                                                    @click.prevent="
+                                                        openPlanForType(type.id)
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        icon="Tag"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </a>
+                                                <a
+                                                    href="#"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-slate-500 sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                    title="Duplicar tipo con sus tarifas"
+                                                    @click.prevent="
+                                                        duplicateType(type)
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        icon="Copy"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </a>
+                                                <a
+                                                    href="#"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-primary sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                    title="Editar tipo"
+                                                    @click.prevent="
+                                                        openType(type)
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        icon="Pencil"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </a>
+                                                <a
+                                                    href="#"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-danger sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                    title="Eliminar tipo"
+                                                    @click.prevent="
+                                                        deleteType(type)
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        icon="Trash2"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </a>
+                                            </div>
                                         </div>
                                     </div>
 
@@ -2201,9 +2206,7 @@ async function deleteSeason(season: SeasonRow) {
                                             >{{ season.starts_on }} →
                                             {{ season.ends_on }}</template
                                         >
-                                        <template v-else
-                                            >Todo el año</template
-                                        >
+                                        <template v-else>Todo el año</template>
                                         <template
                                             v-if="
                                                 weekdaysLabel(season.weekdays)
@@ -2214,8 +2217,7 @@ async function deleteSeason(season: SeasonRow) {
                                                 weekdaysLabel(season.weekdays)
                                             }}</template
                                         >
-                                        · {{ money(season.price) }} ·
-                                        prioridad
+                                        · {{ money(season.price) }} · prioridad
                                         {{ season.priority }}
                                     </div>
                                 </div>
@@ -2542,7 +2544,9 @@ async function deleteSeason(season: SeasonRow) {
 
         <!-- Modal tipo -->
         <Dialog :open="showTypeForm" size="lg" @close="showTypeForm = false">
-            <Dialog.Panel class="w-screen max-w-none rounded-none sm:w-[92vw] sm:max-w-[92vw] sm:rounded-lg lg:w-[920px]">
+            <Dialog.Panel
+                class="w-screen max-w-none rounded-none sm:w-[92vw] sm:max-w-[92vw] sm:rounded-lg lg:w-[920px]"
+            >
                 <form class="flex flex-col" @submit.prevent="submitType">
                     <div
                         class="flex items-center gap-3.5 border-b border-slate-200/70 px-7 py-5 dark:border-darkmode-400"
@@ -3114,10 +3118,7 @@ async function deleteSeason(season: SeasonRow) {
             </Dialog.Panel>
         </Dialog>
         <!-- Confirmación de borrado: zona, tipo o tarifa -->
-        <Dialog
-            :open="confirmDelete !== null"
-            @close="confirmDelete = null"
-        >
+        <Dialog :open="confirmDelete !== null" @close="confirmDelete = null">
             <Dialog.Panel>
                 <div class="p-6 text-center sm:p-7">
                     <div

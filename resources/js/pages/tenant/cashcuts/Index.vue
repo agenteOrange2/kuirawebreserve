@@ -172,8 +172,8 @@ const detailCut = ref<Cut | null>(null);
                                 Cortes de venta
                             </h1>
                             <p class="mt-1 text-sm text-slate-500">
-                                {{ property.name }} · contabiliza lo cobrado
-                                por cada encargado
+                                {{ property.name }} · contabiliza lo cobrado por
+                                cada encargado
                             </p>
                         </div>
                     </div>
@@ -337,7 +337,8 @@ const detailCut = ref<Cut | null>(null);
                             class="mt-1 text-xs text-slate-500"
                         >
                             Incluye fianzas en garantía:
-                            {{ money(preview.guarantees_cash_in) }} cobradas<template
+                            {{ money(preview.guarantees_cash_in) }}
+                            cobradas<template
                                 v-if="preview.guarantees_cash_out > 0"
                             >
                                 −

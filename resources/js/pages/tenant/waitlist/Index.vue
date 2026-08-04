@@ -97,9 +97,9 @@ async function destroy() {
                         </h1>
                         <p class="mt-1 text-sm text-slate-500">
                             Interesados que no encontraron disponibilidad en el
-                            wizard y dejaron su contacto. Cuando una
-                            cancelación libera sus fechas, se les avisa solo
-                            por WhatsApp o correo.
+                            wizard y dejaron su contacto. Cuando una cancelación
+                            libera sus fechas, se les avisa solo por WhatsApp o
+                            correo.
                         </p>
                     </div>
                 </div>
@@ -114,7 +114,9 @@ async function destroy() {
                             :key="`card-${entry.id}`"
                             class="rounded-lg border border-slate-200/70 bg-white p-3.5 dark:border-darkmode-400 dark:bg-darkmode-600"
                         >
-                            <div class="flex items-center justify-between gap-2">
+                            <div
+                                class="flex items-center justify-between gap-2"
+                            >
                                 <div class="min-w-0 truncate font-medium">
                                     {{ entry.guest_name }}
                                 </div>
@@ -175,7 +177,9 @@ async function destroy() {
                     </div>
 
                     <!-- Escritorio: tabla -->
-                    <div class="hidden overflow-auto p-5 sm:block lg:overflow-visible">
+                    <div
+                        class="hidden overflow-auto p-5 sm:block lg:overflow-visible"
+                    >
                         <Table>
                             <Table.Thead>
                                 <Table.Tr>
@@ -330,7 +334,10 @@ async function destroy() {
                             @click="deleting = null"
                             >Cancelar</Button
                         >
-                        <Button variant="danger" class="min-h-11" @click="destroy"
+                        <Button
+                            variant="danger"
+                            class="min-h-11"
+                            @click="destroy"
                             >Sí, eliminar</Button
                         >
                     </div>

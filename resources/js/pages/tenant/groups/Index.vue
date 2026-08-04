@@ -740,8 +740,8 @@ async function deleteGroup(): Promise<void> {
                             Reservas grupales
                         </h1>
                         <p class="mt-1 text-sm text-slate-500">
-                            Administra varias habitaciones bajo un mismo folio
-                            y responsable.
+                            Administra varias habitaciones bajo un mismo folio y
+                            responsable.
                         </p>
                     </div>
                 </div>

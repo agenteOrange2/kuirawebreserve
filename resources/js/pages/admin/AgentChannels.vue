@@ -121,7 +121,8 @@ async function submitMetaLink() {
             e.response?.data?.message ??
             (
                 Object.values(e.response?.data?.errors ?? {})[0] as
-                    string[] | undefined
+                    | string[]
+                    | undefined
             )?.[0] ??
             'No se pudo vincular.';
     } finally {
@@ -272,7 +273,8 @@ async function submitMetaEdit() {
             e.response?.data?.message ??
                 (
                     Object.values(e.response?.data?.errors ?? {})[0] as
-                        string[] | undefined
+                        | string[]
+                        | undefined
                 )?.[0] ??
                 'Ocurrió un error.',
         );

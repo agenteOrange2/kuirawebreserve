@@ -2672,7 +2672,9 @@ async function copyCode() {
                                         class="flex justify-between font-medium text-success"
                                     >
                                         <span>Cupón {{ hold.coupon_code }}</span
-                                        ><span>−{{ money(hold.discount) }}</span>
+                                        ><span
+                                            >−{{ money(hold.discount) }}</span
+                                        >
                                     </div>
                                 </div>
                                 <div

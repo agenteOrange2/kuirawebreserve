@@ -733,15 +733,15 @@ async function submit() {
                                         <FormHelp>
                                             El huésped puede apartar sin pagar
                                             en línea y pagar al llegar, en
-                                            recepción; tú confirmas el
-                                            apartado. Aparece como opción en el
-                                            paso de pago del wizard.
+                                            recepción; tú confirmas el apartado.
+                                            Aparece como opción en el paso de
+                                            pago del wizard.
                                             <template
                                                 v-if="paymentMode === 'never'"
                                             >
-                                                Con el modo "Nunca" el wizard
-                                                no muestra paso de pago: todo
-                                                se paga al llegar de por sí.
+                                                Con el modo "Nunca" el wizard no
+                                                muestra paso de pago: todo se
+                                                paga al llegar de por sí.
                                             </template>
                                         </FormHelp>
                                     </div>
@@ -1269,12 +1269,14 @@ async function submit() {
                                 Los wizards le dicen al huésped que mande su
                                 comprobante de transferencia a estos WhatsApp,
                                 con link directo. Puedes tener varios (línea de
-                                México, de Estados Unidos...). Sin números:
-                                solo se le dice que el hotel lo contactará.
+                                México, de Estados Unidos...). Sin números: solo
+                                se le dice que el hotel lo contactará.
                             </p>
                             <div class="mt-2 space-y-2">
                                 <div
-                                    v-for="(entry, index) in form.transfer_whatsapps"
+                                    v-for="(
+                                        entry, index
+                                    ) in form.transfer_whatsapps"
                                     :key="index"
                                     class="flex items-center gap-2"
                                 >
@@ -1321,7 +1323,10 @@ async function submit() {
                                     })
                                 "
                             >
-                                <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                                <Lucide
+                                    icon="Plus"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
                                 Agregar número
                             </Button>
                         </div>
@@ -1425,8 +1430,8 @@ async function submit() {
                                     Cuánto tiempo tiene el huésped para venir a
                                     pagar cuando eligió "Pago en el hotel". El
                                     apartado se extiende hasta ese plazo y se
-                                    libera solo si nadie paga ni confirma.
-                                    Nunca pasa de la hora de llegada.
+                                    libera solo si nadie paga ni confirma. Nunca
+                                    pasa de la hora de llegada.
                                 </p>
                                 <div class="mt-2 flex items-center gap-2">
                                     <FormInput
@@ -1555,9 +1560,7 @@ async function submit() {
                                 v-if="form.cancel_policy_enabled"
                                 class="mt-3 space-y-3 border-t border-dashed border-slate-300/70 pt-3 dark:border-darkmode-400"
                             >
-                                <div
-                                    class="flex flex-wrap items-center gap-2"
-                                >
+                                <div class="flex flex-wrap items-center gap-2">
                                     <span class="text-xs text-slate-500"
                                         >Cancelación con reembolso completo
                                         hasta</span
@@ -1581,9 +1584,7 @@ async function submit() {
                                         >antes de la llegada</span
                                     >
                                 </div>
-                                <div
-                                    class="flex flex-wrap items-center gap-2"
-                                >
+                                <div class="flex flex-wrap items-center gap-2">
                                     <span class="text-xs text-slate-500"
                                         >Después de ese plazo se retiene
                                         el</span
@@ -1675,17 +1676,16 @@ async function submit() {
                             >
                                 <div class="text-sm">
                                     <div class="font-medium">
-                                        Cobro de huéspedes sin reserva
-                                        (walk-in)
+                                        Cobro de huéspedes sin reserva (walk-in)
                                     </div>
                                     <p class="mt-0.5 text-xs text-slate-500">
                                         Cuándo se cobra el hospedaje de una
                                         llegada de mostrador. Al llegar: el
                                         registro pide el método de pago y el
-                                        hospedaje entra al corte desde el
-                                        inicio (al salir solo consumos). Al
-                                        salir: cuenta final con hospedaje y
-                                        consumos, como siempre.
+                                        hospedaje entra al corte desde el inicio
+                                        (al salir solo consumos). Al salir:
+                                        cuenta final con hospedaje y consumos,
+                                        como siempre.
                                     </p>
                                 </div>
                                 <FormSelect
@@ -1752,9 +1752,7 @@ async function submit() {
                                     <FormHelp
                                         v-if="errors.guarantee_amount"
                                         class="text-danger"
-                                        >{{
-                                            errors.guarantee_amount
-                                        }}</FormHelp
+                                        >{{ errors.guarantee_amount }}</FormHelp
                                     >
                                     <FormHelp v-else>
                                         Con monto en 0 la fianza queda apagada

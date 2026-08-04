@@ -313,9 +313,7 @@ async function deleteFaq() {
                                 <label class="mb-1 block text-sm"
                                     >Logo del hotel</label
                                 >
-                                <div
-                                    class="flex flex-wrap items-center gap-3"
-                                >
+                                <div class="flex flex-wrap items-center gap-3">
                                     <div
                                         class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-full border border-slate-200/70 bg-slate-50 dark:border-darkmode-400 dark:bg-darkmode-600"
                                     >
@@ -373,9 +371,9 @@ async function deleteFaq() {
                                     />
                                 </div>
                                 <FormHelp
-                                    >JPG, PNG o WebP, máximo 2 MB. Aparece
-                                    junto al nombre en el wizard público de
-                                    reservas; se guarda al momento.</FormHelp
+                                    >JPG, PNG o WebP, máximo 2 MB. Aparece junto
+                                    al nombre en el wizard público de reservas;
+                                    se guarda al momento.</FormHelp
                                 >
                             </div>
                             <div>
@@ -418,10 +416,7 @@ async function deleteFaq() {
                                     >Link de Google Maps</label
                                 >
                                 <div class="relative">
-                                    <Lucide
-                                        icon="Map"
-                                        :class="iconInput"
-                                    />
+                                    <Lucide icon="Map" :class="iconInput" />
                                     <FormInput
                                         v-model="form.maps_url"
                                         type="url"
@@ -444,10 +439,7 @@ async function deleteFaq() {
                                     >Sitio web</label
                                 >
                                 <div class="relative">
-                                    <Lucide
-                                        icon="Globe"
-                                        :class="iconInput"
-                                    />
+                                    <Lucide icon="Globe" :class="iconInput" />
                                     <FormInput
                                         v-model="form.website"
                                         type="url"
@@ -462,7 +454,8 @@ async function deleteFaq() {
                                 >
                                 <FormHelp v-else
                                     >Al pagar en línea, el huésped ve un botón
-                                    "Volver al sitio" con esta dirección.</FormHelp
+                                    "Volver al sitio" con esta
+                                    dirección.</FormHelp
                                 >
                             </div>
 
@@ -601,10 +594,7 @@ async function deleteFaq() {
                                 :key="i"
                                 class="flex items-center gap-2"
                             >
-                                <FormSelect
-                                    v-model="social.type"
-                                    class="!w-40"
-                                >
+                                <FormSelect v-model="social.type" class="!w-40">
                                     <option
                                         v-for="(label, key) in socialTypes"
                                         :key="key"
@@ -776,7 +766,6 @@ async function deleteFaq() {
                             >
                         </div>
                     </div>
-
                 </div>
 
                 <!-- Políticas -->
