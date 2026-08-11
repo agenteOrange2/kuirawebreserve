@@ -12,6 +12,7 @@ interface PlanRow {
     label: string;
     description: string | null;
     price_monthly: number;
+    activation_fee: number;
     max_properties: number | null;
     max_rooms: number | null;
     max_users: number | null;
@@ -33,17 +34,30 @@ interface ModuleDef {
 const props = defineProps<{
     plans: PlanRow[];
     moduleCatalog: Record<string, ModuleDef>;
+    addonModules: Record<string, string[]>;
 }>();
 
 const money = (n: number) => `$${n.toLocaleString('es-MX')}`;
 const limit = (n: number | null) => (n === null ? 'Sin límite' : String(n));
 
-// Catálogo como lista ordenada (config/modules.php define el orden).
+// Catálogo como lista ordenada (config/modules.php define el orden). Los
+// módulos que vende algún servicio adicional se agrupan aparte para no
+// confundirlos con los incluidos del plan.
 const moduleList = Object.entries(props.moduleCatalog).map(([key, def]) => ({
     key,
     ...def,
 }));
+const planModuleList = moduleList.filter((m) => !props.addonModules[m.key]);
+const addonModuleList = moduleList.filter((m) => props.addonModules[m.key]);
 const moduleLabel = (key: string) => props.moduleCatalog[key]?.label ?? key;
+const soldBy = (key: string) =>
+    props.addonModules[key]?.length
+        ? `Lo vende: ${props.addonModules[key].join(' · ')}`
+        : undefined;
+const planOwnModules = (plan: PlanRow) =>
+    plan.modules.filter((k) => !props.addonModules[k]);
+const planAddonModules = (plan: PlanRow) =>
+    plan.modules.filter((k) => props.addonModules[k]);
 
 // Crear / editar comparten formulario; editing !== null distingue.
 const showForm = ref(false);
@@ -53,6 +67,7 @@ const form = useForm({
     label: '',
     description: '',
     price_monthly: 0 as number | string,
+    activation_fee: 0 as number | string,
     max_properties: '' as number | string,
     max_rooms: '' as number | string,
     max_users: '' as number | string,
@@ -83,6 +98,7 @@ function openEdit(plan: PlanRow) {
     form.label = plan.label;
     form.description = plan.description ?? '';
     form.price_monthly = plan.price_monthly;
+    form.activation_fee = plan.activation_fee;
     form.max_properties = plan.max_properties ?? '';
     form.max_rooms = plan.max_rooms ?? '';
     form.max_users = plan.max_users ?? '';
@@ -118,6 +134,7 @@ function submit() {
                 ? null
                 : Number(data.ai_monthly_replies),
         price_monthly: Number(data.price_monthly || 0),
+        activation_fee: Number(data.activation_fee || 0),
     });
 
     if (editing.value) {
@@ -140,6 +157,7 @@ function toggleActive(plan: PlanRow) {
         label: plan.label,
         description: plan.description,
         price_monthly: plan.price_monthly,
+        activation_fee: plan.activation_fee,
         max_properties: plan.max_properties,
         max_rooms: plan.max_rooms,
         max_users: plan.max_users,
@@ -232,6 +250,13 @@ function submitDelete() {
                                     >{{ money(plan.price_monthly) }}</span
                                 >
                                 <span class="text-xs"> MXN/mes</span>
+                                <template v-if="plan.activation_fee">
+                                    <span class="mx-1.5 text-slate-300">·</span>
+                                    <span class="text-xs"
+                                        >{{ money(plan.activation_fee) }}
+                                        activación</span
+                                    >
+                                </template>
                             </div>
                             <p
                                 v-if="plan.description"
@@ -325,7 +350,7 @@ function submitDelete() {
                             </div>
                             <div class="flex flex-wrap gap-1.5">
                                 <span
-                                    v-for="key in plan.modules"
+                                    v-for="key in planOwnModules(plan)"
                                     :key="key"
                                     class="rounded-full px-2 py-0.5 text-xs font-medium"
                                     :class="
@@ -339,22 +364,47 @@ function submitDelete() {
                                             : moduleCatalog[key]?.description
                                     "
                                 >
-                                    {{ moduleLabel(key)
-                                    }}<template v-if="key === 'agente-ia'">
-                                        ·
-                                        {{
-                                            plan.ai_monthly_replies === null
-                                                ? 'sin límite'
-                                                : `${plan.ai_monthly_replies}/mes`
-                                        }}</template
-                                    >
+                                    {{ moduleLabel(key) }}
                                 </span>
                                 <span
-                                    v-if="!plan.modules.length"
+                                    v-if="!planOwnModules(plan).length"
                                     class="text-xs text-slate-400"
                                     >Solo el núcleo hotelero</span
                                 >
                             </div>
+                            <template v-if="planAddonModules(plan).length">
+                                <div
+                                    class="mt-3 mb-2 flex items-center gap-2.5"
+                                >
+                                    <Lucide
+                                        icon="PackagePlus"
+                                        class="h-4 w-4 stroke-[1.5] text-slate-400"
+                                    />
+                                    <span
+                                        class="text-slate-500"
+                                        title="Normalmente se venden como servicio adicional; este plan los trae de fábrica"
+                                        >De servicios adicionales</span
+                                    >
+                                </div>
+                                <div class="flex flex-wrap gap-1.5">
+                                    <span
+                                        v-for="key in planAddonModules(plan)"
+                                        :key="key"
+                                        class="rounded-full bg-info/10 px-2 py-0.5 text-xs font-medium text-info"
+                                        :title="soldBy(key)"
+                                    >
+                                        {{ moduleLabel(key)
+                                        }}<template v-if="key === 'agente-ia'">
+                                            ·
+                                            {{
+                                                plan.ai_monthly_replies === null
+                                                    ? 'sin límite'
+                                                    : `${plan.ai_monthly_replies}/mes`
+                                            }}</template
+                                        >
+                                    </span>
+                                </div>
+                            </template>
                         </div>
                     </div>
 
@@ -523,6 +573,35 @@ function submitDelete() {
                                     <FormHelp v-else
                                         >Informativo; el cobro llega con la fase
                                         de facturación.</FormHelp
+                                    >
+                                </div>
+                                <div class="col-span-12 sm:col-span-4">
+                                    <label
+                                        class="mb-1.5 block text-sm font-medium"
+                                        >Cuota única de activación (MXN)</label
+                                    >
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="DollarSign"
+                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                        />
+                                        <FormInput
+                                            v-model="form.activation_fee"
+                                            type="number"
+                                            min="0"
+                                            class="pl-9"
+                                        />
+                                    </div>
+                                    <FormHelp
+                                        v-if="form.errors.activation_fee"
+                                        class="text-danger"
+                                        >{{
+                                            form.errors.activation_fee
+                                        }}</FormHelp
+                                    >
+                                    <FormHelp v-else
+                                        >Se cobra una sola vez al
+                                        contratar.</FormHelp
                                     >
                                 </div>
                                 <div class="col-span-12">
@@ -704,7 +783,7 @@ function submitDelete() {
                             </div>
                             <div class="space-y-3">
                                 <div
-                                    v-for="mod in moduleList"
+                                    v-for="mod in planModuleList"
                                     :key="mod.key"
                                     class="rounded-lg border border-slate-200/70 dark:border-darkmode-400"
                                 >
@@ -741,6 +820,79 @@ function submitDelete() {
                                             >
                                         </span>
                                     </label>
+                                </div>
+                            </div>
+                            <FormHelp class="mt-2">
+                                El núcleo hotelero (plano, reservas,
+                                habitaciones, huéspedes) va en todos los
+                                planes.
+                            </FormHelp>
+                        </section>
+
+                        <!-- Módulos que se venden como servicios adicionales -->
+                        <section
+                            class="border-t border-dashed border-slate-300/70 pt-6"
+                        >
+                            <div
+                                class="mb-1.5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                <Lucide
+                                    icon="PackagePlus"
+                                    class="h-3.5 w-3.5"
+                                />
+                                Servicios adicionales
+                            </div>
+                            <p class="mb-4 text-xs text-slate-500">
+                                Esto normalmente NO va en el plan: el hotel lo
+                                obtiene contratando un servicio adicional (y se
+                                le cobra aparte). Enciéndelo aquí solo si este
+                                plan lo incluye de fábrica sin costo extra.
+                            </p>
+                            <div class="space-y-3">
+                                <div
+                                    v-for="mod in addonModuleList"
+                                    :key="mod.key"
+                                    class="rounded-lg border border-slate-200/70 dark:border-darkmode-400"
+                                >
+                                    <label
+                                        class="flex cursor-pointer items-start gap-3.5 p-4"
+                                        :title="soldBy(mod.key)"
+                                    >
+                                        <FormSwitch class="mt-0.5">
+                                            <FormSwitch.Input
+                                                type="checkbox"
+                                                :checked="
+                                                    form.modules.includes(
+                                                        mod.key,
+                                                    )
+                                                "
+                                                @change="toggleModule(mod.key)"
+                                            />
+                                        </FormSwitch>
+                                        <span class="min-w-0 flex-1">
+                                            <span
+                                                class="flex flex-wrap items-center gap-2 text-sm font-medium"
+                                            >
+                                                {{ mod.label }}
+                                                <span
+                                                    v-if="!mod.available"
+                                                    class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending"
+                                                    title="Se puede incluir desde ya; su área aparecerá sola cuando esté lista"
+                                                >
+                                                    En desarrollo
+                                                </span>
+                                            </span>
+                                            <span
+                                                class="mt-0.5 block text-xs text-slate-500"
+                                                >{{ mod.description }}</span
+                                            >
+                                            <span
+                                                v-if="soldBy(mod.key)"
+                                                class="mt-1 block text-[11px] text-slate-400"
+                                                >{{ soldBy(mod.key) }}</span
+                                            >
+                                        </span>
+                                    </label>
                                     <div
                                         v-if="
                                             mod.key === 'agente-ia' &&
@@ -773,10 +925,8 @@ function submitDelete() {
                                 >{{ form.errors.ai_monthly_replies }}</FormHelp
                             >
                             <FormHelp v-else class="mt-2">
-                                El núcleo hotelero (plano, reservas,
-                                habitaciones, huéspedes, bandeja) va en todos
-                                los planes. BYOK (key propia del hotel) y la API
-                                de integraciones se habilitan por hotel en la
+                                BYOK (key propia del hotel) y la API de
+                                integraciones se habilitan por hotel en la
                                 sección Agentes IA.
                             </FormHelp>
                         </section>

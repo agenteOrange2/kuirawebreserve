@@ -1,16 +1,16 @@
-# Graph Report - kuirawebreserve  (2026-07-31)
+# Graph Report - kuirawebreserve  (2026-08-11)
 
 ## Corpus Check
-- 1044 files · ~5,054,792 words
+- 1243 files · ~5,145,424 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 6611 nodes · 11336 edges · 558 communities (494 shown, 64 thin omitted)
-- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 404 edges (avg confidence: 0.79)
+- 8032 nodes · 14104 edges · 669 communities (622 shown, 47 thin omitted)
+- Extraction: 96% EXTRACTED · 4% INFERRED · 0% AMBIGUOUS · INFERRED: 575 edges (avg confidence: 0.79)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `5774d0e1`
+- Built from commit: `3c5d0bf4`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -200,9 +200,12 @@
 - laravel-boost
 - 0001_01_01_000002_create_jobs_table.php
 - 2026_05_29_195303_create_permission_tables.php
+- 2026_07_13_000001_add_diagnostics_to_channel_links.php
 - 2026_07_13_000003_add_context_editable_to_tenant_agent_settings.php
 - 2026_07_13_000005_add_max_gateways_to_plans.php
 - InboxController.php
+- 2026_07_14_000002_create_platform_settings.php
+- 2026_07_15_000001_add_modules_to_plans_and_create_tenant_modules.php
 - 2026_07_02_190001_create_properties_table.php
 - 2026_07_02_190003_create_room_types_table.php
 - AgentToolsController
@@ -213,8 +216,12 @@
 - 2026_07_03_200002_create_products_table.php
 - 2026_07_03_200003_create_recipes_table.php
 - 2026_07_04_100001_add_duration_and_advance_to_rate_plans.php
+- 2026_07_05_100002_expand_reservations_and_stays.php
+- 2026_07_06_110001_create_cash_cuts_table.php
 - 2026_07_06_150000_create_agent_api_tables.php
 - 2026_07_06_160000_create_conversations_tables.php
+- 2026_07_10_000010_add_extra_guest_fee_and_optional_charges.php
+- 2026_07_13_000004_create_gateway_events.php
 - 2026_07_15_100002_create_site_import_suggestions.php
 - 2026_07_16_000001_create_booking_idempotency_keys.php
 - laravel-boost
@@ -245,7 +252,11 @@
 - ziggy.js
 - create-vhost.sh
 - init-project.sh
+- excel.php
 - HotelSettingsPageController.php
+- queue.php
+- Welcome.vue
+- web.php
 - .__invoke
 - Pest Testing 3
 - Tailwind CSS Development
@@ -255,6 +266,7 @@
 - RoomController
 - Sistema de Reservas del Hotel — Visión general
 - Link.vue
+- RoomTypeController
 - ProfileController.php
 - Wayfinder Development
 - 10. Agentes IA multicanal — **la fase 4, a detalle (v2)**
@@ -272,95 +284,114 @@
 - 5. Plano — **P0/P1 (ampliado v2)**
 - 2.6 Tarifas más ricas (extiende RatePlan)
 - 3. Tipos de habitación y Zonas — **P0 (tipos), P1 (zonas)**
+- AvatarFallback.vue
+- 2026_07_20_000001_create_extras_and_experiences_modules.php
 - PasswordController.php
 - Button.vue
 - reloadRooms
-- Title.vue
 - .__invoke
 - Popover.vue
-- post-create-project-cmd
-- FileIcon.vue
+- 2026_07_16_000001_create_booking_idempotency_keys.php
+- 2026_07_20_000004_add_group_to_payment_requests.php
+- 2026_07_13_000003_add_context_editable_to_tenant_agent_settings.php
+- 2026_07_21_000001_add_experience_schedule_vehicles_and_reservation_links.php
+- IssuePaymentRequest
 - submitBooking
-- continueToGuest
 - ShiftAssignment
 - axios
 - formatMoney
 - DirectGuestMessenger
-- SiteImporter
-- RatePlanType.php
+- GuestReservationMail
 - formatMoney
 - .show
+- tailwind-merge
 - tippy.js
-- catalogFor
 - prettier
-- prettier-plugin-tailwindcss
 - @tailwindcss/forms
+- 2026_07_21_000002_add_phone_to_users_table.php
 - @types/qrcode
 - @types/toastify-js
 - typescript
 - typescript-eslint
 - @vue/eslint-config-typescript
 - post-create-project-cmd
-- Panel.vue
 - Refund
-- eslint-import-resolver-typescript
 - .show
-- Footer.vue
-- @vue-flow/controls
-- BelongsTo
-- post-create-project-cmd
-- @vueuse/core
-- @tailwindcss/vite
+- PaymentRequestController
+- ProductController
 - changePhoneCountry
-- @vitejs/plugin-vue
-- @left4code/tw-starter
+- post-create-project-cmd
 - lodash
 - pinia
 - tailwindcss
-- @vue-flow/controls
-- @vue-flow/minimap
-- vue-input-otp
-- @vueuse/core
+- LogOptions
+- PropertyLogoController.php
 - money
-- postcss
+- Chart.vue
 - postcss-nesting
 - @types/node
 - Footer.vue
-- test
-- lookupCancel
-- eslint
+- NoAvailabilityException
+- ModuleRequestController.php
+- IngredientController.php
 - @eslint/js
-- @laravel/vite-plugin-wayfinder
-- postcss-import
-- @tailwindcss/vite
-- preRegister
-- bookingHoldRequest
-- couponHold
-- waitlistStore
+- PaymentGatewayWebhookController.php
+- Footer.vue
+- Footer.vue
+- LandingController.php
+- toLocalInput
+- clearErrors
+- Header.vue
+- HasMany
+- Items.vue
+- simplebar
+- Menu.vue
+- useInboxAlerts.ts
+- Footer.vue
+- .__invoke
+- Button.vue
+- reload
+- 2026_07_05_100002_expand_reservations_and_stays.php
+- 2026_08_06_250001_add_payment_to_menu_requests.php
+- BookingExtrasController
+- blockLabel
+- .show
+- Input.vue
+- HotelSettingsPageController
+- RatePlanSeasonFactory
+- catalogFor
+- .metrics
+- UserFactory
+- FileIcon.vue
+- .render
+- ChooseCashPayment.php
+- applyCustom
+- amenities.ts
+- test
 
 ## God Nodes (most connected - your core abstractions)
-1. `Controller` - 215 edges
-2. `Reservation` - 136 edges
-3. `Property` - 124 edges
-4. `User` - 96 edges
-5. `cn()` - 91 edges
-6. `Room` - 81 edges
-7. `RatePlan` - 74 edges
-8. `Conversation` - 71 edges
-9. `PaymentRequest` - 67 edges
-10. `PaymentGatewayLink` - 58 edges
+1. `Controller` - 260 edges
+2. `Property` - 153 edges
+3. `Reservation` - 147 edges
+4. `User` - 135 edges
+5. `Room` - 112 edges
+6. `cn()` - 91 edges
+7. `Conversation` - 82 edges
+8. `RatePlan` - 76 edges
+9. `Stay` - 71 edges
+10. `PaymentRequest` - 67 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `reservaConSaldo()` --calls--> `Conversation`  [INFERRED]
   tests/Feature/PaymentBalanceCollectionTest.php → app/Models/Conversation.php
+- `experienceSetupForReservation()` --calls--> `Experience`  [INFERRED]
+  tests/Feature/ExperienceScheduleTest.php → app/Models/Experience.php
+- `experienceSetupForReservation()` --calls--> `ExperienceSession`  [INFERRED]
+  tests/Feature/ExperienceScheduleTest.php → app/Models/ExperienceSession.php
+- `makeSurveyStay()` --calls--> `Guest`  [INFERRED]
+  tests/Feature/StaySurveyTest.php → app/Models/Guest.php
 - `arrivalSoonSettings()` --calls--> `Property`  [INFERRED]
   tests/Feature/ArrivalSoonReminderTest.php → app/Models/Property.php
-- `checkinSettings()` --calls--> `Property`  [INFERRED]
-  tests/Feature/AutoCheckInTest.php → app/Models/Property.php
-- `guaranteeSettings()` --calls--> `Property`  [INFERRED]
-  tests/Feature/GuaranteeDepositTest.php → app/Models/Property.php
-- `hotelPolicy()` --calls--> `Property`  [INFERRED]
-  tests/Feature/HotelCancellationPolicyTest.php → app/Models/Property.php
 
 ## Import Cycles
 - 1-file cycle: `resources/js/components/Base/Dropzone/Dropzone.vue -> resources/js/components/Base/Dropzone/Dropzone.vue`
@@ -371,71 +402,71 @@
 - 1-file cycle: `resources/js/components/Base/Notification/notification.ts -> resources/js/components/Base/Notification/notification.ts`
 - 3-file cycle: `resources/js/components/ui/sidebar/SidebarMenuButton.vue -> resources/js/components/ui/sidebar/SidebarMenuButtonChild.vue -> resources/js/components/ui/sidebar/index.ts -> resources/js/components/ui/sidebar/SidebarMenuButton.vue`
 
-## Communities (558 total, 64 thin omitted)
+## Communities (669 total, 47 thin omitted)
 
 ### Community 0 - "utils.ts"
 Cohesion: 0.03
-Nodes (56): Props, props, props, props, props, props, props, props (+48 more)
+Nodes (52): props, props, props, AlertVariants, props, props, props, props (+44 more)
 
 ### Community 1 - "Property"
-Cohesion: 0.08
-Nodes (9): CreateWalkInStay, ReservationStatus, JsonResponse, updateRoomStatus(), checkOutRequest(), Request, reservaGateway(), reservaF3() (+1 more)
+Cohesion: 0.06
+Nodes (17): CreateWalkInStay, ReservationStatus, lookupCancel(), lookupFind(), JsonResponse, JsonResponse, preRegister(), bookingHoldRequest() (+9 more)
 
 ### Community 2 - "Index.vue"
 Cohesion: 0.02
-Nodes (87): allHistorySelected, arrivalsToday, availability, AvailabilityResult, bulkDeleteOpen, bulkDeleting, calMode, channelBadge (+79 more)
+Nodes (83): allHistorySelected, arrivalsToday, availability, AvailabilityResult, bulkDeleteOpen, bulkDeleting, calMode, changePhoneCountry() (+75 more)
 
 ### Community 3 - "User"
 Cohesion: 0.03
-Nodes (63): adultsOnly, arriveAt, arriveDate, bothModesAvailable, choosePayLater(), continueToGuest(), dateParams(), departDate (+55 more)
+Nodes (67): adultsOnly, arriveAt, arriveDate, bothModesAvailable, choosePayLater(), continueToGuest(), dateParams(), departDate (+59 more)
 
 ### Community 4 - "index.ts"
 Cohesion: 0.07
-Nodes (14): IssueExperiencePayment, ExperienceBookingController, JsonResponse, Request, ExperienceBooking, BelongsTo, DateTimeInterface, HasMany (+6 more)
+Nodes (32): canSetMaintenance, confirmResolve(), deleting, destroy(), destroyPhoto(), editing, errors, filterState (+24 more)
 
 ### Community 5 - "Product"
 Cohesion: 0.07
-Nodes (29): usePublicTheme(), useWizardAppearance(), WizardAppearance, canceled, cancelError, canceling, canPreRegister, code (+21 more)
+Nodes (26): canceled, cancelError, canceling, canPreRegister, code, confirmingCancel, error, fillPreForm() (+18 more)
 
 ### Community 6 - "Wizard.vue"
 Cohesion: 0.02
-Nodes (96): randomUuid(), AddonLine, AddonOption, addonsSubtotal, adults, adultsOnly, anyAvailable, appliedCoupon (+88 more)
+Nodes (100): randomUuid(), AddonLine, AddonOption, addonsSubtotal, adults, adultsOnly, anyAvailable, appliedCoupon (+92 more)
 
 ### Community 7 - "Controller"
-Cohesion: 0.07
-Nodes (26): DashboardController, Controller, AgentContextPageController, Response, AgentLearningsPageController, BookingWizardController, Request, Response (+18 more)
+Cohesion: 0.04
+Nodes (46): Controller, AgentContextPageController, AgentPageController, BookingWizardController, Request, Response, CashCutController, ExperiencesPageController (+38 more)
 
 ### Community 8 - "Index.vue"
 Cohesion: 0.03
-Nodes (55): AiProviderRow, CatalogEntry, catalogFor(), CatalogModel, channelCountLabel, channelError, channelForm, channelLimitReached (+47 more)
+Nodes (51): AiProviderRow, CatalogEntry, CatalogModel, channelCountLabel, channelError, channelForm, channelLimitReached, channelTests (+43 more)
 
 ### Community 9 - "index.ts"
 Cohesion: 0.04
-Nodes (39): emits, forwarded, props, delegatedProps, emits, forwarded, props, delegatedProps (+31 more)
+Nodes (40): emits, forwarded, props, delegatedProps, emits, forwarded, props, delegatedProps (+32 more)
 
 ### Community 10 - "Reservation"
 Cohesion: 0.06
-Nodes (26): ChooseCashPayment, CarbonInterface, IssuePaymentRequest, CollectBalancePayments, JsonResponse, Request, ReservationController, BelongsTo (+18 more)
+Nodes (24): BelongsTo, Builder, DateTimeInterface, HasMany, HasOne, LogOptions, Reservation, makeArrivalSoonReservation() (+16 more)
 
 ### Community 11 - "AppHeader.vue"
-Cohesion: 0.07
-Nodes (25): { isMobile, state }, page, user, props, delegatedProps, props, props, { getInitials } (+17 more)
+Cohesion: 0.18
+Nodes (11): Auth, TwoFactorConfigContent, User, ComponentCustomProperties, ImportMeta, ImportMetaEnv, InertiaConfig, @inertiajs/core (+3 more)
 
 ### Community 12 - "Room"
-Cohesion: 0.05
-Nodes (21): CreateRoomRange, HousekeepingSettingsPageController, Response, JsonResponse, Request, RoomBlockController, JsonResponse, Request (+13 more)
+Cohesion: 0.07
+Nodes (15): CreateRoomRange, SyncRoomUsageLock, JsonResponse, Request, RoomController, BelongsTo, HasMany, HasOne (+7 more)
 
 ### Community 13 - "devDependencies"
-Cohesion: 0.11
-Nodes (19): eslint-config-prettier, eslint-import-resolver-typescript, eslint-plugin-vue, devDependencies, eslint-config-prettier, eslint-import-resolver-typescript, eslint-plugin-vue, postcss (+11 more)
+Cohesion: 0.04
+Nodes (45): concurrently, eslint, eslint-config-prettier, eslint-import-resolver-typescript, @eslint/js, eslint-plugin-import, eslint-plugin-vue, devDependencies (+37 more)
 
 ### Community 14 - "FormInput.vue"
 Cohesion: 0.05
 Nodes (40): attrs, computedClass, ProvideFormInline, attrs, computedClass, emit, formInline, FormInputEmit (+32 more)
 
 ### Community 15 - "Context.vue"
-Cohesion: 0.04
-Nodes (36): FormSwitchComponent, { toasts, dismiss }, dismiss(), push(), Toast, toasts, useToasts(), fallbackMeta (+28 more)
+Cohesion: 0.05
+Nodes (37): availability, AvailabilityData, availLoading, canSubmit, chargeAmount, chargeMethod, chargeNow, emit (+29 more)
 
 ### Community 16 - "Index.vue"
 Cohesion: 0.04
@@ -446,8 +477,8 @@ Cohesion: 0.05
 Nodes (30): Props, uniqueErrors, Props, isRecoveryCodesVisible, recoveryCodeSectionRef, { recoveryCodesList, fetchRecoveryCodes, errors }, code, { copy, copied } (+22 more)
 
 ### Community 18 - "Guest"
-Cohesion: 0.12
-Nodes (12): GuestController, BinaryFileResponse, JsonResponse, Media, Request, GuestsPageController, Request, Response (+4 more)
+Cohesion: 0.13
+Nodes (8): RedirectResponse, Response, ProspectDocumentController, BinaryFileResponse, ProspectDocumentFileController, Builder, ProspectDocument, platformAdminForDocuments()
 
 ### Community 19 - "Button.vue"
 Cohesion: 0.05
@@ -473,59 +504,59 @@ Nodes (18): passwordInput, Props, ButtonVariants, emits, modelValue, props, dele
 
 ### Community 23 - "Index.vue"
 Cohesion: 0.03
-Nodes (46): allSelected, amenityInput, Bed, BlockConflict, blockConflicts, blockForm, blockingRoom, blockRangeInvalid (+38 more)
+Nodes (48): allSelected, amenityInput, Bed, BlockConflict, blockConflicts, blockForm, blockingRoom, blockRangeInvalid (+40 more)
 
 ### Community 24 - "index.ts"
-Cohesion: 0.07
-Nodes (19): allSelected, deleteBusy, deleteIds, deleteOpen, deleteRows, detail, detailLines, ExperienceLine (+11 more)
+Cohesion: 0.10
+Nodes (20): applyCustom(), applyRoom(), customFrom, customTo, donutData, donutOptions, goTo(), lineData (+12 more)
 
 ### Community 25 - "Index.vue"
 Cohesion: 0.04
-Nodes (39): AMENITY_SUGGESTIONS, advanceUnits, confirmDelete, durationUnits, editingPlan, editingSeason, editingType, editingZone (+31 more)
+Nodes (42): useModules(), advanceUnits, confirmDelete, durationUnits, editingPlan, editingSeason, editingType, editingZone (+34 more)
 
 ### Community 26 - "Hotel.vue"
-Cohesion: 0.40
-Nodes (4): AdminUserController, JsonResponse, Request, Response
+Cohesion: 0.13
+Nodes (9): IssueExperiencePayment, ExperienceBookingController, JsonResponse, Request, ExperienceBooking, BelongsTo, DateTimeInterface, HasMany (+1 more)
 
 ### Community 27 - "PlatformAiProvider"
 Cohesion: 0.04
-Nodes (45): useEmbedResize(), BookingResult, choose(), currentSession, dateAvailable, daySessions, ExperienceOption, experiences (+37 more)
+Nodes (48): useEmbedResize(), BookingResult, choose(), currentSession, dateAvailable, daySessions, ExperienceOption, experiences (+40 more)
 
 ### Community 28 - "Index.vue"
 Cohesion: 0.04
-Nodes (38): archivingAll, archivingId, channelMeta, ChannelRow, channelsOpen, ConversationRow, deleteBusy, deleting (+30 more)
+Nodes (41): alerts, archivingAll, archivingId, attachment, attachmentInput, channelMeta, ChannelRow, channelsOpen (+33 more)
 
 ### Community 29 - "Index.vue"
-Cohesion: 0.06
-Nodes (36): categoryFilter, categoryOptions, clearErrors(), commonCategories, deletingProduct, editingIngredient, editingProduct, errors (+28 more)
+Cohesion: 0.05
+Nodes (39): categoryFilter, categoryOptions, commonCategories, deletingProduct, editingIngredient, editingProduct, errors, filteredProducts (+31 more)
 
 ### Community 30 - "Stay"
-Cohesion: 0.09
-Nodes (15): JsonResponse, Request, ReservationRackController, JsonResponse, Request, StayController, BelongsTo, Builder (+7 more)
+Cohesion: 0.04
+Nodes (29): RefundPayment, MenuRequestController, JsonResponse, Request, JsonResponse, Request, ReservationRackController, Response (+21 more)
 
 ### Community 31 - "Index.vue"
 Cohesion: 0.06
-Nodes (26): busySuggestion, deleting, durationUnits, errors, expandedWidget, freshToken, generalError, importing (+18 more)
+Nodes (36): applySuggestion(), busySuggestion, clearErrors(), deleting, discardSuggestion(), durationUnits, errors, expandedWidget (+28 more)
 
 ### Community 32 - "RazeLayout.vue"
-Cohesion: 0.05
-Nodes (32): compactMenu, useCompactMenu(), activeMobileMenu, activePageName, { appearance, updateAppearance }, auth, brandName, { compactMenu, setCompactMenu } (+24 more)
+Cohesion: 0.03
+Nodes (44): compactMenu, useCompactMenu(), centralMenu, tenantMenu, useMenu(), activeMobileMenu, activePageName, { appearance, updateAppearance } (+36 more)
 
 ### Community 33 - "index.ts"
-Cohesion: 0.06
-Nodes (24): emits, forwarded, props, delegatedProps, emits, forwarded, props, props (+16 more)
+Cohesion: 0.05
+Nodes (25): emits, forwarded, props, delegatedProps, emits, forwarded, props, props (+17 more)
 
 ### Community 34 - "index.ts"
-Cohesion: 0.06
-Nodes (28): { as = 'div' }, attrs, ButtonProps, computedClass, { as = 'div' }, attrs, computedClass, DividerProps (+20 more)
+Cohesion: 0.04
+Nodes (41): attrs, computedClass, FormCheckComponent, attrs, computedClass, attrs, computedClass, FormSwitchComponent (+33 more)
 
 ### Community 35 - "index.ts"
 Cohesion: 0.06
 Nodes (27): navigationMenuTriggerStyle, delegatedProps, emits, forwarded, props, delegatedProps, emits, forwarded (+19 more)
 
 ### Community 36 - "Factory"
-Cohesion: 0.07
-Nodes (14): ExperienceFactory, ExperienceSessionFactory, ExperienceSlotFactory, ExperienceVehicleFactory, ExtraFactory, IngredientFactory, static, ProductFactory (+6 more)
+Cohesion: 0.06
+Nodes (16): PlanProspectFactory, ProspectDocumentFactory, ExperienceFactory, ExperienceSessionFactory, ExperienceSlotFactory, ExperienceVehicleFactory, ExtraFactory, IngredientFactory (+8 more)
 
 ### Community 37 - "Alert.vue"
 Cohesion: 0.06
@@ -537,8 +568,8 @@ Nodes (32): AlertProps, {
 }, attrs, computedClass, danger, dark, outlineDanger, outlineDark (+24 more)
 
 ### Community 38 - "CreateReservation"
-Cohesion: 0.06
-Nodes (25): activeAccountsCount, activeGatewaysCount, BankAccount, cancelPolicyPreview, cashAllowedByPlatform, cashEnabled, errors, form (+17 more)
+Cohesion: 0.20
+Nodes (5): CreateExperienceBooking, CreateGroupReservation, CreateReservation, Carbon, CarbonInterface
 
 ### Community 39 - "index.ts"
 Cohesion: 0.06
@@ -546,31 +577,31 @@ Nodes (23): emits, forwarded, props, props, delegatedProps, emits, forwarded, pr
 
 ### Community 40 - "Show.vue"
 Cohesion: 0.06
-Nodes (19): actionError, editForm, impersonating, ModuleRow, payLocal, props, ReservationRow, roleLabels (+11 more)
+Nodes (20): actionError, AddonServiceRow, editForm, impersonating, ModuleRow, payLocal, props, ReservationRow (+12 more)
 
 ### Community 41 - "FloorPlan.vue"
-Cohesion: 0.06
-Nodes (26): ActiveStaySummary, aligning, amenityGroups, busyAction, currencyFormatter, editMode, errorMessage, fichaItems (+18 more)
+Cohesion: 0.03
+Nodes (54): ActiveStaySummary, aligning, amenityGroups, blockLabel(), busyAction, currencyFormatter, documentTypeLabels, editMode (+46 more)
 
 ### Community 42 - "Button.vue"
 Cohesion: 0.07
 Nodes (25): { as = 'button' }, attrs, ButtonProps, computedClass, disclosure, group, attrs, computedClass (+17 more)
 
 ### Community 43 - "Zone"
-Cohesion: 0.09
-Nodes (16): Model, RecordStockMovement, InsufficientStockException, self, IngredientController, JsonResponse, Request, InventoryPageController (+8 more)
+Cohesion: 0.10
+Nodes (14): IncidentController, BinaryFileResponse, JsonResponse, Media, Request, IncidentShowController, Activity, Request (+6 more)
 
 ### Community 44 - "index.ts"
-Cohesion: 0.10
-Nodes (13): emits, forwarded, props, props, delegatedProps, emits, forwarded, props (+5 more)
+Cohesion: 0.07
+Nodes (21): emits, forwarded, props, props, delegatedProps, emits, forwarded, props (+13 more)
 
 ### Community 45 - "AgentChannels.vue"
 Cohesion: 0.08
 Nodes (26): copiedField, deleteMetaLink(), diagnoseError, diagnoseLoading, DiagnoseResult, diagnosingLink, editingMetaLink, EvoRow (+18 more)
 
 ### Community 46 - "Tenant"
-Cohesion: 0.12
-Nodes (12): JsonResponse, RedirectResponse, Request, Response, TenantController, Tenant, BaseTenant, HasDatabase (+4 more)
+Cohesion: 0.09
+Nodes (15): JsonResponse, RedirectResponse, Request, Response, TenantController, TenantModule, Collection, Tenant (+7 more)
 
 ### Community 47 - "compilerOptions"
 Cohesion: 0.06
@@ -581,8 +612,8 @@ Cohesion: 0.08
 Nodes (21): { as = 'a' }, attrs, ButtonProps, computedClass, list, tab, GroupProps, attrs (+13 more)
 
 ### Community 49 - "MetaChannelLink"
-Cohesion: 0.17
-Nodes (7): MetaChannelController, JsonResponse, Request, MetaChannelLink, MetaApi, metaLink(), whatsappLink()
+Cohesion: 0.11
+Nodes (10): MetaChannelController, JsonResponse, Request, MetaWebhookController, Request, MetaChannelLink, MetaApi, metaLink() (+2 more)
 
 ### Community 50 - "AiAgents.vue"
 Cohesion: 0.08
@@ -593,28 +624,28 @@ Cohesion: 0.13
 Nodes (7): BelongsTo, CarbonInterface, HasMany, RatePlan, agentHold(), reservaPagada(), plan()
 
 ### Community 52 - "Conversation"
-Cohesion: 0.11
-Nodes (10): FollowUpConversations, InboxController, BinaryFileResponse, JsonResponse, Media, Request, Response, Conversation (+2 more)
+Cohesion: 0.06
+Nodes (27): activeScope, activeScopeLabel, canCut, countedCash, Cut, detailCut, detailMovements, difference (+19 more)
 
 ### Community 53 - "SiteIntegration"
 Cohesion: 0.17
 Nodes (8): IntegrationPageController, Request, Response, JsonResponse, Request, SiteIntegrationController, self, SiteIntegration
 
 ### Community 54 - "DialogComponent"
-Cohesion: 0.04
-Nodes (40): generalReportFilter, sliderRef, PaginationComponent, { as = 'a', active = false }, attrs, computedClass, LinkProps, TableComponent (+32 more)
+Cohesion: 0.17
+Nodes (8): JsonResponse, Request, CashCutsPageController, Request, Response, CashCut, BelongsTo, makeCut()
 
 ### Community 55 - "GuestFormModal.vue"
 Cohesion: 0.06
 Nodes (34): activeSection, blank(), changePhoneCountry(), docLabels, emit, errors, existingIne, existingVehicle (+26 more)
 
 ### Community 56 - "Table.vue"
-Cohesion: 0.19
-Nodes (9): Activity, Request, Response, ReservationHistoryPageController, Collection, Request, Response, ReservationsPageController (+1 more)
-
-### Community 57 - "Index.vue"
 Cohesion: 0.08
 Nodes (17): activePlans, createForm, createPlanInfo, deleteForm, deleting, editForm, editing, filtered (+9 more)
+
+### Community 57 - "Index.vue"
+Cohesion: 0.17
+Nodes (9): MetaChannelController, JsonResponse, Request, Channel, HasMany, whatsappConversation(), mediaConversation(), inboxConversation() (+1 more)
 
 ### Community 58 - "MonthCalendar.vue"
 Cohesion: 0.09
@@ -625,32 +656,32 @@ Cohesion: 0.11
 Nodes (22): barsFor(), data, dayCellBg(), dayFormatter, dayIndex(), days, emit, error (+14 more)
 
 ### Community 60 - "Reports.vue"
-Cohesion: 0.08
-Nodes (23): applyCustom(), channelIcons, channelLabels, ChannelRow, customFrom, customTo, donutData, donutOptions (+15 more)
+Cohesion: 0.11
+Nodes (11): RecordStockMovement, VoidOrder, OrderController, JsonResponse, Request, View, Order, BelongsTo (+3 more)
 
 ### Community 61 - "Wizard.vue"
-Cohesion: 0.08
-Nodes (19): IssueGroupPayment, GroupReservationController, JsonResponse, Request, GroupShowController, Request, Response, GroupsPageController (+11 more)
+Cohesion: 0.13
+Nodes (12): GroupReservationController, JsonResponse, Request, Request, Response, Request, Response, BelongsTo (+4 more)
 
 ### Community 62 - "Order"
-Cohesion: 0.13
-Nodes (6): Message, BelongsTo, InboundMediaService, Media, OutboundMessenger, inboundMessage()
+Cohesion: 0.03
+Nodes (66): attrs, computedClass, Icon, LucideProps, props, MenuItem, fallbackMeta, GatewayRow (+58 more)
 
 ### Community 63 - "SiteImporter"
 Cohesion: 0.08
 Nodes (17): errors, faqDeleting, faqEditing, faqErrors, faqForm, faqModal, FaqRow, faqs (+9 more)
 
 ### Community 64 - "Migration"
-Cohesion: 0.09
-Nodes (5): CreateTenantsTable, CreateDomainsTable, CreateTenantUserImpersonationTokensTable, AddEventColumnToActivityLogTable, Migration
+Cohesion: 0.07
+Nodes (7): CreateTenantsTable, CreateDomainsTable, CreateTenantUserImpersonationTokensTable, CreateActivityLogTable, AddEventColumnToActivityLogTable, AddBatchUuidColumnToActivityLogTable, Migration
 
 ### Community 65 - "Channel"
-Cohesion: 0.04
-Nodes (37): CreateOrder, RefundPayment, RegisterReservationPayment, SettleStay, JsonResponse, Request, TenantUserController, CashCutController (+29 more)
+Cohesion: 0.06
+Nodes (35): arrival, canSubmit, clearPhotos(), docNumber, docType, documentTypes, emit, ExpressRoom (+27 more)
 
 ### Community 66 - "EvolutionChannelLink"
-Cohesion: 0.09
-Nodes (12): EvolutionChannelController, JsonResponse, Request, EvolutionWebhookController, Request, EvolutionChannelLink, Channel, HasMany (+4 more)
+Cohesion: 0.11
+Nodes (7): EvolutionChannelController, JsonResponse, Request, EvolutionWebhookController, Request, EvolutionChannelLink, EvolutionApi
 
 ### Community 67 - "useAppearance.ts"
 Cohesion: 0.13
@@ -658,27 +689,27 @@ Nodes (16): { appearance, updateAppearance }, tabs, appearance, getStoredAppeara
 
 ### Community 68 - "Index.vue"
 Cohesion: 0.06
-Nodes (27): allSelected, atLimit, bulkDeleteOpen, bulkDeleting, clearErrors(), deleteError, deleting, editing (+19 more)
+Nodes (28): allSelected, atLimit, bulkDeleteOpen, bulkDeleting, clearErrors(), deleteError, deleting, editing (+20 more)
 
 ### Community 69 - "RoomType"
 Cohesion: 0.11
-Nodes (8): AddBaseRatePlan, CreateRoomTypeWithBaseRate, BelongsTo, HasMany, Media, self, RoomType, reservaPara()
+Nodes (7): AddBaseRatePlan, CreateRoomTypeWithBaseRate, BelongsTo, HasMany, Media, self, RoomType
 
 ### Community 70 - "History.vue"
-Cohesion: 0.09
-Nodes (13): AgentGuidelineController, JsonResponse, Request, Response, AgentGuideline, BelongsTo, AgentGuidelineSeeder, CentralRolesSeeder (+5 more)
+Cohesion: 0.08
+Nodes (14): AgentGuidelineController, JsonResponse, Request, AgentLearningsPageController, Response, AgentGuideline, BelongsTo, AgentGuidelineSeeder (+6 more)
 
 ### Community 71 - "SidebarMenuButton.vue"
 Cohesion: 0.10
 Nodes (15): SidebarMenuButtonVariants, delegatedProps, { isMobile, state }, props, props, SidebarMenuButtonProps, emits, forwarded (+7 more)
 
 ### Community 72 - "Index.vue"
-Cohesion: 0.10
-Nodes (19): add(), cart, CartLine, categoryFilter, error, filteredProducts, isOutOfStock(), itemCount (+11 more)
+Cohesion: 0.05
+Nodes (38): add(), cart, CartLine, cartSection, categoryFilter, clearCart(), decrease(), discount (+30 more)
 
 ### Community 73 - "PaymentRequest"
-Cohesion: 0.12
-Nodes (3): PaymentRequest, BelongsTo, Builder
+Cohesion: 0.10
+Nodes (6): PaymentReturnController, Response, PaymentRequest, BelongsTo, Builder, HttpRequest
 
 ### Community 74 - "require"
 Cohesion: 0.10
@@ -693,68 +724,64 @@ Cohesion: 0.10
 Nodes (16): attrs, buttonComputedClass, codePreviewComputedClass, copySource, copySourceEl, copyText, highlightComputedClass, HighlightProps (+8 more)
 
 ### Community 77 - "Command"
-Cohesion: 0.13
-Nodes (11): Response, PosPageController, JsonResponse, Request, ProductController, Request, Response, WizardSettingsPageController (+3 more)
+Cohesion: 0.06
+Nodes (22): MenuDigitalPageController, JsonResponse, RedirectResponse, Request, Response, View, MenuPageController, Response (+14 more)
 
 ### Community 78 - "PaymentGatewayLink"
-Cohesion: 0.29
-Nodes (3): Request, Response, StripeGateway
+Cohesion: 0.09
+Nodes (19): emit, issuingLink, payingBusy, payingReservation, paymentError, paymentForm, refundBusy, refundForm (+11 more)
 
 ### Community 79 - "Index.vue"
 Cohesion: 0.07
 Nodes (18): allSelected, archived, blacklisted, bulkDeleteOpen, bulkDeleting, deleteBusy, deleteError, deleting (+10 more)
 
 ### Community 80 - "PaymentMethodGate"
-Cohesion: 0.42
-Nodes (5): Collection, Request, Response, ReservationReportsController, CarbonImmutable
+Cohesion: 0.16
+Nodes (9): GuestController, BinaryFileResponse, JsonResponse, Media, Request, Guest, Builder, SoftDeletes (+1 more)
 
 ### Community 81 - "AgentBrain"
-Cohesion: 0.15
-Nodes (4): SummarizeConversations, AgentBrain, Collection, TextResponse
+Cohesion: 0.07
+Nodes (13): Request, Response, AiProviderController, JsonResponse, Request, AiProvider, Builder, Message (+5 more)
 
 ### Community 82 - "RoomState"
 Cohesion: 0.12
 Nodes (10): Available, Cleaning, Dirty, Maintenance, Occupied, Reserved, RoomStatus, RoomState (+2 more)
 
 ### Community 83 - "dependencies"
-Cohesion: 0.06
-Nodes (33): axios, chart.js, clsx, dayjs, @inertiajs/vue3, laravel-echo, @laravel/echo-vue, laravel-vite-plugin (+25 more)
+Cohesion: 0.05
+Nodes (43): axios, chart.js, class-variance-authority, clsx, @headlessui/vue, @inertiajs/vue3, laravel-echo, lodash (+35 more)
 
 ### Community 84 - "Slideover.vue"
-Cohesion: 0.13
-Nodes (15): { as = 'div' }, attrs, computedClass, PanelProps, slideover, attrs, computedClass, emit (+7 more)
+Cohesion: 0.22
+Nodes (9): attrs, computedClass, emit, handleClose(), open, props, Size, SlideoverProps (+1 more)
 
 ### Community 85 - "InputOTPSlot.vue"
 Cohesion: 0.11
 Nodes (14): delegatedProps, emits, forwarded, props, delegatedProps, forwarded, props, forwarded (+6 more)
 
 ### Community 86 - "SidebarProvider.vue"
-Cohesion: 0.24
-Nodes (9): emits, isMobile, open, openMobile, props, setOpen(), setOpenMobile(), state (+1 more)
+Cohesion: 0.12
+Nodes (15): emits, isMobile, open, openMobile, props, setOpen(), setOpenMobile(), state (+7 more)
 
 ### Community 87 - "Index.vue"
 Cohesion: 0.04
 Nodes (38): activeRoomsCount, addingExperience, addingRooms, cancelExperienceBusy, cancellingExperience, cancellingRoom, cancelRoomBusy, chargeBusy (+30 more)
 
 ### Community 88 - "Payment"
-Cohesion: 0.14
-Nodes (9): backgroundInput, backgroundPreview, faviconInput, faviconPreview, form, logoInput, logoPreview, props (+1 more)
-
-### Community 89 - "AiProvider"
-Cohesion: 0.06
-Nodes (27): attrs, computedClass, FormCheckComponent, attrs, computedClass, emit, InputEmit, InputProps (+19 more)
+Cohesion: 0.05
+Nodes (27): RegisterGatewayPayment, ChangeStayRoom, ExtendStay, DateTimeInterface, TransitionReservation, Carbon, UpdateReservation, ChangeRoomStatus (+19 more)
 
 ### Community 90 - "ShiftsPageController.php"
-Cohesion: 0.40
-Nodes (4): { as = 'div' }, attrs, ButtonProps, computedClass
+Cohesion: 0.29
+Nodes (5): { as = 'div' }, attrs, computedClass, DescriptionProps, SlideoverComponent
 
 ### Community 91 - "Plan"
 Cohesion: 0.23
 Nodes (6): RedirectResponse, Request, Response, PlanController, Builder, Plan
 
 ### Community 92 - "RatePlanSeason"
-Cohesion: 0.13
-Nodes (6): CreateExperienceBooking, CreateGroupReservation, CreateReservation, Carbon, NoAvailabilityException, self
+Cohesion: 0.08
+Nodes (16): Model, InsufficientStockException, self, IngredientController, JsonResponse, Request, InventoryPageController, Response (+8 more)
 
 ### Community 93 - "composer.json"
 Cohesion: 0.12
@@ -773,20 +800,20 @@ Cohesion: 0.21
 Nodes (13): getOptions(), init(), setValue(), updateValue(), computedOptions, emit, props, ProvideTomSelect (+5 more)
 
 ### Community 97 - "mutate"
-Cohesion: 0.12
-Nodes (19): clearErrors(), deletePlan(), deleteSeason(), deleteType(), deleteZone(), duplicateType(), editSeason(), handleError() (+11 more)
+Cohesion: 0.13
+Nodes (17): clearErrors(), deletePlan(), deleteSeason(), deleteType(), deleteZone(), duplicateType(), editSeason(), handleError() (+9 more)
 
 ### Community 98 - "FormRequest"
-Cohesion: 0.26
-Nodes (5): PasswordUpdateRequest, ProfileDeleteRequest, UpdateReservationRequest, FormRequest, PasswordValidationRules
+Cohesion: 0.10
+Nodes (16): busyProduct, extrasEnabled, extrasStepActive, guestErrors, guestForm, localProducts, outOfStockSelectedCount, paymentModeLabels (+8 more)
 
 ### Community 99 - "CentralModel"
-Cohesion: 0.18
-Nodes (7): ModuleRequestController, JsonResponse, Request, CentralModel, ModuleActivationRequest, TenantModule, bindWizardExtrasTenant()
+Cohesion: 0.20
+Nodes (7): RegisterReservationPayment, SettleStay, BinaryFileResponse, JsonResponse, Media, Request, StayController
 
 ### Community 100 - "OutboundMessenger"
-Cohesion: 0.10
-Nodes (13): address, deleteBusy, deleteError, deleting, docLabels, GuestData, hasHistory, MediaItem (+5 more)
+Cohesion: 0.07
+Nodes (25): channelIcons, channelLabels, ChannelRow, customFrom, customTo, donutData, donutOptions, effective (+17 more)
 
 ### Community 101 - "aliases"
 Cohesion: 0.12
@@ -797,24 +824,30 @@ Cohesion: 0.29
 Nodes (5): FaqController, JsonResponse, Request, Faq, Builder
 
 ### Community 103 - "BrandingController.php"
-Cohesion: 0.12
-Nodes (10): deleting, editing, errors, ExtraRow, extras, form, props, saving (+2 more)
+Cohesion: 0.09
+Nodes (20): attrs, computedClass, {
+    dark = false,
+    bordered = false,
+    hover = false,
+    striped = false,
+    sm = false,
+}, ProvideTable, TableProps, attrs, computedClass, table (+12 more)
 
 ### Community 104 - "AgentToolsController"
-Cohesion: 0.13
-Nodes (8): ExperienceController, JsonResponse, Request, Experience, BelongsTo, HasMany, Media, experienceSetupForReservation()
+Cohesion: 0.12
+Nodes (9): ExperienceController, JsonResponse, Request, Request, Response, Experience, BelongsTo, HasMany (+1 more)
 
 ### Community 105 - "ShiftType"
-Cohesion: 0.47
-Nodes (3): BookingExtrasController, JsonResponse, Request
+Cohesion: 0.10
+Nodes (13): address, deleteBusy, deleteError, deleting, docLabels, GuestData, hasHistory, MediaItem (+5 more)
 
 ### Community 106 - "Seeder"
-Cohesion: 0.17
-Nodes (5): AiProviderController, JsonResponse, Request, AiProvider, Builder
+Cohesion: 0.11
+Nodes (10): deleting, DocumentRow, editForm, editing, editInput, props, serviceTone, uploadForm (+2 more)
 
 ### Community 107 - "AgentContext.vue"
-Cohesion: 0.08
-Nodes (21): generalReportFilter, generalReportFilter, generalReportFilter, generalReportFilter, MainProps, props, attrs, computedClass (+13 more)
+Cohesion: 0.04
+Nodes (40): generalReportFilter, sliderRef, generalReportFilter, PaginationComponent, { as = 'a', active = false }, attrs, computedClass, LinkProps (+32 more)
 
 ### Community 108 - "optionalDependencies"
 Cohesion: 0.15
@@ -830,15 +863,15 @@ Nodes (12): ChatMessage, draft, listRef, loadMessages(), messages, props, scroll
 
 ### Community 111 - "UserInfo.vue"
 Cohesion: 0.11
-Nodes (13): Appearance, busy, colorRows, dirty, form, lightBgWarning, logoUrl, previewDark (+5 more)
+Nodes (13): qrcode, qrcode, openQr(), downloadWizardQr(), printQrCodes(), Aspect, aspects, errors (+5 more)
 
 ### Community 112 - "PaymentGatewayController"
 Cohesion: 0.40
 Nodes (4): BookingLookupController, JsonResponse, Request, Response
 
 ### Community 113 - "AppServiceProvider"
-Cohesion: 0.23
-Nodes (3): AppServiceProvider, TenantAwareDatabaseSessionHandler, DatabaseSessionHandler
+Cohesion: 0.13
+Nodes (6): Response, Response, BelongsTo, Builder, self, StaySurvey
 
 ### Community 114 - "PayPalGateway"
 Cohesion: 0.03
@@ -849,32 +882,32 @@ Cohesion: 0.27
 Nodes (8): init(), NotificationElement, NotificationProps, props, ProvideNotification, reInit(), toastifyRef, vNotificationDirective
 
 ### Community 116 - "TinySlider.vue"
-Cohesion: 0.24
-Nodes (8): init(), reInit(), props, ProvideTinySlider, sliderRef, TinySliderElement, TinySliderProps, vSliderDirective
+Cohesion: 0.14
+Nodes (11): FileIconProps, Variant, { variant, type, src }, init(), reInit(), props, ProvideTinySlider, sliderRef (+3 more)
 
 ### Community 117 - "clearErrors"
-Cohesion: 0.17
-Nodes (15): clearErrors(), deleteBlock(), duplicateRoom(), handleError(), openBlocks(), openBulk(), openCreate(), openEdit() (+7 more)
+Cohesion: 0.16
+Nodes (16): clearErrors(), confirmResetUsage(), deleteBlock(), duplicateRoom(), handleError(), openBlocks(), openBulk(), openCreate() (+8 more)
 
 ### Community 118 - "AGENTS.md"
 Cohesion: 0.04
 Nodes (45): APIs & Eloquent Resources, Application Structure & Architecture, Artisan, Authentication & Authorization, Available Search Syntax, Comments, Configuration, Constructors (+37 more)
 
 ### Community 119 - "AvailabilityService"
-Cohesion: 0.40
-Nodes (3): JsonResponse, Request, RoomTypeController
+Cohesion: 0.11
+Nodes (9): contractForm, editing, form, managing, managingCurrent, props, serviceIcons, ServiceRow (+1 more)
 
 ### Community 120 - "TwoFactorAuthenticationController.php"
-Cohesion: 0.11
-Nodes (9): deleteForm, deleting, editing, form, ModuleDef, moduleList, PlanRow, props (+1 more)
+Cohesion: 0.17
+Nodes (7): CouponController, JsonResponse, Request, Coupon, BelongsTo, CarbonInterface, LogOptions
 
 ### Community 122 - "Dropzone.vue"
 Cohesion: 0.25
 Nodes (7): DropzoneElement, DropzoneProps, fileUploadRef, init(), props, ProvideDropzone, vFileUploadDirective
 
 ### Community 123 - "IssuePaymentRequest"
-Cohesion: 0.35
-Nodes (3): MetaChannelController, JsonResponse, Request
+Cohesion: 0.19
+Nodes (10): usePublicTheme(), useWizardAppearance(), WizardAppearance, answers, done, error, form, { isDark, rootStyle } (+2 more)
 
 ### Community 124 - "Spec — Cobros de reservas y pasarelas de pago por tenant"
 Cohesion: 0.04
@@ -885,8 +918,8 @@ Cohesion: 0.34
 Nodes (3): BookingController, JsonResponse, Request
 
 ### Community 126 - "RateDurationUnit"
-Cohesion: 0.22
-Nodes (6): passwordRules(), JsonResponse, Request, SmtpTestController, TenantMailer, Mailer
+Cohesion: 0.31
+Nodes (5): JsonResponse, Request, SmtpTestController, Mailer, TenantMailer
 
 ### Community 127 - "require-dev"
 Cohesion: 0.20
@@ -905,16 +938,20 @@ Cohesion: 0.21
 Nodes (13): autoFillEnd(), clearGuest(), createFromDate(), createFromRack(), fromLocalInput(), openCreate(), openEdit(), pad2() (+5 more)
 
 ### Community 131 - "PropertyController"
-Cohesion: 0.27
-Nodes (4): ExperienceSlot, BelongsTo, Collection, HasMany
+Cohesion: 0.19
+Nodes (7): ExperienceSlotController, JsonResponse, Request, ExperienceSlot, BelongsTo, Collection, HasMany
 
 ### Community 132 - "Message"
-Cohesion: 0.09
-Nodes (13): RegisterGatewayPayment, TransitionReservation, Carbon, UpdateReservation, ChangeRoomStatus, AdvanceHousekeeping, RoomStatus, AutoCheckInArrivals (+5 more)
+Cohesion: 0.03
+Nodes (50): { toasts, dismiss }, dismiss(), push(), Toast, toasts, useToasts(), backgroundInput, backgroundPreview (+42 more)
+
+### Community 133 - "TenancyServiceProvider"
+Cohesion: 0.11
+Nodes (16): channelLabels, CleaningCycle, dotColor, MaintenancePeriod, monthlyChart, monthlyOptions, MonthlyPoint, props (+8 more)
 
 ### Community 134 - "StripeGateway"
-Cohesion: 0.10
-Nodes (16): countedCash, Cut, detailCut, difference, from, Method, methodIcons, notes (+8 more)
+Cohesion: 0.28
+Nodes (8): form, page, props, sendTest(), submit(), testing, toastFlash(), toasts
 
 ### Community 136 - "BalloonBlockEditor.vue"
 Cohesion: 0.22
@@ -945,16 +982,16 @@ Cohesion: 0.21
 Nodes (8): ExtraController, JsonResponse, Request, ExtrasPageController, Request, Response, Extra, BelongsTo
 
 ### Community 143 - "ProfileController.php"
-Cohesion: 0.08
-Nodes (22): ChartElement, ChartProps, chartRef, init(), props, ProvideChart, channelLabels, CleaningCycle (+14 more)
+Cohesion: 0.09
+Nodes (17): assignSel, busy, confirmResolve(), deleting, IncidentDetail, IncidentPhoto, patch(), photoInput (+9 more)
 
 ### Community 144 - "Spec técnico — Sistema de reservas multitenant (hoteles / moteles)"
 Cohesion: 0.06
 Nodes (33): 10. Tiempo real, 11. Reportes, 12. Roles y permisos, 13. API + plugin de WordPress, 14. Roadmap por fases, 15. Riesgos y notas, 1. Resumen ejecutivo, 2. Stack recomendado y justificación (+25 more)
 
 ### Community 145 - "FortifyServiceProvider"
-Cohesion: 0.53
-Nodes (3): JsonResponse, Request, RatePlanController
+Cohesion: 0.08
+Nodes (19): activeCategory, cart, cartCount, cartItems, categories, checkout, chosenPay, done (+11 more)
 
 ### Community 146 - "setup"
 Cohesion: 0.25
@@ -985,8 +1022,8 @@ Cohesion: 0.06
 Nodes (31): 1. Clonar el repositorio, 2. Limpiar archivos del proyecto anterior, 3. Instalar dependencias, 4. Configurar entorno, 5. Migraciones y seeders, 6. Compilar assets, 7. Iniciar servidor de desarrollo, Actualizar dependencias (+23 more)
 
 ### Community 153 - "Middleware"
-Cohesion: 0.48
-Nodes (3): HandleInertiaRequests, Request, Middleware
+Cohesion: 0.17
+Nodes (7): JsonResponse, Request, ShiftController, BelongsTo, Builder, HasMany, Shift
 
 ### Community 154 - "config"
 Cohesion: 0.29
@@ -997,8 +1034,8 @@ Cohesion: 0.07
 Nodes (29): 10. Criterios globales de "hecho" (toda etapa), 11. Preguntas abiertas (decidir sobre la marcha, no bloquean E1), 1. Principios (lo que hace que todo se sienta "guiado"), 2. Mapa de etapas, 3. Etapa 1 — Base de planes y módulos `M`, 4. Etapa 2 — Precio único y catálogo guiado `M`, 5. Etapa 3 — Habitaciones guiadas `S`–`M`, 6. Etapa 4 — Reservas: rack de ocupación `L` (+21 more)
 
 ### Community 156 - "refreshThread"
-Cohesion: 0.14
-Nodes (10): BookingCouponController, JsonResponse, Request, CouponController, JsonResponse, Request, CouponsPageController, Request (+2 more)
+Cohesion: 0.24
+Nodes (7): HandleAppearance, Closure, Request, Response, HandleInertiaRequests, Request, Middleware
 
 ### Community 157 - "EnsureModuleEnabled.php"
 Cohesion: 0.53
@@ -1009,16 +1046,16 @@ Cohesion: 0.53
 Nodes (4): EnsureTenantIsActive, Closure, Request, Response
 
 ### Community 159 - "HandleAppearance.php"
-Cohesion: 0.21
-Nodes (8): PaymentGatewayController, JsonResponse, Request, PaymentGatewayWebhookController, JsonResponse, Request, Gateways, PaymentGateway
+Cohesion: 0.28
+Nodes (5): PaymentGatewayController, JsonResponse, Request, Gateways, PaymentGateway
 
 ### Community 160 - "SiteCatalogController.php"
 Cohesion: 0.29
 Nodes (5): JsonResponse, Request, ShiftTypeController, HasMany, ShiftType
 
 ### Community 161 - "Recipe"
-Cohesion: 0.04
-Nodes (44): attrs, computedClass, Icon, LucideProps, props, centralMenu, MenuItem, tenantMenu (+36 more)
+Cohesion: 0.36
+Nodes (4): DashboardController, CarbonImmutable, Request, Response
 
 ### Community 163 - "Draggable.vue"
 Cohesion: 0.33
@@ -1041,8 +1078,8 @@ Cohesion: 0.22
 Nodes (8): §1 Diagnóstico (2026-07-20, caso Cabañas Real de la Sierra), §2 Principios, §3 F1 — Conexión confiable (plugin v1.1), §4 F2 — Diseño de tarjetas (plugin v1.1), §5 F3 — Lado Laravel, §6 Distribución y mantenimiento, §7 Fuera de alcance (por ahora), Spec: plugin de WordPress y la integración de sitios
 
 ### Community 168 - "Inertia Vue Development"
-Cohesion: 0.08
-Nodes (24): Basic Link Component, Basic Usage, Client-Side Navigation, Common Pitfalls, Deferred Props, Documentation, Form Component (Recommended), Form Component Reset Props (+16 more)
+Cohesion: 0.09
+Nodes (22): Basic Link Component, Basic Usage, Client-Side Navigation, Common Pitfalls, Deferred Props, Documentation, Form Component (Recommended), Form Component Reset Props (+14 more)
 
 ### Community 169 - "Spec — Motor de reservas web: un motor, tres entregas"
 Cohesion: 0.08
@@ -1053,28 +1090,32 @@ Cohesion: 0.40
 Nodes (3): darkMode, iconColor, props
 
 ### Community 171 - "Inertia Vue Development"
-Cohesion: 0.08
-Nodes (24): Basic Link Component, Basic Usage, Client-Side Navigation, Common Pitfalls, Deferred Props, Documentation, Form Component (Recommended), Form Component Reset Props (+16 more)
+Cohesion: 0.09
+Nodes (22): Basic Link Component, Basic Usage, Client-Side Navigation, Common Pitfalls, Deferred Props, Documentation, Form Component (Recommended), Form Component Reset Props (+14 more)
 
 ### Community 172 - "askAction"
 Cohesion: 0.40
 Nodes (5): askAction(), askCancel(), askCheckIn(), askConfirm(), askNoShow()
 
 ### Community 173 - "reload"
-Cohesion: 0.29
-Nodes (7): bulkDeleteHistory(), money(), reload(), submitConfirmAction(), submitCreate(), submitPayment(), submitRefund()
+Cohesion: 0.40
+Nodes (5): bulkDeleteHistory(), money(), reload(), submitConfirmAction(), submitCreate()
 
 ### Community 174 - "ProfileValidationRules.php"
 Cohesion: 0.83
 Nodes (3): emailRules(), nameRules(), profileRules()
 
 ### Community 176 - "test"
-Cohesion: 0.07
-Nodes (26): className, Props, auth, { isCurrentUrl, whenCurrentUrl }, mainNavItems, page, Props, rightNavItems (+18 more)
+Cohesion: 0.06
+Nodes (31): className, Props, auth, { isCurrentUrl, whenCurrentUrl }, mainNavItems, page, Props, rightNavItems (+23 more)
 
 ### Community 177 - "RoomTypePhotoController.php"
 Cohesion: 0.20
 Nodes (9): BreadcrumbProps, { light }, ProvideBeradcrumb, slots, BreadcrumbComponent, breadcrumb, computedClass, LinkProps (+1 more)
+
+### Community 178 - "axios"
+Cohesion: 0.20
+Nodes (8): AddonServiceController, RedirectResponse, Request, Response, AddonService, Builder, BelongsTo, TenantAddonService
 
 ### Community 179 - "concurrently"
 Cohesion: 0.31
@@ -1089,64 +1130,96 @@ Cohesion: 0.10
 Nodes (20): 1.1 Lo que ya existe y resuelve la mitad del problema, 1.2 ✅ YA CONSTRUIDO (2026-07-23): transferencia conectada de verdad a WhatsApp, 1.3 ✅ YA CONSTRUIDO (2026-07-23): vincular la conversación a la reserva automáticamente, 1.4 ✅ YA CORREGIDO (2026-07-11): elegir pasarela específica cuando hay varias conectadas, 1. Pago: opción de pago siempre visible + transferencia conectada a WhatsApp, 2.1 El bug, 2.2 Lo que ya existía y no se usaba, 2.3 El fix (+12 more)
 
 ### Community 187 - "0001_01_01_000002_create_jobs_table.php"
-Cohesion: 0.23
-Nodes (7): AgentPageController, Request, Response, JsonResponse, Request, Response, WebchatController
+Cohesion: 0.34
+Nodes (4): ActivityLogPageController, Activity, Request, Response
 
 ### Community 189 - "2026_05_29_195303_create_permission_tables.php"
-Cohesion: 0.25
-Nodes (5): ExperienceVehicleController, JsonResponse, Request, ExperienceVehicle, BelongsTo
+Cohesion: 0.21
+Nodes (7): GenerateExperienceSessions, GenerateScheduledExperienceSessions, ExperienceVehicleController, JsonResponse, Request, ExperienceVehicle, BelongsTo
+
+### Community 195 - "2026_07_13_000001_add_diagnostics_to_channel_links.php"
+Cohesion: 0.11
+Nodes (6): StoreProspectDocumentRequest, UpdateReservationRequest, UpdatePlanProspectRequest, UpdateProspectDocumentRequest, BelongsTo, FormRequest
 
 ### Community 198 - "2026_07_13_000003_add_context_editable_to_tenant_agent_settings.php"
-Cohesion: 0.11
-Nodes (13): JsonResponse, Request, PropertyController, self, HasMany, Property, arrivalSoonSettings(), checkinSettings() (+5 more)
+Cohesion: 0.09
+Nodes (16): Response, JsonResponse, Request, PropertyController, self, HasMany, Property, arrivalSoonSettings() (+8 more)
 
 ### Community 199 - "2026_07_13_000005_add_max_gateways_to_plans.php"
-Cohesion: 0.11
-Nodes (14): PaymentMethodsPageController, Response, PaymentGatewayLink, MercadoPagoGateway, Request, createCheckout(), parseWebhook(), Request (+6 more)
+Cohesion: 0.16
+Nodes (11): PaymentGatewayLink, createCheckout(), parseWebhook(), Request, refund(), testCredentials(), PayPalGateway, Request (+3 more)
 
 ### Community 200 - "InboxController.php"
 Cohesion: 0.06
-Nodes (27): { as = 'div' }, attrs, computedClass, DescriptionProps, { as = 'div' }, attrs, computedClass, FooterProps (+19 more)
+Nodes (28): billingMode, busyId, canManageProperty, categories, categoryFilter, filteredProducts, filteredRequests, hoursForm (+20 more)
+
+### Community 201 - "2026_07_14_000002_create_platform_settings.php"
+Cohesion: 0.14
+Nodes (10): gatewayFor(), GatewayLink, gateways, gwBusy, gwFieldHints, gwForms, props, saveGateway() (+2 more)
+
+### Community 202 - "2026_07_15_000001_add_modules_to_plans_and_create_tenant_modules.php"
+Cohesion: 0.16
+Nodes (8): JsonResponse, Request, PushSubscriptionController, BelongsTo, PushSubscription, WebPushSender, Request, subscribeRequest()
 
 ### Community 209 - "2026_07_02_190003_create_room_types_table.php"
-Cohesion: 0.36
-Nodes (4): CreateNewUser, ProfileUpdateRequest, CreatesNewUsers, ProfileValidationRules
+Cohesion: 0.27
+Nodes (4): PaymentRequestController, BinaryFileResponse, JsonResponse, Request
 
 ### Community 211 - "AgentToolsController"
-Cohesion: 0.36
-Nodes (3): AgentToolsController, JsonResponse, Request
+Cohesion: 0.23
+Nodes (6): AgentToolsController, JsonResponse, Request, AgentPlaygroundController, JsonResponse, Request
 
 ### Community 212 - "2026_07_03_100001_create_rate_plans_table.php"
-Cohesion: 0.12
-Nodes (11): AgentPlaygroundController, JsonResponse, Request, AgentTokenController, JsonResponse, Request, AvailabilityController, JsonResponse (+3 more)
+Cohesion: 0.09
+Nodes (15): allSelected, deleteBusy, deleteIds, deleteOpen, deleteRows, meta, NoticeRow, PaginationLink (+7 more)
 
 ### Community 213 - "2026_07_03_100002_create_guests_table.php"
-Cohesion: 0.22
-Nodes (5): BrandingController, RedirectResponse, Request, Response, PlatformSetting
+Cohesion: 0.36
+Nodes (4): BrandingController, RedirectResponse, Request, Response
 
 ### Community 214 - "2026_07_03_100003_create_reservations_table.php"
 Cohesion: 0.33
 Nodes (4): ExperienceWizardController, JsonResponse, Request, Response
 
 ### Community 216 - "2026_07_03_100005_add_code_to_reservations_table.php"
-Cohesion: 0.17
-Nodes (9): JsonResponse, Request, ShiftController, Request, Response, UsersPageController, BelongsTo, Builder (+1 more)
+Cohesion: 0.10
+Nodes (19): Authorizing Channels, Basic Usage, Broadcasting Helpers, Broadcasting Interfaces, Channel Authorization, Channel Types, Client-Side Features, Client-Side Setup (+11 more)
 
 ### Community 218 - "2026_07_03_200002_create_products_table.php"
 Cohesion: 0.09
 Nodes (16): actionError, AdminUser, currentUserId, filtered, page, props, search, stats (+8 more)
 
 ### Community 219 - "2026_07_03_200003_create_recipes_table.php"
-Cohesion: 0.10
-Nodes (16): busyProduct, extrasEnabled, extrasStepActive, guestErrors, guestForm, localProducts, outOfStockSelectedCount, paymentModeLabels (+8 more)
+Cohesion: 0.18
+Nodes (7): EmailSettingsController, RedirectResponse, Request, Response, PlatformSetting, Mailer, PlatformMailer
 
 ### Community 223 - "2026_07_04_100001_add_duration_and_advance_to_rate_plans.php"
 Cohesion: 0.22
 Nodes (8): JsonResponse, Request, RatePlanSeasonController, BelongsTo, CarbonInterface, RatePlanSeason, seasonsController(), weekdaySeasonsController()
 
+### Community 226 - "2026_07_05_100002_expand_reservations_and_stays.php"
+Cohesion: 0.12
+Nodes (10): deleting, editing, errors, ExtraRow, extras, form, props, saving (+2 more)
+
+### Community 229 - "2026_07_06_110001_create_cash_cuts_table.php"
+Cohesion: 0.07
+Nodes (19): allSelected, deleteBusy, deleteIds, deleteOpen, deleteRows, detail, detailLines, ExperienceLine (+11 more)
+
 ### Community 233 - "2026_07_06_150000_create_agent_api_tables.php"
 Cohesion: 0.06
 Nodes (28): approveFromDetail(), approvePayment(), clearReceipt(), ClosedRequest, closeQueueDetail(), initialParams, OverdueBalance, paymentBusy (+20 more)
+
+### Community 234 - "2026_07_06_160000_create_conversations_tables.php"
+Cohesion: 0.10
+Nodes (19): Authorizing Channels, Basic Usage, Broadcasting Helpers, Broadcasting Interfaces, Channel Authorization, Channel Types, Client-Side Features, Client-Side Setup (+11 more)
+
+### Community 239 - "2026_07_10_000010_add_extra_guest_fee_and_optional_charges.php"
+Cohesion: 0.07
+Nodes (14): FollowUpConversations, InboxController, Builder, JsonResponse, Request, Response, Conversation, BelongsTo (+6 more)
+
+### Community 242 - "2026_07_13_000004_create_gateway_events.php"
+Cohesion: 0.19
+Nodes (12): applyPreset(), applyToPanel(), DEFAULTS, form, isDefaultTheme, presets, props, resetTheme() (+4 more)
 
 ### Community 246 - "2026_07_16_000001_create_booking_idempotency_keys.php"
 Cohesion: 0.11
@@ -1157,84 +1230,120 @@ Cohesion: 0.53
 Nodes (4): ForceJsonResponse, Closure, Request, Response
 
 ### Community 251 - "TenantAiUsage"
-Cohesion: 0.13
-Nodes (10): AiAgentsController, JsonResponse, Request, Response, Response, Builder, PlatformAiProvider, BelongsTo (+2 more)
+Cohesion: 0.04
+Nodes (30): { as = 'div' }, attrs, computedClass, DescriptionProps, { as = 'div' }, attrs, computedClass, FooterProps (+22 more)
 
 ### Community 253 - "dayjs"
-Cohesion: 0.50
-Nodes (3): PaymentReturnController, Response, HttpRequest
+Cohesion: 0.15
+Nodes (12): load(), loading, meta, notices, open, openPanel(), props, push (+4 more)
 
 ### Community 254 - "@headlessui/vue"
-Cohesion: 0.33
-Nodes (6): fetchSuggestion(), maybeAutoSuggest(), open(), patchConversation(), refreshThread(), scrollThread()
+Cohesion: 0.22
+Nodes (9): fetchSuggestion(), maybeAutoSuggest(), onVisibilityChange(), open(), patchConversation(), refreshIfVisible(), refreshInbox(), refreshThread() (+1 more)
 
 ### Community 255 - "@inertiajs/vue3"
-Cohesion: 0.15
-Nodes (4): PruneArchivedConversations, MetaWebhookController, Request, HasMany
-
-### Community 256 - "PaymentRequestController.php"
-Cohesion: 0.16
-Nodes (3): CarbonInterface, ReservationPolicy, RateDurationUnit
-
-### Community 258 - "@left4code/tw-starter"
-Cohesion: 0.32
-Nodes (5): GenerateExperienceSessions, GenerateScheduledExperienceSessions, ExperienceSlotController, JsonResponse, Request
-
-### Community 259 - "lodash"
-Cohesion: 0.42
-Nodes (4): ExperiencePhotoController, BinaryFileResponse, JsonResponse, Request
-
-### Community 262 - "TenantUserController.php"
-Cohesion: 0.27
-Nodes (4): PaymentRequestController, BinaryFileResponse, JsonResponse, Request
-
-### Community 264 - "vite"
-Cohesion: 0.17
-Nodes (9): { as = 'div' }, attrs, computedClass, DescriptionProps, SlideoverComponent, { as = 'div' }, attrs, computedClass (+1 more)
-
-### Community 265 - "AgentToolsController"
-Cohesion: 0.39
-Nodes (4): BinaryFileResponse, JsonResponse, Request, PropertyLogoController
-
-### Community 266 - "GroupWizardController"
-Cohesion: 0.25
-Nodes (5): AutoCheckoutOverdueStays, ExpirePaymentRequests, ExpireReservationHolds, RenameCentralDomain, Command
-
-### Community 268 - "tw-animate-css"
-Cohesion: 0.17
-Nodes (9): GuestNoticeMail, Content, Envelope, GuestReservationMail, Content, Envelope, Mailable, Queueable (+1 more)
-
-### Community 269 - "reloadRooms"
-Cohesion: 0.50
-Nodes (3): ExperienceSessionController, JsonResponse, Request
-
-### Community 270 - "ExperienceSessionController.php"
-Cohesion: 0.25
-Nodes (8): cancelExperience(), cancelRoom(), issueCharge(), reload(), submitExperience(), submitInfo(), submitPeople(), submitRooms()
-
-### Community 271 - "reloadRooms"
 Cohesion: 0.38
 Nodes (5): BinaryFileResponse, JsonResponse, Media, Request, RoomTypePhotoController
 
+### Community 256 - "PaymentRequestController.php"
+Cohesion: 0.15
+Nodes (3): CarbonInterface, ReservationPolicy, RateDurationUnit
+
+### Community 258 - "@left4code/tw-starter"
+Cohesion: 0.17
+Nodes (3): CarbonImmutable, RoomStatus, TenantOperationSeeder
+
+### Community 259 - "lodash"
+Cohesion: 0.08
+Nodes (12): Request, Response, ShiftsPageController, Request, Response, UsersPageController, HasApiTokens, HasRoles (+4 more)
+
+### Community 260 - "AvailabilityController.php"
+Cohesion: 0.40
+Nodes (3): JsonResponse, Request, RoomTypeController
+
+### Community 261 - "RatePlanController.php"
+Cohesion: 0.08
+Nodes (14): AiAgentsController, JsonResponse, Request, Response, DashboardController, Response, CentralModel, Builder (+6 more)
+
+### Community 262 - "TenantUserController.php"
+Cohesion: 0.30
+Nodes (5): JsonResponse, Request, StaffNotificationController, Builder, StaffNotification
+
+### Community 263 - "reka-ui"
+Cohesion: 0.18
+Nodes (7): Collection, RedirectResponse, Request, Response, PlanProspectController, FilterPlanProspectsRequest, PlanProspect
+
+### Community 264 - "vite"
+Cohesion: 0.23
+Nodes (3): AppServiceProvider, TenantAwareDatabaseSessionHandler, DatabaseSessionHandler
+
+### Community 265 - "AgentToolsController"
+Cohesion: 0.22
+Nodes (8): Request, Response, ReservationHistoryPageController, Activity, Collection, Request, Response, ReservationsPageController
+
+### Community 266 - "GroupWizardController"
+Cohesion: 0.16
+Nodes (8): JsonResponse, Request, RoomBlockController, BelongsTo, Builder, DateTimeInterface, RoomBlock, blocksController()
+
+### Community 267 - "TwoFactorAuthenticationController.php"
+Cohesion: 0.47
+Nodes (3): JsonResponse, Request, UserController
+
+### Community 268 - "tw-animate-css"
+Cohesion: 0.25
+Nodes (4): RedirectResponse, Response, ProspectRegistrationController, StoreEventProspectRequest
+
+### Community 269 - "reloadRooms"
+Cohesion: 0.06
+Nodes (25): generalReportFilter, generalReportFilter, generalReportFilter, MainProps, props, TabComponent, { as = 'div' }, attrs (+17 more)
+
+### Community 270 - "ExperienceSessionController.php"
+Cohesion: 0.12
+Nodes (13): CreateNewUser, ResetUserPassword, RedirectResponse, Request, Response, ProfileController, PasswordUpdateRequest, ProfileDeleteRequest (+5 more)
+
+### Community 271 - "reloadRooms"
+Cohesion: 0.11
+Nodes (13): Appearance, busy, colorRows, dirty, form, lightBgWarning, logoUrl, previewDark (+5 more)
+
+### Community 272 - "Tippy.vue"
+Cohesion: 0.15
+Nodes (8): PasswordController, RedirectResponse, Response, Response, TwoFactorAuthenticationController, TwoFactorAuthenticationRequest, HasMiddleware, InteractsWithTwoFactorState
+
 ### Community 276 - "HandleAppearance.php"
-Cohesion: 0.20
-Nodes (5): RoomStatusChanged, Dispatchable, InteractsWithSockets, PrivateChannel, ShouldBroadcast
+Cohesion: 0.13
+Nodes (9): ConversationActivity, PrivateChannel, PrivateChannel, RoomStatusChanged, PrivateChannel, StaffNotified, Dispatchable, InteractsWithSockets (+1 more)
+
+### Community 289 - "excel.php"
+Cohesion: 0.25
+Nodes (4): props, delegatedProps, props, props
 
 ### Community 292 - "HotelSettingsPageController.php"
-Cohesion: 0.67
-Nodes (3): qrcode, qrcode, downloadWizardQr()
+Cohesion: 0.25
+Nodes (4): Request, Response, StripeGateway, PaymentGateway
+
+### Community 297 - "queue.php"
+Cohesion: 0.31
+Nodes (4): SendStaffPush, Model, StaffNotifier, ShouldQueue
+
+### Community 304 - "Welcome.vue"
+Cohesion: 0.12
+Nodes (16): brandLogo, brandName, choosePlan(), form, goTo(), isAuthenticated, isScrolled, LandingModule (+8 more)
+
+### Community 313 - "web.php"
+Cohesion: 0.38
+Nodes (3): JsonResponse, Request, ReservationController
 
 ### Community 366 - ".__invoke"
-Cohesion: 0.53
-Nodes (4): HandleAppearance, Closure, Request, Response
+Cohesion: 0.18
+Nodes (3): FortifyServiceProvider, TenancyServiceProvider, ServiceProvider
 
 ### Community 367 - "Pest Testing 3"
 Cohesion: 0.12
 Nodes (15): Architecture Testing, Assertions, Basic Test Structure, Basic Usage, Common Pitfalls, Creating Tests, Datasets, Documentation (+7 more)
 
 ### Community 368 - "Tailwind CSS Development"
-Cohesion: 0.12
-Nodes (15): Basic Usage, Common Patterns, Common Pitfalls, CSS-First Configuration, Dark Mode, Documentation, Flexbox Layout, Grid Layout (+7 more)
+Cohesion: 0.13
+Nodes (14): Basic Usage, Common Patterns, Common Pitfalls, CSS-First Configuration, Dark Mode, Documentation, Flexbox Layout, Grid Layout (+6 more)
 
 ### Community 369 - "Parte II — Módulos por plan"
 Cohesion: 0.12
@@ -1245,20 +1354,28 @@ Cohesion: 0.12
 Nodes (15): Architecture Testing, Assertions, Basic Test Structure, Basic Usage, Common Pitfalls, Creating Tests, Datasets, Documentation (+7 more)
 
 ### Community 371 - "Tailwind CSS Development"
-Cohesion: 0.12
-Nodes (15): Basic Usage, Common Patterns, Common Pitfalls, CSS-First Configuration, Dark Mode, Documentation, Flexbox Layout, Grid Layout (+7 more)
+Cohesion: 0.13
+Nodes (14): Basic Usage, Common Patterns, Common Pitfalls, CSS-First Configuration, Dark Mode, Documentation, Flexbox Layout, Grid Layout (+6 more)
 
 ### Community 372 - "RoomController"
 Cohesion: 0.29
-Nodes (4): Response, RoomHistoryController, BelongsTo, RoomStatusLog
+Nodes (4): GroupWizardController, JsonResponse, Request, Response
 
 ### Community 373 - "Sistema de Reservas del Hotel — Visión general"
 Cohesion: 0.14
 Nodes (13): Apartar y registrar huéspedes, Cobrar de distintas formas, Conocer a sus clientes, Cosas que el sistema hace solo, Cómo se ve el día a día, En resumen, el sistema abarca:, En una frase, Llevar el control del dinero (+5 more)
 
+### Community 375 - "Link.vue"
+Cohesion: 0.19
+Nodes (5): BinaryFileResponse, Media, GuestReservationMail, Content, Envelope
+
+### Community 377 - "RoomTypeController"
+Cohesion: 0.06
+Nodes (26): allSelected, applyFilters(), bulkDelete(), bulkDeleteOpen, bulkDeleting, clearFilters(), editing, form (+18 more)
+
 ### Community 378 - "ProfileController.php"
-Cohesion: 0.39
-Nodes (4): RedirectResponse, Request, Response, ProfileController
+Cohesion: 0.20
+Nodes (8): applyTemplate(), confirmTemplate, instructions, props, refreshing, saving, toast, useTemplate()
 
 ### Community 379 - "Wayfinder Development"
 Cohesion: 0.18
@@ -1296,6 +1413,10 @@ Nodes (7): Guía — Conectar Messenger e Instagram DM a la bandeja, Parte 1 —
 Cohesion: 0.25
 Nodes (7): 1. Qué se reportó y causa raíz de cada punto, 2. Ya corregido (2026-07-10), 3. Transparencia de precio (P1), 4. Un solo modelo de capacidad (P1), 5. Pasos visibles y control explícito (P1), 6. Plan de implementación, Spec — Wizard público: precio transparente, capacidad conectada y pasos que el hotel controla
 
+### Community 390 - "CreateTenantsTable"
+Cohesion: 0.12
+Nodes (15): ALCANCE DE HOY (demo con moteleros mañana), Archivos críticos, Contexto, Decisiones de diseño, E1 — Infraestructura del modo [HOY, recortado], E2 — Registro exprés en el plano (modo motel) [HOY, completo], E3 — Salida en 1 click y cobros desde el plano [DIFERIDO post-reunión], E4 — POS: consumos cobrados al momento y cargados a la habitación (modo motel) [DIFERIDO post-reunión] (+7 more)
+
 ### Community 391 - "2. Habitaciones — **P0/P1 (ampliado v2)**"
 Cohesion: 0.29
 Nodes (7): 2.1 Modelo `Room` (ampliar), 2.2 Incidencias de mantenimiento (mini-módulo) — **P1**, 2.3.1 Auto-checkout por vencimiento — **✅ HECHO (Iteración B/C)**, 2.3 Bloqueos programados — **P1**, 2.4 Housekeeping pro — **P1/P2**, 2.5 Estadísticas por habitación (en su ficha) — **P1**, 2. Habitaciones — **P0/P1 (ampliado v2)**
@@ -1320,37 +1441,65 @@ Nodes (5): 2.6.1 Duración con unidad — **P0 · pedida explícita**, 2.6.2 Ven
 Cohesion: 0.67
 Nodes (3): 3. Tipos de habitación y Zonas — **P0 (tipos), P1 (zonas)**, `RoomType` (ampliar), `Zone` (ampliar) — P1
 
+### Community 418 - "AvatarFallback.vue"
+Cohesion: 0.16
+Nodes (13): GuestNoticeMail, Content, Envelope, Content, Envelope, PlatformTestMail, Collection, Content (+5 more)
+
+### Community 420 - "2026_07_20_000001_create_extras_and_experiences_modules.php"
+Cohesion: 0.17
+Nodes (9): brandLogo, brandName, form, page, phoneCodes, props, RegistroService, serviceIcons (+1 more)
+
 ### Community 421 - "PasswordController.php"
-Cohesion: 0.21
-Nodes (6): PasswordController, RedirectResponse, Response, Response, TwoFactorAuthenticationController, HasMiddleware
+Cohesion: 0.53
+Nodes (3): JsonResponse, Request, RatePlanController
 
 ### Community 423 - "Button.vue"
 Cohesion: 0.29
 Nodes (7): alignToGrid(), buildNodes(), buildRoomNodes(), buildZoneNodes(), onNodeDragStop(), patchNode(), rebuildZoneNodes()
 
 ### Community 424 - "reloadRooms"
-Cohesion: 0.29
-Nodes (7): changeStatus(), checkInReservation(), checkOutStay(), onVisibilityChange(), refreshIfIdle(), reloadRooms(), runRoomAction()
+Cohesion: 0.22
+Nodes (9): changeStatus(), checkInReservation(), checkOutStay(), onVisibilityChange(), refreshIfIdle(), reloadRooms(), runRoomAction(), submitExtend() (+1 more)
+
+### Community 427 - ".__invoke"
+Cohesion: 0.39
+Nodes (5): IncidentReportsController, CarbonImmutable, Collection, Request, Response
 
 ### Community 429 - "Popover.vue"
 Cohesion: 0.33
 Nodes (6): capacityFor(), maxRoomsFor(), setAdults(), setChildren(), setRooms(), typeFor()
 
-### Community 444 - "FileIcon.vue"
-Cohesion: 0.22
-Nodes (5): props, ProvideTippy, TippyProps, tippyRef, vTippyDirective
+### Community 432 - "2026_07_16_000001_create_booking_idempotency_keys.php"
+Cohesion: 0.50
+Nodes (3): JsonResponse, Request, TenantUserController
+
+### Community 439 - "2026_07_20_000004_add_group_to_payment_requests.php"
+Cohesion: 0.60
+Nodes (3): Request, Response, WidgetScriptController
+
+### Community 440 - "2026_07_13_000003_add_context_editable_to_tenant_agent_settings.php"
+Cohesion: 0.08
+Nodes (20): CreateOrder, DispatchMenuRequest, IssuePaymentRequest, AdminUserController, JsonResponse, Request, Response, AgentTokenController (+12 more)
+
+### Community 442 - "2026_07_21_000001_add_experience_schedule_vehicles_and_reservation_links.php"
+Cohesion: 0.16
+Nodes (13): busyId, KitchenRequest, minutesWaiting(), money(), now, props, RequestItem, saleFailed (+5 more)
 
 ### Community 447 - "ShiftAssignment"
-Cohesion: 0.20
-Nodes (8): JsonResponse, Request, ShiftAssignmentController, Request, Response, ShiftsPageController, BelongsTo, ShiftAssignment
+Cohesion: 0.29
+Nodes (5): JsonResponse, Request, ShiftAssignmentController, BelongsTo, ShiftAssignment
 
 ### Community 448 - "axios"
-Cohesion: 0.15
-Nodes (4): SendArrivalReminders, BelongsTo, Refund, PaymentGuestNotifier
+Cohesion: 0.20
+Nodes (6): ExperienceSessionController, JsonResponse, Request, ExperienceSession, BelongsTo, HasMany
 
-### Community 452 - "SiteImporter"
-Cohesion: 0.60
-Nodes (3): OrderController, JsonResponse, Request
+### Community 450 - "DirectGuestMessenger"
+Cohesion: 0.29
+Nodes (4): anchor, emit, host, props
+
+### Community 454 - "GuestReservationMail"
+Cohesion: 0.24
+Nodes (4): LandingController, RedirectResponse, Response, StorePlanProspectRequest
 
 ### Community 455 - "formatMoney"
 Cohesion: 0.40
@@ -1361,80 +1510,160 @@ Cohesion: 0.33
 Nodes (5): 1. Objetivo, 2. Fase 1 — iCal export/import por tipo de habitación, 3. Fase 2 — Channel manager API, 4. Decisiones, Spec — Channel manager (módulo futuro, NO construir aún)
 
 ### Community 459 - "tippy.js"
-Cohesion: 0.42
-Nodes (3): PaymentsPageController, Request, Response
-
-### Community 464 - "catalogFor"
 Cohesion: 0.33
-Nodes (3): FileIconProps, Variant, { variant, type, src }
+Nodes (6): handleError(), mutate(), removePhoto(), submitDeleteProduct(), submitIngredient(), submitMovement()
 
 ### Community 482 - "post-create-project-cmd"
 Cohesion: 0.12
-Nodes (17): scripts, lint, lint:check, post-autoload-dump, post-create-project-cmd, post-update-cmd, pre-package-uninstall, Illuminate\\Foundation\\ComposerScripts::postAutoloadDump (+9 more)
-
-### Community 484 - "Panel.vue"
-Cohesion: 0.24
-Nodes (10): applySuggestion(), clearErrors(), discardSuggestion(), handleError(), openTokenForm(), runImport(), showRateEditor(), submitDelete() (+2 more)
+Nodes (17): scripts, lint, lint:check, post-autoload-dump, post-update-cmd, pre-package-uninstall, test, Illuminate\\Foundation\\ComposerScripts::postAutoloadDump (+9 more)
 
 ### Community 489 - "Refund"
-Cohesion: 0.67
-Nodes (3): autosizeReply(), sendReply(), useSuggestion()
-
-### Community 492 - "eslint-import-resolver-typescript"
-Cohesion: 0.40
-Nodes (3): props, props, AlertVariants
+Cohesion: 0.50
+Nodes (4): autosizeReply(), clearAttachment(), sendReply(), useSuggestion()
 
 ### Community 493 - ".show"
-Cohesion: 0.33
-Nodes (4): delegatedProps, emits, forwarded, props
+Cohesion: 0.42
+Nodes (4): ExperiencePhotoController, BinaryFileResponse, JsonResponse, Request
 
-### Community 499 - "post-create-project-cmd"
-Cohesion: 0.60
-Nodes (3): ExperiencesPageController, Request, Response
+### Community 497 - "PaymentRequestController"
+Cohesion: 0.43
+Nodes (4): JsonResponse, Request, Response, WebchatController
 
-### Community 538 - "postcss"
-Cohesion: 0.60
-Nodes (3): JsonResponse, Request, SiteCatalogController
+### Community 526 - "post-create-project-cmd"
+Cohesion: 0.42
+Nodes (5): CarbonImmutable, Collection, Request, Response, ReservationReportsController
+
+### Community 529 - "lodash"
+Cohesion: 0.47
+Nodes (3): BookingExtrasController, JsonResponse, Request
+
+### Community 533 - "LogOptions"
+Cohesion: 0.43
+Nodes (3): PaymentsPageController, Request, Response
+
+### Community 535 - "PropertyLogoController.php"
+Cohesion: 0.39
+Nodes (4): BinaryFileResponse, JsonResponse, Request, PropertyLogoController
+
+### Community 538 - "Chart.vue"
+Cohesion: 0.31
+Nodes (6): ChartElement, ChartProps, chartRef, init(), props, ProvideChart
 
 ### Community 539 - "postcss-nesting"
 Cohesion: 0.40
-Nodes (4): { as = 'div', placement = 'bottom-end' }, attrs, computedClass, PanelProps
+Nodes (5): closeProductModal(), onPhotoPicked(), openProduct(), releasePreview(), submitProduct()
 
 ### Community 540 - "@types/node"
-Cohesion: 0.40
-Nodes (4): { as = 'div' }, attrs, computedClass, PopoverProps
+Cohesion: 0.33
+Nodes (9): formatFriendlyDateTime(), formatStayRange(), formatTime(), humanizeDurationLabel(), humanizeMinutes(), nightsBetween(), parseLocalDate(), stayLabel() (+1 more)
 
-### Community 541 - "Footer.vue"
+### Community 548 - "ModuleRequestController.php"
+Cohesion: 0.43
+Nodes (4): ModuleRequestController, JsonResponse, Request, ModuleActivationRequest
+
+### Community 549 - "IngredientController.php"
+Cohesion: 0.60
+Nodes (3): Request, Response, StaffNotificationsPageController
+
+### Community 551 - "PaymentGatewayWebhookController.php"
+Cohesion: 0.60
+Nodes (3): PaymentGatewayWebhookController, JsonResponse, Request
+
+### Community 553 - "Footer.vue"
+Cohesion: 0.19
+Nodes (4): Payment, BelongsTo, HasMany, LogOptions
+
+### Community 554 - "Footer.vue"
+Cohesion: 0.06
+Nodes (28): { as = 'div' }, attrs, ButtonProps, computedClass, { as = 'div' }, attrs, computedClass, DividerProps (+20 more)
+
+### Community 556 - "LandingController.php"
+Cohesion: 0.57
+Nodes (3): Request, Response, SurveysPageController
+
+### Community 563 - "toLocalInput"
+Cohesion: 0.33
+Nodes (6): openExtend(), pad(), autoFillEnd(), suggestedEndFor(), toLocalInput(), toLocalInput()
+
+### Community 564 - "clearErrors"
+Cohesion: 0.67
+Nodes (3): clearErrors(), openIngredient(), openMovement()
+
+### Community 566 - "Header.vue"
+Cohesion: 0.29
+Nodes (6): { as = 'div' }, attrs, computedClass, PanelProps, slideover, ProvideSlideover
+
+### Community 568 - "Items.vue"
+Cohesion: 0.60
+Nodes (3): BookingCouponController, JsonResponse, Request
+
+### Community 570 - "Menu.vue"
+Cohesion: 0.50
+Nodes (3): Request, Response, WizardSettingsPageController
+
+### Community 572 - "Footer.vue"
+Cohesion: 0.60
+Nodes (3): CouponsPageController, Request, Response
+
+### Community 573 - ".__invoke"
 Cohesion: 0.40
 Nodes (4): { as = 'div' }, attrs, computedClass, FooterProps
 
-### Community 542 - "test"
-Cohesion: 0.50
-Nodes (4): test, @lint:check, @php artisan config:clear --ansi, @php artisan test
+### Community 618 - "Button.vue"
+Cohesion: 0.60
+Nodes (3): seedAddonServices(), seedPlanPricing(), up()
 
-### Community 548 - "lookupCancel"
-Cohesion: 0.67
-Nodes (3): lookupCancel(), lookupFind(), JsonResponse
+### Community 619 - "reload"
+Cohesion: 0.25
+Nodes (8): cancelExperience(), cancelRoom(), issueCharge(), reload(), submitExperience(), submitInfo(), submitPeople(), submitRooms()
+
+### Community 628 - "blockLabel"
+Cohesion: 0.60
+Nodes (3): GuestsPageController, Request, Response
+
+### Community 629 - ".show"
+Cohesion: 0.40
+Nodes (5): departingSoon(), endsToday(), hasPendingPayment(), isDimmed(), matchesFilters()
+
+### Community 631 - "Input.vue"
+Cohesion: 0.25
+Nodes (7): attrs, computedClass, emit, InputEmit, InputProps, localValue, props
+
+### Community 642 - "catalogFor"
+Cohesion: 0.50
+Nodes (4): catalogFor(), openProviderCreate(), openProviderEdit(), submitProvider()
+
+### Community 649 - "UserFactory"
+Cohesion: 0.50
+Nodes (4): post-create-project-cmd, @php artisan key:generate --ansi, @php artisan migrate --graceful --ansi, @php -r \"file_exists('database/database.sqlite') || touch('database/database.sqlite');\
+
+### Community 653 - "ChooseCashPayment.php"
+Cohesion: 0.40
+Nodes (4): { as = 'div' }, attrs, computedClass, TitleProps
+
+### Community 656 - "applyCustom"
+Cohesion: 0.83
+Nodes (4): applyCustom(), applyRoom(), goTo(), query()
 
 ## Knowledge Gaps
-- **2577 isolated node(s):** `php`, `E:\Xampp\php\php.exe`, `$schema`, `style`, `config` (+2572 more)
+- **3048 isolated node(s):** `php`, `E:\Xampp\php\php.exe`, `$schema`, `style`, `config` (+3043 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **64 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **47 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
 
-- **Why does `Controller` connect `Controller` to `ActivitiesPanel.vue`, `Property`, `@left4code/tw-starter`, `lodash`, `index.ts`, `Message`, `TenantUserController.php`, `AgentToolsController`, `Reservation`, `Room`, `reloadRooms`, `CreateNewUser.php`, `reloadRooms`, `FortifyServiceProvider`, `Guest`, `Dashboard.vue`, `Hotel.vue`, `postcss`, `refreshThread`, `Stay`, `HandleAppearance.php`, `SiteCatalogController.php`, `PasswordController.php`, `Zone`, `Tenant`, `MetaChannelLink`, `concurrently`, `Conversation`, `SiteIntegration`, `RoomStatus.php`, `Table.vue`, `0001_01_01_000002_create_jobs_table.php`, `2026_05_29_195303_create_permission_tables.php`, `Wizard.vue`, `ShiftAssignment`, `Channel`, `EvolutionChannelLink`, `SiteImporter`, `History.vue`, `2026_07_13_000005_add_max_gateways_to_plans.php`, `2026_07_13_000003_add_context_editable_to_tenant_agent_settings.php`, `tippy.js`, `Command`, `PaymentMethodGate`, `AgentToolsController`, `2026_07_03_100001_create_rate_plans_table.php`, `2026_07_03_100002_create_guests_table.php`, `2026_07_03_100003_create_reservations_table.php`, `2026_07_03_100005_add_code_to_reservations_table.php`, `Plan`, `RatePlanSeason`, `2026_07_04_100001_add_duration_and_advance_to_rate_plans.php`, `CentralModel`, `Faq`, `AgentToolsController`, `ShiftType`, `Seeder`, `IssuePaymentRequest`, `PaymentGatewayController`, `post-create-project-cmd`, `RoomController`, `AvailabilityService`, `dayjs`, `ProfileController.php`, `TenantAiUsage`, `.holds`, `RateDurationUnit`, `@inertiajs/vue3`?**
-  _High betweenness centrality (0.091) - this node is a cross-community bridge._
-- **Why does `PendingRequest` connect `Product` to `EvolutionChannelLink`?**
-  _High betweenness centrality (0.079) - this node is a cross-community bridge._
-- **Why does `Reservation` connect `Reservation` to `Property`, `Message`, `index.ts`, `tw-animate-css`, `Stay`, `RatePlan`, `Conversation`, `Table.vue`, `0001_01_01_000002_create_jobs_table.php`, `Wizard.vue`, `axios`, `Channel`, `RoomType`, `PaymentMethodGate`, `AgentToolsController`, `RatePlanSeason`, `PaymentGatewayController`, `RoomController`, `2026_07_15_100002_create_site_import_suggestions.php`, `.holds`, `@inertiajs/vue3`?**
-  _High betweenness centrality (0.048) - this node is a cross-community bridge._
-- **Are the 16 inferred relationships involving `Reservation` (e.g. with `.closeDay()` and `.handle()`) actually correct?**
-  _`Reservation` has 16 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 102 inferred relationships involving `Property` (e.g. with `.handle()` and `.handle()`) actually correct?**
-  _`Property` has 102 INFERRED edges - model-reasoned connections that need verification._
-- **Are the 14 inferred relationships involving `User` (e.g. with `.__invoke()` and `.impersonate()`) actually correct?**
-  _`User` has 14 INFERRED edges - model-reasoned connections that need verification._
+- **Why does `PendingRequest` connect `Product` to `MetaChannelLink`?**
+  _High betweenness centrality (0.258) - this node is a cross-community bridge._
+- **Why does `Controller` connect `Controller` to `Property`, `Room`, `post-create-project-cmd`, `lodash`, `Guest`, `Dashboard.vue`, `LogOptions`, `PropertyLogoController.php`, `Hotel.vue`, `Stay`, `ModuleRequestController.php`, `CreateReservation`, `PaymentGatewayWebhookController.php`, `Zone`, `LandingController.php`, `Tenant`, `MetaChannelLink`, `SiteIntegration`, `DialogComponent`, `Items.vue`, `Index.vue`, `Menu.vue`, `Footer.vue`, `Wizard.vue`, `Reports.vue`, `EvolutionChannelLink`, `History.vue`, `PaymentRequest`, `Command`, `PaymentMethodGate`, `AgentBrain`, `Payment`, `Plan`, `RatePlanSeason`, `CentralModel`, `Faq`, `AgentToolsController`, `PaymentGatewayController`, `blockLabel`, `TwoFactorAuthenticationController.php`, `.holds`, `RateDurationUnit`, `ActivitiesPanel.vue`, `HotelSettingsPageController`, `PropertyController`, `CreateNewUser.php`, `Middleware`, `HandleAppearance.php`, `SiteCatalogController.php`, `Recipe`, `axios`, `concurrently`, `RoomStatus.php`, `2026_05_29_195303_create_permission_tables.php`, `2026_07_13_000003_add_context_editable_to_tenant_agent_settings.php`, `2026_07_15_000001_add_modules_to_plans_and_create_tenant_modules.php`, `2026_07_02_190003_create_room_types_table.php`, `AgentToolsController`, `2026_07_03_100002_create_guests_table.php`, `2026_07_03_100003_create_reservations_table.php`, `2026_07_03_200003_create_recipes_table.php`, `2026_07_04_100001_add_duration_and_advance_to_rate_plans.php`, `2026_07_10_000010_add_extra_guest_fee_and_optional_charges.php`, `@inertiajs/vue3`, `lodash`, `AvailabilityController.php`, `RatePlanController.php`, `TenantUserController.php`, `reka-ui`, `AgentToolsController`, `GroupWizardController`, `TwoFactorAuthenticationController.php`, `tw-animate-css`, `ExperienceSessionController.php`, `Tippy.vue`, `web.php`, `RoomController`, `PasswordController.php`, `.__invoke`, `2026_07_16_000001_create_booking_idempotency_keys.php`, `2026_07_20_000004_add_group_to_payment_requests.php`, `2026_07_13_000003_add_context_editable_to_tenant_agent_settings.php`, `ShiftAssignment`, `axios`, `GuestReservationMail`, `.show`, `PaymentRequestController`, `ProductController`?**
+  _High betweenness centrality (0.090) - this node is a cross-community bridge._
+- **Why does `EvolutionApi` connect `EvolutionChannelLink` to `Property`, `2026_07_10_000010_add_extra_guest_fee_and_optional_charges.php`, `MetaChannelLink`, `2026_07_15_100002_create_site_import_suggestions.php`, `IssuePaymentRequest`?**
+  _High betweenness centrality (0.068) - this node is a cross-community bridge._
+- **Are the 126 inferred relationships involving `Property` (e.g. with `.handle()` and `.handle()`) actually correct?**
+  _`Property` has 126 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 24 inferred relationships involving `Reservation` (e.g. with `.closeDay()` and `.handle()`) actually correct?**
+  _`Reservation` has 24 INFERRED edges - model-reasoned connections that need verification._
+- **Are the 19 inferred relationships involving `User` (e.g. with `.__invoke()` and `.impersonate()`) actually correct?**
+  _`User` has 19 INFERRED edges - model-reasoned connections that need verification._
 - **What connects `php`, `E:\Xampp\php\php.exe`, `$schema` to the rest of the system?**
-  _2577 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _3048 weakly-connected nodes found - possible documentation gaps or missing edges._

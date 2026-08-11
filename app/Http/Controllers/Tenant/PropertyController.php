@@ -89,6 +89,10 @@ class PropertyController extends Controller
             // llama distinto).
             'settings.guest_policy' => ['nullable', \Illuminate\Validation\Rule::in(['family', 'adults_only'])],
             'settings.block_mode_label' => ['nullable', 'string', 'max:60'],
+            // OJO: settings.property_mode NO se valida aquí a propósito — el
+            // modo hotel|motel es decisión de plataforma y se administra SOLO
+            // desde /admin (Admin\TenantController); si el tenant lo manda,
+            // se descarta en silencio (spec-modo-motel).
             // Paso opcional de extras (POS/inventario) dentro del wizard —
             // se administra en el área aislada /ajustes/wizard.
             'settings.wizard_extras_enabled' => ['sometimes', 'boolean'],
@@ -97,6 +101,11 @@ class PropertyController extends Controller
             'settings.wizard_bg_from' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
             'settings.wizard_bg_to' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
             'settings.wizard_accent' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            // Tema del PANEL por hotel (/ajustes/general/apariencia): acento
+            // de botones y degradado del menú lateral; null = tema Kuira.
+            'settings.panel_primary' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'settings.panel_menu_from' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'settings.panel_menu_to' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
             'settings.wizard_theme' => ['sometimes', \Illuminate\Validation\Rule::in(['light', 'dark', 'auto'])],
             // Control explícito de si el wizard pide pago en línea al
             // reservar (spec-wizard-precios-y-pasos §5.2): por default lo
@@ -186,6 +195,13 @@ class PropertyController extends Controller
             // con el link de reseñas del hotel (Google/Tripadvisor) si lo
             // capturó — ver ReservationPolicy::postStayThanksEnabled.
             'settings.post_stay_thanks_enabled' => ['sometimes', 'boolean'],
+            'settings.post_stay_survey_enabled' => ['sometimes', 'boolean'],
+            // Aspectos del cuestionario de experiencia (/ajustes/encuestas):
+            // cada uno es una pregunta de 1 a 5 estrellas. La calificación
+            // general y el comentario son fijos y no se configuran.
+            'settings.survey_aspects' => ['sometimes', 'array', 'max:8'],
+            'settings.survey_aspects.*.key' => ['nullable', 'string', 'max:40'],
+            'settings.survey_aspects.*.label' => ['required', 'string', 'max:60'],
             'settings.review_url' => ['sometimes', 'nullable', 'url', 'max:500'],
             // Widgets públicos incrustables (/integracion): el toggle apaga
             // también la página pública correspondiente.
@@ -223,6 +239,29 @@ class PropertyController extends Controller
         if (isset($data['settings']) && array_key_exists('emails', $data['settings'])) {
             $data['settings']['email'] = collect($data['settings']['emails'] ?? [])
                 ->filter()->first() ?: null;
+        }
+
+        // Aspectos del cuestionario: la llave es el identificador ESTABLE
+        // de cada pregunta (agrupa respuestas históricas aunque se renombre
+        // el texto). A los nuevos se les genera del label, sin repetirse.
+        if (isset($data['settings']) && array_key_exists('survey_aspects', $data['settings'])) {
+            $seen = [];
+            $data['settings']['survey_aspects'] = collect($data['settings']['survey_aspects'] ?? [])
+                ->map(function (array $aspect) use (&$seen) {
+                    $key = trim((string) ($aspect['key'] ?? ''));
+                    if ($key === '') {
+                        $key = \Illuminate\Support\Str::slug((string) $aspect['label']) ?: 'aspecto';
+                    }
+                    $base = $key;
+                    for ($i = 2; in_array($key, $seen, true); $i++) {
+                        $key = "{$base}-{$i}";
+                    }
+                    $seen[] = $key;
+
+                    return ['key' => $key, 'label' => (string) $aspect['label']];
+                })
+                ->values()
+                ->all();
         }
 
         // Merge para no pisar llaves de settings que esta pantalla no maneja.

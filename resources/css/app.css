@@ -145,6 +145,61 @@
 
 /*
  |--------------------------------------------------------------------------
+ | Calendario del wizard (Litepicker inline, paso 1 de /reservar).
+ | Toma el acento del hotel gratis: --color-primary la pisa
+ | useWizardAppearance en el div raíz. El bloque .booking-dark de abajo
+ | sigue la misma mecánica de remapeo que el resto de la piel oscura.
+ |--------------------------------------------------------------------------
+ */
+.booking-datepicker .litepicker {
+    width: 100%;
+    font-family: inherit;
+    --litepicker-container-months-color-bg: transparent;
+    --litepicker-container-months-box-shadow-color: transparent;
+    --litepicker-is-start-color-bg: var(--color-primary);
+    --litepicker-is-end-color-bg: var(--color-primary);
+    --litepicker-is-in-range-color: color-mix(
+        in srgb,
+        var(--color-primary) 14%,
+        transparent
+    );
+    --litepicker-is-today-color: var(--color-primary);
+    --litepicker-day-color-hover: var(--color-primary);
+    --litepicker-button-prev-month-color-hover: var(--color-primary);
+    --litepicker-button-next-month-color-hover: var(--color-primary);
+}
+.booking-datepicker .litepicker .container__months {
+    width: 100%;
+    justify-content: center;
+    box-shadow: none;
+    /* Aire entre los dos meses: pegados se leen como una sola parrilla y
+       el ojo brinca de "30 de agosto" a "1 de septiembre" sin frontera. */
+    gap: 3rem;
+}
+/* En celular los días crecen a target táctil (44px) pero se encogen en
+   pantallas angostas (360/320px) para que el mes nunca desborde la caja:
+   100vw menos el marco acumulado (root px-4 + tarjeta p-5 + caja p-4). */
+@media (max-width: 639px) {
+    .booking-datepicker .litepicker {
+        --litepicker-day-width: min(44px, calc((100vw - 116px) / 7));
+    }
+}
+.booking-dark .booking-datepicker .litepicker {
+    --litepicker-month-header-color: var(--color-slate-200);
+    --litepicker-month-weekday-color: var(--color-slate-500);
+    --litepicker-day-color: var(--color-slate-300);
+    --litepicker-is-locked-color: var(--color-darkmode-300);
+    --litepicker-button-prev-month-color: var(--color-slate-400);
+    --litepicker-button-next-month-color: var(--color-slate-400);
+    --litepicker-is-in-range-color: color-mix(
+        in srgb,
+        var(--color-primary) 32%,
+        transparent
+    );
+}
+
+/*
+ |--------------------------------------------------------------------------
  | El preflight de Tailwind v4 pone cursor: default en los botones; en el
  | panel todo lo clickeable debe mostrar la manita.
  |--------------------------------------------------------------------------

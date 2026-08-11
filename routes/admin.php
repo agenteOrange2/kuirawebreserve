@@ -60,8 +60,24 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
     Route::patch('plans/{plan}', [PlanController::class, 'update'])->name('plans.update');
     Route::delete('plans/{plan}', [PlanController::class, 'destroy'])->name('plans.destroy');
 
+    // Servicios adicionales: catálogo con precios y contratación por hotel
+    // (se cobran por encima del plan; sus módulos aplican vía hasModule).
+    Route::get('servicios', [\App\Http\Controllers\Admin\AddonServiceController::class, 'index'])->name('services');
+    Route::patch('addon-services/{addonService}', [\App\Http\Controllers\Admin\AddonServiceController::class, 'update'])->name('services.update');
+    Route::patch('tenants/{tenant}/addon-services/{addonService}', [\App\Http\Controllers\Admin\AddonServiceController::class, 'updateTenant'])->name('tenants.addon-services');
+
+    // Documentos comerciales que se envían a prospectos (antes de las rutas
+    // con {planProspect} para que "documentos" no caiga en el parámetro).
+    Route::get('prospectos/documentos', [\App\Http\Controllers\Admin\ProspectDocumentController::class, 'index'])->name('prospects.documents');
+    Route::post('prospectos/documentos', [\App\Http\Controllers\Admin\ProspectDocumentController::class, 'store'])->name('prospects.documents.store');
+    Route::patch('prospectos/documentos/{prospectDocument}', [\App\Http\Controllers\Admin\ProspectDocumentController::class, 'update'])->name('prospects.documents.update');
+    Route::delete('prospectos/documentos/{prospectDocument}', [\App\Http\Controllers\Admin\ProspectDocumentController::class, 'destroy'])->name('prospects.documents.destroy');
+
     Route::get('prospectos', [PlanProspectController::class, 'index'])->name('prospects');
+    Route::delete('prospectos', [PlanProspectController::class, 'destroyBulk'])->name('prospects.destroyBulk');
     Route::patch('prospectos/{planProspect}', [PlanProspectController::class, 'update'])->name('prospects.update');
+    Route::post('prospectos/{planProspect}/enviar-documentos', [PlanProspectController::class, 'sendDocuments'])->name('prospects.sendDocuments');
+    Route::patch('prospectos/{planProspect}/whatsapp-enviado', [PlanProspectController::class, 'markWhatsappSent'])->name('prospects.markWhatsapp');
 
     // Agentes IA de plataforma: keys maestras + asignación por tenant.
     Route::get('agentes-ia', [AiAgentsController::class, 'index'])->name('ai');

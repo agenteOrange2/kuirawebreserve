@@ -10,9 +10,11 @@ use Spatie\ModelStates\StateConfig;
  * Máquina de estados del semáforo de habitaciones (spec §6).
  *
  * available → reserved → occupied → dirty → cleaning → available
- * available → occupied (walk-in) · reserved → available (cancelación)
- * reserved → dirty (cierre de día: la salida venció sin check-in y se
- * asume que la habitación se usó) · cualquiera → maintenance → available
+ * dirty → available (liberar en un paso: la habitación ya quedó lista sin
+ * registrar el ciclo de limpieza) · available → occupied (walk-in) ·
+ * reserved → available (cancelación) · reserved → dirty (cierre de día: la
+ * salida venció sin check-in y se asume que la habitación se usó) ·
+ * cualquiera → maintenance → available
  */
 abstract class RoomState extends State
 {
@@ -27,6 +29,7 @@ abstract class RoomState extends State
             ->allowTransition(Available::class, Occupied::class)
             ->allowTransition(Occupied::class, Dirty::class)
             ->allowTransition(Dirty::class, Cleaning::class)
+            ->allowTransition(Dirty::class, Available::class)
             ->allowTransition(Cleaning::class, Available::class)
             ->allowTransition([Available::class, Reserved::class, Occupied::class, Dirty::class, Cleaning::class], Maintenance::class)
             ->allowTransition(Maintenance::class, Available::class);

@@ -55,15 +55,30 @@ class HandleInertiaRequests extends Middleware
                 'plan' => tenant('plan'),
                 // Logo del hotel (el mismo del wizard) para el encabezado
                 // del menú lateral; null = icono genérico.
-                'logo_url' => ($logo = \App\Models\Property::query()->first()?->getFirstMedia('wizard_logo'))
+                'logo_url' => ($logo = ($property = \App\Models\Property::query()->first())?->getFirstMedia('wizard_logo'))
                     ? '/fotos/logo?v='.$logo->id
                     : null,
+                // Tema del panel por hotel (/ajustes/general/apariencia):
+                // RazeLayout pisa las variables CSS del theme con esto.
+                // Null u omitido = colores default de Kuira.
+                'colors' => [
+                    'primary' => ($property?->settings ?? [])['panel_primary'] ?? null,
+                    'menu_from' => ($property?->settings ?? [])['panel_menu_from'] ?? null,
+                    'menu_to' => ($property?->settings ?? [])['panel_menu_to'] ?? null,
+                ],
+                // Modo de operación (/ajustes/general): 'motel' enciende el
+                // registro exprés del plano y los atajos de caseta.
+                'property_mode' => ($property?->settings ?? [])['property_mode'] ?? 'hotel',
                 // Módulos activos del hotel (plan + overrides): el menú
                 // lateral oculta los items de módulos apagados.
                 'modules' => tenant()->enabledModules(),
                 // Llave pública VAPID para suscribirse a las notificaciones
                 // push. Null = función apagada y el panel no la ofrece.
                 'vapid_key' => config('webpush.public_key') ?: null,
+                // Permisos efectivos del usuario (directos + por rol): el
+                // menú lateral esconde lo que respondería 403. Vacío en
+                // páginas públicas sin sesión.
+                'permissions' => $request->user()?->getAllPermissions()->pluck('name')->values()->all() ?? [],
             ] : null,
             // Branding de plataforma (login universal, layout). Cacheado.
             'branding' => [
@@ -75,6 +90,12 @@ class HandleInertiaRequests extends Middleware
             ],
             'auth' => [
                 'user' => $request->user(),
+            ],
+            // Mensajes flash de sesión (back()->with('success'|'error', ...)):
+            // las páginas los convierten en toasts tras cada acción.
+            'flash' => fn () => [
+                'success' => $request->hasSession() ? $request->session()->get('success') : null,
+                'error' => $request->hasSession() ? $request->session()->get('error') : null,
             ],
             'ziggy' => fn () => [
                 ...(new \Tighten\Ziggy\Ziggy)->toArray(),

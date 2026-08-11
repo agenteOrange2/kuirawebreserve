@@ -28,6 +28,7 @@ class PlanController extends Controller
                 'label' => $plan->label,
                 'description' => $plan->description,
                 'price_monthly' => (int) $plan->price_monthly,
+                'activation_fee' => (int) $plan->activation_fee,
                 'max_properties' => $plan->max_properties,
                 'max_rooms' => $plan->max_rooms,
                 'max_users' => $plan->max_users,
@@ -42,6 +43,17 @@ class PlanController extends Controller
             // Catálogo de módulos (config/modules.php): key => label,
             // description, available (false = en desarrollo).
             'moduleCatalog' => config('modules', []),
+            // Módulo => nombres de servicios adicionales que lo venden. En el
+            // modal esos módulos se agrupan aparte para no confundirlos con
+            // los incluidos del plan.
+            'addonModules' => \App\Models\Central\AddonService::query()
+                ->where('active', true)
+                ->get(['name', 'modules'])
+                ->flatMap(fn (\App\Models\Central\AddonService $service) => collect($service->modules ?? [])
+                    ->map(fn (string $module) => ['module' => $module, 'service' => $service->name]))
+                ->groupBy('module')
+                ->map(fn ($rows) => $rows->pluck('service')->values())
+                ->all(),
         ]);
     }
 
@@ -97,6 +109,8 @@ class PlanController extends Controller
             'label' => ['required', 'string', 'max:60'],
             'description' => ['nullable', 'string', 'max:160'],
             'price_monthly' => ['required', 'integer', 'min:0'],
+            // Cuota única de activación (tabla de inversión del documento).
+            'activation_fee' => ['nullable', 'integer', 'min:0'],
             'max_properties' => ['nullable', 'integer', 'min:1'],
             'max_rooms' => ['nullable', 'integer', 'min:1'],
             'max_users' => ['nullable', 'integer', 'min:1'],

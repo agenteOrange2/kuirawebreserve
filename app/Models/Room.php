@@ -51,6 +51,9 @@ class Room extends Model
         'extra_guest_fee',
         'optional_charges',
         'status',
+        'usage_count',
+        'usage_limit',
+        'usage_locked_at',
         'pos_x',
         'pos_y',
         'width',
@@ -73,6 +76,9 @@ class Room extends Model
             'price_modifier' => 'decimal:2',
             'extra_guest_fee' => 'decimal:2',
             'optional_charges' => 'array',
+            'usage_count' => 'integer',
+            'usage_limit' => 'integer',
+            'usage_locked_at' => 'datetime',
             'pos_x' => 'integer',
             'pos_y' => 'integer',
             'width' => 'integer',
@@ -84,7 +90,7 @@ class Room extends Model
     {
         return LogOptions::defaults()
             ->useLogName('room')
-            ->logOnly(['number', 'name', 'status', 'zone_id', 'room_type_id', 'notes', 'maintenance_notes', 'price_modifier'])
+            ->logOnly(['number', 'name', 'status', 'zone_id', 'room_type_id', 'notes', 'maintenance_notes', 'price_modifier', 'usage_limit', 'usage_locked_at'])
             ->logOnlyDirty()
             ->dontSubmitEmptyLogs();
     }
@@ -269,9 +275,13 @@ class Room extends Model
 
         if (in_array($current, [RoomStatus::Dirty->value, RoomStatus::Cleaning->value], true)
             && ! app(\App\Services\HousekeepingPolicy::class)->manualAllowed()) {
-            $blocked[] = $current === RoomStatus::Dirty->value
-                ? RoomStatus::Cleaning->value
-                : RoomStatus::Available->value;
+            // Modo automático puro: el reloj mueve el flujo de limpieza, así
+            // que se ocultan tanto "iniciar limpieza" como el liberado
+            // directo por limpiar → disponible.
+            if ($current === RoomStatus::Dirty->value) {
+                $blocked[] = RoomStatus::Cleaning->value;
+            }
+            $blocked[] = RoomStatus::Available->value;
         }
 
         return array_values(array_diff($this->status->transitionableStates(), $blocked));
@@ -284,6 +294,15 @@ class Room extends Model
         }
 
         return $this->upcomingReservation()->exists();
+    }
+
+    /**
+     * Candado por usos activo: la habitación alcanzó su límite y quedó fuera
+     * de disponibilidad hasta que se resetee el contador.
+     */
+    public function usageLocked(): bool
+    {
+        return $this->usage_locked_at !== null;
     }
 
     /**
@@ -320,7 +339,9 @@ class Room extends Model
      */
     public function duplicateAsNew(): self
     {
-        $copy = $this->replicate(['status', 'notes', 'maintenance_notes']);
+        // El contador y el candado son historia de ESTA habitación; la copia
+        // hereda el límite (misma política de rotación) pero nace en cero.
+        $copy = $this->replicate(['status', 'notes', 'maintenance_notes', 'usage_count', 'usage_locked_at']);
         $copy->number = static::nextAvailableNumber($this->number, $this->property_id);
         $copy->pos_x = (int) $this->pos_x + 30;
         $copy->pos_y = (int) $this->pos_y + 30;
@@ -376,6 +397,9 @@ class Room extends Model
             'color' => $this->status->color(),
             'label' => $this->status->label(),
             'transitions' => $this->manualStatusTransitions(),
+            'usage_count' => (int) $this->usage_count,
+            'usage_limit' => $this->usage_limit,
+            'usage_locked' => $this->usageLocked(),
             'pos_x' => $this->pos_x,
             'pos_y' => $this->pos_y,
             'width' => $this->width,
@@ -395,6 +419,11 @@ class Room extends Model
                         'price' => max(0, round((float) $plan->price + (float) ($this->price_modifier ?? 0), 2)),
                         'duration_minutes' => $plan->duration_minutes,
                         'duration_label' => $plan->durationLabel(),
+                        // Para que el modal de reserva del plano calcule la
+                        // salida sugerida client-side (los meses son
+                        // calendario y duration_minutes ahí es null).
+                        'duration_unit' => $plan->duration_unit?->value,
+                        'duration_value' => $plan->duration_value,
                     ])
                     ->all()
                 : [],
@@ -406,6 +435,17 @@ class Room extends Model
                 'amount' => (float) $activeStay->amount,
                 'consumos_total' => round((float) ($activeStay->consumos_total ?? 0), 2),
                 'total_due' => round((float) $activeStay->amount + (float) ($activeStay->consumos_total ?? 0), 2),
+                // Saldo REAL pendiente del huésped (espejo de Stay::folio()
+                // pero con agregados del controlador, sin consultas por
+                // cuarto): hospedaje no pagado + consumos a habitación sin
+                // liquidar. Es lo que pinta el badge "Debe $X" del tablero.
+                'balance_due' => round(
+                    max(0, $activeStay->reservation !== null
+                        ? (float) $activeStay->reservation->total_amount - (float) ($activeStay->reservation->paid_total ?? 0)
+                        : (float) $activeStay->amount - (float) ($activeStay->lodging_paid_total ?? 0))
+                    + (float) ($activeStay->room_pending_total ?? 0),
+                    2,
+                ),
                 'check_in_at' => $activeStay->check_in_at?->format('d/m/Y H:i'),
                 'check_in_at_iso' => $activeStay->check_in_at?->toIso8601String(),
                 'planned_end_at' => $activeStay->planned_end_at?->format('d/m/Y H:i'),
@@ -415,6 +455,16 @@ class Room extends Model
                 'num_people' => $activeStay->num_people,
                 'vehicle_plate' => $activeStay->vehicle_plate,
                 'vehicle_desc' => $activeStay->vehicle_desc,
+                // Identificación del huésped a pie (registro exprés motel):
+                // solo tipo y fotos con URL protegida por permiso — el
+                // número cifrado jamás viaja en payloads.
+                'id_document_type' => $activeStay->id_document_type,
+                'id_document_photos' => $activeStay->relationLoaded('media')
+                    ? $activeStay->getMedia('id_document')
+                        ->map(fn ($media) => route('tenant.stays.document.show', [$activeStay, $media], false))
+                        ->values()
+                        ->all()
+                    : [],
             ] : null,
             'upcoming_reservation' => $upcomingReservation ? [
                 'id' => $upcomingReservation->id,
@@ -424,6 +474,9 @@ class Room extends Model
                 'status' => $upcomingReservation->status->value,
                 'status_label' => $upcomingReservation->status->label(),
                 'total_amount' => (float) $upcomingReservation->total_amount,
+                // La fecha límite de pago ya venció y sigue debiendo: el
+                // tablero lo marca para que recepción cobre antes de recibir.
+                'payment_overdue' => $upcomingReservation->isPaymentOverdue(),
                 'starts_at' => $upcomingReservation->starts_at->format('d/m/Y H:i'),
                 'starts_at_iso' => $upcomingReservation->starts_at->toIso8601String(),
                 'starts_today' => $upcomingReservation->starts_at->isToday(),

@@ -8,14 +8,16 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\InteractsWithMedia;
 
 /**
  * Ocupación real de una habitación (check-in hecho). Puede venir de una
  * reserva o ser walk-in directo.
  */
-class Stay extends Model
+class Stay extends Model implements HasMedia
 {
-    use LogsActivity;
+    use InteractsWithMedia, LogsActivity;
 
     public const STATUS_ACTIVE = 'active';
 
@@ -30,6 +32,8 @@ class Stay extends Model
         'num_people',
         'vehicle_plate',
         'vehicle_desc',
+        'id_document_type',
+        'id_document_number',
         'check_in_at',
         'planned_end_at',
         'check_out_at',
@@ -51,6 +55,9 @@ class Stay extends Model
             'thanks_sent_at' => 'datetime',
             'amount' => 'decimal:2',
             'extra_charges' => 'array',
+            // Identificación del huésped a pie (registro exprés de caseta):
+            // cifrada en reposo, igual que Guest.id_document_number.
+            'id_document_number' => 'encrypted',
         ];
     }
 
@@ -61,6 +68,16 @@ class Stay extends Model
             ->logOnly(['status', 'room_id', 'check_in_at', 'check_out_at', 'amount'])
             ->logOnlyDirty()
             ->dontSubmitEmptyLogs();
+    }
+
+    /**
+     * Foto del documento del huésped a pie (registro exprés de caseta):
+     * privada como los documentos del CRM — solo se sirve con el permiso
+     * guests.view-documents vía la ruta tenant.stays.document.show.
+     */
+    public function registerMediaCollections(): void
+    {
+        $this->addMediaCollection('id_document')->useDisk('local');
     }
 
     public function room(): BelongsTo

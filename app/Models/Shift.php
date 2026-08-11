@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 /**
  * Turno de trabajo de un encargado: registra quién estuvo a cargo y en qué
@@ -46,6 +47,11 @@ class Shift extends Model
     public function closedBy(): BelongsTo
     {
         return $this->belongsTo(User::class, 'closed_by');
+    }
+
+    public function cashCuts(): HasMany
+    {
+        return $this->hasMany(CashCut::class);
     }
 
     public function isOpen(): bool

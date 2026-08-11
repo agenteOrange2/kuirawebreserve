@@ -45,6 +45,7 @@ class BookingExtrasController extends Controller
                 ->where(fn ($q) => $q->where('track_stock', false)->orWhere('stock_qty', '>', 0))
                 ->orderBy('category')
                 ->orderBy('name')
+                ->with('media')
                 ->get(['id', 'name', 'category', 'unit', 'price'])
                 ->map(fn (Product $p) => [
                     'id' => $p->id,
@@ -52,6 +53,7 @@ class BookingExtrasController extends Controller
                     'category' => $p->category,
                     'unit' => $p->unit,
                     'price' => (float) $p->price,
+                    'photo' => $p->photoPayload(),
                 ]);
         }
 

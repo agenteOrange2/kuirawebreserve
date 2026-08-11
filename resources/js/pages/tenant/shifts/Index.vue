@@ -25,6 +25,8 @@ interface ShiftRow {
     opened_by: string | null;
     closed_by: string | null;
     has_cut: boolean;
+    // Ámbitos ya cortados de este turno ('rooms' | 'pos' | 'all').
+    cut_scopes: string[];
 }
 interface ShiftTypeRow {
     id: number;
@@ -138,9 +140,12 @@ const tabs = computed(() => [
     },
 ]);
 
+// El corte se liga al TURNO (shift), no solo al rango: así el servicio
+// filtra por shift_id y el arqueo es exacto aunque se cierre tarde.
 const cutUrl = (s: ShiftRow) =>
     route('tenant.cashcuts', {
         user: s.user_id,
+        shift: s.id,
         from: s.started_at_input,
         to: s.ended_at_input ?? undefined,
     });
@@ -286,6 +291,7 @@ async function submitClose(goToCut: boolean) {
             router.visit(
                 route('tenant.cashcuts', {
                     user: shift.user_id,
+                    shift: shift.id,
                     from: shift.started_at_input,
                     to: String(data.ended_at).slice(0, 16),
                 }),
@@ -1135,7 +1141,17 @@ async function createSuggested() {
                                             icon="CircleCheck"
                                             class="h-3.5 w-3.5"
                                         />
-                                        Con corte
+                                        {{
+                                            s.cut_scopes.includes('all')
+                                                ? 'Con corte'
+                                                : s.cut_scopes
+                                                      .map((sc) =>
+                                                          sc === 'pos'
+                                                              ? 'POS'
+                                                              : 'Recepción',
+                                                      )
+                                                      .join(' + ')
+                                        }}
                                     </a>
                                     <Button
                                         v-else
@@ -1357,7 +1373,9 @@ async function createSuggested() {
                                 Generar el corte automáticamente</span
                             >
                             <span class="mt-0.5 block text-xs text-slate-500">
-                                Se guarda el corte del periodo exacto del turno,
+                                Se guardan los cortes del turno POR CAJA
+                                (recepción y punto de venta, cada uno solo si
+                                tuvo movimientos),
                                 <span class="font-medium"
                                     >sin arqueo de efectivo</span
                                 >. Si prefieres contar la caja, usa "Cerrar y

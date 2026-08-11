@@ -314,6 +314,18 @@ class TransitionReservation
         \App\Models\Coupon::query()
             ->where('code', $reservation->coupon_code)
             ->increment('used_count');
+
+        // Bitácora del canje: el increment de arriba es query builder (sin
+        // eventos de modelo), así que sin esta línea el uso del cupón no
+        // dejaría rastro de cuándo ni en qué reserva se consumió. El causer
+        // lo resuelve spatie (usuario autenticado; null = huésped web).
+        activity('coupon')
+            ->performedOn($reservation)
+            ->withProperties([
+                'code' => $reservation->coupon_code,
+                'discount' => (float) $reservation->discount_amount,
+            ])
+            ->log(sprintf('Cupón %s canjeado al confirmarse la reserva', $reservation->coupon_code));
     }
 
     /**

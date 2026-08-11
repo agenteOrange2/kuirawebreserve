@@ -77,7 +77,7 @@ class PaymentGuestNotifier
 
         $body = "Recibimos tu pago de {$request->amountLabel()} ({$request->conceptLabel()}).";
         $body .= $reservation->status === ReservationStatus::Confirmed
-            ? " Tu reserva {$reservation->displayCode()} está confirmada. Te esperamos."
+            ? " Tu reserva {$reservation->displayCode()} está confirmada. Te esperamos — para tu registro, trae una identificación oficial."
             : " Quedó registrado en tu reserva {$reservation->displayCode()}.";
 
         $confirmed = $reservation->status === ReservationStatus::Confirmed;
@@ -180,7 +180,7 @@ class PaymentGuestNotifier
 
         $this->push(
             $reservation->id,
-            "Te esperamos: tu reserva {$reservation->displayCode()} ({$reservation->roomType?->name}) llega el {$arrival}. Presenta tu código en recepción. Si algo cambió, respóndenos por aquí o llama al hotel.",
+            "Te esperamos: tu reserva {$reservation->displayCode()} ({$reservation->roomType?->name}) llega el {$arrival}. Presenta tu código y una identificación oficial en recepción. Si algo cambió, respóndenos por aquí o llama al hotel.",
             subject: 'Te esperamos pronto',
         );
     }
@@ -195,7 +195,7 @@ class PaymentGuestNotifier
 
         $this->push(
             $reservation->id,
-            "Hoy es el día: tu habitación ({$reservation->roomType?->name}) te espera a partir de las {$time}. Presenta tu código {$reservation->displayCode()} en recepción. Te esperamos.",
+            "Hoy es el día: tu habitación ({$reservation->roomType?->name}) te espera a partir de las {$time}. Presenta tu código {$reservation->displayCode()} y una identificación oficial en recepción. Te esperamos.",
             subject: 'Tu habitación te espera hoy',
         );
     }
@@ -208,7 +208,7 @@ class PaymentGuestNotifier
     {
         $arrival = $reservation->starts_at->locale('es')->isoFormat('dddd D [de] MMMM [a las] HH:mm');
 
-        $body = "Tu reserva {$reservation->displayCode()} está confirmada: {$reservation->roomType?->name}, llegada el {$arrival}. Te esperamos.";
+        $body = "Tu reserva {$reservation->displayCode()} está confirmada: {$reservation->roomType?->name}, llegada el {$arrival}. Te esperamos — para tu registro, trae una identificación oficial.";
 
         // Invitación al pre-registro (consulta pública /reserva): con sus
         // datos completos desde antes, la llegada es entregar la llave.
@@ -234,11 +234,23 @@ class PaymentGuestNotifier
     public function postStayThanks(\App\Models\Stay $stay): void
     {
         $hotel = \App\Models\Property::query()->first()?->name;
+        $policy = app(\App\Services\ReservationPolicy::class);
 
         $body = 'Gracias por hospedarte'.($hotel ? " en {$hotel}" : ' con nosotros')
             .'. Fue un gusto atenderte y esperamos que hayas disfrutado tu estancia.';
 
-        if ($review = app(\App\Services\ReservationPolicy::class)->reviewUrl()) {
+        // Cuestionario de experiencia: una encuesta por estancia con token
+        // público; se crea aquí porque este aviso sale UNA vez (el sello
+        // thanks_sent_at vive en TransitionReservation). Requiere el módulo
+        // encuestas (Profesional+); sin contexto de tenant (tests) aplica.
+        $tenant = tenant();
+        if (($tenant === null || $tenant->hasModule('encuestas')) && $policy->postStaySurveyEnabled()) {
+            $survey = \App\Models\StaySurvey::forStay($stay);
+            $url = $this->absoluteTenantUrl(route('tenant.survey', ['token' => $survey->token], false));
+            $body .= " ¿Cómo te fue? Cuéntanos en un minuto: {$url}.";
+        }
+
+        if ($review = $policy->reviewUrl()) {
             $body .= " Si tienes un minuto, tu opinión nos ayuda mucho: puedes dejarnos una reseña aquí: {$review}.";
         }
 
@@ -277,8 +289,17 @@ class PaymentGuestNotifier
             return null;
         }
 
-        $relative = route('tenant.booking.lookup', [], false);
-        $domain = $tenant->domains()->value('domain');
+        return $this->absoluteTenantUrl(route('tenant.booking.lookup', [], false));
+    }
+
+    /**
+     * URL pública SIEMPRE en el dominio del hotel — los avisos también
+     * salen de webhooks y schedulers, donde url() a secas hereda un host
+     * equivocado (mismo criterio que PaymentRequest::publicReturnUrl).
+     */
+    protected function absoluteTenantUrl(string $relative): string
+    {
+        $domain = tenant()?->domains()->value('domain');
 
         if (! $domain) {
             return url($relative);
@@ -319,6 +340,18 @@ class PaymentGuestNotifier
             $conversation->markLead(Conversation::LEAD_WON);
         }
 
-        $this->messenger->pushToConversation($conversation, $body);
+        $delivered = $this->messenger->pushToConversation($conversation, $body);
+
+        // Hilo sin transporte real (webchat) o envío rechazado (p. ej. Meta
+        // fuera de la ventana de 24 h): el mensaje quedaba solo guardado en
+        // la bandeja y el huésped no se enteraba de nada — ni WhatsApp ni
+        // correo. Respaldo directo por los canales del huésped.
+        if (! $delivered) {
+            $reservation = Reservation::find($reservationId);
+
+            if ($reservation) {
+                $this->direct->send($reservation, $body, $subject, $withCalendar);
+            }
+        }
     }
 }

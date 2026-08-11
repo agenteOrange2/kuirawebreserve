@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -73,7 +72,7 @@ const modeOptions: {
     {
         value: 'manual',
         label: 'Manual',
-        help: 'El personal mueve cada habitación desde el plano: sucia a en limpieza cuando alguien entra a limpiar, y a disponible al terminar.',
+        help: 'El personal mueve cada habitación desde el plano: de por limpiar a en limpieza cuando alguien entra a limpiar, y a disponible al terminar (o directo a disponible si ya quedó lista).',
     },
     {
         value: 'auto',
@@ -94,8 +93,8 @@ const dayCloseOptions: {
 }[] = [
     {
         value: 'dirty',
-        label: 'Se asume que se ocupó: pasarla a sucia',
-        help: 'La reserva se marca completada y la habitación cae a sucia para que limpieza la revise. Recomendado cuando no se registra check-in en el panel.',
+        label: 'Se asume que se ocupó: dejarla por limpiar',
+        help: 'La reserva se marca completada y la habitación queda por limpiar para que el equipo la revise. Recomendado cuando no se registra check-in en el panel.',
     },
     {
         value: 'available',
@@ -147,34 +146,54 @@ async function submit() {
 <template>
     <RazeLayout title="Operación del día">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <Link
-                        href="/ajustes"
-                        class="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
+            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
+                 círculo + título + acciones a la derecha -->
+            <div
+                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+            >
+                <div class="flex min-w-0 items-center gap-4">
+                    <div
+                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="ArrowLeft" class="h-4 w-4" /> Ajustes
-                    </Link>
-                    <h1 class="mt-1 text-lg font-medium">Operación del día</h1>
-                    <p class="text-sm text-slate-500">
-                        Los relojes del plano: check-in a la hora de llegada,
-                        cierre de día para reservadas vencidas y el flujo de
-                        limpieza sucia, en limpieza y disponible.
-                    </p>
+                        <Lucide icon="Brush" class="h-7 w-7" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-xl font-medium">Operación del día</h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            Los relojes del plano: check-in a la hora de
+                            llegada, cierre de día para reservadas vencidas y el
+                            flujo de limpieza: por limpiar, en limpieza y
+                            disponible.
+                        </p>
+                    </div>
                 </div>
-                <Button
-                    variant="primary"
-                    class="rounded-[0.5rem]"
-                    :disabled="saving"
-                    @click="submit"
-                >
-                    <Lucide
-                        :icon="saving ? 'RefreshCw' : 'Save'"
-                        class="mr-2 h-4 w-4"
-                        :class="saving && 'animate-spin'"
-                    />
-                    Guardar cambios
-                </Button>
+                <div class="flex flex-wrap gap-2">
+                    <Button
+                        as="a"
+                        :href="route('tenant.hotel-settings')"
+                        variant="outline-secondary"
+                        class="rounded-[0.5rem] bg-white"
+                    >
+                        <Lucide
+                            icon="ArrowLeft"
+                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                        />
+                        Volver a Ajustes
+                    </Button>
+                    <Button
+                        variant="primary"
+                        class="rounded-[0.5rem]"
+                        :disabled="saving"
+                        @click="submit"
+                    >
+                        <Lucide
+                            :icon="saving ? 'RefreshCw' : 'Save'"
+                            class="mr-2 h-4 w-4"
+                            :class="saving && 'animate-spin'"
+                        />
+                        Guardar cambios
+                    </Button>
+                </div>
             </div>
 
             <form class="mt-5 grid grid-cols-12 gap-6" @submit.prevent="submit">
@@ -234,9 +253,9 @@ async function submit() {
                                 class="mt-0.5 h-3.5 w-3.5 shrink-0"
                             />
                             Solo aplica a reservas confirmadas con habitación
-                            asignada. Si a la hora la habitación sigue sucia u
-                            ocupada, el check-in espera y se registra en cuanto
-                            se libere. La salida la cierra el check-out
+                            asignada. Si a la hora la habitación sigue por
+                            limpiar u ocupada, el check-in espera y se registra
+                            en cuanto se libere. La salida la cierra el check-out
                             automático de siempre.
                         </p>
                         <p
@@ -262,8 +281,8 @@ async function submit() {
                             Flujo de limpieza
                         </div>
                         <p class="text-xs text-slate-500">
-                            Cuando una habitación queda sucia (check-out o
-                            cierre de día), ¿quién la avanza a en limpieza y
+                            Cuando una habitación queda por limpiar (check-out
+                            o cierre de día), ¿quién la avanza a en limpieza y
                             luego a disponible?
                         </p>
                         <div class="mt-4 space-y-3">
@@ -303,7 +322,7 @@ async function submit() {
                         >
                             <div class="flex flex-wrap items-center gap-2">
                                 <span class="text-xs text-slate-500"
-                                    >De sucia a en limpieza tras</span
+                                    >De por limpiar a en limpieza tras</span
                                 >
                                 <FormInput
                                     v-model.number="form.hk_dirty_value"
@@ -376,7 +395,8 @@ async function submit() {
                             "
                         >
                             Ahora mismo: {{ roomCounts.dirty }} habitación(es)
-                            en sucia y {{ roomCounts.cleaning }} en limpieza.
+                            por limpiar y {{ roomCounts.cleaning }} en
+                            limpieza.
                         </p>
                     </div>
                 </div>
@@ -441,7 +461,7 @@ async function submit() {
                             El cierre corre unos minutos después de la hora de
                             salida de la reserva. Las estancias con check-in
                             registrado no pasan por aquí: su check-out
-                            automático ya manda la habitación a sucia.
+                            automático ya deja la habitación por limpiar.
                         </p>
                         <p
                             class="mt-2 text-xs"

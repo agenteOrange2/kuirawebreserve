@@ -221,6 +221,13 @@ class GuestController extends Controller
             'vehicle.notes' => ['nullable', 'string', 'max:255'],
         ]);
 
+        // Lista negra = CRM completo (módulo crm-avanzado, Profesional+):
+        // sin él los campos se ignoran. Sin tenant (tests) aplica.
+        $tenant = tenant();
+        if ($tenant !== null && ! $tenant->hasModule('crm-avanzado')) {
+            unset($data['is_blacklisted'], $data['blacklist_reason']);
+        }
+
         // El vehículo vive en meta.vehicle (sin campos vacíos).
         if ($request->has('vehicle')) {
             $vehicle = array_filter(

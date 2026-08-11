@@ -184,3 +184,32 @@ it('una reservada con reserva viva no se puede mandar a sucia a mano; una vencid
         ->not->toContain(RoomStatus::Dirty->value)
         ->not->toContain(RoomStatus::Available->value);
 });
+
+it('una habitación por limpiar puede liberarse en un solo paso a disponible', function () {
+    hkSettings(['hk_mode' => 'manual']);
+
+    // occupied → dirty → available directo, sin pasar por "en limpieza".
+    app(ChangeRoomStatus::class)->handle($this->room->refresh(), RoomStatus::Occupied->value);
+    app(ChangeRoomStatus::class)->handle($this->room->refresh(), RoomStatus::Dirty->value);
+
+    $room = $this->room->refresh();
+
+    // El liberado directo aparece entre las transiciones manuales del plano.
+    expect($room->manualStatusTransitions())->toContain(RoomStatus::Available->value);
+
+    app(ChangeRoomStatus::class)->handle($room, RoomStatus::Available->value, null);
+
+    expect($this->room->refresh()->status->getMorphClass())->toBe(RoomStatus::Available->value);
+});
+
+it('en modo automático puro el liberado directo también se oculta', function () {
+    hkSettings(['hk_mode' => 'auto']);
+
+    app(ChangeRoomStatus::class)->handle($this->room->refresh(), RoomStatus::Occupied->value);
+    app(ChangeRoomStatus::class)->handle($this->room->refresh(), RoomStatus::Dirty->value);
+
+    $transitions = $this->room->refresh()->manualStatusTransitions();
+
+    expect($transitions)->not->toContain(RoomStatus::Available->value)
+        ->and($transitions)->not->toContain(RoomStatus::Cleaning->value);
+});

@@ -5,8 +5,10 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormInput, FormLabel, FormTextarea } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
+import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import type { WizardAppearance } from '@/composables/useWizardAppearance';
 import { useWizardAppearance } from '@/composables/useWizardAppearance';
+import { formatFriendlyDateTime } from '@/lib/bookingFormat';
 
 interface PendingRequest {
     method: 'gateway' | 'transfer';
@@ -59,6 +61,12 @@ const props = defineProps<{
         logo_url: string | null;
         phone: string | null;
         currency: string;
+    };
+    // Contacto público del hotel (redes, mapa, sitio) para el pie.
+    contact: {
+        website: string | null;
+        maps_url: string | null;
+        socials: { type: string; url: string; icon: Icon }[];
     };
 }>();
 
@@ -210,16 +218,6 @@ const statusClass = computed(() => {
     }
 });
 
-function formatDateTime(iso: string): string {
-    return new Date(iso).toLocaleString('es-MX', {
-        weekday: 'short',
-        day: '2-digit',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-    });
-}
-
 // Cuenta regresiva del apartado pendiente, igual que en el wizard.
 const nowMs = ref(Date.now());
 let clock: number | null = null;
@@ -275,7 +273,7 @@ const holdCountdown = computed(() => {
                 <a
                     v-if="property.phone"
                     :href="`tel:${property.phone}`"
-                    class="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+                    class="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
                 >
                     <Lucide icon="Phone" class="h-4 w-4" />
                 </a>
@@ -372,8 +370,10 @@ const holdCountdown = computed(() => {
                                     icon="Calendar"
                                     class="h-4 w-4 shrink-0 text-slate-400"
                                 />
-                                {{ formatDateTime(result.starts_at) }} →
-                                {{ formatDateTime(result.ends_at) }}
+                                Del
+                                {{ formatFriendlyDateTime(result.starts_at) }}
+                                al
+                                {{ formatFriendlyDateTime(result.ends_at) }}
                             </div>
                             <div class="flex items-center gap-2">
                                 <Lucide
@@ -428,7 +428,11 @@ const holdCountdown = computed(() => {
                                 class="pt-1 text-xs text-slate-400"
                             >
                                 Fecha límite de pago:
-                                {{ formatDateTime(result.payment_due_at) }}
+                                {{
+                                    formatFriendlyDateTime(
+                                        result.payment_due_at,
+                                    )
+                                }}
                             </p>
                         </div>
 
@@ -727,6 +731,54 @@ const holdCountdown = computed(() => {
                 </div>
             </div>
 
+            <!-- Que la página se sienta DEL hotel: sus redes y cómo llegar -->
+            <div
+                v-if="
+                    contact.socials.length ||
+                    contact.maps_url ||
+                    contact.website
+                "
+                class="mt-6 text-center"
+            >
+                <p class="text-xs font-medium text-white/70">
+                    Síguenos y encuéntranos
+                </p>
+                <div
+                    class="mt-2.5 flex flex-wrap items-center justify-center gap-2.5"
+                >
+                    <a
+                        v-for="social in contact.socials"
+                        :key="social.url"
+                        :href="social.url"
+                        target="_blank"
+                        rel="noopener"
+                        :title="social.type"
+                        class="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white transition hover:bg-white/20"
+                    >
+                        <Lucide :icon="social.icon" class="h-4 w-4" />
+                    </a>
+                    <a
+                        v-if="contact.maps_url"
+                        :href="contact.maps_url"
+                        target="_blank"
+                        rel="noopener"
+                        title="Cómo llegar"
+                        class="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white transition hover:bg-white/20"
+                    >
+                        <Lucide icon="MapPin" class="h-4 w-4" />
+                    </a>
+                    <a
+                        v-if="contact.website"
+                        :href="contact.website"
+                        target="_blank"
+                        rel="noopener"
+                        title="Sitio web"
+                        class="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white transition hover:bg-white/20"
+                    >
+                        <Lucide icon="Globe" class="h-4 w-4" />
+                    </a>
+                </div>
+            </div>
             <p class="mt-4 text-center text-[11px] text-white/60">
                 Impulsado por KuiraWebReserve · tus datos de pago nunca pasan
                 por este sitio

@@ -19,9 +19,12 @@ class CouponsPageController extends Controller
     {
         return Inertia::render('tenant/coupons/Index', [
             'coupons' => Coupon::query()
+                ->with('roomType:id,name')
                 ->latest('id')
                 ->get()
                 ->map(fn (Coupon $coupon) => CouponController::serialize($coupon)),
+            // Para la condición "solo este tipo de habitación".
+            'roomTypes' => \App\Models\RoomType::query()->orderBy('name')->get(['id', 'name']),
             'canManage' => $request->user()->can('properties.manage'),
         ]);
     }

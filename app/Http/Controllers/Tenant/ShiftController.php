@@ -43,9 +43,11 @@ class ShiftController extends Controller
     }
 
     /**
-     * Cierra el turno. Con auto_cut genera de una vez el corte del periodo
-     * exacto del turno (sin arqueo); si no, el arqueo manual se hace en
-     * /cortes con el periodo prellenado.
+     * Cierra el turno. Con auto_cut genera de una vez los cortes POR
+     * ÁMBITO del periodo exacto del turno (sin arqueo): el de recepción
+     * si hubo cobros o fianzas, y el de punto de venta si hubo ventas y
+     * el hotel tiene el módulo. Si no, el arqueo manual se hace en
+     * /cortes con el turno prellenado.
      */
     public function close(Request $request, Shift $shift, CashCutService $cuts): JsonResponse
     {
@@ -67,28 +69,63 @@ class ShiftController extends Controller
         $shift->refresh();
 
         if ($request->boolean('auto_cut')) {
-            $agg = $cuts->compute($shift->user, $shift->started_at, $shift->ended_at);
+            // Sin contexto de tenant (tests) el módulo no aplica.
+            $tenant = tenant();
+            $scopes = array_values(array_filter([
+                CashCut::SCOPE_ROOMS,
+                $tenant === null || $tenant->hasModule('pos') ? CashCut::SCOPE_POS : null,
+            ]));
 
-            CashCut::create([
-                'property_id' => $shift->property_id,
-                'user_id' => $shift->user_id,
-                'opened_at' => $shift->started_at,
-                'closed_at' => $shift->ended_at,
-                'orders_count' => $agg['orders_count'],
-                'orders_total' => $agg['orders_total'],
-                'orders_cost' => $agg['orders_cost'],
-                'payments_count' => $agg['payments_count'],
-                'payments_total' => $agg['payments_total'],
-                'cash_total' => $agg['cash_total'],
-                'card_total' => $agg['card_total'],
-                'transfer_total' => $agg['transfer_total'],
-                'grand_total' => $agg['grand_total'],
-                'expected_cash' => $agg['expected_cash'],
-                'counted_cash' => null, // automático: sin arqueo físico
-                'difference' => 0,
-                'notes' => 'Corte automático al cerrar turno.',
-                'created_by' => $request->user()?->id,
-            ]);
+            foreach ($scopes as $scope) {
+                // Si alguien ya hizo el arqueo manual de ese ámbito antes
+                // de cerrar el turno, no se duplica: se salta en silencio.
+                if ($cuts->overlaps($shift->user, $scope, $shift->started_at, $shift->ended_at)) {
+                    continue;
+                }
+
+                $agg = $cuts->compute($shift->user, $shift->started_at, $shift->ended_at, $shift, $scope);
+
+                // Solo ámbitos con movimiento: una devolución de fianza
+                // sola también cuenta (afecta el arqueo de recepción).
+                $hasActivity = $scope === CashCut::SCOPE_POS
+                    ? $agg['orders_count'] > 0
+                    : $agg['payments_count'] > 0 || $agg['guarantees_count'] > 0 || $agg['guarantees_cash_out'] > 0;
+
+                if (! $hasActivity) {
+                    continue;
+                }
+
+                // Se congela también la foto de pendientes: el corte
+                // automático es el relevo de turno por excelencia.
+                $pending = $cuts->pendingSnapshot($shift->user, $shift->started_at, $shift->ended_at, $shift, $scope);
+
+                CashCut::create([
+                    'property_id' => $shift->property_id,
+                    'user_id' => $shift->user_id,
+                    'shift_id' => $shift->id,
+                    'scope' => $scope,
+                    'opened_at' => $shift->started_at,
+                    'closed_at' => $shift->ended_at,
+                    'orders_count' => $agg['orders_count'],
+                    'orders_total' => $agg['orders_total'],
+                    'orders_cost' => $agg['orders_cost'],
+                    'payments_count' => $agg['payments_count'],
+                    'payments_total' => $agg['payments_total'],
+                    'cash_total' => $agg['cash_total'],
+                    'card_total' => $agg['card_total'],
+                    'transfer_total' => $agg['transfer_total'],
+                    'grand_total' => $agg['grand_total'],
+                    'expected_cash' => $agg['expected_cash'],
+                    'opening_cash' => $agg['opening_cash'],
+                    'counted_cash' => null, // automático: sin arqueo físico
+                    'difference' => 0,
+                    'pending_count' => $pending['count'],
+                    'pending_total' => $pending['total'],
+                    'pending_items' => $pending['items'],
+                    'notes' => 'Corte automático al cerrar turno.',
+                    'created_by' => $request->user()?->id,
+                ]);
+            }
         }
 
         return response()->json($shift);

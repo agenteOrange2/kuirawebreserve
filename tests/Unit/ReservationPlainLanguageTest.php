@@ -15,7 +15,7 @@ it('mantiene el flujo público de reserva en lenguaje cotidiano', function () {
     );
 
     expect($wizard)
-        ->toContain('¿Cuándo llegarás?')
+        ->toContain('¿Cuándo nos visitas?')
         ->toContain('Por unas horas')
         ->toContain('Buscar habitaciones')
         ->toContain('Paso {{ stepNumber(step) }} de');

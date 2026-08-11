@@ -105,6 +105,19 @@ class RatePlanController extends Controller
 
         $type = RatePlanType::tryFrom($data['type'] ?? '') ?? $ratePlan?->type;
 
+        // Tarifas por hora/día/semana/mes = módulo tarifas-flexibles
+        // (Profesional+). Sin él solo se crean tarifas por noche; las de
+        // bloque ya existentes siguen operando (apagar no borra datos).
+        $tenant = tenant();
+        if ($type !== RatePlanType::Night
+            && $tenant !== null
+            && ! $tenant->hasModule('tarifas-flexibles')
+            && $ratePlan?->type !== $type) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'type' => ['Las tarifas por hora, día, semana o mes son parte del plan Profesional (módulo Tarifas flexibles).'],
+            ]);
+        }
+
         if ($type === RatePlanType::Night) {
             $data['duration_unit'] = null;
             $data['duration_value'] = null;

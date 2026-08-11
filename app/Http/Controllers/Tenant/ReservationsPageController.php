@@ -369,6 +369,12 @@ class ReservationsPageController extends Controller
      */
     protected function timelineMessage(Activity $activity, array $old, array $attributes): string
     {
+        // Entradas con mensaje propio (cupones aplicados/canjeados, estancia
+        // extendida...): su descripción ya viene escrita para humanos.
+        if (! in_array($activity->description, ['created', 'updated', 'deleted'], true)) {
+            return $activity->description;
+        }
+
         if (($old['status'] ?? null) && ($attributes['status'] ?? null) && $old['status'] !== $attributes['status']) {
             $from = ReservationStatus::tryFrom((string) $old['status'])?->label() ?? $old['status'];
             $to = ReservationStatus::tryFrom((string) $attributes['status'])?->label() ?? $attributes['status'];
@@ -386,6 +392,32 @@ class ReservationsPageController extends Controller
 
         if (($old['starts_at'] ?? null) !== ($attributes['starts_at'] ?? null) || ($old['ends_at'] ?? null) !== ($attributes['ends_at'] ?? null)) {
             return 'Se ajustó el rango de la reserva';
+        }
+
+        if (array_key_exists('coupon_code', $attributes)) {
+            return ($attributes['coupon_code'] ?? null)
+                ? 'Cupón '.$attributes['coupon_code'].' aplicado a la reserva'
+                : 'Se quitó el cupón de la reserva';
+        }
+
+        if (array_key_exists('guest_id', $attributes) || array_key_exists('guest_name', $attributes)) {
+            return 'Se actualizaron los datos del huésped';
+        }
+
+        if (array_key_exists('num_people', $attributes) || array_key_exists('adults', $attributes) || array_key_exists('children', $attributes)) {
+            return 'Se ajustó el número de personas';
+        }
+
+        if (array_key_exists('rate_plan_id', $attributes)) {
+            return 'Se cambió la tarifa de la reserva';
+        }
+
+        if (array_key_exists('total_amount', $attributes) && isset($old['total_amount'])) {
+            return sprintf('Total: $%s → $%s', number_format((float) $old['total_amount'], 2), number_format((float) $attributes['total_amount'], 2));
+        }
+
+        if (array_key_exists('notes', $attributes)) {
+            return 'Se editaron las notas internas';
         }
 
         return 'Reserva actualizada';

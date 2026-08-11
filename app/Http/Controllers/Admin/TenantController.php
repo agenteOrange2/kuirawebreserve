@@ -38,12 +38,16 @@ class TenantController extends Controller
             // Métricas de operación de la BD del tenant, con caché corto
             // para no abrir N conexiones en cada carga del listado.
             $ops = \Illuminate\Support\Facades\Cache::remember(
-                "admin:tenant-ops:{$tenant->id}",
+                // v2: se agregó 'mode' al rollup (spec-modo-motel).
+                "admin:tenant-ops:v2:{$tenant->id}",
                 600,
                 fn () => $tenant->run(fn () => [
                     'users' => User::count(),
                     'rooms' => \App\Models\Room::count(),
                     'reservations_month' => \App\Models\Reservation::where('created_at', '>=', $monthStart)->count(),
+                    // Modo de operación: se administra SOLO desde este panel
+                    // (crear/editar), el tenant no lo puede tocar.
+                    'mode' => (\App\Models\Property::query()->first()?->settings ?? [])['property_mode'] ?? 'hotel',
                 ]),
             );
 
@@ -54,7 +58,9 @@ class TenantController extends Controller
                 'name' => $tenant->name,
                 'plan' => $tenant->plan,
                 'plan_label' => $plan['label'] ?? $tenant->plan,
-                'price_monthly' => (int) ($plan['price_monthly'] ?? 0),
+                // Plan + servicios adicionales: lo que el hotel paga al mes.
+                'price_monthly' => $tenant->monthlyPrice(),
+                'addons' => $tenant->addonServices()->count(),
                 'ai_in_plan' => (bool) ($plan['ai']['enabled'] ?? false),
                 'suspended' => $tenant->isSuspended(),
                 'domain' => $tenant->domains->first()?->domain,
@@ -62,6 +68,7 @@ class TenantController extends Controller
                 'users' => $ops['users'],
                 'rooms' => $ops['rooms'],
                 'reservations_month' => $ops['reservations_month'],
+                'mode' => $ops['mode'] ?? 'hotel',
                 'ai_replies' => (int) ($aiUsage[$tenant->id] ?? 0),
             ];
         });
@@ -75,7 +82,7 @@ class TenantController extends Controller
                 'active' => $active->count(),
                 'suspended' => $tenants->count() - $active->count(),
                 'new_month' => $tenants->filter(fn (Tenant $t) => $t->created_at?->gte($monthStart))->count(),
-                'mrr' => (int) $active->sum(fn (Tenant $t) => config("plans.{$t->plan}.price_monthly", 0)),
+                'mrr' => (int) $active->sum(fn (Tenant $t) => $t->monthlyPrice()),
                 'ai_replies_month' => (int) $aiUsage->sum(),
             ],
             'monthLabel' => now()->translatedFormat('F Y'),
@@ -154,11 +161,13 @@ class TenantController extends Controller
             ->where('tenant_id', $tenant->id)
             ->pluck('created_at', 'module');
         $planModules = $plan['modules'] ?? [];
+        $addonModules = $tenant->addonModules();
 
         $modules = collect(config('modules', []))
-            ->map(function (array $def, string $key) use ($moduleOverrides, $moduleRequests, $planModules) {
+            ->map(function (array $def, string $key) use ($moduleOverrides, $moduleRequests, $planModules, $addonModules) {
                 $override = $moduleOverrides->has($key) ? (bool) $moduleOverrides[$key] : null;
                 $inPlan = in_array($key, $planModules, true);
+                $inAddon = in_array($key, $addonModules, true);
 
                 return [
                     'key' => $key,
@@ -166,8 +175,10 @@ class TenantController extends Controller
                     'description' => $def['description'],
                     'available' => $def['available'],
                     'in_plan' => $inPlan,
-                    'override' => $override, // null = hereda del plan
-                    'enabled' => $override ?? $inPlan,
+                    // Lo aporta un servicio adicional contratado.
+                    'in_addon' => $inAddon,
+                    'override' => $override, // null = hereda del plan/servicio
+                    'enabled' => $override ?? ($inPlan || $inAddon),
                     'requested_at' => $moduleRequests->has($key)
                         ? \Illuminate\Support\Carbon::parse($moduleRequests[$key])->format('d/m/Y')
                         : null,
@@ -182,9 +193,31 @@ class TenantController extends Controller
             ->selectRaw('COALESCE(SUM(prompt_tokens) + SUM(completion_tokens), 0) as t')
             ->value('t');
 
+        // Servicios adicionales: catálogo completo con bandera de
+        // contratado + desglose de la inversión mensual (plan + servicios).
+        $contractedKeys = $tenant->addonServices()->pluck('key');
+        $addonServices = \App\Models\Central\AddonService::query()->ordered()->get()
+            ->map(fn (\App\Models\Central\AddonService $service) => [
+                'key' => $service->key,
+                'name' => $service->name,
+                'summary' => $service->summary,
+                'price_monthly' => (int) $service->price_monthly,
+                'activation_fee' => (int) $service->activation_fee,
+                'modules' => $service->modules ?? [],
+                'requires' => $service->requires,
+                'active' => $service->active,
+                'contracted' => $contractedKeys->contains($service->key),
+            ])->values();
+
         return Inertia::render('admin/tenants/Show', [
             'paymentMethods' => $paymentMethods,
             'modules' => $modules,
+            'addonServices' => $addonServices,
+            'billing' => [
+                'plan_monthly' => (int) ($plan['price_monthly'] ?? 0),
+                'addons_monthly' => (int) $tenant->addonServices()->sum('price_monthly'),
+                'total_monthly' => $tenant->monthlyPrice(),
+            ],
             'tenant' => [
                 'id' => $tenant->id,
                 'name' => $tenant->name,
@@ -204,7 +237,12 @@ class TenantController extends Controller
             'ops' => $ops,
             'ai' => [
                 'enabled' => $agentSetting->enabled,
-                'limit' => $agentSetting->monthly_reply_limit ?? ($plan['ai']['monthly_replies'] ?? null),
+                // Mismo cálculo que PlatformAgentGate: ajuste del hotel ??
+                // plan + cuota que aporten los servicios adicionales con IA.
+                'limit' => $agentSetting->monthly_reply_limit
+                    ?? (($plan['ai']['monthly_replies'] ?? null) === null
+                        ? null
+                        : (int) $plan['ai']['monthly_replies'] + (int) $tenant->addonServices()->sum('ai_monthly_replies')),
                 'used' => $aiUsed,
                 'tokens' => $aiTokens,
                 'byok_allowed' => $agentSetting->byok_allowed,
@@ -229,6 +267,10 @@ class TenantController extends Controller
                 Rule::unique('tenants', 'id'),
             ],
             'plan' => ['required', Rule::in(array_keys(config('plans')))],
+            // Modo de operación (spec-modo-motel): el tenant nace bien
+            // configurado desde la venta; después puede cambiarlo en sus
+            // ajustes (/ajustes/general).
+            'mode' => ['required', Rule::in(['hotel', 'motel'])],
             'owner_name' => ['required', 'string', 'max:255'],
             'owner_email' => ['required', 'email', 'max:255'],
             'owner_password' => ['required', 'string', 'min:8'],
@@ -261,7 +303,16 @@ class TenantController extends Controller
             ]);
             $owner->assignRole('owner');
 
-            Property::create(['name' => $data['name']]);
+            // Modo motel: semillas EDITABLES (no derivación en runtime) —
+            // registro exprés + wizard solo adultos + menú pagado al recibir.
+            Property::create([
+                'name' => $data['name'],
+                'settings' => $data['mode'] === 'motel' ? [
+                    'property_mode' => 'motel',
+                    'guest_policy' => 'adults_only',
+                    'menu_billing_mode' => 'motel',
+                ] : null,
+            ]);
         });
 
         return redirect()->route('admin.tenants.index');
@@ -272,9 +323,25 @@ class TenantController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'plan' => ['required', Rule::in(array_keys(config('plans')))],
+            'mode' => ['required', Rule::in(['hotel', 'motel'])],
         ]);
 
-        $tenant->update($data);
+        $tenant->update(collect($data)->only(['name', 'plan'])->all());
+
+        // Modo de operación: vive en el settings de la Property del tenant y
+        // se administra SOLO desde aquí. Cambiarlo no re-siembra guest_policy
+        // ni menú (eso es solo al crear): no se pisa lo que el hotel ya afinó.
+        $tenant->run(function () use ($data) {
+            $property = Property::query()->first();
+
+            if ($property && (($property->settings['property_mode'] ?? 'hotel') !== $data['mode'])) {
+                $property->update([
+                    'settings' => array_merge($property->settings ?? [], ['property_mode' => $data['mode']]),
+                ]);
+            }
+        });
+
+        \Illuminate\Support\Facades\Cache::forget("admin:tenant-ops:v2:{$tenant->id}");
 
         return redirect()->route('admin.tenants.index');
     }

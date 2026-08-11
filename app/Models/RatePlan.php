@@ -88,13 +88,19 @@ class RatePlan extends Model
      * hay solape, gana la de mayor `priority`; empate lo resuelve la más
      * reciente (id mayor).
      */
-    public function activeSeasonFor(CarbonInterface $date): ?RatePlanSeason
+    public function activeSeasonFor(CarbonInterface $date, ?int $stayUnits = null): ?RatePlanSeason
     {
         $seasons = $this->relationLoaded('seasons')
             ? $this->seasons
             : $this->seasons()->where('active', true)->get();
 
-        $candidates = $seasons->filter(fn (RatePlanSeason $s) => $s->active && $s->coversDate($date));
+        $candidates = $seasons->filter(fn (RatePlanSeason $s) => $s->active
+            && $s->coversDate($date)
+            // Descuento por estancia larga (documento base): la temporada
+            // con `min_nights` solo rige cuando la estancia completa alcanza
+            // esas noches/periodos. Sin contexto de estancia (null) no se
+            // aplica — mejor no regalar el precio largo en consultas sueltas.
+            && ($s->min_nights === null || ($stayUnits !== null && $stayUnits >= $s->min_nights)));
 
         return $candidates->isEmpty() ? null : $candidates
             ->sort(fn (RatePlanSeason $a, RatePlanSeason $b) => $b->priority <=> $a->priority ?: $b->id <=> $a->id)
@@ -102,9 +108,9 @@ class RatePlan extends Model
     }
 
     /** Precio por unidad para esa fecha: el de la temporada activa, o el base. */
-    protected function unitPriceForDate(CarbonInterface $date): float
+    protected function unitPriceForDate(CarbonInterface $date, ?int $stayUnits = null): float
     {
-        return (float) ($this->activeSeasonFor($date)?->price ?? $this->price);
+        return (float) ($this->activeSeasonFor($date, $stayUnits)?->price ?? $this->price);
     }
 
     /**
@@ -128,7 +134,7 @@ class RatePlan extends Model
             $cursor = $start->copy()->startOfDay();
             $total = 0.0;
             for ($i = 0; $i < $nights; $i++) {
-                $total += $this->unitPriceForDate($cursor) + $modifier;
+                $total += $this->unitPriceForDate($cursor, $nights) + $modifier;
                 $cursor = $cursor->addDay();
             }
 
@@ -136,7 +142,7 @@ class RatePlan extends Model
         }
 
         $units = $this->unitsFor($start, $end);
-        $unitPrice = $this->unitPriceForDate($start) + $modifier;
+        $unitPrice = $this->unitPriceForDate($start, $units) + $modifier;
 
         return max(0, round($units * $unitPrice, 2));
     }
@@ -162,7 +168,7 @@ class RatePlan extends Model
             $cursor = $start->copy()->startOfDay();
             $runs = [];
             for ($i = 0; $i < $units; $i++) {
-                $season = $this->activeSeasonFor($cursor);
+                $season = $this->activeSeasonFor($cursor, $units);
                 $lastKey = array_key_last($runs);
                 if ($lastKey !== null && $runs[$lastKey]['season']?->id === $season?->id) {
                     $runs[$lastKey]['nights']++;
@@ -182,7 +188,7 @@ class RatePlan extends Model
                 ];
             }
         } else {
-            $season = $this->activeSeasonFor($start);
+            $season = $this->activeSeasonFor($start, $units);
             $unitPrice = (float) ($season?->price ?? $this->price);
             $label = $season?->name ?? 'Tarifa';
             $lines[] = [

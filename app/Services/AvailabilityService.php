@@ -11,8 +11,9 @@ use Illuminate\Support\Collection;
 /**
  * Motor de disponibilidad (spec §7). Una habitación está libre en un rango si
  * no tiene solape con reservas bloqueantes (confirmadas/en casa, o pendientes
- * con hold vigente) ni con estancias activas, no está en mantenimiento y no
- * tiene un bloqueo por fechas (RoomBlock) sobre las noches pedidas.
+ * con hold vigente) ni con estancias activas, no está en mantenimiento, no
+ * tiene un bloqueo por fechas (RoomBlock) sobre las noches pedidas y no tiene
+ * el candado por usos activo (usage_locked_at, rotación de habitaciones).
  *
  * Anti-doble-reserva: dentro de una transacción, con $lock=true el SELECT es
  * FOR UPDATE — bloquea las filas de habitaciones candidatas y lee el último
@@ -30,8 +31,12 @@ class AvailabilityService
         ?int $ignoreReservationId = null,
         bool $lock = false,
     ): Collection {
+        // Rotación por desgaste parejo: la auto-asignación toma primero la
+        // habitación con menos usos (antes siempre ganaba el número más bajo
+        // y la 101 se llevaba todos los walk-ins); el número desempata.
         $query = $this->availabilityQuery($start, $end, $ignoreReservationId)
             ->where('room_type_id', $roomTypeId)
+            ->orderBy('usage_count')
             ->orderBy('number');
 
         if ($lock) {
@@ -53,6 +58,12 @@ class AvailabilityService
         ?int $ignoreReservationId = null,
     ): bool {
         if ($room->status->getMorphClass() === RoomStatus::Maintenance->value) {
+            return false;
+        }
+
+        // Candado por usos: alcanzó su límite y nadie la puede asignar
+        // (ni el wizard ni recepción) hasta resetear el contador.
+        if ($room->usageLocked()) {
             return false;
         }
 
@@ -87,6 +98,8 @@ class AvailabilityService
     ): Builder {
         return Room::query()
             ->where('status', '!=', RoomStatus::Maintenance->value)
+            // Candado por usos (rotación): bloqueada hasta resetear contador.
+            ->whereNull('usage_locked_at')
             ->whereDoesntHave('reservations', function (Builder $q) use ($start, $end, $ignoreReservationId) {
                 $q->blocking()
                     ->overlapping($start, $end)

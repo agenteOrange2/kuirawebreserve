@@ -34,7 +34,7 @@ enum RoomStatus: string
             self::Available => 'Disponible',
             self::Reserved => 'Reservada',
             self::Occupied => 'Ocupada',
-            self::Dirty => 'Sucia',
+            self::Dirty => 'Por limpiar',
             self::Cleaning => 'En limpieza',
             self::Maintenance => 'Mantenimiento',
         };

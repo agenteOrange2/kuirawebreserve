@@ -109,8 +109,15 @@ class CreateReservation
             // endpoint público de consulta solo es vitrina. El descuento se
             // congela en la reserva y el total nunca baja de 0; el uso se
             // cuenta recién al confirmarse (TransitionReservation), no en
-            // el hold.
-            $coupon = $this->resolveCoupon($data['coupon_code'] ?? null);
+            // el hold. Las condiciones (noches mínimas, tipo, frecuente,
+            // cumpleaños) se validan contra ESTA reserva y ESTE huésped.
+            $coupon = $this->resolveCoupon(
+                $data['coupon_code'] ?? null,
+                $guest,
+                $start,
+                $ratePlan->unitsFor($start, $end),
+                $ratePlan->room_type_id,
+            );
             $discount = $coupon?->discountFor($total) ?? 0.0;
             $total = round(max(0, $total - $discount), 2);
 
@@ -154,6 +161,20 @@ class CreateReservation
                 'guest_notes' => $data['guest_notes'] ?? null,
                 'created_by' => $user?->id,
             ]);
+
+            // Bitácora: quién aplicó el cupón y cuánto descontó. El diff de
+            // atributos de la reserva no lo cuenta con esta claridad.
+            if ($coupon !== null) {
+                $entry = activity('coupon')
+                    ->performedOn($reservation)
+                    ->withProperties(['code' => $coupon->code, 'discount' => $discount]);
+
+                if ($user !== null) {
+                    $entry->causedBy($user);
+                }
+
+                $entry->log(sprintf('Cupón %s aplicado: descuento $%s', $coupon->code, number_format($discount, 2)));
+            }
 
             // Reservas EXP- reales (cupo duro bajo su propio lock): si el
             // cupo se agotó entre mostrar y reservar, la excepción revienta
@@ -251,18 +272,39 @@ class CreateReservation
      *
      * @throws \InvalidArgumentException
      */
-    protected function resolveCoupon(?string $code): ?\App\Models\Coupon
-    {
+    protected function resolveCoupon(
+        ?string $code,
+        ?\App\Models\Guest $guest = null,
+        ?\Carbon\CarbonInterface $start = null,
+        ?int $nights = null,
+        ?int $roomTypeId = null,
+    ): ?\App\Models\Coupon {
         $code = strtoupper(trim((string) $code));
 
         if ($code === '') {
             return null;
         }
 
+        // Módulo cupones (Empresarial): sin él no se aceptan códigos por
+        // ningún canal. Sin contexto de tenant (tests) aplica.
+        $tenant = tenant();
+        if ($tenant !== null && ! $tenant->hasModule('cupones')) {
+            throw new \InvalidArgumentException('Los cupones de descuento no están incluidos en el plan de este hotel.');
+        }
+
         $coupon = \App\Models\Coupon::query()->where('code', $code)->first();
 
         if (! $coupon || ! $coupon->isRedeemable()) {
             throw new \InvalidArgumentException('Ese código de descuento no es válido o ya no está disponible.');
+        }
+
+        // Condiciones del cupón (estancia larga, tipo, frecuente,
+        // cumpleaños): el motivo exacto viaja al huésped, nunca se cobra
+        // el total completo en silencio.
+        $reason = $coupon->rejectionReason($guest, $start, $nights, $roomTypeId);
+
+        if ($reason !== null) {
+            throw new \InvalidArgumentException($reason);
         }
 
         return $coupon;

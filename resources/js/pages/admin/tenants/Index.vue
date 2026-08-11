@@ -19,6 +19,7 @@ interface TenantRow {
     plan: string;
     plan_label: string;
     price_monthly: number;
+    addons: number;
     ai_in_plan: boolean;
     suspended: boolean;
     domain: string | null;
@@ -26,6 +27,7 @@ interface TenantRow {
     users: number;
     rooms: number;
     reservations_month: number;
+    mode: string;
     ai_replies: number;
 }
 
@@ -95,6 +97,9 @@ const createForm = useForm({
     name: '',
     subdomain: '',
     plan: props.plans.find((p) => p.active)?.value ?? 'basic',
+    // Modo de operación: motel enciende el registro exprés del plano y
+    // siembra wizard solo-adultos + menú pagado al recibir (editables).
+    mode: 'hotel',
     owner_name: '',
     owner_email: '',
     owner_password: '',
@@ -116,12 +121,13 @@ function submitCreate() {
 
 // ── Editar ──
 const editing = ref<TenantRow | null>(null);
-const editForm = useForm({ name: '', plan: '' });
+const editForm = useForm({ name: '', plan: '', mode: 'hotel' });
 
 function openEdit(tenant: TenantRow) {
     editing.value = tenant;
     editForm.name = tenant.name;
     editForm.plan = tenant.plan;
+    editForm.mode = tenant.mode;
 }
 
 function submitEdit() {
@@ -510,13 +516,21 @@ function submitDelete() {
                                     >
                                     <div
                                         class="mt-1 text-[10px] text-slate-400"
+                                        :title="
+                                            t.addons
+                                                ? 'Plan base + servicios adicionales contratados'
+                                                : undefined
+                                        "
                                     >
                                         ${{
                                             t.price_monthly.toLocaleString(
                                                 'es-MX',
                                             )
                                         }}
-                                        MXN/mes
+                                        MXN/mes<template v-if="t.addons">
+                                            ·
+                                            {{ t.addons }} servicio(s)</template
+                                        >
                                     </div>
                                 </td>
                                 <td :class="cellClass" class="px-5 py-3.5">
@@ -830,6 +844,83 @@ function submitDelete() {
                             </div>
                         </div>
 
+                        <!-- Modo de operación (spec-modo-motel) -->
+                        <div>
+                            <FormLabel>Modo de operación</FormLabel>
+                            <div class="grid gap-3 sm:grid-cols-2">
+                                <button
+                                    type="button"
+                                    class="flex w-full items-start gap-3 rounded-lg border p-3.5 text-left transition"
+                                    :class="
+                                        createForm.mode === 'hotel'
+                                            ? 'border-primary bg-primary/5'
+                                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
+                                    "
+                                    @click="createForm.mode = 'hotel'"
+                                >
+                                    <Lucide
+                                        icon="Building2"
+                                        class="mt-0.5 h-4 w-4 shrink-0"
+                                        :class="
+                                            createForm.mode === 'hotel'
+                                                ? 'text-primary'
+                                                : 'text-slate-400'
+                                        "
+                                    />
+                                    <span class="min-w-0">
+                                        <span class="block text-sm font-medium"
+                                            >Hotel</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block text-xs text-slate-500"
+                                            >Flujo clásico de reservas y
+                                            recepción.</span
+                                        >
+                                    </span>
+                                </button>
+                                <button
+                                    type="button"
+                                    class="flex w-full items-start gap-3 rounded-lg border p-3.5 text-left transition"
+                                    :class="
+                                        createForm.mode === 'motel'
+                                            ? 'border-primary bg-primary/5'
+                                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
+                                    "
+                                    @click="createForm.mode = 'motel'"
+                                >
+                                    <Lucide
+                                        icon="CarFront"
+                                        class="mt-0.5 h-4 w-4 shrink-0"
+                                        :class="
+                                            createForm.mode === 'motel'
+                                                ? 'text-primary'
+                                                : 'text-slate-400'
+                                        "
+                                    />
+                                    <span class="min-w-0">
+                                        <span class="block text-sm font-medium"
+                                            >Motel</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block text-xs text-slate-500"
+                                            >Registro exprés en el plano con
+                                            placa o identificación y cobro en la
+                                            llegada.</span
+                                        >
+                                    </span>
+                                </button>
+                            </div>
+                            <FormHelp
+                                >El tenant puede cambiarlo después en sus
+                                ajustes (Datos generales).</FormHelp
+                            >
+                            <FormHelp
+                                v-if="createForm.errors.mode"
+                                class="text-danger"
+                                >{{ createForm.errors.mode }}</FormHelp
+                            >
+                        </div>
+
                         <div
                             class="border-t border-dashed border-slate-300/70 pt-4"
                         >
@@ -970,6 +1061,68 @@ function submitDelete() {
                                     {{ plan.label }}
                                 </option>
                             </FormSelect>
+                        </div>
+                        <div>
+                            <FormLabel>Modo de operación</FormLabel>
+                            <div class="grid gap-3 sm:grid-cols-2">
+                                <button
+                                    type="button"
+                                    class="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition"
+                                    :class="
+                                        editForm.mode === 'hotel'
+                                            ? 'border-primary bg-primary/5'
+                                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
+                                    "
+                                    @click="editForm.mode = 'hotel'"
+                                >
+                                    <Lucide
+                                        icon="Building2"
+                                        class="mt-0.5 h-4 w-4 shrink-0"
+                                        :class="
+                                            editForm.mode === 'hotel'
+                                                ? 'text-primary'
+                                                : 'text-slate-400'
+                                        "
+                                    />
+                                    <span class="text-sm font-medium"
+                                        >Hotel</span
+                                    >
+                                </button>
+                                <button
+                                    type="button"
+                                    class="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition"
+                                    :class="
+                                        editForm.mode === 'motel'
+                                            ? 'border-primary bg-primary/5'
+                                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
+                                    "
+                                    @click="editForm.mode = 'motel'"
+                                >
+                                    <Lucide
+                                        icon="CarFront"
+                                        class="mt-0.5 h-4 w-4 shrink-0"
+                                        :class="
+                                            editForm.mode === 'motel'
+                                                ? 'text-primary'
+                                                : 'text-slate-400'
+                                        "
+                                    />
+                                    <span class="text-sm font-medium"
+                                        >Motel</span
+                                    >
+                                </button>
+                            </div>
+                            <FormHelp
+                                >Motel enciende el registro exprés del plano
+                                (placa o identificación y cobro en la llegada).
+                                Cambiarlo no toca lo demás que el hotel ya
+                                configuró.</FormHelp
+                            >
+                            <FormHelp
+                                v-if="editForm.errors.mode"
+                                class="text-danger"
+                                >{{ editForm.errors.mode }}</FormHelp
+                            >
                         </div>
                         <div class="flex justify-end gap-2 pt-2">
                             <Button

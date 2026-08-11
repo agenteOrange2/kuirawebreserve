@@ -48,9 +48,14 @@ class StayController extends Controller
             'guest_id' => ['nullable', 'exists:guests,id'],
             'guest_name' => ['nullable', 'string', 'max:255'],
             'guest_phone' => ['nullable', 'string', 'max:30'],
+            'guest_email' => ['nullable', 'email', 'max:255'],
             'num_people' => ['sometimes', 'integer', 'min:1', 'max:20'],
             'vehicle_plate' => ['nullable', 'string', 'max:20'],
             'vehicle_desc' => ['nullable', 'string', 'max:100'],
+            // Identificación del huésped a pie (registro exprés, spec-modo-
+            // motel): tipo del catálogo del CRM + número (se guarda cifrado).
+            'id_document_type' => ['nullable', Rule::in(\App\Models\Guest::DOCUMENT_TYPES)],
+            'id_document_number' => ['nullable', 'string', 'max:60'],
             // Conceptos de cargos opcionales de la habitación; el monto
             // SIEMPRE se resuelve del catálogo del cuarto, nunca del cliente.
             'extra_charges' => ['sometimes', 'array', 'max:20'],
@@ -69,6 +74,12 @@ class StayController extends Controller
             $stay = $action->handle($data, $request->user());
         } catch (NoAvailabilityException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
+            // La tarifa elegida es de otro tipo de habitación (el select del
+            // modal mezcla tipos): sin esto el firstOrFail truena en 404 crudo.
+            return response()->json([
+                'message' => 'La tarifa elegida no corresponde al tipo de esta habitación; elige una tarifa de su tipo.',
+            ], 422);
         }
 
         return response()->json($this->serialize($stay->load(['room:id,number', 'ratePlan:id,name,type'])), 201);
@@ -252,6 +263,44 @@ class StayController extends Controller
                     ->implode(', '),
             ])->values(),
         ];
+    }
+
+    /**
+     * Foto del documento del huésped a pie (registro exprés, spec-modo-motel):
+     * se sube DESPUÉS de crear la estancia con su id — el POST de stays es
+     * JSON transaccional y no carga con multipart.
+     */
+    public function storeDocument(Request $request, Stay $stay): JsonResponse
+    {
+        $request->validate([
+            'file' => ['required', 'image', 'mimes:jpeg,png,webp', 'max:8192'],
+        ], [
+            'file.max' => 'La foto debe pesar máximo 8 MB.',
+            'file.mimes' => 'Usa una imagen JPG, PNG o WebP.',
+        ]);
+
+        $media = $stay->addMedia($request->file('file'))->toMediaCollection('id_document');
+
+        return response()->json([
+            'id' => $media->id,
+            'url' => route('tenant.stays.document.show', [$stay, $media], false),
+        ], 201);
+    }
+
+    /**
+     * Sirve la foto del documento con el MISMO permiso que las INE del CRM
+     * (guests.view-documents); disco privado, nunca URL pública.
+     */
+    public function showDocument(Stay $stay, \Spatie\MediaLibrary\MediaCollections\Models\Media $media): \Symfony\Component\HttpFoundation\BinaryFileResponse
+    {
+        abort_unless(
+            $media->model_type === $stay->getMorphClass()
+            && (int) $media->model_id === $stay->id
+            && $media->collection_name === 'id_document',
+            404,
+        );
+
+        return response()->file($media->getPath());
     }
 
     /**

@@ -15,6 +15,7 @@ import {
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
+import { useModules } from '@/composables/useModules';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 import { AMENITY_SUGGESTIONS } from '@/lib/amenities';
@@ -87,6 +88,7 @@ interface SeasonRow {
     starts_on: string | null;
     ends_on: string | null;
     weekdays: number[] | null;
+    min_nights: number | null;
     price: string | number;
     priority: number;
     active: boolean;
@@ -106,6 +108,7 @@ const money = (v: number | string) =>
     `$${Number(v).toLocaleString('es-MX', { maximumFractionDigits: 2 })}`;
 
 const toast = useToasts();
+const { hasModule } = useModules();
 
 const durationUnits = [
     { value: 'minute', label: 'Minutos' },
@@ -614,6 +617,7 @@ const seasonForm = reactive({
     starts_on: '',
     ends_on: '',
     weekdays: [] as number[],
+    min_nights: '' as string | number,
     price: '' as string | number,
     priority: 0 as number | string,
 });
@@ -649,6 +653,7 @@ function resetSeasonForm() {
     seasonForm.starts_on = '';
     seasonForm.ends_on = '';
     seasonForm.weekdays = [];
+    seasonForm.min_nights = '';
     seasonForm.price = '';
     seasonForm.priority = 0;
 }
@@ -678,6 +683,7 @@ function editSeason(season: SeasonRow) {
     seasonForm.starts_on = season.starts_on ?? '';
     seasonForm.ends_on = season.ends_on ?? '';
     seasonForm.weekdays = [...(season.weekdays ?? [])];
+    seasonForm.min_nights = season.min_nights ?? '';
     seasonForm.price = season.price;
     seasonForm.priority = season.priority;
     clearErrors();
@@ -692,6 +698,8 @@ function submitSeason() {
         starts_on: seasonForm.starts_on === '' ? null : seasonForm.starts_on,
         ends_on: seasonForm.ends_on === '' ? null : seasonForm.ends_on,
         weekdays: seasonForm.weekdays.length ? seasonForm.weekdays : null,
+        // Estancia larga: la temporada solo rige con estas noches o más.
+        min_nights: seasonForm.min_nights === '' ? null : Number(seasonForm.min_nights),
     };
 
     mutate(
@@ -1384,6 +1392,9 @@ async function deleteSeason(season: SeasonRow) {
                                                         }}</span
                                                     >
                                                     <button
+                                                        v-if="
+                                                            hasModule('promos')
+                                                        "
                                                         type="button"
                                                         class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 hover:bg-slate-200 dark:bg-darkmode-400 dark:hover:bg-darkmode-300"
                                                         title="Temporadas y promos"
@@ -1543,6 +1554,11 @@ async function deleteSeason(season: SeasonRow) {
                                                                 )
                                                             }}
                                                             <button
+                                                                v-if="
+                                                                    hasModule(
+                                                                        'promos',
+                                                                    )
+                                                                "
                                                                 type="button"
                                                                 class="ml-1.5 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-normal text-slate-500 hover:bg-slate-200 dark:bg-darkmode-400 dark:hover:bg-darkmode-300"
                                                                 title="Temporadas y promos"
@@ -1813,7 +1829,13 @@ async function deleteSeason(season: SeasonRow) {
                                     v-model="planForm.type"
                                 >
                                     <option value="night">Por noche</option>
-                                    <option value="block">
+                                    <option
+                                        v-if="
+                                            hasModule('tarifas-flexibles') ||
+                                            planForm.type === 'block'
+                                        "
+                                        value="block"
+                                    >
                                         Por periodo (horas/días/semanas/meses)
                                     </option>
                                 </FormSelect>
@@ -2217,6 +2239,10 @@ async function deleteSeason(season: SeasonRow) {
                                                 weekdaysLabel(season.weekdays)
                                             }}</template
                                         >
+                                        <template v-if="season.min_nights">
+                                            · {{ season.min_nights }}+
+                                            noches</template
+                                        >
                                         · {{ money(season.price) }} · prioridad
                                         {{ season.priority }}
                                     </div>
@@ -2394,6 +2420,30 @@ async function deleteSeason(season: SeasonRow) {
                                     <FormHelp
                                         >Si se solapa con otra, gana la de
                                         número más alto.</FormHelp
+                                    >
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="season-min-nights"
+                                        >Noches mínimas (estancia
+                                        larga)</FormLabel
+                                    >
+                                    <FormInput
+                                        id="season-min-nights"
+                                        v-model="seasonForm.min_nights"
+                                        type="number"
+                                        min="1"
+                                        max="365"
+                                        placeholder="Sin mínimo"
+                                    />
+                                    <FormHelp
+                                        >Solo aplica cuando la estancia alcanza
+                                        estas noches: el descuento por quedarse
+                                        más.</FormHelp
+                                    >
+                                    <FormHelp
+                                        v-if="errors.min_nights"
+                                        class="text-danger"
+                                        >{{ errors.min_nights }}</FormHelp
                                     >
                                 </div>
                             </div>
@@ -2860,7 +2910,12 @@ async function deleteSeason(season: SeasonRow) {
                                         v-model="typeForm.rate_type"
                                     >
                                         <option value="night">Por noche</option>
-                                        <option value="block">
+                                        <option
+                                            v-if="
+                                                hasModule('tarifas-flexibles')
+                                            "
+                                            value="block"
+                                        >
                                             Por periodo (horas/días/semanas)
                                         </option>
                                     </FormSelect>

@@ -72,12 +72,23 @@ async function requestModule(mod: PlanModuleRow) {
 <template>
     <RazeLayout title="Ajustes del hotel">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Ajustes del hotel</h1>
-                    <p class="text-sm text-slate-500">
-                        Tu plan y las áreas de configuración del hotel.
-                    </p>
+            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
+                 círculo + título + acción a la derecha -->
+            <div
+                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+            >
+                <div class="flex items-center gap-4">
+                    <div
+                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Settings" class="h-7 w-7" />
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-medium">Ajustes del hotel</h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            Tu plan y las áreas de configuración del hotel.
+                        </p>
+                    </div>
                 </div>
                 <span
                     class="flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary capitalize"
@@ -341,6 +352,30 @@ async function requestModule(mod: PlanModuleRow) {
                     />
                 </Link>
 
+                <!-- Avisos al huésped: recordatorios y agradecimiento post-estancia -->
+                <Link
+                    :href="route('tenant.guest-notices')"
+                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                >
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="BellRing" class="h-5 w-5" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="font-medium">Avisos al huésped</div>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Área aparte: canal de envío, recordatorios de
+                            llegada y agradecimiento al salir con encuesta y
+                            link de reseñas.
+                        </p>
+                    </div>
+                    <Lucide
+                        icon="ArrowRight"
+                        class="h-4 w-4 shrink-0 text-slate-400"
+                    />
+                </Link>
+
                 <!-- Operación del día: check-in automático, limpieza y cierre -->
                 <Link
                     :href="route('tenant.housekeeping-settings')"
@@ -365,6 +400,30 @@ async function requestModule(mod: PlanModuleRow) {
                     />
                 </Link>
 
+                <!-- Cuestionario de experiencia: aspectos de la encuesta -->
+                <Link
+                    :href="route('tenant.survey-settings')"
+                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                >
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Smile" class="h-5 w-5" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="font-medium">Encuestas</div>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Área aparte: personaliza los aspectos que el huésped
+                            califica en el cuestionario que llega con el
+                            agradecimiento post-estancia.
+                        </p>
+                    </div>
+                    <Lucide
+                        icon="ArrowRight"
+                        class="h-4 w-4 shrink-0 text-slate-400"
+                    />
+                </Link>
+
                 <!-- Datos generales: contacto, redes, horarios/moneda, políticas, FAQs -->
                 <Link
                     :href="route('tenant.general-settings')"
@@ -379,7 +438,8 @@ async function requestModule(mod: PlanModuleRow) {
                         <div class="font-medium">Datos generales</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: contacto y redes, horarios y moneda,
-                            políticas del hotel y preguntas frecuentes.
+                            políticas del hotel, preguntas frecuentes y
+                            apariencia del panel.
                         </p>
                         <p class="mt-1 text-xs text-slate-500">
                             {{ generalSummary.phones }} teléfono(s) ·

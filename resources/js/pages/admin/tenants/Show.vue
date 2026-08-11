@@ -38,9 +38,22 @@ interface ModuleRow {
     description: string;
     available: boolean;
     in_plan: boolean;
+    in_addon: boolean;
     override: boolean | null;
     enabled: boolean;
     requested_at: string | null;
+}
+
+interface AddonServiceRow {
+    key: string;
+    name: string;
+    summary: string | null;
+    price_monthly: number;
+    activation_fee: number;
+    modules: string[];
+    requires: string | null;
+    active: boolean;
+    contracted: boolean;
 }
 
 const props = defineProps<{
@@ -90,6 +103,12 @@ const props = defineProps<{
         tenant_enabled: boolean;
     }[];
     modules: ModuleRow[];
+    addonServices: AddonServiceRow[];
+    billing: {
+        plan_monthly: number;
+        addons_monthly: number;
+        total_monthly: number;
+    };
 }>();
 
 const toast = useToasts();
@@ -145,6 +164,31 @@ function setModule(mod: ModuleRow, mode: 'inherit' | 'on' | 'off') {
                     mode === 'inherit'
                         ? `${mod.label}: hereda del plan`
                         : `${mod.label}: forzado ${mode === 'on' ? 'activado' : 'apagado'}`,
+                ),
+        },
+    );
+}
+
+// Servicios adicionales: contratar o retirar para este hotel.
+function toggleAddon(service: AddonServiceRow) {
+    router.patch(
+        route('admin.tenants.addon-services', [props.tenant.id, service.key]),
+        { contracted: !service.contracted },
+        {
+            preserveScroll: true,
+            onSuccess: () =>
+                toast.success(
+                    service.contracted
+                        ? 'Servicio retirado'
+                        : 'Servicio contratado',
+                    service.contracted
+                        ? `${service.name}: dejó de cobrarse y sus módulos se apagan`
+                        : `${service.name}: se suma $${service.price_monthly.toLocaleString('es-MX')} MXN/mes`,
+                ),
+            onError: (errors) =>
+                toast.error(
+                    'No se pudo actualizar',
+                    errors.service ?? 'Ocurrió un error.',
                 ),
         },
     );
@@ -609,10 +653,40 @@ async function deleteUser() {
                             >
                         </div>
                         <div class="flex items-center justify-between">
-                            <span class="text-slate-500">Precio de lista</span>
+                            <span class="text-slate-500">Plan base</span>
                             <span class="font-medium"
                                 >${{
-                                    plan.price_monthly.toLocaleString('es-MX')
+                                    billing.plan_monthly.toLocaleString('es-MX')
+                                }}
+                                MXN/mes</span
+                            >
+                        </div>
+                        <div
+                            v-if="billing.addons_monthly"
+                            class="flex items-center justify-between"
+                        >
+                            <span class="text-slate-500"
+                                >Servicios adicionales</span
+                            >
+                            <span class="font-medium"
+                                >+${{
+                                    billing.addons_monthly.toLocaleString(
+                                        'es-MX',
+                                    )
+                                }}
+                                MXN/mes</span
+                            >
+                        </div>
+                        <div
+                            v-if="billing.addons_monthly"
+                            class="flex items-center justify-between border-t border-dashed border-slate-300/70 pt-3"
+                        >
+                            <span class="text-slate-500">Total mensual</span>
+                            <span class="font-medium text-primary"
+                                >${{
+                                    billing.total_monthly.toLocaleString(
+                                        'es-MX',
+                                    )
                                 }}
                                 MXN/mes</span
                             >
@@ -901,7 +975,9 @@ async function deleteUser() {
                                         mod.override === null
                                             ? mod.in_plan
                                                 ? `Incluido en el plan ${tenant.plan_label}`
-                                                : `No incluido en el plan ${tenant.plan_label}`
+                                                : mod.in_addon
+                                                  ? 'Lo aporta un servicio adicional contratado'
+                                                  : `No incluido en el plan ${tenant.plan_label}`
                                             : mod.override
                                               ? 'Forzado: activado para este hotel'
                                               : 'Forzado: desactivado para este hotel'
@@ -1057,6 +1133,96 @@ async function deleteUser() {
                         >
                             Sin usuarios. Agrega el primero con "Nuevo".
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Servicios adicionales: contratados por encima del plan -->
+            <div class="col-span-12">
+                <div class="box box--stacked flex flex-col">
+                    <div
+                        class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
+                    >
+                        <Lucide
+                            icon="PackagePlus"
+                            class="h-4 w-4 stroke-[1.5] text-primary"
+                        />
+                        <h2 class="text-base font-medium">
+                            Servicios adicionales
+                        </h2>
+                        <span
+                            v-if="billing.addons_monthly"
+                            class="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+                        >
+                            +${{
+                                billing.addons_monthly.toLocaleString('es-MX')
+                            }}
+                            MXN/mes
+                        </span>
+                        <Link
+                            :href="route('admin.services')"
+                            class="ml-auto flex items-center text-xs text-primary"
+                        >
+                            Catálogo
+                            <Lucide icon="ArrowRight" class="ml-1 h-3 w-3" />
+                        </Link>
+                    </div>
+                    <div
+                        class="flex flex-col divide-y divide-dashed divide-slate-300/70 px-5"
+                    >
+                        <div
+                            v-for="service in addonServices"
+                            :key="service.key"
+                            class="flex flex-col gap-2 py-3.5 sm:flex-row sm:items-center sm:gap-3"
+                        >
+                            <div class="min-w-0 flex-1">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="text-sm font-medium">{{
+                                        service.name
+                                    }}</span>
+                                    <span
+                                        v-if="!service.active"
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-darkmode-400"
+                                        title="Retirado del catálogo: no aplica aunque esté contratado"
+                                    >
+                                        Fuera de catálogo
+                                    </span>
+                                </div>
+                                <div
+                                    class="mt-0.5 text-xs text-slate-500"
+                                    :title="service.summary ?? undefined"
+                                >
+                                    ${{
+                                        service.price_monthly.toLocaleString(
+                                            'es-MX',
+                                        )
+                                    }}
+                                    MXN/mes · ${{
+                                        service.activation_fee.toLocaleString(
+                                            'es-MX',
+                                        )
+                                    }}
+                                    activación única
+                                </div>
+                            </div>
+                            <FormSwitch class="shrink-0">
+                                <FormSwitch.Input
+                                    :checked="service.contracted"
+                                    type="checkbox"
+                                    @change="toggleAddon(service)"
+                                />
+                            </FormSwitch>
+                        </div>
+                    </div>
+                    <div
+                        class="border-t border-dashed border-slate-300/70 px-5 py-3.5"
+                    >
+                        <FormHelp>
+                            Contratar enciende de inmediato los módulos del
+                            servicio para este hotel y suma su precio al plan
+                            base; retirarlo los apaga sin borrar datos. La
+                            Modalidad 3 requiere la Modalidad 2 contratada.
+                        </FormHelp>
                     </div>
                 </div>
             </div>

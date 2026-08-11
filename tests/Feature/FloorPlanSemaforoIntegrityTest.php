@@ -85,8 +85,10 @@ it('sí libera una reservada huérfana (sin reserva que la respalde)', function 
 it('las transiciones manuales del payload excluyen reservada y ocupada', function () {
     expect($this->room->refresh()->manualStatusTransitions())->toBe(['maintenance']);
 
+    // Por limpiar ofrece también el liberado directo a disponible (la
+    // habitación quedó lista sin registrar el ciclo de limpieza).
     $this->room->update(['status' => 'dirty']);
-    expect($this->room->refresh()->manualStatusTransitions())->toBe(['cleaning', 'maintenance']);
+    expect($this->room->refresh()->manualStatusTransitions())->toBe(['cleaning', 'available', 'maintenance']);
 
     // El flujo de housekeeping completo sigue funcionando a mano.
     updateRoomStatus($this->room, 'cleaning', $this->user);

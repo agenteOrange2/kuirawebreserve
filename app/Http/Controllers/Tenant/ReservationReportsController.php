@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Models\Property;
 use App\Models\Reservation;
+use App\Models\Room;
 use App\Models\Stay;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\CarbonImmutable;
@@ -27,6 +28,15 @@ class ReservationReportsController extends Controller
     {
         return Inertia::render('tenant/reservations/Reports', $this->reportData($request) + [
             'property' => Property::query()->firstOrFail()->only(['id', 'name']),
+            // Catálogo para el filtro por habitación (mismo patrón que el
+            // reporte de incidencias).
+            'rooms' => Room::query()
+                ->orderBy('number')
+                ->get(['id', 'number', 'name'])
+                ->map(fn (Room $room) => [
+                    'id' => $room->id,
+                    'label' => trim($room->number.' '.($room->name ?? '')),
+                ]),
         ]);
     }
 
@@ -52,9 +62,13 @@ class ReservationReportsController extends Controller
             'period' => ['nullable', 'in:week,month,year,custom'],
             'from' => ['nullable', 'date', 'required_if:period,custom'],
             'to' => ['nullable', 'date', 'after_or_equal:from', 'required_if:period,custom'],
+            'room' => ['nullable', 'integer'],
         ]);
 
         $period = $request->query('period', 'month');
+        $roomId = $request->integer('room') ?: null;
+        $room = $roomId ? Room::query()->find($roomId) : null;
+        $roomId = $room?->id;
         $today = CarbonImmutable::today();
 
         [$from, $to, $label] = match ($period) {
@@ -68,17 +82,40 @@ class ReservationReportsController extends Controller
             default => [$today->startOfMonth(), $today->endOfMonth(), ucfirst($today->locale('es')->isoFormat('MMMM YYYY'))],
         };
 
+        if ($room) {
+            $label .= ' · Habitación '.trim($room->number.' '.($room->name ?? ''));
+        }
+
         // Reservas cuya llegada cae en el rango (el "negocio" del periodo).
         $reservations = Reservation::query()
             ->with(['roomType:id,name'])
             ->whereBetween('starts_at', [$from, $to])
+            ->when($roomId, fn ($q) => $q->where('room_id', $roomId))
             ->get();
 
-        $payments = Payment::query()->whereBetween('paid_at', [$from, $to])->get(['amount', 'paid_at']);
+        // Con filtro de habitación, los cobros y consumos se acotan a lo que
+        // le pertenece: pagos de sus reservas o estancias y órdenes cargadas
+        // a sus estancias (los pagos sueltos de experiencias quedan fuera).
+        $payments = Payment::query()
+            ->whereBetween('paid_at', [$from, $to])
+            ->when($roomId, fn ($q) => $q->where(fn ($qq) => $qq
+                ->whereHas('reservation', fn ($r) => $r->where('room_id', $roomId))
+                ->orWhereHas('stay', fn ($s) => $s->where('room_id', $roomId))))
+            ->get(['id', 'amount', 'paid_at']);
         $orders = Order::query()
             ->where('status', Order::STATUS_COMPLETED)
             ->whereBetween('created_at', [$from, $to])
-            ->get(['total', 'created_at']);
+            ->when($roomId, fn ($q) => $q->whereHas('stay', fn ($s) => $s->where('room_id', $roomId)))
+            ->get(['id', 'total', 'created_at']);
+
+        // Usos reales por habitación: estancias (con o sin reserva — los
+        // walk-ins también cuentan) cuyo check-in cae en el rango. Es la
+        // misma definición de "uso" que la ficha de la habitación.
+        $stays = Stay::query()
+            ->with('room:id,number,name')
+            ->whereBetween('check_in_at', [$from, $to])
+            ->when($roomId, fn ($q) => $q->where('room_id', $roomId))
+            ->get(['id', 'room_id', 'amount', 'check_in_at']);
 
         $byStatus = $reservations->countBy(fn (Reservation $r) => $r->status->value);
         $total = $reservations->count();
@@ -99,6 +136,7 @@ class ReservationReportsController extends Controller
                 'period' => $period,
                 'from' => $from->format('Y-m-d'),
                 'to' => $to->format('Y-m-d'),
+                'room' => $roomId,
             ],
             'period' => [
                 'label' => $label,
@@ -120,8 +158,11 @@ class ReservationReportsController extends Controller
                 'payments_total' => $paymentsTotal,
                 'orders_total' => $ordersTotal,
                 'revenue_total' => round($paymentsTotal + $ordersTotal, 2),
-                'check_ins' => Stay::query()->whereBetween('check_in_at', [$from, $to])->count(),
-                'check_outs' => Stay::query()->whereBetween('check_out_at', [$from, $to])->count(),
+                'check_ins' => $stays->count(),
+                'check_outs' => Stay::query()
+                    ->whereBetween('check_out_at', [$from, $to])
+                    ->when($roomId, fn ($q) => $q->where('room_id', $roomId))
+                    ->count(),
             ],
             'series' => $this->buildSeries($from, $to, $reservations, $payments, $orders),
             'byStatus' => collect(ReservationStatus::cases())->map(fn (ReservationStatus $status) => [
@@ -141,6 +182,17 @@ class ReservationReportsController extends Controller
                     'channel' => $channel,
                     'count' => $count,
                 ])->sortByDesc('count')->values(),
+            // Uso por habitación: cuántas veces se ocupó cada una en el rango
+            // (estancias con check-in dentro) y el hospedaje que generó. Las
+            // estancias de habitaciones ya borradas caen en "Sin habitación".
+            'byRoom' => $stays->groupBy(fn (Stay $stay) => $stay->room
+                    ? trim($stay->room->number.' '.($stay->room->name ?? ''))
+                    : 'Sin habitación')
+                ->map(fn (Collection $group, string $name) => [
+                    'name' => $name,
+                    'uses' => $group->count(),
+                    'revenue' => round((float) $group->sum('amount'), 2),
+                ])->sortByDesc('uses')->values(),
         ];
     }
 

@@ -48,14 +48,38 @@ class CreateWalkInStay
                 throw NoAvailabilityException::forRoom($room->number);
             }
 
+            // Techo real de la habitación, igual que CreateReservation: el
+            // walk-in era el único canal que no lo hacía cumplir.
+            $capacity = $room->effectiveMaxOccupancy();
+            $people = max(1, (int) ($data['num_people'] ?? 1));
+            if ($capacity !== null && $people > $capacity) {
+                throw NoAvailabilityException::exceedsCapacity($room->number, $capacity);
+            }
+
             $guest = null;
             if (! empty($data['guest_id'])) {
                 $guest = Guest::findOrFail($data['guest_id']);
             } elseif (! empty($data['guest_phone'])) {
                 $guest = Guest::firstOrCreate(
                     ['phone' => $data['guest_phone']],
-                    ['first_name' => $data['guest_name'] ?? null],
+                    [
+                        'first_name' => $data['guest_name'] ?? null,
+                        'email' => $data['guest_email'] ?? null,
+                    ],
                 );
+            }
+
+            // La ficha del CRM se enriquece de paso, sin pisar lo que ya
+            // tenga: correo capturado en mostrador y documento del exprés.
+            if ($guest) {
+                $guest->fill(array_filter([
+                    'email' => $guest->email ? null : ($data['guest_email'] ?? null),
+                    'id_document_type' => $guest->id_document_number ? null : ($data['id_document_type'] ?? null),
+                    'id_document_number' => $guest->id_document_number ? null : ($data['id_document_number'] ?? null),
+                ]));
+                if ($guest->isDirty()) {
+                    $guest->save();
+                }
             }
 
             // Cargos extra de la ficha: personas sobre las incluidas +
@@ -74,6 +98,8 @@ class CreateWalkInStay
                 'num_people' => $data['num_people'] ?? 1,
                 'vehicle_plate' => $data['vehicle_plate'] ?? null,
                 'vehicle_desc' => $data['vehicle_desc'] ?? null,
+                'id_document_type' => $data['id_document_type'] ?? null,
+                'id_document_number' => $data['id_document_number'] ?? null,
                 'check_in_at' => $start,
                 'planned_end_at' => $end,
                 'status' => Stay::STATUS_ACTIVE,

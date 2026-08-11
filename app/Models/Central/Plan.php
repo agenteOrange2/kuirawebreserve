@@ -22,6 +22,7 @@ class Plan extends CentralModel
         'label',
         'description',
         'price_monthly',
+        'activation_fee',
         'max_properties',
         'max_rooms',
         'max_users',
@@ -60,6 +61,7 @@ class Plan extends CentralModel
         return [
             'label' => $this->label,
             'price_monthly' => (int) $this->price_monthly,
+            'activation_fee' => (int) $this->activation_fee,
             'max_properties' => $this->max_properties !== null ? (int) $this->max_properties : null,
             'max_rooms' => $this->max_rooms !== null ? (int) $this->max_rooms : null,
             'max_users' => $this->max_users !== null ? (int) $this->max_users : null,

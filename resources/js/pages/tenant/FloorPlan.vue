@@ -14,8 +14,11 @@ import { FormInput, FormSelect } from '@/components/Base/Form';
 import { Dialog, Slideover } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
+import { useModules } from '@/composables/useModules';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import ExpressCheckInModal from '@/pages/tenant/floorplan/ExpressCheckInModal.vue';
+import ReserveModal from '@/pages/tenant/floorplan/ReserveModal.vue';
 
 import '@vue-flow/core/dist/style.css';
 import '@vue-flow/core/dist/theme-default.css';
@@ -29,6 +32,8 @@ interface RatePlanSummary {
     price: number;
     duration_minutes: number | null;
     duration_label: string;
+    duration_unit: string | null;
+    duration_value: number | null;
 }
 
 interface ActiveStaySummary {
@@ -39,6 +44,9 @@ interface ActiveStaySummary {
     amount: number;
     consumos_total: number;
     total_due: number;
+    // Saldo REAL pendiente (hospedaje no pagado + consumos a habitación sin
+    // liquidar): alimenta el badge "Debe $X" y el filtro Pago pendiente.
+    balance_due: number;
     check_in_at: string | null;
     check_in_at_iso: string | null;
     planned_end_at: string | null;
@@ -48,6 +56,8 @@ interface ActiveStaySummary {
     num_people: number;
     vehicle_plate: string | null;
     vehicle_desc: string | null;
+    id_document_type: string | null;
+    id_document_photos: string[];
 }
 
 interface UpcomingReservationSummary {
@@ -58,6 +68,7 @@ interface UpcomingReservationSummary {
     status: string;
     status_label: string;
     total_amount: number;
+    payment_overdue: boolean;
     starts_at: string;
     starts_at_iso: string;
     starts_today: boolean;
@@ -116,6 +127,9 @@ interface RoomData {
     color: string;
     label: string;
     transitions: string[];
+    usage_count: number;
+    usage_limit: number | null;
+    usage_locked: boolean;
     pos_x: number;
     pos_y: number;
     width: number;
@@ -136,6 +150,9 @@ interface RoomStatusChangedPayload {
     color: string;
     label: string;
     transitions: string[];
+    usage_count: number;
+    usage_limit: number | null;
+    usage_locked: boolean;
     changed_by: number | null;
     changed_at: string;
 }
@@ -149,6 +166,11 @@ const props = defineProps<{
     canManageReservations: boolean;
     canManageOrders: boolean;
     manualCheckinAllowed: boolean;
+    // Registro exprés de caseta (modo motel, spec-modo-motel).
+    expressCheckin: boolean;
+    guaranteeAmount: number;
+    // Fotos de identificación en la ficha (mismo permiso que el CRM).
+    canViewDocuments: boolean;
 }>();
 
 const statusStyles: Record<
@@ -197,7 +219,7 @@ const statusLabels: Record<string, { label: string; color: string }> = {
     available: { label: 'Disponible', color: 'green' },
     reserved: { label: 'Reservada', color: 'cyan' },
     occupied: { label: 'Ocupada', color: 'red' },
-    dirty: { label: 'Sucia', color: 'orange' },
+    dirty: { label: 'Por limpiar', color: 'orange' },
     cleaning: { label: 'En limpieza', color: 'blue' },
     maintenance: { label: 'Mantenimiento', color: 'gray' },
 };
@@ -230,7 +252,7 @@ const transitionMeta: Record<
     },
     dirty: {
         icon: 'Paintbrush',
-        label: 'Marcar sucia',
+        label: 'Marcar por limpiar',
         variant: 'outline-warning',
     },
     cleaning: {
@@ -343,6 +365,8 @@ function zoneTint(color: string | null, alpha: number): string {
 }
 
 const toast = useToasts();
+// Tablero personalizado (Empresarial): editar el acomodo del plano.
+const { hasModule } = useModules();
 
 const nodes = ref(buildNodes(props.rooms)) as Ref<Node[]>;
 const selectedId = ref<number | null>(null);
@@ -380,6 +404,29 @@ const selectedRoom = computed<RoomData | null>(() => {
     return (node?.data as RoomData) ?? null;
 });
 
+// Registro exprés (modo motel): el modal vende y cobra sin salir del plano.
+const expressOpen = ref(false);
+
+function onExpressRegistered() {
+    expressOpen.value = false;
+    router.reload({ only: ['rooms'] });
+}
+
+// Reserva para otra fecha sin salir del plano (modo motel).
+const reserveOpen = ref(false);
+
+function onReserved() {
+    reserveOpen.value = false;
+    router.reload({ only: ['rooms'] });
+}
+
+const documentTypeLabels: Record<string, string> = {
+    ine: 'INE',
+    pasaporte: 'Pasaporte',
+    licencia: 'Licencia',
+    otro: 'Documento',
+};
+
 /* --- Buscador y filtros ------------------------------------------------
  * Con 40 cuartos el canvas se vuelve un "búscalo a ojo". El buscador mira
  * número, nombre y el huésped de la estancia o de la llegada; los filtros
@@ -389,6 +436,7 @@ const selectedRoom = computed<RoomData | null>(() => {
 const search = ref('');
 const statusFilter = ref('');
 const zoneFilter = ref<string>('');
+const typeFilter = ref<string>('');
 
 const zoneOptions = computed(() => {
     const seen = new Map<number, string>();
@@ -399,12 +447,20 @@ const zoneOptions = computed(() => {
     return [...seen.entries()].map(([id, name]) => ({ id, name }));
 });
 
+const typeOptions = computed(() => {
+    const seen = new Set<string>();
+    props.rooms.forEach((room) => {
+        if (room.room_type) seen.add(room.room_type);
+    });
+    return [...seen.values()];
+});
+
 const statusOptions = computed(() => {
     const counts = new Map<string, number>();
     props.rooms.forEach((room) => {
         counts.set(room.status, (counts.get(room.status) ?? 0) + 1);
     });
-    return Object.entries(statusLabels)
+    const options = Object.entries(statusLabels)
         .filter(([status]) => counts.has(status))
         .map(([status, meta]) => ({
             status,
@@ -412,11 +468,46 @@ const statusOptions = computed(() => {
             color: meta.color,
             count: counts.get(status) ?? 0,
         }));
+
+    // "Salida próxima" no es estado del semáforo: es la estancia activa que
+    // termina hoy (o ya se excedió). Entra al filtro como opción derivada
+    // para que recepción vea de un vistazo qué cuartos se liberan.
+    const departing = props.rooms.filter((room) => departingSoon(room)).length;
+    if (departing > 0) {
+        options.push({
+            status: 'departing',
+            label: 'Salida próxima',
+            color: 'amber',
+            count: departing,
+        });
+    }
+
+    // "Pago pendiente" tampoco es estado del semáforo: huésped en casa con
+    // saldo o reserva con pago vencido. Derivado, igual que salida próxima.
+    const due = props.rooms.filter((room) => hasPendingPayment(room)).length;
+    if (due > 0) {
+        options.push({
+            status: 'due',
+            label: 'Pago pendiente',
+            color: 'red',
+            count: due,
+        });
+    }
+
+    return options;
 });
 
 function matchesFilters(room: RoomData): boolean {
-    if (statusFilter.value && room.status !== statusFilter.value) return false;
+    if (statusFilter.value === 'departing') {
+        if (!departingSoon(room)) return false;
+    } else if (statusFilter.value === 'due') {
+        if (!hasPendingPayment(room)) return false;
+    } else if (statusFilter.value && room.status !== statusFilter.value) {
+        return false;
+    }
     if (zoneFilter.value && String(room.zone_id ?? '') !== zoneFilter.value)
+        return false;
+    if (typeFilter.value && (room.room_type ?? '') !== typeFilter.value)
         return false;
 
     const term = search.value.trim().toLowerCase();
@@ -436,15 +527,38 @@ const filtersActive = computed(
     () =>
         search.value.trim() !== '' ||
         statusFilter.value !== '' ||
-        zoneFilter.value !== '',
+        zoneFilter.value !== '' ||
+        typeFilter.value !== '',
 );
 
 const matchingRooms = computed(() => props.rooms.filter(matchesFilters));
+
+// Agrupar la vista de lista por zona/piso o por tipo de habitación (el
+// canvas no se reordena: ahí manda el acomodo físico que dibujó el hotel).
+const groupBy = ref<'' | 'zone' | 'type'>('');
+
+const groupedRooms = computed(() => {
+    if (!groupBy.value) {
+        return [{ title: '', rooms: matchingRooms.value }];
+    }
+
+    const map = new Map<string, RoomData[]>();
+    matchingRooms.value.forEach((room) => {
+        const key =
+            groupBy.value === 'zone'
+                ? (room.zone ?? 'Sin zona')
+                : (room.room_type ?? 'Sin tipo');
+        map.set(key, [...(map.get(key) ?? []), room]);
+    });
+
+    return [...map.entries()].map(([title, rooms]) => ({ title, rooms }));
+});
 
 function clearFilters() {
     search.value = '';
     statusFilter.value = '';
     zoneFilter.value = '';
+    typeFilter.value = '';
 }
 
 /** Sobre el canvas: opaca los cuartos que no cumplen el filtro. */
@@ -708,6 +822,20 @@ function stayTone(iso: string | null | undefined): string {
         : 'text-danger';
 }
 
+// "Salida próxima" para el filtro del tablero: sale hoy o ya se excedió.
+function departingSoon(room: RoomData): boolean {
+    return endsToday(room) || Boolean(room.active_stay?.is_overdue);
+}
+
+// "Pago pendiente" para el filtro y el badge: huésped en casa con saldo o
+// reserva próxima cuya fecha límite de pago ya venció.
+function hasPendingPayment(room: RoomData): boolean {
+    return (
+        (room.active_stay?.balance_due ?? 0) > 0 ||
+        Boolean(room.upcoming_reservation?.payment_overdue)
+    );
+}
+
 // "Sale hoy": la estancia activa termina hoy (si ya se excedió, el nodo ya
 // trae su propio badge "Excedida" y este no se muestra).
 function endsToday(room: RoomData): boolean {
@@ -944,7 +1072,7 @@ function checkOutStay(room: RoomData) {
         },
         {
             successTitle: 'Salida registrada',
-            successMessage: `La habitación ${room.number} pasó a sucia; limpieza puede entrar`,
+            successMessage: `La habitación ${room.number} quedó por limpiar; el equipo puede entrar`,
             errorTitle: 'No se pudo registrar la salida',
         },
     );
@@ -1047,7 +1175,7 @@ async function submitMove() {
         selectedId.value = null;
         toast.success(
             'Huésped movido',
-            'La habitación que dejó quedó marcada como sucia.',
+            'La habitación que dejó quedó marcada por limpiar.',
         );
         reloadRooms();
     } catch (e: any) {
@@ -1072,6 +1200,9 @@ function nodeTooltip(room: RoomData): string {
         lines.push(room.active_stay.guest_name);
         lines.push(`Salida: ${room.active_stay.planned_end_at ?? 'Sin hora'}`);
         lines.push(`Total: ${formatMoney(room.active_stay.total_due)}`);
+        if (room.active_stay.balance_due > 0) {
+            lines.push(`Debe: ${formatMoney(room.active_stay.balance_due)}`);
+        }
     } else if (room.upcoming_reservation) {
         lines.push(room.upcoming_reservation.guest_name);
         lines.push(`Llega: ${room.upcoming_reservation.starts_at}`);
@@ -1082,7 +1213,25 @@ function nodeTooltip(room: RoomData): string {
         lines.push(`Desde ${formatMoney(room.rate_plans[0].price)}`);
     }
 
+    if (room.usage_locked) {
+        lines.push(
+            `Bloqueada por usos: ${room.usage_count} de ${room.usage_limit}. Resetea el contador para liberarla.`,
+        );
+    } else if (room.usage_limit) {
+        lines.push(`Usos: ${room.usage_count} de ${room.usage_limit}`);
+    } else if (room.usage_count) {
+        lines.push(`Usos: ${room.usage_count}`);
+    }
+
     return lines.join('\n');
+}
+
+function usageBadgeTitle(room: RoomData): string {
+    if (room.usage_locked)
+        return `Bloqueada por usos: llegó a ${room.usage_count} de ${room.usage_limit}. Resetea el contador en Habitaciones para liberarla.`;
+    return room.usage_limit
+        ? `${room.usage_count} de ${room.usage_limit} usos para bloquearse`
+        : `${room.usage_count} usos desde el último reseteo`;
 }
 
 useEcho<RoomStatusChangedPayload>(
@@ -1094,6 +1243,9 @@ useEcho<RoomStatusChangedPayload>(
             color: payload.color,
             label: payload.label,
             transitions: payload.transitions,
+            usage_count: payload.usage_count,
+            usage_limit: payload.usage_limit,
+            usage_locked: payload.usage_locked,
         });
         lastEvent.value = `Hab. ${payload.number} → ${payload.label}`;
 
@@ -1141,7 +1293,7 @@ useEcho<RoomStatusChangedPayload>(
                     {{ aligning ? 'Alineando…' : 'Alinear' }}
                 </Button>
                 <Button
-                    v-if="canManage"
+                    v-if="canManage && hasModule('tablero-avanzado')"
                     :variant="editMode ? 'primary' : 'outline-secondary'"
                     class="rounded-[0.5rem]"
                     :title="
@@ -1221,6 +1373,17 @@ useEcho<RoomStatusChangedPayload>(
                             :value="String(zone.id)"
                         >
                             {{ zone.name }}
+                        </option>
+                    </FormSelect>
+                    <FormSelect
+                        v-if="typeOptions.length > 1"
+                        v-model="typeFilter"
+                        class="sm:w-44"
+                        aria-label="Filtrar por tipo de habitación"
+                    >
+                        <option value="">Todos los tipos</option>
+                        <option v-for="t in typeOptions" :key="t" :value="t">
+                            {{ t }}
                         </option>
                     </FormSelect>
                     <Button
@@ -1319,6 +1482,14 @@ useEcho<RoomStatusChangedPayload>(
                             {{ blockLabel(data) }}
                         </span>
                         <span
+                            v-else-if="data.usage_locked"
+                            class="absolute -top-2 left-1/2 inline-flex -translate-x-1/2 items-center gap-1 rounded-full bg-slate-950 px-2 py-0.5 text-[9px] font-semibold text-white shadow-lg"
+                            :title="usageBadgeTitle(data)"
+                        >
+                            <Lucide icon="Lock" class="h-3 w-3" />
+                            Bloqueada
+                        </span>
+                        <span
                             v-if="data.upcoming_reservation?.starts_today"
                             class="absolute -top-2 -left-2 inline-flex h-6 min-w-6 items-center justify-center rounded-full bg-info px-1.5 text-[10px] font-semibold text-white shadow-lg"
                             title="Llega hoy"
@@ -1334,6 +1505,23 @@ useEcho<RoomStatusChangedPayload>(
                                     data.active_stay?.consumos_total,
                                 ).replace('.00', '')
                             }}
+                        </span>
+                        <span
+                            v-else-if="data.usage_count > 0 || data.usage_limit"
+                            class="absolute -top-2 -right-2 inline-flex items-center gap-1 rounded-full px-2 py-1 text-[10px] font-semibold text-white shadow-lg"
+                            :class="
+                                data.usage_locked ? 'bg-danger' : 'bg-slate-950'
+                            "
+                            :title="usageBadgeTitle(data)"
+                        >
+                            <Lucide
+                                :icon="data.usage_locked ? 'Lock' : 'Repeat'"
+                                class="h-3 w-3"
+                            />
+                            {{ data.usage_count
+                            }}<template v-if="data.usage_limit"
+                                >/{{ data.usage_limit }}</template
+                            >
                         </span>
                         <span class="text-lg leading-tight font-bold">{{
                             data.number
@@ -1360,6 +1548,27 @@ useEcho<RoomStatusChangedPayload>(
                             <Lucide icon="LogOut" class="h-3.5 w-3.5" />
                         </span>
                         <span
+                            v-if="(data.active_stay?.balance_due ?? 0) > 0"
+                            class="absolute -right-2 -bottom-2 rounded-full bg-danger px-2 py-1 text-[9px] font-semibold text-white shadow-lg"
+                            :title="`Pago pendiente: debe ${formatMoney(data.active_stay?.balance_due)}`"
+                        >
+                            Debe
+                            {{
+                                formatMoney(
+                                    data.active_stay?.balance_due,
+                                ).replace('.00', '')
+                            }}
+                        </span>
+                        <span
+                            v-else-if="
+                                data.upcoming_reservation?.payment_overdue
+                            "
+                            class="absolute -right-2 -bottom-2 rounded-full bg-danger px-2 py-1 text-[9px] font-semibold text-white shadow-lg"
+                            title="La fecha límite de pago de la reserva ya venció"
+                        >
+                            Pago vencido
+                        </span>
+                        <span
                             v-if="data.zone_color"
                             class="pointer-events-none absolute inset-x-0 bottom-0 h-[3px] rounded-b-lg"
                             :style="{ backgroundColor: data.zone_color }"
@@ -1372,9 +1581,38 @@ useEcho<RoomStatusChangedPayload>(
         <!-- Vista de lista: la única en móvil (arrastrar y hacer zoom en el
              canvas desde el teléfono es un castigo, y el mostrador y el ama
              de llaves viven ahí). Abre la misma ficha que el plano. -->
-        <div class="mt-4 space-y-2.5 lg:hidden">
+        <div class="mt-4 lg:hidden">
+            <div class="mb-3 flex items-center justify-end gap-2">
+                <span class="text-xs text-slate-500">Agrupar por</span>
+                <FormSelect
+                    v-model="groupBy"
+                    class="w-36"
+                    aria-label="Agrupar la lista"
+                >
+                    <option value="">Número</option>
+                    <option value="zone">Zona o piso</option>
+                    <option value="type">Tipo</option>
+                </FormSelect>
+            </div>
+        </div>
+        <div
+            v-for="group in groupedRooms"
+            :key="group.title || 'all'"
+            class="mt-4 space-y-2.5 first-of-type:mt-0 lg:hidden"
+        >
+            <div
+                v-if="group.title"
+                class="flex items-center gap-2 px-1 text-xs font-medium tracking-wide text-slate-500 uppercase"
+            >
+                <Lucide
+                    :icon="groupBy === 'type' ? 'BedDouble' : 'MapPin'"
+                    class="h-3.5 w-3.5"
+                />
+                {{ group.title }}
+                <span class="text-slate-400">({{ group.rooms.length }})</span>
+            </div>
             <button
-                v-for="room in matchingRooms"
+                v-for="room in group.rooms"
                 :key="room.id"
                 type="button"
                 class="box box--stacked flex w-full items-center gap-3.5 p-4 text-left transition active:scale-[0.99]"
@@ -1399,6 +1637,25 @@ useEcho<RoomStatusChangedPayload>(
                             {{ blockLabel(room) }}
                         </span>
                         <span
+                            v-if="room.usage_count > 0 || room.usage_limit"
+                            class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                            :class="
+                                room.usage_locked
+                                    ? 'bg-danger/10 text-danger'
+                                    : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400 dark:text-slate-300'
+                            "
+                            :title="usageBadgeTitle(room)"
+                        >
+                            <Lucide
+                                :icon="room.usage_locked ? 'Lock' : 'Repeat'"
+                                class="h-3 w-3"
+                            />
+                            {{ room.usage_count
+                            }}<template v-if="room.usage_limit"
+                                >/{{ room.usage_limit }}</template
+                            >
+                        </span>
+                        <span
                             v-if="room.active_stay?.is_overdue"
                             class="rounded-full bg-danger/10 px-2 py-0.5 text-[10px] font-medium text-danger"
                             >Excedida</span
@@ -1413,6 +1670,23 @@ useEcho<RoomStatusChangedPayload>(
                             class="rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning"
                             >Sale hoy</span
                         >
+                        <span
+                            v-if="(room.active_stay?.balance_due ?? 0) > 0"
+                            class="rounded-full bg-danger/10 px-2 py-0.5 text-[10px] font-medium text-danger"
+                            >Debe
+                            {{
+                                formatMoney(
+                                    room.active_stay?.balance_due,
+                                ).replace('.00', '')
+                            }}</span
+                        >
+                        <span
+                            v-else-if="
+                                room.upcoming_reservation?.payment_overdue
+                            "
+                            class="rounded-full bg-danger/10 px-2 py-0.5 text-[10px] font-medium text-danger"
+                            >Pago vencido</span
+                        >
                     </span>
                     <span
                         class="mt-0.5 block truncate text-sm text-slate-500 dark:text-slate-400"
@@ -1426,18 +1700,35 @@ useEcho<RoomStatusChangedPayload>(
                     class="h-5 w-5 shrink-0 text-slate-300"
                 />
             </button>
-
-            <p
-                v-if="!matchingRooms.length"
-                class="box box--stacked p-8 text-center text-sm text-slate-500"
-            >
-                Ninguna habitación coincide con la búsqueda.
-            </p>
         </div>
+
+        <p
+            v-if="!matchingRooms.length"
+            class="box box--stacked mt-4 p-8 text-center text-sm text-slate-500 lg:hidden"
+        >
+            Ninguna habitación coincide con la búsqueda.
+        </p>
 
         <p v-if="errorMessage" class="mt-3 text-sm text-danger">
             {{ errorMessage }}
         </p>
+
+        <!-- Registro exprés (modo motel): vende y cobra sin salir del plano -->
+        <ExpressCheckInModal
+            :open="expressOpen"
+            :room="selectedRoom"
+            :guarantee-amount="guaranteeAmount"
+            @close="expressOpen = false"
+            @registered="onExpressRegistered"
+        />
+
+        <!-- Reserva para otra fecha (modo motel), también sin salir -->
+        <ReserveModal
+            :open="reserveOpen"
+            :room="selectedRoom"
+            @close="reserveOpen = false"
+            @reserved="onReserved"
+        />
 
         <!-- Extender estancia -->
         <Dialog :open="extending !== null" @close="extending = null">
@@ -1517,7 +1808,7 @@ useEcho<RoomStatusChangedPayload>(
                         </h2>
                         <p class="mt-2 text-sm text-slate-500">
                             Su cuenta y sus consumos se van con él. La
-                            {{ moving?.number }} queda marcada como sucia.
+                            {{ moving?.number }} queda marcada por limpiar.
                         </p>
                     </div>
 
@@ -1736,24 +2027,34 @@ useEcho<RoomStatusChangedPayload>(
                                     variant="primary"
                                     class="h-auto min-h-14 justify-start rounded-xl px-4 py-3 text-left"
                                     @click="
-                                        openReservations(
-                                            'walkin',
-                                            selectedRoom.id,
-                                        )
+                                        expressCheckin
+                                            ? (expressOpen = true)
+                                            : openReservations(
+                                                  'walkin',
+                                                  selectedRoom.id,
+                                              )
                                     "
                                 >
                                     <Lucide
-                                        icon="LogIn"
+                                        :icon="expressCheckin ? 'Zap' : 'LogIn'"
                                         class="mr-3 h-5 w-5 shrink-0"
                                     />
                                     <span>
                                         <span class="block font-semibold">
-                                            Llegó sin reserva
+                                            {{
+                                                expressCheckin
+                                                    ? 'Registrar llegada'
+                                                    : 'Llegó sin reserva'
+                                            }}
                                         </span>
                                         <span
                                             class="mt-0.5 block text-xs font-normal opacity-80"
                                         >
-                                            Registrar su entrada ahora
+                                            {{
+                                                expressCheckin
+                                                    ? 'Placa o identificación y cobro, aquí mismo'
+                                                    : 'Registrar su entrada ahora'
+                                            }}
                                         </span>
                                     </span>
                                 </Button>
@@ -1761,10 +2062,12 @@ useEcho<RoomStatusChangedPayload>(
                                     variant="outline-primary"
                                     class="h-auto min-h-14 justify-start rounded-xl bg-white px-4 py-3 text-left dark:bg-darkmode-600"
                                     @click="
-                                        openReservations(
-                                            'reserve',
-                                            selectedRoom.id,
-                                        )
+                                        expressCheckin
+                                            ? (reserveOpen = true)
+                                            : openReservations(
+                                                  'reserve',
+                                                  selectedRoom.id,
+                                              )
                                     "
                                 >
                                     <Lucide
@@ -1778,7 +2081,11 @@ useEcho<RoomStatusChangedPayload>(
                                         <span
                                             class="mt-0.5 block text-xs font-normal text-slate-500"
                                         >
-                                            Apartarla para otra fecha
+                                            {{
+                                                expressCheckin
+                                                    ? 'Para otra fecha, aquí mismo'
+                                                    : 'Apartarla para otra fecha'
+                                            }}
                                         </span>
                                     </span>
                                 </Button>
@@ -1939,6 +2246,40 @@ useEcho<RoomStatusChangedPayload>(
                                             {{ formatMoney(charge.amount) }}
                                         </span>
                                     </div>
+                                </div>
+                            </div>
+
+                            <div
+                                v-if="
+                                    selectedRoom.usage_count > 0 ||
+                                    selectedRoom.usage_limit
+                                "
+                                class="mt-4 border-t border-slate-200/70 pt-4 dark:border-darkmode-400"
+                            >
+                                <div
+                                    class="text-sm font-semibold text-slate-900 dark:text-slate-100"
+                                >
+                                    Contador de usos
+                                </div>
+                                <div
+                                    class="mt-2 flex items-center gap-2 text-sm"
+                                    :class="
+                                        selectedRoom.usage_locked
+                                            ? 'text-danger'
+                                            : 'text-slate-600 dark:text-slate-300'
+                                    "
+                                >
+                                    <Lucide
+                                        :icon="
+                                            selectedRoom.usage_locked
+                                                ? 'Lock'
+                                                : 'Repeat'
+                                        "
+                                        class="h-4 w-4 shrink-0"
+                                    />
+                                    <span>{{
+                                        usageBadgeTitle(selectedRoom)
+                                    }}</span>
                                 </div>
                             </div>
 
@@ -2139,6 +2480,44 @@ useEcho<RoomStatusChangedPayload>(
                                         }}
                                     </dd>
                                 </div>
+                                <div
+                                    class="rounded-xl p-3"
+                                    :class="
+                                        selectedRoom.active_stay.balance_due > 0
+                                            ? 'bg-danger/10'
+                                            : 'bg-white/80 dark:bg-darkmode-600/80'
+                                    "
+                                >
+                                    <dt
+                                        :class="
+                                            selectedRoom.active_stay
+                                                .balance_due > 0
+                                                ? 'text-danger'
+                                                : 'text-slate-500'
+                                        "
+                                    >
+                                        Saldo pendiente
+                                    </dt>
+                                    <dd
+                                        class="mt-1 font-medium"
+                                        :class="
+                                            selectedRoom.active_stay
+                                                .balance_due > 0
+                                                ? 'text-danger'
+                                                : 'text-slate-900 dark:text-slate-100'
+                                        "
+                                    >
+                                        {{
+                                            selectedRoom.active_stay
+                                                .balance_due > 0
+                                                ? formatMoney(
+                                                      selectedRoom.active_stay
+                                                          .balance_due,
+                                                  )
+                                                : 'Al corriente'
+                                        }}
+                                    </dd>
+                                </div>
                             </dl>
 
                             <div
@@ -2190,6 +2569,44 @@ useEcho<RoomStatusChangedPayload>(
                                         }}</template
                                     >
                                 </span>
+                            </div>
+
+                            <!-- Identificación del huésped a pie (exprés
+                                 motel): tipo + fotos, solo con permiso. -->
+                            <div
+                                v-if="
+                                    canViewDocuments &&
+                                    (selectedRoom.active_stay
+                                        .id_document_type ||
+                                        selectedRoom.active_stay
+                                            .id_document_photos.length)
+                                "
+                                class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-600 dark:text-slate-300"
+                            >
+                                <span class="inline-flex items-center gap-1.5">
+                                    <Lucide
+                                        icon="IdCard"
+                                        class="h-4 w-4 shrink-0 text-slate-400"
+                                    />
+                                    Identificación:
+                                    {{
+                                        documentTypeLabels[
+                                            selectedRoom.active_stay
+                                                .id_document_type ?? 'otro'
+                                        ] ?? 'Documento'
+                                    }}
+                                </span>
+                                <a
+                                    v-for="(photo, index) in selectedRoom
+                                        .active_stay.id_document_photos"
+                                    :key="photo"
+                                    :href="photo"
+                                    target="_blank"
+                                    class="inline-flex items-center gap-1 text-primary hover:underline"
+                                >
+                                    <Lucide icon="Camera" class="h-3.5 w-3.5" />
+                                    Foto {{ index + 1 }}
+                                </a>
                             </div>
 
                             <div

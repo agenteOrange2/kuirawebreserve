@@ -55,7 +55,14 @@ class PlatformAgentGate
             return $base + ['limit' => null, 'used' => 0, 'blocked_reason' => 'disabled', 'chain' => collect()];
         }
 
-        $limit = $settings->monthly_reply_limit ?? $planAi['monthly_replies'] ?? null;
+        // Cuota: el ajuste por hotel manda; si no, la del plan MÁS lo que
+        // aporten los servicios adicionales con IA (Modalidad 2 suma las
+        // suyas — así un plan sin IA que contrata el asistente tiene cuota
+        // propia). null = sin límite.
+        $planReplies = $planAi['monthly_replies'] ?? null;
+        $limit = $settings->monthly_reply_limit ?? ($planReplies === null
+            ? null
+            : $planReplies + (int) $tenant->addonServices()->sum('ai_monthly_replies'));
         $used = TenantAiUsage::repliesThisMonth($tenant->id);
 
         if ($limit !== null && $limit > 0 && $used >= $limit) {

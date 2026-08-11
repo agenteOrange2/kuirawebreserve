@@ -136,8 +136,8 @@ it('la validación pública devuelve el descuento para el subtotal', function ()
 
 it('sin el módulo, el endpoint público responde 403 y el hold rechaza cupones', function () {
     $tenant = new Tenant;
-    $tenant->id = 'hotel-basic';
-    $tenant->plan = 'basic'; // basic no incluye cupones
+    $tenant->id = 'hotel-esencial';
+    $tenant->plan = 'esencial'; // el plan Esencial no incluye cupones
     app()->instance(\Stancl\Tenancy\Contracts\Tenant::class, $tenant);
 
     $request = Request::create('http://hotel.test/api/booking/coupons/check', 'POST');
@@ -151,4 +151,102 @@ it('sin el módulo, el endpoint público responde 403 y el hold rechaza cupones'
 
     expect($hold->getStatusCode())->toBe(422)
         ->and($hold->getData(true)['message'])->toContain('no están disponibles');
+});
+
+it('las condiciones del cupón se validan contra la reserva y el huésped', function () {
+    // Noches/periodos mínimos: el hold de un periodo no alcanza.
+    Coupon::create(['code' => 'LARGA', 'kind' => 'percent', 'value' => 15, 'min_nights' => 2]);
+
+    $short = couponHold(['coupon_code' => 'LARGA']);
+    expect($short->getStatusCode())->toBe(422)
+        ->and($short->getData(true)['message'])->toContain('al menos 2 noches');
+
+    // Tipo de habitación: cupón amarrado a OTRO tipo.
+    $otherType = RoomType::factory()->create(['property_id' => $this->property->id]);
+    Coupon::create(['code' => 'SUITE', 'kind' => 'percent', 'value' => 10, 'room_type_id' => $otherType->id]);
+
+    $wrongType = couponHold(['coupon_code' => 'SUITE']);
+    expect($wrongType->getStatusCode())->toBe(422)
+        ->and($wrongType->getData(true)['message'])->toContain('aplica solo para');
+
+    // Cliente frecuente: huésped nuevo no alcanza las visitas.
+    Coupon::create(['code' => 'FRECUENTE', 'kind' => 'amount', 'value' => 100, 'min_visits' => 3]);
+
+    $newGuest = couponHold(['coupon_code' => 'FRECUENTE']);
+    expect($newGuest->getStatusCode())->toBe(422)
+        ->and($newGuest->getData(true)['message'])->toContain('clientes frecuentes');
+});
+
+it('el cupón de cumpleaños exige fecha registrada y cercana', function () {
+    Coupon::create(['code' => 'CUMPLE', 'kind' => 'percent', 'value' => 20, 'birthday' => true]);
+
+    // Huésped sin fecha de nacimiento: rechazado con motivo claro.
+    $without = couponHold(['coupon_code' => 'CUMPLE']);
+    expect($without->getStatusCode())->toBe(422)
+        ->and($without->getData(true)['message'])->toContain('fecha de nacimiento');
+
+    // Huésped registrado cuyo cumpleaños cae cerca de la llegada: aplica.
+    \App\Models\Guest::create([
+        'first_name' => 'Festejada',
+        'phone' => '5299887766554',
+        'birth_date' => now()->addHour()->subYears(30)->addDays(3),
+    ]);
+
+    $near = couponHold([
+        'coupon_code' => 'CUMPLE',
+        'guest_name' => 'Festejada',
+        'guest_phone' => '5299887766554',
+    ]);
+
+    expect($near->getStatusCode())->toBe(201)
+        ->and((float) $near->getData(true)['discount'])->toEqual(200.0);
+});
+
+it('recepción aplica cupón en una reserva manual con la misma validación', function () {
+    Coupon::create(['code' => 'MOSTRADOR', 'kind' => 'percent', 'value' => 10]);
+
+    Spatie\Permission\Models\Permission::findOrCreate('reservations.manage', 'web');
+    $user = \App\Models\User::factory()->create();
+
+    $request = Request::create('/api/reservations', 'POST', [
+        'rate_plan_id' => RatePlan::firstOrFail()->id,
+        'room_id' => $this->room->id,
+        'starts_at' => now()->addDay()->setTime(15, 0)->toDateTimeString(),
+        'guest_name' => 'Cliente Mostrador',
+        'confirmed' => true,
+        'coupon_code' => 'MOSTRADOR',
+    ]);
+    $request->setUserResolver(fn () => $user);
+
+    $response = app(\App\Http\Controllers\Tenant\ReservationController::class)->store(
+        $request,
+        app(\App\Actions\Reservations\CreateReservation::class),
+    );
+
+    $reservation = Reservation::firstOrFail();
+
+    expect($response->getStatusCode())->toBe(201)
+        ->and($reservation->coupon_code)->toBe('MOSTRADOR')
+        ->and((float) $reservation->discount_amount)->toEqual(100.0)
+        ->and((float) $reservation->total_amount)->toEqual(900.0);
+
+    // Un cupón que no cumple condiciones responde 422 con el motivo.
+    Coupon::create(['code' => 'LARGA2', 'kind' => 'percent', 'value' => 15, 'min_nights' => 5]);
+
+    $bad = Request::create('/api/reservations', 'POST', [
+        'rate_plan_id' => RatePlan::firstOrFail()->id,
+        'starts_at' => now()->addDays(3)->setTime(15, 0)->toDateTimeString(),
+        'guest_name' => 'Otro Cliente',
+        'confirmed' => true,
+        'coupon_code' => 'LARGA2',
+    ]);
+    $bad->setUserResolver(fn () => $user);
+
+    $rejected = app(\App\Http\Controllers\Tenant\ReservationController::class)->store(
+        $bad,
+        app(\App\Actions\Reservations\CreateReservation::class),
+    );
+
+    expect($rejected->getStatusCode())->toBe(422)
+        ->and($rejected->getData(true)['message'])->toContain('al menos 5 noches');
 });

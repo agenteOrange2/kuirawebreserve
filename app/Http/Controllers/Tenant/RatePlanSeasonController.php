@@ -79,6 +79,9 @@ class RatePlanSeasonController extends Controller
             'ends_on' => ['sometimes', 'nullable', 'date', 'after_or_equal:starts_on', 'required_with:starts_on'],
             'weekdays' => ['sometimes', 'nullable', 'array', 'max:7'],
             'weekdays.*' => ['integer', 'between:0,6', 'distinct'],
+            // Estancia larga: la temporada solo rige si la estancia alcanza
+            // estas noches (o periodos, en tarifas por bloque).
+            'min_nights' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:365'],
             'price' => [$season ? 'sometimes' : 'required', 'numeric', 'min:0'],
             'priority' => ['sometimes', 'integer', 'min:0', 'max:1000'],
             'active' => ['sometimes', 'boolean'],
@@ -100,11 +103,12 @@ class RatePlanSeasonController extends Controller
         }
 
         // Estado RESULTANTE (payload + lo ya guardado en update): las fechas
-        // van en pareja, y debe quedar rango o días de la semana; ambos
-        // vacíos no es una regla.
+        // van en pareja, y debe quedar rango, días de la semana o noches
+        // mínimas (promo de estancia larga); todo vacío no es una regla.
         $startsOn = array_key_exists('starts_on', $data) ? $data['starts_on'] : $season?->starts_on;
         $endsOn = array_key_exists('ends_on', $data) ? $data['ends_on'] : $season?->ends_on;
         $weekdays = array_key_exists('weekdays', $data) ? $data['weekdays'] : $season?->weekdays;
+        $minNights = array_key_exists('min_nights', $data) ? $data['min_nights'] : $season?->min_nights;
 
         if (($startsOn === null) !== ($endsOn === null)) {
             throw ValidationException::withMessages([
@@ -112,9 +116,9 @@ class RatePlanSeasonController extends Controller
             ]);
         }
 
-        if ($startsOn === null && empty($weekdays)) {
+        if ($startsOn === null && empty($weekdays) && $minNights === null) {
             throw ValidationException::withMessages([
-                'starts_on' => 'Captura un rango de fechas, marca días de la semana, o ambos.',
+                'starts_on' => 'Captura un rango de fechas, marca días de la semana o define noches mínimas.',
             ]);
         }
 
@@ -134,6 +138,7 @@ class RatePlanSeasonController extends Controller
             'starts_on' => $season->starts_on?->toDateString(),
             'ends_on' => $season->ends_on?->toDateString(),
             'weekdays' => $season->weekdays,
+            'min_nights' => $season->min_nights,
             'price' => $season->price,
             'priority' => $season->priority,
             'active' => $season->active,

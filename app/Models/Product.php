@@ -39,6 +39,9 @@ class Product extends Model implements HasMedia
         // POS; esto decide si además se ofrece SIN staff de por medio al
         // huésped en /reservar. Default false — el admin elige a propósito.
         'available_in_wizard',
+        // Curación del menú digital (/menu, módulo menu-digital): mismo
+        // criterio que available_in_wizard pero para la carta del huésped.
+        'available_in_menu',
     ];
 
     protected function casts(): array
@@ -51,6 +54,7 @@ class Product extends Model implements HasMedia
             'reorder_point' => 'decimal:3',
             'active' => 'boolean',
             'available_in_wizard' => 'boolean',
+            'available_in_menu' => 'boolean',
         ];
     }
 

@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -281,19 +280,51 @@ async function deleteFaq() {
 <template>
     <RazeLayout title="Datos generales">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <Link
-                        href="/ajustes"
-                        class="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
+            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
+                 círculo + título + acción a la derecha -->
+            <div
+                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+            >
+                <div class="flex min-w-0 items-center gap-4">
+                    <div
+                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="ArrowLeft" class="h-4 w-4" /> Ajustes
-                    </Link>
-                    <h1 class="mt-1 text-lg font-medium">Datos generales</h1>
-                    <p class="text-sm text-slate-500">
-                        Contacto, redes, horarios y moneda, políticas y
-                        preguntas frecuentes.
-                    </p>
+                        <Lucide icon="Building2" class="h-7 w-7" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-xl font-medium">Datos generales</h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            Contacto, redes, horarios y moneda, políticas y
+                            preguntas frecuentes.
+                        </p>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <Button
+                        as="a"
+                        :href="route('tenant.panel-appearance')"
+                        variant="outline-primary"
+                        class="rounded-[0.5rem] bg-white"
+                        title="Colores del menú lateral y botones del panel"
+                    >
+                        <Lucide
+                            icon="Palette"
+                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                        />
+                        Apariencia del panel
+                    </Button>
+                    <Button
+                        as="a"
+                        :href="route('tenant.hotel-settings')"
+                        variant="outline-secondary"
+                        class="rounded-[0.5rem] bg-white"
+                    >
+                        <Lucide
+                            icon="ArrowLeft"
+                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                        />
+                        Volver a Ajustes
+                    </Button>
                 </div>
             </div>
 
@@ -575,65 +606,55 @@ async function deleteFaq() {
                             </div>
                         </div>
                     </div>
+                </div>
 
-                    <!-- Redes sociales: los canales del hotel -->
-                    <div class="box box--stacked mt-6 p-5">
+                <!-- Columna derecha: políticas + horarios/moneda + redes,
+                     tres tarjetas medianas que emparejan la altura de la
+                     columna de datos (antes Políticas se estiraba sola y
+                     quedaba un vacío enorme) -->
+                <div class="col-span-12 xl:col-span-6">
+                    <div class="box box--stacked p-5">
                         <div
                             class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
                         >
-                            <Lucide icon="Share2" class="h-3.5 w-3.5" /> Redes
-                            sociales
+                            <Lucide icon="ScrollText" class="h-3.5 w-3.5" />
+                            Políticas del hotel
                         </div>
                         <p class="mb-3 text-xs text-slate-500">
-                            Se muestran en la página de pago y donde el huésped
-                            aterriza — para llegarle por todos tus canales.
-                        </p>
-                        <div v-if="form.socials.length" class="space-y-2">
-                            <div
-                                v-for="(social, i) in form.socials"
-                                :key="i"
-                                class="flex items-center gap-2"
+                            Escríbelas en lenguaje natural: mascotas,
+                            estacionamiento, visitas, cancelaciones, niños…
+                            <span class="font-medium"
+                                >Los asistentes IA responderán a los huéspedes
+                                usando exactamente lo que pongas aquí.</span
                             >
-                                <FormSelect v-model="social.type" class="!w-40">
-                                    <option
-                                        v-for="(label, key) in socialTypes"
-                                        :key="key"
-                                        :value="key"
-                                    >
-                                        {{ label }}
-                                    </option>
-                                </FormSelect>
-                                <FormInput
-                                    v-model="social.url"
-                                    type="url"
-                                    placeholder="https://…"
-                                />
-                                <button
-                                    type="button"
-                                    class="rounded p-1.5 text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                    title="Quitar red"
-                                    @click="form.socials.splice(i, 1)"
-                                >
-                                    <Lucide icon="Trash2" class="h-4 w-4" />
-                                </button>
-                            </div>
-                        </div>
-                        <Button
-                            v-if="form.socials.length < 10"
-                            type="button"
-                            variant="outline-secondary"
-                            size="sm"
-                            class="mt-2 rounded-[0.5rem] bg-white"
-                            @click="
-                                form.socials.push({
-                                    type: 'facebook',
-                                    url: '',
-                                })
-                            "
+                        </p>
+                        <FormTextarea
+                            v-model="form.policies"
+                            rows="10"
+                            placeholder="Ej.
+— No se permiten mascotas, excepto perros de asistencia.
+— El estacionamiento es gratuito para huéspedes (1 auto por habitación).
+— Cancelaciones sin costo hasta 24 h antes de la llegada.
+— Check-in a partir de las 15:00; salidas después de las 12:00 generan cargo de $200/hora."
+                        />
+                        <FormHelp v-if="errors.policies" class="text-danger">{{
+                            errors.policies
+                        }}</FormHelp>
+                        <div
+                            class="mt-3 flex items-start gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
                         >
-                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
-                            Agregar red social
-                        </Button>
+                            <Lucide
+                                icon="Bot"
+                                class="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                            />
+                            <span
+                                >Estas políticas + horarios + tarifas serán la
+                                única fuente de verdad del agente de
+                                WhatsApp/webchat. Si algo no está escrito aquí,
+                                el agente dirá que no tiene esa información (no
+                                inventa).</span
+                            >
+                        </div>
                     </div>
 
                     <div class="box box--stacked mt-6 p-5">
@@ -766,53 +787,65 @@ async function deleteFaq() {
                             >
                         </div>
                     </div>
-                </div>
 
-                <!-- Políticas -->
-                <div class="col-span-12 flex flex-col xl:col-span-6">
-                    <div class="box box--stacked flex flex-1 flex-col p-5">
+                    <!-- Redes sociales: los canales del hotel -->
+                    <div class="box box--stacked mt-6 p-5">
                         <div
                             class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
                         >
-                            <Lucide icon="ScrollText" class="h-3.5 w-3.5" />
-                            Políticas del hotel
+                            <Lucide icon="Share2" class="h-3.5 w-3.5" /> Redes
+                            sociales
                         </div>
                         <p class="mb-3 text-xs text-slate-500">
-                            Escríbelas en lenguaje natural: mascotas,
-                            estacionamiento, visitas, cancelaciones, niños…
-                            <span class="font-medium"
-                                >Los asistentes IA responderán a los huéspedes
-                                usando exactamente lo que pongas aquí.</span
-                            >
+                            Se muestran en la página de pago y donde el huésped
+                            aterriza — para llegarle por todos tus canales.
                         </p>
-                        <FormTextarea
-                            v-model="form.policies"
-                            rows="14"
-                            class="flex-1"
-                            placeholder="Ej.
-— No se permiten mascotas, excepto perros de asistencia.
-— El estacionamiento es gratuito para huéspedes (1 auto por habitación).
-— Cancelaciones sin costo hasta 24 h antes de la llegada.
-— Check-in a partir de las 15:00; salidas después de las 12:00 generan cargo de $200/hora."
-                        />
-                        <FormHelp v-if="errors.policies" class="text-danger">{{
-                            errors.policies
-                        }}</FormHelp>
-                        <div
-                            class="mt-3 flex items-start gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
-                        >
-                            <Lucide
-                                icon="Bot"
-                                class="mt-0.5 h-4 w-4 shrink-0 text-primary"
-                            />
-                            <span
-                                >Estas políticas + horarios + tarifas serán la
-                                única fuente de verdad del agente de
-                                WhatsApp/webchat. Si algo no está escrito aquí,
-                                el agente dirá que no tiene esa información (no
-                                inventa).</span
+                        <div v-if="form.socials.length" class="space-y-2">
+                            <div
+                                v-for="(social, i) in form.socials"
+                                :key="i"
+                                class="flex items-center gap-2"
                             >
+                                <FormSelect v-model="social.type" class="!w-40">
+                                    <option
+                                        v-for="(label, key) in socialTypes"
+                                        :key="key"
+                                        :value="key"
+                                    >
+                                        {{ label }}
+                                    </option>
+                                </FormSelect>
+                                <FormInput
+                                    v-model="social.url"
+                                    type="url"
+                                    placeholder="https://…"
+                                />
+                                <button
+                                    type="button"
+                                    class="rounded p-1.5 text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                    title="Quitar red"
+                                    @click="form.socials.splice(i, 1)"
+                                >
+                                    <Lucide icon="Trash2" class="h-4 w-4" />
+                                </button>
+                            </div>
                         </div>
+                        <Button
+                            v-if="form.socials.length < 10"
+                            type="button"
+                            variant="outline-secondary"
+                            size="sm"
+                            class="mt-2 rounded-[0.5rem] bg-white"
+                            @click="
+                                form.socials.push({
+                                    type: 'facebook',
+                                    url: '',
+                                })
+                            "
+                        >
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                            Agregar red social
+                        </Button>
                     </div>
                 </div>
 

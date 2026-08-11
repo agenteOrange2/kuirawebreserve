@@ -17,6 +17,7 @@ class Zone extends Model
         'piso' => 'Piso',
         'edificio' => 'Edificio',
         'area' => 'Área',
+        'pasillo' => 'Pasillo',
     ];
 
     protected $fillable = [

@@ -12,6 +12,9 @@ export interface MenuItem {
     // Key de config/modules.php: el item solo aparece si el módulo está
     // activo para el hotel (panelTenant.modules del share de Inertia).
     module?: string;
+    // Permiso (spatie) que exige la ruta del item: sin él, el item se
+    // esconde (panelTenant.permissions) — mismo gate que el middleware.
+    permission?: string;
     // El TÍTULO de sección es el toggle: se pinta como divider (uppercase)
     // con chevron y colapsa sus items — sin renglón duplicado debajo.
     sectionToggle?: boolean;
@@ -39,6 +42,11 @@ const centralMenu: Array<MenuItem | string> = [
         icon: 'Layers',
         pageName: 'admin.plans',
         title: 'Planes',
+    },
+    {
+        icon: 'PackagePlus',
+        pageName: 'admin.services',
+        title: 'Servicios adicionales',
     },
     {
         icon: 'ContactRound',
@@ -83,11 +91,14 @@ const tenantMenu: Array<MenuItem | string> = [
         icon: 'Map',
         pageName: 'tenant.plano',
         title: 'Plano',
+        permission: 'rooms.view',
     },
     {
         icon: 'MessagesSquare',
         pageName: 'tenant.inbox',
         title: 'Bandeja',
+        permission: 'reservations.view',
+        module: 'mensajeria',
     },
     {
         icon: 'CalendarDays',
@@ -97,41 +108,48 @@ const tenantMenu: Array<MenuItem | string> = [
                 icon: 'CalendarDays',
                 pageName: 'tenant.reservations',
                 title: 'Reservas',
+                permission: 'reservations.view',
             },
             {
                 icon: 'CalendarRange',
                 pageName: 'tenant.reservations.calendar',
                 title: 'Calendario',
+                permission: 'reservations.view',
             },
             {
                 icon: 'UsersRound',
                 pageName: 'tenant.groups',
                 title: 'Reservas grupales',
                 module: 'grupos',
+                permission: 'reservations.view',
             },
             {
                 icon: 'Compass',
                 pageName: 'tenant.experiences',
                 title: 'Experiencias',
                 module: 'experiencias',
+                permission: 'reservations.view',
             },
             {
                 icon: 'Gift',
                 pageName: 'tenant.extras',
                 title: 'Extras de reserva',
                 module: 'extras',
+                permission: 'properties.manage',
             },
             {
                 icon: 'BellRing',
                 pageName: 'tenant.waitlist',
                 title: 'Lista de espera',
                 module: 'lista-espera',
+                permission: 'reservations.manage',
             },
             {
                 icon: 'TicketPercent',
                 pageName: 'tenant.coupons',
                 title: 'Cupones',
                 module: 'cupones',
+                permission: 'properties.manage',
             },
         ],
     },
@@ -143,16 +161,33 @@ const tenantMenu: Array<MenuItem | string> = [
                 icon: 'Users',
                 pageName: 'tenant.guests',
                 title: 'Huéspedes',
+                permission: 'guests.view',
             },
             {
                 icon: 'BedDouble',
                 pageName: 'tenant.rooms',
                 title: 'Habitaciones',
+                permission: 'rooms.view',
+            },
+            {
+                icon: 'Wrench',
+                pageName: 'tenant.incidents',
+                title: 'Incidencias',
+                module: 'incidencias',
+                permission: 'rooms.view',
+            },
+            {
+                icon: 'Smile',
+                pageName: 'tenant.surveys',
+                title: 'Encuestas',
+                module: 'encuestas',
+                permission: 'reports.view',
             },
             {
                 icon: 'Shapes',
                 pageName: 'tenant.catalog',
                 title: 'Zonas y tipos',
+                permission: 'rooms.view',
             },
         ],
     },
@@ -165,34 +200,54 @@ const tenantMenu: Array<MenuItem | string> = [
                 pageName: 'tenant.pos',
                 title: 'POS',
                 module: 'pos',
+                permission: 'orders.manage',
             },
             {
                 icon: 'Clock',
                 pageName: 'tenant.shifts',
                 title: 'Turnos',
-                module: 'pos',
+                module: 'corte-caja',
+                permission: 'orders.manage',
             },
             {
                 icon: 'Calculator',
                 pageName: 'tenant.cashcuts',
-                title: 'Cortes de venta',
-                module: 'pos',
+                title: 'Cortes de caja',
+                module: 'corte-caja',
+                permission: 'orders.manage',
             },
             {
                 icon: 'Package',
                 pageName: 'tenant.inventory',
                 title: 'Inventario',
                 module: 'pos',
+                permission: 'inventory.manage',
+            },
+            {
+                icon: 'UtensilsCrossed',
+                pageName: 'tenant.menu-digital',
+                title: 'Menú digital',
+                module: 'menu-digital',
+                permission: 'orders.manage',
+            },
+            {
+                icon: 'ChefHat',
+                pageName: 'tenant.menu-kitchen',
+                title: 'Cocina',
+                module: 'menu-digital',
+                permission: 'orders.manage',
             },
             {
                 icon: 'Wallet',
                 pageName: 'tenant.payments',
                 title: 'Pagos',
+                permission: 'reservations.view',
             },
             {
                 icon: 'Landmark',
                 pageName: 'tenant.online-payments',
                 title: 'Cobros en línea',
+                permission: 'reservations.view',
             },
         ],
     },
@@ -204,22 +259,34 @@ const tenantMenu: Array<MenuItem | string> = [
                 icon: 'UserCog',
                 pageName: 'tenant.users',
                 title: 'Usuarios',
+                permission: 'users.manage',
+            },
+            {
+                icon: 'History',
+                pageName: 'tenant.activity',
+                title: 'Actividad',
+                module: 'bitacora',
+                permission: 'reports.view',
             },
             {
                 icon: 'Bot',
                 pageName: 'tenant.agent',
                 title: 'Asistente IA',
+                permission: 'properties.manage',
+                module: 'mensajeria',
             },
             {
                 icon: 'Plug',
                 pageName: 'tenant.integration',
                 title: 'Integración',
                 module: 'motor-web',
+                permission: 'properties.manage',
             },
             {
                 icon: 'Settings',
                 pageName: 'tenant.hotel-settings',
                 title: 'Ajustes',
+                permission: 'properties.manage',
             },
         ],
     },
@@ -237,14 +304,20 @@ export function useMenu() {
             return centralMenu;
         }
 
-        // Items de módulos apagados desaparecen del menú (spec-plan-maestro E1).
-        // También dentro de submenus (si los hubiera) y un título de sección
-        // que se queda sin items debajo tampoco se pinta.
-        const modules =
-            (page.props.panelTenant as { modules?: string[] } | null)
-                ?.modules ?? [];
+        // Items de módulos apagados desaparecen del menú (spec-plan-maestro E1)
+        // y también los que exigen un permiso que el usuario no tiene (mismo
+        // gate `can:` de la ruta — sin esto, un rol limitado veía opciones
+        // que respondían 403). Un título de sección que se queda sin items
+        // debajo tampoco se pinta.
+        const shared = page.props.panelTenant as {
+            modules?: string[];
+            permissions?: string[];
+        } | null;
+        const modules = shared?.modules ?? [];
+        const permissions = shared?.permissions ?? [];
         const enabled = (item: MenuItem) =>
-            !item.module || modules.includes(item.module);
+            (!item.module || modules.includes(item.module)) &&
+            (!item.permission || permissions.includes(item.permission));
 
         const filtered = tenantMenu.flatMap(
             (item): Array<MenuItem | string> => {

@@ -51,6 +51,9 @@ interface RoomRow {
     included_occupancy: number | null;
     extra_guest_fee: number | null;
     optional_charges: OptionalCharge[];
+    usage_count: number;
+    usage_limit: number | null;
+    usage_locked: boolean;
     maintenance_notes: string | null;
 }
 
@@ -401,6 +404,43 @@ async function duplicateRoom(room: RoomRow) {
     }
 }
 
+// ── Contador de usos y candado de rotación ──
+const resettingUsage = ref<RoomRow | null>(null);
+const resettingBusy = ref(false);
+
+async function confirmResetUsage() {
+    if (!resettingUsage.value) return;
+    resettingBusy.value = true;
+    try {
+        await axios.post(`/api/rooms/${resettingUsage.value.id}/usage-reset`);
+        toast.success(
+            'Contador reseteado',
+            `La ${resettingUsage.value.number} vuelve a cero usos y entra de nuevo en la rotación.`,
+        );
+        resettingUsage.value = null;
+        router.reload({ only: ['rooms'] });
+    } catch (error) {
+        handleError(error);
+    } finally {
+        resettingBusy.value = false;
+    }
+}
+
+function usageBadgeClass(room: RoomRow): string {
+    if (room.usage_locked) return 'bg-danger/10 text-danger';
+    if (room.usage_limit && room.usage_count >= room.usage_limit * 0.8)
+        return 'bg-warning/10 text-warning';
+    return 'bg-slate-100 text-slate-500 dark:bg-darkmode-400 dark:text-slate-300';
+}
+
+function usageTitle(room: RoomRow): string {
+    if (room.usage_locked)
+        return `Bloqueada por usos: llegó a ${room.usage_count} de ${room.usage_limit}. Resetea el contador para liberarla.`;
+    return room.usage_limit
+        ? `${room.usage_count} de ${room.usage_limit} usos para bloquearse`
+        : `${room.usage_count} usos desde el último reseteo`;
+}
+
 // ── Bloqueos por fechas (mantenimiento programado): los días marcados no
 // se ofrecen al reservar; el semáforo presente no se toca. ──
 interface BlockRow {
@@ -554,6 +594,8 @@ const form = reactive({
     included_occupancy: '' as string | number,
     extra_guest_fee: '' as string | number,
     optional_charges: [] as { concept: string; amount: string | number }[],
+    usage_count: 0 as string | number,
+    usage_limit: '' as string | number,
     notes: '',
     maintenance_notes: '',
 });
@@ -578,6 +620,8 @@ function openCreate() {
     form.included_occupancy = '';
     form.extra_guest_fee = '';
     form.optional_charges = [];
+    form.usage_count = 0;
+    form.usage_limit = '';
     form.notes = '';
     form.maintenance_notes = '';
     amenityInput.value = '';
@@ -605,6 +649,8 @@ function openEdit(room: RoomRow) {
     form.optional_charges = (room.optional_charges ?? []).map((charge) => ({
         ...charge,
     }));
+    form.usage_count = room.usage_count ?? 0;
+    form.usage_limit = room.usage_limit ?? '';
     form.notes = room.notes ?? '';
     form.maintenance_notes = room.maintenance_notes ?? '';
     amenityInput.value = '';
@@ -703,6 +749,8 @@ async function submit() {
                 concept: charge.concept.trim(),
                 amount: Number(charge.amount) || 0,
             })),
+        usage_count: Number(form.usage_count) || 0,
+        usage_limit: toNumberOrNull(form.usage_limit),
         notes: form.notes === '' ? null : form.notes,
         maintenance_notes:
             form.maintenance_notes.trim() === ''
@@ -1049,6 +1097,25 @@ async function submitDelete() {
                                     />
                                     {{ room.zone }}
                                 </span>
+                                <span
+                                    v-if="room.usage_count || room.usage_limit"
+                                    :title="usageTitle(room)"
+                                    class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium whitespace-nowrap"
+                                    :class="usageBadgeClass(room)"
+                                >
+                                    <Lucide
+                                        :icon="
+                                            room.usage_locked
+                                                ? 'Lock'
+                                                : 'Repeat'
+                                        "
+                                        class="h-3 w-3"
+                                    />
+                                    {{ room.usage_count
+                                    }}<template v-if="room.usage_limit"
+                                        >/{{ room.usage_limit }}</template
+                                    >
+                                </span>
                             </div>
                             <div
                                 v-if="canManage || canBlock"
@@ -1090,6 +1157,24 @@ async function submitDelete() {
                                         icon="CalendarOff"
                                         class="h-4 w-4"
                                     />
+                                </button>
+                                <button
+                                    v-if="
+                                        canBlock &&
+                                        (room.usage_count > 0 ||
+                                            room.usage_locked)
+                                    "
+                                    type="button"
+                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 dark:border-darkmode-400"
+                                    :class="
+                                        room.usage_locked
+                                            ? 'text-danger'
+                                            : 'text-slate-500'
+                                    "
+                                    title="Resetear contador de usos"
+                                    @click="resettingUsage = room"
+                                >
+                                    <Lucide icon="RotateCcw" class="h-4 w-4" />
                                 </button>
                                 <button
                                     v-if="canManage"
@@ -1232,10 +1317,37 @@ async function submitDelete() {
                                             v-if="
                                                 room.smoking ||
                                                 room.accessible ||
-                                                room.price_modifier
+                                                room.price_modifier ||
+                                                room.usage_count ||
+                                                room.usage_limit
                                             "
                                             class="mt-1 flex items-center gap-2 sm:gap-1.5"
                                         >
+                                            <span
+                                                v-if="
+                                                    room.usage_count ||
+                                                    room.usage_limit
+                                                "
+                                                :title="usageTitle(room)"
+                                                class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium whitespace-nowrap"
+                                                :class="usageBadgeClass(room)"
+                                            >
+                                                <Lucide
+                                                    :icon="
+                                                        room.usage_locked
+                                                            ? 'Lock'
+                                                            : 'Repeat'
+                                                    "
+                                                    class="h-3 w-3"
+                                                />
+                                                {{ room.usage_count
+                                                }}<template
+                                                    v-if="room.usage_limit"
+                                                    >/{{
+                                                        room.usage_limit
+                                                    }}</template
+                                                >
+                                            </span>
                                             <span
                                                 v-if="room.smoking"
                                                 title="Se permite fumar"
@@ -1328,6 +1440,27 @@ async function submitDelete() {
                                             >
                                                 <Lucide
                                                     icon="CalendarOff"
+                                                    class="h-4 w-4"
+                                                />
+                                            </button>
+                                            <button
+                                                v-if="
+                                                    canBlock &&
+                                                    (room.usage_count > 0 ||
+                                                        room.usage_locked)
+                                                "
+                                                type="button"
+                                                class="flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-info/10 hover:text-info"
+                                                :class="
+                                                    room.usage_locked
+                                                        ? 'text-danger'
+                                                        : 'text-slate-500'
+                                                "
+                                                title="Resetear contador de usos"
+                                                @click="resettingUsage = room"
+                                            >
+                                                <Lucide
+                                                    icon="RotateCcw"
                                                     class="h-4 w-4"
                                                 />
                                             </button>
@@ -2142,6 +2275,79 @@ async function submitDelete() {
                             </div>
                         </div>
 
+                        <!-- Contador de usos y candado de rotación -->
+                        <div
+                            class="space-y-4 border-t border-slate-200/60 pt-6 dark:border-darkmode-400"
+                        >
+                            <div
+                                class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                <Lucide icon="Repeat" class="h-3.5 w-3.5" />
+                                Contador de usos
+                            </div>
+                            <div class="grid grid-cols-12 gap-4">
+                                <div class="col-span-12 sm:col-span-6">
+                                    <FormLabel htmlFor="room-usage-limit"
+                                        >Bloquear tras N usos
+                                        (opcional)</FormLabel
+                                    >
+                                    <FormInput
+                                        id="room-usage-limit"
+                                        v-model="form.usage_limit"
+                                        type="number"
+                                        min="1"
+                                        placeholder="Ej. 20"
+                                    />
+                                    <FormHelp
+                                        >Al llegar al límite la habitación se
+                                        bloquea sola y se usan las demás del
+                                        tipo; vacío = sin candado.</FormHelp
+                                    >
+                                    <FormHelp
+                                        v-if="errors.usage_limit"
+                                        class="text-danger"
+                                        >{{ errors.usage_limit }}</FormHelp
+                                    >
+                                </div>
+                                <div class="col-span-12 sm:col-span-6">
+                                    <FormLabel htmlFor="room-usage-count"
+                                        >Usos acumulados</FormLabel
+                                    >
+                                    <FormInput
+                                        id="room-usage-count"
+                                        v-model="form.usage_count"
+                                        type="number"
+                                        min="0"
+                                    />
+                                    <FormHelp
+                                        >Sube solo con cada check-out; ajústalo
+                                        aquí si quieres partir de otro
+                                        número.</FormHelp
+                                    >
+                                    <FormHelp
+                                        v-if="errors.usage_count"
+                                        class="text-danger"
+                                        >{{ errors.usage_count }}</FormHelp
+                                    >
+                                </div>
+                            </div>
+                            <div
+                                v-if="editing?.usage_locked"
+                                class="flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                            >
+                                <Lucide
+                                    icon="Lock"
+                                    class="mt-0.5 h-4 w-4 shrink-0"
+                                />
+                                <span
+                                    >Bloqueada por usos: llegó a su límite y
+                                    está fuera de disponibilidad. Baja el
+                                    contador, sube el límite o usa "Resetear
+                                    contador" en la lista para liberarla.</span
+                                >
+                            </div>
+                        </div>
+
                         <!-- Notas -->
                         <div
                             class="space-y-4 border-t border-slate-200/60 pt-6 dark:border-darkmode-400"
@@ -2947,6 +3153,44 @@ async function submitDelete() {
                         @click="blockingRoom = null"
                         >Cerrar</Button
                     >
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Confirmar reset del contador de usos -->
+        <Dialog :open="resettingUsage !== null" @close="resettingUsage = null">
+            <Dialog.Panel>
+                <div class="p-5 text-center">
+                    <Lucide
+                        icon="RotateCcw"
+                        class="mx-auto mb-3 h-12 w-12 text-info"
+                    />
+                    <h2 class="text-base font-medium">
+                        ¿Resetear el contador de la
+                        {{ resettingUsage?.number }}?
+                    </h2>
+                    <p class="mt-2 text-sm text-slate-500">
+                        Lleva {{ resettingUsage?.usage_count }} uso(s). El
+                        contador vuelve a cero<template
+                            v-if="resettingUsage?.usage_locked"
+                        >
+                            y el candado se retira: la habitación entra de nuevo
+                            en disponibilidad</template
+                        >.
+                    </p>
+                    <div class="mt-5 flex justify-center gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            @click="resettingUsage = null"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="primary"
+                            :disabled="resettingBusy"
+                            @click="confirmResetUsage"
+                            >Sí, resetear</Button
+                        >
+                    </div>
                 </div>
             </Dialog.Panel>
         </Dialog>

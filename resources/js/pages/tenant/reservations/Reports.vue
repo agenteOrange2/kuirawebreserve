@@ -3,7 +3,7 @@ import { router } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import Chart from '@/components/Base/Chart';
-import { FormInput } from '@/components/Base/Form';
+import { FormInput, FormSelect } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import Table from '@/components/Base/Table';
@@ -30,10 +30,19 @@ interface ChannelRow {
     channel: string;
     count: number;
 }
+interface RoomOption {
+    id: number;
+    label: string;
+}
+interface RoomRow {
+    name: string;
+    uses: number;
+    revenue: number;
+}
 
 const props = defineProps<{
     property: { id: number; name: string };
-    filters: { period: string; from: string; to: string };
+    filters: { period: string; from: string; to: string; room: number | null };
     period: { label: string; from: string; to: string };
     kpis: {
         total: number;
@@ -57,6 +66,8 @@ const props = defineProps<{
     byStatus: StatusRow[];
     byRoomType: RoomTypeRow[];
     byChannel: ChannelRow[];
+    byRoom: RoomRow[];
+    rooms: RoomOption[];
 }>();
 
 const money = (n: number) =>
@@ -77,25 +88,42 @@ const periods: { key: string; label: string; icon: Icon }[] = [
 const customFrom = ref(props.filters.from);
 const customTo = ref(props.filters.to);
 
+// ── Filtro por habitación ─────────────────────────────────────
+const roomSel = ref<string | number>(props.filters.room ?? '');
+
+function query(period: string) {
+    return {
+        period,
+        room: roomSel.value || undefined,
+        ...(period === 'custom'
+            ? { from: customFrom.value, to: customTo.value }
+            : {}),
+    };
+}
+
 function goTo(period: string) {
     if (period === 'custom') {
         applyCustom();
         return;
     }
-    router.get(
-        route('tenant.reservations.reports'),
-        { period },
-        { preserveScroll: true },
-    );
+    router.get(route('tenant.reservations.reports'), query(period), {
+        preserveScroll: true,
+    });
 }
 
 function applyCustom() {
     if (!customFrom.value || !customTo.value) return;
-    router.get(
-        route('tenant.reservations.reports'),
-        { period: 'custom', from: customFrom.value, to: customTo.value },
-        { preserveScroll: true },
-    );
+    router.get(route('tenant.reservations.reports'), query('custom'), {
+        preserveScroll: true,
+    });
+}
+
+function applyRoom() {
+    if (props.filters.period === 'custom') {
+        applyCustom();
+        return;
+    }
+    goTo(props.filters.period);
 }
 
 const showCustom = ref(props.filters.period === 'custom');
@@ -103,6 +131,7 @@ const showCustom = ref(props.filters.period === 'custom');
 const pdfUrl = computed(() =>
     route('tenant.reservations.reports.pdf', {
         period: props.filters.period,
+        ...(props.filters.room ? { room: props.filters.room } : {}),
         ...(props.filters.period === 'custom'
             ? { from: props.filters.from, to: props.filters.to }
             : {}),
@@ -216,6 +245,9 @@ const effective = computed(
 );
 const maxChannel = computed(() =>
     Math.max(1, ...props.byChannel.map((c) => c.count)),
+);
+const maxRoomUses = computed(() =>
+    Math.max(1, ...props.byRoom.map((r) => r.uses)),
 );
 </script>
 
@@ -341,8 +373,28 @@ const maxChannel = computed(() =>
                             Aplicar
                         </Button>
                     </div>
+                    <div class="flex items-center gap-2 sm:ml-auto">
+                        <Lucide
+                            icon="BedDouble"
+                            class="h-4 w-4 stroke-[1.3] text-slate-400"
+                        />
+                        <FormSelect
+                            v-model="roomSel"
+                            class="w-52"
+                            @change="applyRoom"
+                        >
+                            <option value="">Todas las habitaciones</option>
+                            <option
+                                v-for="room in rooms"
+                                :key="room.id"
+                                :value="room.id"
+                            >
+                                {{ room.label }}
+                            </option>
+                        </FormSelect>
+                    </div>
                     <div
-                        class="ml-auto flex items-center gap-2 rounded-[0.5rem] border border-dashed border-slate-300/70 px-3 py-1.5 text-sm dark:border-darkmode-400"
+                        class="flex items-center gap-2 rounded-[0.5rem] border border-dashed border-slate-300/70 px-3 py-1.5 text-sm dark:border-darkmode-400"
                     >
                         <Lucide
                             icon="CalendarRange"
@@ -698,6 +750,72 @@ const maxChannel = computed(() =>
                     >
                         <Lucide icon="Radio" class="h-8 w-8" />
                         <p class="text-sm">Sin datos en el periodo.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Uso por habitación -->
+            <div class="col-span-12 flex flex-col">
+                <div class="flex items-center md:h-10">
+                    <div class="text-base font-medium">Uso por habitación</div>
+                    <div class="ml-3 text-xs text-slate-400">
+                        Estancias con check-in en el periodo; los walk-ins
+                        también cuentan.
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked mt-3.5 flex-1 overflow-auto p-5 lg:overflow-visible"
+                >
+                    <Table v-if="byRoom.length">
+                        <Table.Thead>
+                            <Table.Tr>
+                                <Table.Th>Habitación</Table.Th>
+                                <Table.Th class="w-24 text-right"
+                                    >Usos</Table.Th
+                                >
+                                <Table.Th class="hidden w-1/3 sm:table-cell" />
+                                <Table.Th class="text-right"
+                                    >Ingresos de hospedaje</Table.Th
+                                >
+                            </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                            <Table.Tr v-for="row in byRoom" :key="row.name">
+                                <Table.Td class="font-medium">
+                                    <div class="flex items-center gap-2">
+                                        <Lucide
+                                            icon="BedDouble"
+                                            class="h-4 w-4 text-slate-400"
+                                        />
+                                        {{ row.name }}
+                                    </div>
+                                </Table.Td>
+                                <Table.Td class="text-right font-medium">{{
+                                    row.uses
+                                }}</Table.Td>
+                                <Table.Td class="hidden sm:table-cell">
+                                    <div
+                                        class="h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-darkmode-400"
+                                    >
+                                        <div
+                                            class="h-full rounded-full bg-info/70"
+                                            :style="{
+                                                width: `${(row.uses / maxRoomUses) * 100}%`,
+                                            }"
+                                        />
+                                    </div>
+                                </Table.Td>
+                                <Table.Td class="text-right font-medium">{{
+                                    money(row.revenue)
+                                }}</Table.Td>
+                            </Table.Tr>
+                        </Table.Tbody>
+                    </Table>
+                    <div
+                        v-else
+                        class="py-10 text-center text-sm text-slate-500"
+                    >
+                        Sin estancias en el periodo.
                     </div>
                 </div>
             </div>

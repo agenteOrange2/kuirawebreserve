@@ -55,6 +55,9 @@ class PaymentReturnController extends Controller
                 ->where('tenant_id', (string) tenant('id'))->where('active', true)->exists();
 
         return Inertia::render('tenant/payments/Return', [
+            // Acento del hotel (/reservas/ajustes): la página de retorno
+            // debe verse del hotel, igual que el wizard.
+            'accent' => $property?->wizardAppearance()['accent'],
             // Contacto público para el pie: nombre, sitio para "volver" y
             // redes para seguir al hotel por todos sus canales.
             'hotel' => $property

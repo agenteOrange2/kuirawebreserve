@@ -139,3 +139,29 @@ it('el ajuste del cuarto se suma por unidad encima del precio de temporada', fun
     // 2 noches × (1000 + 100) = 2200
     expect($plan->priceFor($start, $end, $this->room))->toEqual(2200.0);
 });
+
+it('una promo de estancia larga solo aplica al alcanzar las noches mínimas', function () {
+    $plan = RatePlan::factory()->create(['property_id' => $this->property->id, 'room_type_id' => $this->roomType->id, 'price' => 1000]);
+
+    // Sin fechas ni días: promo recurrente que rige solo con 3+ noches.
+    RatePlanSeason::factory()->create([
+        'rate_plan_id' => $plan->id,
+        'name' => 'Estancia larga',
+        'starts_on' => null,
+        'ends_on' => null,
+        'weekdays' => null,
+        'min_nights' => 3,
+        'price' => 800,
+    ]);
+
+    $start = now()->addDays(10)->setTime(15, 0);
+
+    // 2 noches: precio normal.
+    expect($plan->priceFor($start, $start->copy()->addDays(2)->setTime(12, 0)))->toEqual(2000.0)
+        // 3 noches: entra la promo en TODAS las noches.
+        ->and($plan->priceFor($start, $start->copy()->addDays(3)->setTime(12, 0)))->toEqual(2400.0);
+
+    // El desglose también la nombra.
+    $lines = $plan->priceBreakdown($start, $start->copy()->addDays(3)->setTime(12, 0), null);
+    expect($lines[0]['concept'])->toContain('Estancia larga');
+});

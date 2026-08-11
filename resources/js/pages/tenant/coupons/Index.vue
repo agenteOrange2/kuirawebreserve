@@ -20,6 +20,11 @@ interface CouponRow {
     kind: 'percent' | 'amount';
     value: number;
     label: string;
+    min_nights: number | null;
+    min_visits: number | null;
+    room_type_id: number | null;
+    birthday: boolean;
+    conditions: string[];
     starts_at: string | null;
     ends_at: string | null;
     max_uses: number | null;
@@ -30,6 +35,7 @@ interface CouponRow {
 
 const props = defineProps<{
     coupons: CouponRow[];
+    roomTypes: Array<{ id: number; name: string }>;
     canManage: boolean;
 }>();
 
@@ -61,6 +67,10 @@ const form = reactive({
     starts_at: '',
     ends_at: '',
     max_uses: '' as string | number,
+    min_nights: '' as string | number,
+    min_visits: '' as string | number,
+    room_type_id: '' as string | number,
+    birthday: false,
     active: true,
 });
 
@@ -72,6 +82,10 @@ function openForm(coupon: CouponRow | null = null) {
     form.starts_at = coupon?.starts_at ?? '';
     form.ends_at = coupon?.ends_at ?? '';
     form.max_uses = coupon?.max_uses ?? '';
+    form.min_nights = coupon?.min_nights ?? '';
+    form.min_visits = coupon?.min_visits ?? '';
+    form.room_type_id = coupon?.room_type_id ?? '';
+    form.birthday = coupon?.birthday ?? false;
     form.active = coupon?.active ?? true;
     Object.keys(errors).forEach((k) => delete errors[k]);
     showForm.value = true;
@@ -87,6 +101,12 @@ async function submit() {
         starts_at: form.starts_at || null,
         ends_at: form.ends_at || null,
         max_uses: form.max_uses === '' ? null : Number(form.max_uses),
+        // Condiciones del documento base: estancia larga, tipo de
+        // habitación, cliente frecuente y cumpleaños.
+        min_nights: form.min_nights === '' ? null : Number(form.min_nights),
+        min_visits: form.min_visits === '' ? null : Number(form.min_visits),
+        room_type_id: form.room_type_id === '' ? null : Number(form.room_type_id),
+        birthday: form.birthday,
         active: form.active,
     };
     try {
@@ -337,6 +357,18 @@ async function destroy() {
                                                     : 'Monto fijo'
                                             }}
                                         </span>
+                                        <div
+                                            v-if="coupon.conditions.length"
+                                            class="mt-1 flex flex-wrap gap-1"
+                                        >
+                                            <span
+                                                v-for="condition in coupon.conditions"
+                                                :key="condition"
+                                                class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-normal text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                            >
+                                                {{ condition }}
+                                            </span>
+                                        </div>
                                     </Table.Td>
                                     <Table.Td class="whitespace-nowrap">{{
                                         vigencyLabel(coupon)
@@ -565,6 +597,90 @@ async function destroy() {
                             <FormHelp v-else>
                                 El uso se descuenta cuando la reserva se
                                 confirma, no al apartar.
+                            </FormHelp>
+                        </div>
+
+                        <!-- Condiciones opcionales -->
+                        <div
+                            class="rounded-lg border border-dashed border-slate-300/70 p-3.5 dark:border-darkmode-400"
+                        >
+                            <div
+                                class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                <Lucide icon="SlidersHorizontal" class="h-3.5 w-3.5" />
+                                Condiciones (opcionales)
+                            </div>
+                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                <div>
+                                    <label class="mb-1 block text-sm"
+                                        >Noches mínimas</label
+                                    >
+                                    <FormInput
+                                        v-model="form.min_nights"
+                                        type="number"
+                                        min="1"
+                                        placeholder="Sin mínimo"
+                                    />
+                                    <FormHelp
+                                        v-if="errors.min_nights"
+                                        class="text-danger"
+                                        >{{ errors.min_nights }}</FormHelp
+                                    >
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm"
+                                        >Cliente frecuente (visitas
+                                        mínimas)</label
+                                    >
+                                    <FormInput
+                                        v-model="form.min_visits"
+                                        type="number"
+                                        min="1"
+                                        placeholder="Cualquier huésped"
+                                    />
+                                    <FormHelp
+                                        v-if="errors.min_visits"
+                                        class="text-danger"
+                                        >{{ errors.min_visits }}</FormHelp
+                                    >
+                                </div>
+                                <div>
+                                    <label class="mb-1 block text-sm"
+                                        >Solo para el tipo</label
+                                    >
+                                    <FormSelect v-model="form.room_type_id">
+                                        <option value="">
+                                            Cualquier habitación
+                                        </option>
+                                        <option
+                                            v-for="t in roomTypes"
+                                            :key="t.id"
+                                            :value="t.id"
+                                        >
+                                            {{ t.name }}
+                                        </option>
+                                    </FormSelect>
+                                    <FormHelp
+                                        v-if="errors.room_type_id"
+                                        class="text-danger"
+                                        >{{ errors.room_type_id }}</FormHelp
+                                    >
+                                </div>
+                                <div class="flex items-end pb-1.5">
+                                    <label
+                                        class="flex cursor-pointer items-center gap-2.5 text-sm"
+                                    >
+                                        <FormSwitch.Input
+                                            v-model="form.birthday"
+                                            type="checkbox"
+                                        />
+                                        Solo en cumpleaños (± 7 días)
+                                    </label>
+                                </div>
+                            </div>
+                            <FormHelp class="mt-2">
+                                El cumpleaños y las visitas se validan con el
+                                teléfono del huésped registrado en el CRM.
                             </FormHelp>
                         </div>
                         <div

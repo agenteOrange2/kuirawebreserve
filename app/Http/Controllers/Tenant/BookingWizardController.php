@@ -80,6 +80,9 @@ class BookingWizardController extends Controller
             'hasWaitlist' => (bool) tenant()?->hasModule('lista-espera'),
             // Cupones: input "¿Tienes un código?" antes de apartar.
             'hasCoupons' => (bool) tenant()?->hasModule('cupones'),
+            // Redes, mapa y sitio del hotel para el pie del wizard: la
+            // página debe sentirse del hotel, no del sistema.
+            'contact' => $property->publicContact(),
         ]);
     }
 }

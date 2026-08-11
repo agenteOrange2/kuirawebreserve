@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 /**
  * Reembolso de un pago (spec-pagos §6.6): fila propia, el Payment original
@@ -12,6 +14,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class Refund extends Model
 {
+    use LogsActivity;
     public const STATUS_COMPLETED = 'completed';
 
     public const STATUS_FAILED = 'failed';
@@ -34,6 +37,16 @@ class Refund extends Model
             'amount' => 'decimal:2',
             'refunded_at' => 'datetime',
         ];
+    }
+
+    /** Bitácora: el dinero que sale también deja rastro de quién y cuándo. */
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->useLogName('payment')
+            ->logOnly(['amount', 'status', 'payment_id', 'reservation_id', 'reason'])
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs();
     }
 
     public function payment(): BelongsTo

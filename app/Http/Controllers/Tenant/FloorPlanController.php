@@ -32,9 +32,32 @@ class FloorPlanController extends Controller
                     ->where('active', true)
                     ->orderBy('price'),
                 'activeStay' => fn ($query) => $query
-                    ->with(['guest:id,first_name,last_name', 'ratePlan:id,name'])
+                    ->with([
+                        'guest:id,first_name,last_name',
+                        'ratePlan:id,name',
+                        // Fotos del documento (registro exprés motel): sin
+                        // esto getMedia dispara una query por cuarto.
+                        'media',
+                        // Para el saldo pendiente del huésped en casa: lo
+                        // pagado de la reserva se agrega aquí y el payload
+                        // calcula el neto sin una consulta por cuarto.
+                        'reservation' => fn ($r) => $r->withSum('payments as paid_total', 'amount'),
+                    ])
                     ->withSum(
                         ['orders as consumos_total' => fn ($orderQuery) => $orderQuery->where('status', Order::STATUS_COMPLETED)],
+                        'total',
+                    )
+                    // Hospedaje ya liquidado en folio (walk-in sin reserva).
+                    ->withSum(
+                        ['payments as lodging_paid_total' => fn ($payQuery) => $payQuery->where('kind', \App\Models\Payment::KIND_LODGING)],
+                        'amount',
+                    )
+                    // Consumos cargados a habitación aún sin liquidar.
+                    ->withSum(
+                        ['orders as room_pending_total' => fn ($orderQuery) => $orderQuery
+                            ->where('status', Order::STATUS_COMPLETED)
+                            ->where('payment_method', 'room')
+                            ->whereNull('settled_at')],
                         'total',
                     ),
                 'upcomingReservation' => fn ($query) => $query
@@ -66,6 +89,15 @@ class FloorPlanController extends Controller
             // En modo de check-in "automático" puro (/ajustes/limpieza) la
             // llegada la registra el reloj: el botón manual se oculta.
             'manualCheckinAllowed' => app(\App\Services\HousekeepingPolicy::class)->manualCheckInAllowed(),
+            // Registro exprés (modo motel, spec-modo-motel): el modal cobra
+            // en la llegada y necesita saber si hay fianza configurada.
+            'expressCheckin' => app(\App\Services\PropertyMode::class)->expressCheckInEnabled(),
+            'guaranteeAmount' => app(\App\Services\ReservationPolicy::class)->guaranteeEnabled()
+                ? app(\App\Services\ReservationPolicy::class)->guaranteeAmount()
+                : 0,
+            // Fotos de identificación en la ficha: mismo permiso que las
+            // INE del CRM.
+            'canViewDocuments' => $request->user()->can('guests.view-documents'),
         ]);
     }
 }

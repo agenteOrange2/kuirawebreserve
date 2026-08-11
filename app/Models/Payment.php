@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 /**
  * Abono registrado a una reserva o a una estancia (folio): el libro de
@@ -15,6 +17,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
  */
 class Payment extends Model
 {
+    use LogsActivity;
     public const UPDATED_AT = null;
 
     /** Métodos de mostrador (los que el staff captura a mano). */
@@ -63,6 +66,21 @@ class Payment extends Model
             'fee_amount' => 'decimal:2',
             'paid_at' => 'datetime',
         ];
+    }
+
+    /**
+     * Bitácora: "quién registró un pago" es requisito del documento base.
+     * El libro es append-only, así que en la práctica solo se loguean
+     * creaciones; el causer lo resuelve spatie (usuario autenticado, null
+     * para webhooks de pasarela = Sistema).
+     */
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->useLogName('payment')
+            ->logOnly(['amount', 'method', 'kind', 'reservation_id', 'stay_id', 'received_by'])
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs();
     }
 
     protected static function booted(): void

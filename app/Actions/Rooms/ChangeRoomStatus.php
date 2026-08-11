@@ -2,6 +2,7 @@
 
 namespace App\Actions\Rooms;
 
+use App\Enums\RoomStatus;
 use App\Events\RoomStatusChanged;
 use App\Models\Room;
 use App\Models\User;
@@ -35,6 +36,22 @@ class ChangeRoomStatus
             'context' => $context ?: null,
             'created_at' => now(),
         ]);
+
+        // Contador de usos: la habitación "se usó" cuando queda por limpiar
+        // tras una estancia (ocupada → sucia) o tras un cierre de día con uso
+        // asumido (reservada vencida → sucia). Check-out manual, auto-checkout,
+        // cambio de habitación y cierre de día pasan todos por aquí, así que
+        // el incremento vive en un solo lugar. Query builder (como el
+        // used_count de cupones) para que sea atómico y sin eventos de modelo.
+        if ($toStatus === RoomStatus::Dirty->value
+            && in_array($from, [RoomStatus::Occupied->value, RoomStatus::Reserved->value], true)) {
+            Room::query()->whereKey($room->id)->increment('usage_count');
+            $room->usage_count = (int) Room::query()->whereKey($room->id)->value('usage_count');
+
+            app(SyncRoomUsageLock::class)->handle($room, $changedBy, array_filter([
+                'auto' => (bool) ($context['auto'] ?? false),
+            ]));
+        }
 
         RoomStatusChanged::dispatch($room, $from, $changedBy?->id);
 

@@ -86,6 +86,33 @@ Route::middleware([
         ->middleware('module:motor-web')
         ->name('booking.lookup');
 
+    // Cuestionario de experiencia post-estancia (módulo encuestas,
+    // Profesional+): el huésped llega desde el agradecimiento o el QR.
+    // QR impreso en la habitación: una sola URL por cuarto que resuelve la
+    // estancia en curso y manda a su encuesta por token. Va ANTES de
+    // /encuesta/{token} solo por claridad — no compiten (dos segmentos).
+    Route::get('/encuesta/habitacion/{room}', [\App\Http\Controllers\Tenant\SurveyPageController::class, 'room'])
+        ->middleware(['throttle:30,1', 'module:encuestas'])
+        ->whereNumber('room')
+        ->name('survey.room');
+
+    Route::get('/encuesta/{token}', [\App\Http\Controllers\Tenant\SurveyPageController::class, 'page'])
+        ->middleware(['throttle:30,1', 'module:encuestas'])
+        ->name('survey');
+
+    // Menú digital (módulo menu-digital, parte del servicio Inventario y
+    // Costos): carta pública con los productos del POS que el hotel curó;
+    // el huésped arma su pedido y la solicitud cae en la campana del
+    // staff. El QR impreso en la habitación llega con el cuarto ya puesto.
+    Route::get('/menu', [\App\Http\Controllers\Tenant\MenuPageController::class, 'page'])
+        ->middleware(['throttle:60,1', 'module:menu-digital'])
+        ->name('menu');
+
+    Route::get('/menu/habitacion/{room}', [\App\Http\Controllers\Tenant\MenuPageController::class, 'room'])
+        ->middleware(['throttle:60,1', 'module:menu-digital'])
+        ->whereNumber('room')
+        ->name('menu.room');
+
     // Fotos públicas de tipos de habitación (las consume el wizard, sin
     // login): solo entrega la colección photos de RoomType.
     Route::get('/fotos/habitaciones/{mediaId}', [\App\Http\Controllers\Tenant\RoomTypePhotoController::class, 'show'])
@@ -144,6 +171,28 @@ Route::middleware([
             Route::get('/habitaciones/{room}', RoomShowController::class)->name('rooms.show');
             Route::get('/habitaciones/{room}/history', RoomHistoryController::class)->name('rooms.history');
             Route::get('/catalogo', CatalogPageController::class)->name('catalog');
+
+            // Incidencias de mantenimiento (módulo incidencias,
+            // Profesional+; los reportes son del avanzado, Empresarial).
+            Route::get('/incidencias', \App\Http\Controllers\Tenant\IncidentsPageController::class)
+                ->middleware('module:incidencias')
+                ->name('incidents');
+            // Reportes por periodo (hoy/semana/mes/año/rango, general o por
+            // habitación) — antes de {incident} para no resolver "reportes"
+            // como id.
+            Route::get('/incidencias/reportes', \App\Http\Controllers\Tenant\IncidentReportsController::class)
+                ->middleware('module:incidencias-avanzado')
+                ->name('incidents.reports');
+            Route::get('/incidencias/reportes/pdf', [\App\Http\Controllers\Tenant\IncidentReportsController::class, 'pdf'])
+                ->middleware('module:incidencias-avanzado')
+                ->name('incidents.reports.pdf');
+            Route::get('/incidencias/{incident}', \App\Http\Controllers\Tenant\IncidentShowController::class)
+                ->middleware('module:incidencias')
+                ->whereNumber('incident')
+                ->name('incidents.show');
+            Route::get('/incidencias/{incident}/fotos/{media}', [\App\Http\Controllers\Tenant\IncidentController::class, 'showPhoto'])
+                ->middleware('module:incidencias')
+                ->name('incidents.photos.show');
         });
 
         Route::get('/reservas', ReservationsPageController::class)
@@ -176,6 +225,23 @@ Route::middleware([
             Route::get('/reservas/reportes/pdf', [ReservationReportsController::class, 'pdf'])
                 ->name('reservations.reports.pdf');
         });
+
+        // Resultados del cuestionario de experiencia post-estancia.
+        Route::get('/encuestas', \App\Http\Controllers\Tenant\SurveysPageController::class)
+            ->middleware(['can:reports.view', 'module:encuestas'])
+            ->name('surveys');
+
+        // PDF del reporte de satisfacción (satisfacción avanzada,
+        // Empresarial).
+        Route::get('/encuestas/pdf', [\App\Http\Controllers\Tenant\SurveysPageController::class, 'pdf'])
+            ->middleware(['can:reports.view', 'module:encuestas-avanzado'])
+            ->name('surveys.pdf');
+
+        // Bitácora global de acciones: quién hizo qué y cuándo, en todo el
+        // hotel (reservas, pagos, semáforo, incidencias, cupones).
+        Route::get('/actividad', \App\Http\Controllers\Tenant\ActivityLogPageController::class)
+            ->middleware(['can:reports.view', 'module:bitacora'])
+            ->name('activity');
 
         Route::get('/inventario', InventoryPageController::class)
             ->middleware(['can:inventory.manage', 'module:pos'])
@@ -224,8 +290,15 @@ Route::middleware([
                 ->name('guests.show');
         });
         Route::get('/huespedes/{guest}/documentos/{media}', [GuestController::class, 'showDocument'])
-            ->middleware('can:guests.view-documents')
+            ->middleware(['can:guests.view-documents', 'module:crm-avanzado'])
             ->name('guests.documents.show');
+
+        // Foto del documento de una estancia (registro exprés motel): mismo
+        // permiso que las INE del CRM, pero SIN gate de módulo — el exprés
+        // funciona en cualquier plan.
+        Route::get('/estancias/{stay}/documento/{media}', [\App\Http\Controllers\Tenant\StayController::class, 'showDocument'])
+            ->middleware('can:guests.view-documents')
+            ->name('stays.document.show');
 
         Route::get('/pos', PosPageController::class)
             ->middleware(['can:orders.manage', 'module:pos'])
@@ -244,12 +317,44 @@ Route::middleware([
             ->whereNumber('order')
             ->name('pos.ticket');
 
+        // Menú digital: curación de la carta pública, liga/QR y las
+        // solicitudes de los huéspedes (el cobro real sigue en el POS).
+        Route::get('/menu-digital', [\App\Http\Controllers\Tenant\MenuDigitalPageController::class, 'index'])
+            ->middleware(['can:orders.manage', 'module:menu-digital'])
+            ->name('menu-digital');
+
+        // Vista de cocina: solo ver solicitudes y despacharlas.
+        Route::get('/menu-digital/solicitudes', [\App\Http\Controllers\Tenant\MenuDigitalPageController::class, 'kitchen'])
+            ->middleware(['can:orders.manage', 'module:menu-digital'])
+            ->name('menu-kitchen');
+
+        // Comanda imprimible de un pedido (80 mm, patrón del ticket POS).
+        Route::get('/menu-digital/comanda/{menuRequest}', [\App\Http\Controllers\Tenant\MenuDigitalPageController::class, 'comanda'])
+            ->middleware(['can:orders.manage', 'module:menu-digital'])
+            ->whereNumber('menuRequest')
+            ->name('menu-comanda');
+
+        // Cortes de caja y turnos: módulo corte-caja (escalonado comercial,
+        // Profesional+). El ámbito POS dentro de la página sigue exigiendo
+        // además el módulo pos.
         Route::get('/cortes', CashCutsPageController::class)
-            ->middleware(['can:orders.manage', 'module:pos'])
+            ->middleware(['can:orders.manage', 'module:corte-caja'])
             ->name('cashcuts');
 
+        // PDF de un corte guardado (para imprimir y firmar el arqueo).
+        Route::get('/cortes/{cashCut}/pdf', [CashCutsPageController::class, 'pdf'])
+            ->middleware(['can:orders.manage', 'module:corte-caja'])
+            ->whereNumber('cashCut')
+            ->name('cashcuts.pdf');
+
+        // Movimientos de un corte guardado (los carga el modal de detalle).
+        Route::get('/cortes/{cashCut}/movimientos', [CashCutsPageController::class, 'movements'])
+            ->middleware(['can:orders.manage', 'module:corte-caja'])
+            ->whereNumber('cashCut')
+            ->name('cashcuts.movements');
+
         Route::get('/turnos', ShiftsPageController::class)
-            ->middleware(['can:orders.manage', 'module:pos'])
+            ->middleware(['can:orders.manage', 'module:corte-caja'])
             ->name('shifts');
 
         Route::get('/usuarios', UsersPageController::class)
@@ -267,6 +372,12 @@ Route::middleware([
             ->middleware('can:properties.manage')
             ->name('general-settings');
 
+        // Apariencia del PANEL del hotel: acento y colores del menú lateral
+        // por tenant (no confundir con la apariencia del wizard público).
+        Route::get('/ajustes/general/apariencia', \App\Http\Controllers\Tenant\PanelAppearancePageController::class)
+            ->middleware('can:properties.manage')
+            ->name('panel-appearance');
+
         // Área aislada del wizard público (modalidad/huéspedes, extras del
         // POS, resumen de pago) — separada de Ajustes general a propósito.
         Route::get('/ajustes/wizard', \App\Http\Controllers\Tenant\WizardSettingsPageController::class)
@@ -277,9 +388,27 @@ Route::middleware([
         // transferencia, confirmación automática y modo de pago del wizard.
         // Sin gate de módulo: las transferencias existen en todos los planes;
         // la sección de pasarelas se bloquea sola si falta el módulo cobros.
-        Route::get('/ajustes/metodos-pago', \App\Http\Controllers\Tenant\PaymentMethodsPageController::class)
+        // Hub + sub-páginas: cada tema de cobro encapsulado en su URL.
+        Route::middleware('can:properties.manage')->group(function () {
+            Route::get('/ajustes/metodos-pago', [\App\Http\Controllers\Tenant\PaymentMethodsPageController::class, 'index'])
+                ->name('payment-methods');
+            Route::get('/ajustes/metodos-pago/pasarela-pago', [\App\Http\Controllers\Tenant\PaymentMethodsPageController::class, 'gateways'])
+                ->name('payment-methods.gateways');
+            Route::get('/ajustes/metodos-pago/pagos-transferencia', [\App\Http\Controllers\Tenant\PaymentMethodsPageController::class, 'transfers'])
+                ->name('payment-methods.transfers');
+            Route::get('/ajustes/metodos-pago/plazos-y-saldo', [\App\Http\Controllers\Tenant\PaymentMethodsPageController::class, 'terms'])
+                ->middleware('module:anticipos')
+                ->name('payment-methods.terms');
+            Route::get('/ajustes/metodos-pago/politicas', [\App\Http\Controllers\Tenant\PaymentMethodsPageController::class, 'policies'])
+                ->name('payment-methods.policies');
+        });
+
+        // Área aislada de avisos al huésped: canal directo de WhatsApp,
+        // recordatorios de llegada y agradecimiento post-estancia (encuesta
+        // y reseñas). Vivía dentro de Métodos de pago; nada de eso es dinero.
+        Route::get('/ajustes/avisos', \App\Http\Controllers\Tenant\GuestNoticesPageController::class)
             ->middleware('can:properties.manage')
-            ->name('payment-methods');
+            ->name('guest-notices');
 
         // Área aislada de correo saliente: SMTP propio del hotel para
         // confirmaciones y avisos al huésped. Misma regla que wizard y
@@ -295,29 +424,43 @@ Route::middleware([
             ->middleware('can:properties.manage')
             ->name('housekeeping-settings');
 
+        // Área aislada del cuestionario de experiencia: los aspectos que
+        // pregunta la encuesta post-estancia de este hotel.
+        Route::get('/ajustes/encuestas', \App\Http\Controllers\Tenant\SurveySettingsPageController::class)
+            ->middleware(['can:properties.manage', 'module:encuestas'])
+            ->name('survey-settings');
+
         // Integración con sitios (spec-integracion-sitios): tokens, catálogo
         // vivo e importador. Detrás del módulo motor-web.
         Route::get('/integracion', \App\Http\Controllers\Tenant\IntegrationPageController::class)
             ->middleware(['can:properties.manage', 'module:motor-web'])
             ->name('integration');
 
+        // Área de mensajería (bandeja, canales y asistente): detrás del
+        // módulo mensajeria — el Esencial no la incluye y sin el gate se le
+        // daba acceso de facto al asistente IA.
         Route::get('/asistente', AgentPageController::class)
-            ->middleware('can:properties.manage')
+            ->middleware(['can:properties.manage', 'module:mensajeria'])
             ->name('agent');
 
         Route::get('/asistente/contexto', \App\Http\Controllers\Tenant\AgentContextPageController::class)
-            ->middleware('can:properties.manage')
+            ->middleware(['can:properties.manage', 'module:mensajeria'])
             ->name('agent-context');
 
         // Aprendizajes del bot: área aislada, habilitada por el super-admin
         // (guidelines_editable) — mismo patrón que /asistente/contexto.
         Route::get('/asistente/aprendizajes', \App\Http\Controllers\Tenant\AgentLearningsPageController::class)
-            ->middleware('can:reservations.manage')
+            ->middleware(['can:reservations.manage', 'module:mensajeria'])
             ->name('agent-learnings');
 
         Route::get('/bandeja', [InboxController::class, 'index'])
-            ->middleware('can:reservations.view')
+            ->middleware(['can:reservations.view', 'module:mensajeria'])
             ->name('inbox');
+
+        // Historial completo de la campana. Sin gate: igual que la campana,
+        // todo el staff lo ve y el contenido ya viene acotado a cada quien.
+        Route::get('/bandeja/avisos', \App\Http\Controllers\Tenant\StaffNotificationsPageController::class)
+            ->name('staff-notifications');
 
         // Conciliación de pasarelas y transferencias (spec-pagos §9.4).
         // Centro de pagos: transferencias por verificar, saldos vencidos,
@@ -336,6 +479,8 @@ Route::middleware([
         Route::get('staff-notifications', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'index'])->name('staff-notifications.index');
         Route::post('staff-notifications/read-all', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'readAll'])->name('staff-notifications.read-all');
         Route::post('staff-notifications/{notification}/read', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'read'])->name('staff-notifications.read');
+        Route::delete('staff-notifications', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'destroyBulk'])->name('staff-notifications.destroy-bulk');
+        Route::delete('staff-notifications/{notification}', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'destroy'])->name('staff-notifications.destroy');
 
         // Push del panel: cada quien conecta y desconecta SUS dispositivos.
         Route::get('push-subscriptions', [\App\Http\Controllers\Tenant\PushSubscriptionController::class, 'index'])->name('push-subscriptions.index');
@@ -479,6 +624,11 @@ Route::middleware([
         Route::patch('rooms/{room}/status', [RoomController::class, 'updateStatus'])
             ->middleware('can:rooms.update-status')
             ->name('rooms.update-status');
+        // Reset del contador de usos (candado de rotación): mismo permiso
+        // que el semáforo — recepción lo libera sin pasar por administración.
+        Route::post('rooms/{room}/usage-reset', [RoomController::class, 'resetUsage'])
+            ->middleware('can:rooms.update-status')
+            ->name('rooms.usage-reset');
 
         // Bloqueos por fechas (mantenimiento programado): mismo permiso que
         // mover el semáforo — front-desk y housekeeping los programan.
@@ -486,15 +636,28 @@ Route::middleware([
             ->only(['index', 'store', 'destroy'])
             ->middleware('can:rooms.update-status');
 
+        // Incidencias de mantenimiento: reportar y dar seguimiento con el
+        // mismo permiso que mover el semáforo (housekeeping y front-desk
+        // las levantan); eliminar exige administrar habitaciones.
+        Route::middleware(['can:rooms.update-status', 'module:incidencias'])->group(function () {
+            Route::post('incidents', [\App\Http\Controllers\Tenant\IncidentController::class, 'store'])->name('incidents.store');
+            Route::patch('incidents/{incident}', [\App\Http\Controllers\Tenant\IncidentController::class, 'update'])->name('incidents.update');
+            Route::post('incidents/{incident}/photos', [\App\Http\Controllers\Tenant\IncidentController::class, 'storePhoto'])->name('incidents.photos.store');
+            Route::delete('incidents/{incident}/photos/{media}', [\App\Http\Controllers\Tenant\IncidentController::class, 'destroyPhoto'])->name('incidents.photos.destroy');
+        });
+        Route::delete('incidents/{incident}', [\App\Http\Controllers\Tenant\IncidentController::class, 'destroy'])
+            ->middleware(['can:rooms.manage', 'module:incidencias'])
+            ->name('incidents.destroy');
+
         // Tarifas (noche / bloque).
         Route::apiResource('rate-plans', RatePlanController::class)
             ->except(['show'])
             ->middleware('can:rooms.manage');
 
-        // Temporadas y promos por tarifa (spec-motor-reservas-web E0.5).
+        // Temporadas y promos por tarifa (módulo promos, Profesional+).
         Route::apiResource('rate-plans.seasons', RatePlanSeasonController::class)
             ->except(['show'])
-            ->middleware('can:rooms.manage');
+            ->middleware(['can:rooms.manage', 'module:promos']);
 
         // Disponibilidad y reservas (fase 2).
         Route::get('availability', AvailabilityController::class)
@@ -524,6 +687,9 @@ Route::middleware([
             // Reembolsos (spec-pagos F4): siempre decisión humana.
             Route::post('reservations/{reservation}/payments/{payment}/refund', [ReservationController::class, 'refundPayment'])->name('reservations.payments.refund');
             Route::post('stays', [StayController::class, 'store'])->name('stays.store');
+            // Foto del documento del huésped a pie (registro exprés motel):
+            // se sube tras crear la estancia, con el id devuelto.
+            Route::post('stays/{stay}/id-document', [StayController::class, 'storeDocument'])->name('stays.document.store');
             // Con el huésped adentro: "una noche más" y cambio de cuarto sin
             // tener que registrar su salida y volver a darle entrada.
             Route::patch('stays/{stay}/extend', [StayController::class, 'extend'])->name('stays.extend');
@@ -549,13 +715,29 @@ Route::middleware([
             // Cancelar una venta: devuelve la mercancía al inventario y la
             // saca del corte y del folio (ambos solo suman completadas).
             Route::post('orders/{order}/void', [OrderController::class, 'void'])->name('orders.void');
+        });
+
+        // Menú digital: curar la carta y atender solicitudes del huésped.
+        Route::middleware(['can:orders.manage', 'module:menu-digital'])->group(function () {
+            Route::patch('menu-products/{product}', [\App\Http\Controllers\Tenant\MenuDigitalPageController::class, 'toggleProduct'])->name('menu-products.update');
+            Route::patch('menu-requests/{menuRequest}', [\App\Http\Controllers\Tenant\MenuDigitalPageController::class, 'updateRequest'])->name('menu-requests.update');
+        });
+
+        // Hotel o motel (cómo se paga el pedido): decisión del dueño.
+        Route::patch('menu-settings', [\App\Http\Controllers\Tenant\MenuDigitalPageController::class, 'updateSettings'])
+            ->middleware(['can:properties.manage', 'module:menu-digital'])
+            ->name('menu-settings.update');
+
+        // Cortes de caja y turnos: módulo corte-caja. El ámbito POS del
+        // corte se valida en el controlador, no aquí.
+        Route::middleware(['can:orders.manage', 'module:corte-caja'])->group(function () {
             Route::post('cash-cuts', [CashCutController::class, 'store'])->name('cashcuts.store');
             Route::post('shifts', [ShiftController::class, 'store'])->name('shifts.store');
             Route::patch('shifts/{shift}/close', [ShiftController::class, 'close'])->name('shifts.close');
         });
 
         // Rol semanal y tipos de turno (planeación).
-        Route::middleware(['can:shifts.manage', 'module:pos'])->group(function () {
+        Route::middleware(['can:shifts.manage', 'module:corte-caja'])->group(function () {
             Route::post('shift-types', [ShiftTypeController::class, 'store'])->name('shift-types.store');
             Route::patch('shift-types/{shiftType}', [ShiftTypeController::class, 'update'])->name('shift-types.update');
             Route::delete('shift-types/{shiftType}', [ShiftTypeController::class, 'destroy'])->name('shift-types.destroy');
@@ -614,13 +796,14 @@ Route::middleware([
             Route::post('meta-channels/{linkId}/resubscribe', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'resubscribe'])->name('meta-channels.resubscribe');
         });
 
-        // Bandeja unificada de conversaciones.
-        Route::middleware('can:reservations.view')->group(function () {
+        // Bandeja unificada de conversaciones (módulo mensajeria, igual que
+        // la página /bandeja).
+        Route::middleware(['can:reservations.view', 'module:mensajeria'])->group(function () {
             Route::get('inbox/{conversation}', [InboxController::class, 'show'])->name('inbox.show');
             // Adjuntos entrantes de WhatsApp (privados: solo staff logueado).
             Route::get('inbox/{conversation}/attachments/{media}', [InboxController::class, 'attachment'])->name('inbox.attachment');
         });
-        Route::middleware('can:reservations.manage')->group(function () {
+        Route::middleware(['can:reservations.manage', 'module:mensajeria'])->group(function () {
             Route::post('inbox/archive-resolved', [InboxController::class, 'archiveResolved'])->name('inbox.archive-resolved');
             // Antes de inbox/{conversation} para que 'archived' no se
             // intente resolver como id de conversación.
@@ -630,8 +813,11 @@ Route::middleware([
             Route::patch('inbox/{conversation}', [InboxController::class, 'update'])->name('inbox.update');
             Route::delete('inbox/{conversation}', [InboxController::class, 'destroy'])->name('inbox.destroy');
             Route::patch('channels/{channel}', [InboxController::class, 'updateChannel'])->name('channels.update');
-
+        });
+        Route::middleware('can:reservations.manage')->group(function () {
             // Cola de verificación de pagos (transferencias, spec-pagos §7.4).
+            // Fuera del gate de mensajería: las transferencias con
+            // verificación van en todos los planes.
             Route::get('payment-requests', [PaymentRequestController::class, 'index'])->name('payment-requests.index');
             Route::get('payment-requests/{paymentRequest}', [PaymentRequestController::class, 'show'])->name('payment-requests.show');
             Route::get('payment-requests/{paymentRequest}/receipt', [PaymentRequestController::class, 'receipt'])->name('payment-requests.receipt');
@@ -657,8 +843,12 @@ Route::middleware([
             Route::post('guests/{guest}/restore', [GuestController::class, 'restore'])
                 ->withTrashed()
                 ->name('guests.restore');
-            Route::post('guests/{guest}/documents', [GuestController::class, 'storeDocument'])->name('guests.documents.store');
-            Route::delete('guests/{guest}/documents/{media}', [GuestController::class, 'destroyDocument'])->name('guests.documents.destroy');
+            Route::post('guests/{guest}/documents', [GuestController::class, 'storeDocument'])
+                ->middleware('module:crm-avanzado')
+                ->name('guests.documents.store');
+            Route::delete('guests/{guest}/documents/{media}', [GuestController::class, 'destroyDocument'])
+                ->middleware('module:crm-avanzado')
+                ->name('guests.documents.destroy');
         });
     });
 });
@@ -699,6 +889,32 @@ Route::middleware([
     'throttle:60,1',
 ])->prefix('api/site')->name('tenant.site.')->group(function () {
     Route::get('catalog', \App\Http\Controllers\Tenant\SiteCatalogController::class)->name('catalog');
+});
+
+// API pública del cuestionario de experiencia: stateless (sin sesión/CSRF),
+// identificada por el token único de la encuesta y con throttle corto.
+Route::middleware([
+    InitializeTenancyByDomain::class,
+    PreventAccessFromCentralDomains::class,
+    App\Http\Middleware\EnsureTenantIsActive::class,
+    'throttle:10,1',
+])->prefix('api/encuesta')->name('tenant.survey-api.')->group(function () {
+    Route::post('{token}', [\App\Http\Controllers\Tenant\SurveyPageController::class, 'store'])
+        ->middleware('module:encuestas')
+        ->name('store');
+});
+
+// API pública del menú digital: stateless (sin sesión/CSRF), con throttle
+// corto — el huésped manda su pedido desde /menu sin login.
+Route::middleware([
+    InitializeTenancyByDomain::class,
+    PreventAccessFromCentralDomains::class,
+    App\Http\Middleware\EnsureTenantIsActive::class,
+    'throttle:10,1',
+])->prefix('api/menu')->name('tenant.menu-api.')->group(function () {
+    Route::post('solicitudes', [\App\Http\Controllers\Tenant\MenuRequestController::class, 'store'])
+        ->middleware('module:menu-digital')
+        ->name('store');
 });
 
 // API pública del webchat: stateless (sin sesión/CSRF), identificada por UUID

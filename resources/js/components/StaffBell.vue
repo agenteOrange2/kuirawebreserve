@@ -40,6 +40,8 @@ const meta: Record<string, { icon: Icon; tone: string }> = {
     message: { icon: 'MessageCircle', tone: 'bg-primary/10 text-primary' },
     reservation: { icon: 'CalendarCheck', tone: 'bg-info/10 text-info' },
     payment: { icon: 'BadgeDollarSign', tone: 'bg-success/10 text-success' },
+    survey: { icon: 'Frown', tone: 'bg-danger/10 text-danger' },
+    menu: { icon: 'UtensilsCrossed', tone: 'bg-warning/10 text-warning' },
 };
 
 const metaFor = (type: string) =>
@@ -85,6 +87,21 @@ async function readAll() {
     } catch {
         load(); // el servidor manda: si falló, recuperar la verdad
     }
+}
+
+async function remove(notice: StaffNotice) {
+    notices.value = notices.value.filter((n) => n.id !== notice.id);
+    if (!notice.read) unread.value = Math.max(0, unread.value - 1);
+    try {
+        await axios.delete(`/api/staff-notifications/${notice.id}`);
+    } catch {
+        load(); // el servidor manda: si falló, recuperar la verdad
+    }
+}
+
+function goToAll() {
+    open.value = false;
+    router.visit('/bandeja/avisos');
 }
 
 // En vivo: el contador se mueve sin recargar ni preguntar cada rato.
@@ -252,43 +269,57 @@ onMounted(load);
                         v-if="notices.length"
                         class="divide-y divide-slate-100 dark:divide-darkmode-400"
                     >
-                        <button
+                        <div
                             v-for="n in notices"
                             :key="n.id"
-                            type="button"
-                            class="flex w-full items-start gap-3 px-5 py-3.5 text-left transition hover:bg-slate-50 dark:hover:bg-darkmode-600"
+                            class="flex items-start gap-3 px-5 py-3.5 transition hover:bg-slate-50 dark:hover:bg-darkmode-600"
                             :class="n.read ? 'opacity-60' : ''"
-                            @click="go(n)"
                         >
-                            <span
-                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-                                :class="metaFor(n.type).tone"
+                            <button
+                                type="button"
+                                class="flex min-w-0 flex-1 items-start gap-3 text-left"
+                                @click="go(n)"
                             >
-                                <Lucide
-                                    :icon="metaFor(n.type).icon"
-                                    class="h-4 w-4"
-                                />
-                            </span>
-                            <span class="min-w-0 flex-1">
                                 <span
-                                    class="block truncate text-sm font-medium"
-                                    >{{ n.title }}</span
+                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                                    :class="metaFor(n.type).tone"
                                 >
-                                <span
-                                    v-if="n.body"
-                                    class="mt-0.5 block text-xs text-slate-500"
-                                    >{{ n.body }}</span
-                                >
-                                <span
-                                    class="mt-1 block text-[11px] text-slate-400"
-                                    >{{ n.at }}</span
-                                >
-                            </span>
-                            <span
-                                v-if="!n.read"
-                                class="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary"
-                            />
-                        </button>
+                                    <Lucide
+                                        :icon="metaFor(n.type).icon"
+                                        class="h-4 w-4"
+                                    />
+                                </span>
+                                <span class="min-w-0 flex-1">
+                                    <span class="flex items-center gap-2">
+                                        <span
+                                            class="truncate text-sm font-medium"
+                                            >{{ n.title }}</span
+                                        >
+                                        <span
+                                            v-if="!n.read"
+                                            class="h-2 w-2 shrink-0 rounded-full bg-primary"
+                                        />
+                                    </span>
+                                    <span
+                                        v-if="n.body"
+                                        class="mt-0.5 block text-xs text-slate-500"
+                                        >{{ n.body }}</span
+                                    >
+                                    <span
+                                        class="mt-1 block text-[11px] text-slate-400"
+                                        >{{ n.at }}</span
+                                    >
+                                </span>
+                            </button>
+                            <button
+                                type="button"
+                                title="Eliminar este aviso"
+                                class="mt-1.5 shrink-0 rounded-md p-1 text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                @click="remove(n)"
+                            >
+                                <Lucide icon="X" class="h-3.5 w-3.5" />
+                            </button>
+                        </div>
                     </div>
 
                     <div
@@ -305,6 +336,21 @@ onMounted(load);
                             nuevos, las reservas que entran solas y los
                             comprobantes por verificar.
                         </p>
+                    </div>
+
+                    <!-- La campana solo trae los últimos; el resto vive en
+                         /bandeja/avisos con filtros y borrado en masa. -->
+                    <div
+                        class="border-t border-slate-100 px-5 py-3.5 dark:border-darkmode-400"
+                    >
+                        <button
+                            type="button"
+                            class="flex w-full items-center justify-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                            @click="goToAll"
+                        >
+                            Ver todos los avisos
+                            <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
+                        </button>
                     </div>
                 </Slideover.Description>
             </Slideover.Panel>

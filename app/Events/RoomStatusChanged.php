@@ -43,6 +43,11 @@ class RoomStatusChanged implements ShouldBroadcast
             'color' => $room->status->color(),
             'label' => $room->status->label(),
             'transitions' => $room->manualStatusTransitions(),
+            // Contador de usos y candado: el plano los pinta en vivo (el
+            // incremento ocurre justo antes de despachar este evento).
+            'usage_count' => (int) $room->usage_count,
+            'usage_limit' => $room->usage_limit,
+            'usage_locked' => $room->usageLocked(),
             'changed_by' => $changedBy,
             'changed_at' => now()->toIso8601String(),
         ];

@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\Tenant;
 
 use App\Http\Controllers\Controller;
-use App\Models\CashCut;
 use App\Models\Property;
 use App\Models\Shift;
 use App\Models\ShiftAssignment;
@@ -26,14 +25,6 @@ class ShiftsPageController extends Controller
         $property = Property::firstOrFail();
 
         $serialize = function (Shift $shift) {
-            // ¿Ya existe un corte que cubre el cierre de este turno?
-            $hasCut = $shift->ended_at
-                ? CashCut::query()
-                    ->where('user_id', $shift->user_id)
-                    ->where('closed_at', '>=', $shift->ended_at)
-                    ->exists()
-                : false;
-
             return [
                 'id' => $shift->id,
                 'user_id' => $shift->user_id,
@@ -48,7 +39,10 @@ class ShiftsPageController extends Controller
                 'notes' => $shift->notes,
                 'opened_by' => $shift->createdBy?->name,
                 'closed_by' => $shift->closedBy?->name,
-                'has_cut' => $hasCut,
+                // Cortes LIGADOS al turno (shift_id) y sus ámbitos — los
+                // cortes por reloj de antes del enlace no marcan el badge.
+                'has_cut' => $shift->cashCuts->isNotEmpty(),
+                'cut_scopes' => $shift->cashCuts->pluck('scope')->unique()->values(),
             ];
         };
 
@@ -125,13 +119,13 @@ class ShiftsPageController extends Controller
             'scheduledToday' => $scheduledToday,
             'activeShifts' => Shift::query()
                 ->open()
-                ->with(['user:id,name', 'createdBy:id,name'])
+                ->with(['user:id,name', 'createdBy:id,name', 'cashCuts:id,shift_id,scope'])
                 ->orderBy('started_at')
                 ->get()
                 ->map($serialize),
             'history' => Shift::query()
                 ->whereNotNull('ended_at')
-                ->with(['user:id,name', 'createdBy:id,name', 'closedBy:id,name'])
+                ->with(['user:id,name', 'createdBy:id,name', 'closedBy:id,name', 'cashCuts:id,shift_id,scope'])
                 ->latest('ended_at')
                 ->take(30)
                 ->get()

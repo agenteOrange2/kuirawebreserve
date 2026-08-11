@@ -19,6 +19,12 @@ class StaffNotification extends Model
 
     public const TYPE_PAYMENT = 'payment';
 
+    /** Evaluación baja de un huésped: atender antes de la reseña pública. */
+    public const TYPE_SURVEY = 'survey';
+
+    /** Solicitud del menú digital: un huésped pidió productos desde /menu. */
+    public const TYPE_MENU = 'menu';
+
     protected $fillable = [
         'type',
         'title',

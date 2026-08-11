@@ -22,6 +22,13 @@ class BookingCouponController extends Controller
             // Subtotal mostrado en pantalla, solo para previsualizar el
             // monto; el hold recalcula todo server-side.
             'subtotal' => ['required', 'numeric', 'min:0'],
+            // Contexto opcional para validar condiciones (noches mínimas,
+            // tipo de habitación, frecuente, cumpleaños) ANTES del hold —
+            // el hold igual revalida todo.
+            'room_type_id' => ['nullable', 'integer'],
+            'starts_at' => ['nullable', 'date'],
+            'ends_at' => ['nullable', 'date'],
+            'guest_phone' => ['nullable', 'string', 'max:30'],
         ]);
 
         $coupon = Coupon::query()
@@ -32,6 +39,22 @@ class BookingCouponController extends Controller
             return response()->json([
                 'message' => 'Ese código no es válido o ya no está disponible.',
             ], 422);
+        }
+
+        $start = isset($data['starts_at']) && $data['starts_at'] ? \Illuminate\Support\Carbon::parse($data['starts_at']) : null;
+        $end = isset($data['ends_at']) && $data['ends_at'] ? \Illuminate\Support\Carbon::parse($data['ends_at']) : null;
+        $nights = $start !== null && $end !== null
+            ? max(1, (int) $start->copy()->startOfDay()->diffInDays($end->copy()->startOfDay()))
+            : null;
+
+        $guest = filled($data['guest_phone'] ?? null)
+            ? \App\Models\Guest::query()->where('phone', trim($data['guest_phone']))->first()
+            : null;
+
+        $reason = $coupon->rejectionReason($guest, $start, $nights, $request->integer('room_type_id') ?: null);
+
+        if ($reason !== null) {
+            return response()->json(['message' => $reason], 422);
         }
 
         return response()->json([

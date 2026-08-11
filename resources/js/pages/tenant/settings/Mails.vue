@@ -121,15 +121,26 @@ const providerGuides = [
 <template>
     <RazeLayout title="Correo saliente">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="min-w-0">
-                    <h1 class="text-lg font-medium">Correo saliente</h1>
-                    <p class="mt-0.5 text-sm text-slate-500">
-                        Área aislada: el SMTP propio del hotel. Con él, las
-                        confirmaciones y avisos al huésped salen por correo a
-                        nombre de tu hotel; sin configurar, los avisos solo
-                        salen por WhatsApp.
-                    </p>
+            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
+                 círculo + título + acción a la derecha -->
+            <div
+                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+            >
+                <div class="flex min-w-0 items-center gap-4">
+                    <div
+                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Mail" class="h-7 w-7" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-xl font-medium">Correo saliente</h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            Área aislada: el SMTP propio del hotel. Con él, las
+                            confirmaciones y avisos al huésped salen por correo
+                            a nombre de tu hotel; sin configurar, los avisos
+                            solo salen por WhatsApp.
+                        </p>
+                    </div>
                 </div>
                 <div class="flex flex-wrap gap-2">
                     <Button

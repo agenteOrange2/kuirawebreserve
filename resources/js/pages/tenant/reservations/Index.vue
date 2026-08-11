@@ -22,6 +22,7 @@ import { Dialog, Menu, Slideover } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
+import { useModules } from '@/composables/useModules';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 import MonthCalendar from './MonthCalendar.vue';
@@ -219,6 +220,9 @@ const props = defineProps<{
 }>();
 
 const toast = useToasts();
+// Gates de plan dentro del formulario: vehículo (crm-avanzado) y cupón
+// (cupones). Las rutas y el backend validan lo suyo; esto solo esconde.
+const { hasModule } = useModules();
 const money = (n: number) =>
     '$' +
     new Intl.NumberFormat('es-MX', {
@@ -582,8 +586,8 @@ async function submitConfirmAction() {
             toast.success(
                 'Salida registrada',
                 pending > 0 && !folioForce.value
-                    ? `Se cobró la cuenta final y la habitación ${action.stay.room ?? '—'} pasó a sucia.`
-                    : `La habitación ${action.stay.room ?? '—'} pasó a sucia; limpieza puede entrar.`,
+                    ? `Se cobró la cuenta final y la habitación ${action.stay.room ?? '—'} quedó por limpiar.`
+                    : `La habitación ${action.stay.room ?? '—'} quedó por limpiar; el equipo puede entrar.`,
             );
         } else if (action.kind === 'confirm') {
             await axios.patch(
@@ -675,6 +679,9 @@ const form = reactive({
     vehicle_desc: '',
     eta: '',
     confirmed: true,
+    // Cupón aplicado desde recepción (módulo cupones): mismo validador y
+    // congelado que el wizard público.
+    coupon_code: '',
     // Conceptos de cargos opcionales del cuarto elegidos (el monto lo
     // resuelve el servidor desde la ficha de la habitación).
     extra_charges: [] as string[],
@@ -1024,6 +1031,7 @@ function openCreate(
     form.vehicle_desc = '';
     form.eta = '';
     form.confirmed = false;
+    form.coupon_code = '';
     form.extra_charges = [];
     form.notes = '';
     form.guest_notes = '';
@@ -1064,6 +1072,7 @@ function openEdit(reservation: ReservationRow) {
     form.vehicle_desc = reservation.vehicle_desc ?? '';
     form.eta = reservation.eta ?? '';
     form.confirmed = reservation.status === 'confirmed';
+    form.coupon_code = ''; // el cupón congelado no se reedita desde aquí
     // Solo los opcionales se re-eligen; la línea de personas extra la
     // recalcula el servidor según huéspedes/fechas.
     form.extra_charges = (reservation.extra_charges ?? [])
@@ -1249,6 +1258,7 @@ async function submitCreate() {
             vehicle_desc: form.vehicle_desc || null,
             eta: form.eta || null,
             extra_charges: form.extra_charges,
+            coupon_code: form.coupon_code.trim() || undefined,
             notes: form.notes || undefined,
             guest_notes: form.guest_notes || undefined,
         };
@@ -2520,7 +2530,7 @@ const modalDescription = computed(() => {
                             >
                                 <li>
                                     La estancia termina y la habitación pasa a
-                                    <span class="font-medium">Sucia</span>
+                                    <span class="font-medium">Por limpiar</span>
                                     (limpieza puede entrar).
                                 </li>
                                 <li v-if="folio && folio.grand_pending > 0">
@@ -3786,7 +3796,7 @@ const modalDescription = computed(() => {
                                 <Lucide icon="StickyNote" class="h-3.5 w-3.5" />
                                 Datos opcionales
                             </div>
-                            <div>
+                            <div v-if="hasModule('crm-avanzado')">
                                 <FormLabel htmlFor="res-plate"
                                     >Placas del vehículo</FormLabel
                                 >
@@ -3804,7 +3814,7 @@ const modalDescription = computed(() => {
                                     />
                                 </div>
                             </div>
-                            <div>
+                            <div v-if="hasModule('crm-avanzado')">
                                 <FormLabel htmlFor="res-vehicle"
                                     >Descripción del vehículo</FormLabel
                                 >
@@ -3842,6 +3852,41 @@ const modalDescription = computed(() => {
                                     v-model="form.guest_notes"
                                     placeholder="Piso alto, cuna, llega tarde…"
                                 />
+                            </div>
+                            <div
+                                v-if="
+                                    !walkIn &&
+                                    !editingReservationId &&
+                                    hasModule('cupones')
+                                "
+                            >
+                                <FormLabel htmlFor="res-coupon"
+                                    >Cupón de descuento (opcional)</FormLabel
+                                >
+                                <div class="relative">
+                                    <Lucide
+                                        icon="TicketPercent"
+                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                    />
+                                    <FormInput
+                                        id="res-coupon"
+                                        v-model="form.coupon_code"
+                                        type="text"
+                                        class="pl-9 uppercase"
+                                        placeholder="CÓDIGO"
+                                        maxlength="40"
+                                    />
+                                </div>
+                                <FormHelp
+                                    v-if="errors.coupon_code"
+                                    class="text-danger"
+                                    >{{ errors.coupon_code }}</FormHelp
+                                >
+                                <FormHelp v-else
+                                    >Se valida igual que en el wizard: si no
+                                    cumple sus condiciones, la reserva no se
+                                    crea con descuento a ciegas.</FormHelp
+                                >
                             </div>
                         </template>
 

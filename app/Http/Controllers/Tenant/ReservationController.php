@@ -54,6 +54,10 @@ class ReservationController extends Controller
             'confirmed' => ['sometimes', 'boolean'],
             'source_channel' => ['sometimes', Rule::in(['front_desk', 'phone', 'web', 'whatsapp', 'walk_in'])],
             'deposit_amount' => ['sometimes', 'numeric', 'min:0'],
+            // Recepción también puede aplicar cupones (módulo cupones): la
+            // validación y el congelado viven en CreateReservation, igual
+            // que en el wizard público.
+            'coupon_code' => ['nullable', 'string', 'max:40'],
             // Conceptos de cargos opcionales de la habitación; el monto
             // SIEMPRE se resuelve del catálogo del cuarto, nunca del cliente.
             'extra_charges' => ['sometimes', 'array', 'max:20'],
@@ -65,6 +69,10 @@ class ReservationController extends Controller
         try {
             $reservation = $action->handle($data, $request->user());
         } catch (NoAvailabilityException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\InvalidArgumentException $e) {
+            // Cupón inválido o que no cumple sus condiciones: el motivo
+            // exacto llega a recepción, igual que al huésped del wizard.
             return response()->json(['message' => $e->getMessage()], 422);
         }
 

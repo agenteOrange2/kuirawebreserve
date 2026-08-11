@@ -74,6 +74,16 @@ const submit = () => {
                                     <Lucide icon="Sun" class="mr-2.5 h-4 w-4" />
                                     Apariencia
                                 </Link>
+                                <Link
+                                    :href="route('admin.settings.email.edit')"
+                                    class="flex items-center rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400"
+                                >
+                                    <Lucide
+                                        icon="Mail"
+                                        class="mr-2.5 h-4 w-4"
+                                    />
+                                    Correo
+                                </Link>
                             </nav>
                         </div>
                     </div>

@@ -286,6 +286,16 @@ class ReservationPolicy
         return $url === '' ? null : $url;
     }
 
+    /**
+     * ¿El agradecimiento incluye el cuestionario de experiencia? (link
+     * público /encuesta/{token}, una respuesta por estancia). Solo aplica
+     * cuando el agradecimiento mismo está prendido.
+     */
+    public function postStaySurveyEnabled(): bool
+    {
+        return (bool) ($this->settings()['post_stay_survey_enabled'] ?? true);
+    }
+
     /** Valor+unidad de settings traducido a minutos; null si no está configurado. */
     protected function minutesFrom(string $valueKey, string $unitKey): ?int
     {

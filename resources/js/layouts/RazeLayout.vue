@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { Head, Link, usePage } from '@inertiajs/vue3';
-import { computed, ref, watch } from 'vue';
+import { computed, ref, watch, watchEffect } from 'vue';
 import Breadcrumb from '@/components/Base/Breadcrumb';
 import { Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
@@ -22,8 +22,29 @@ const tenant = computed(
             plan: string;
             logo_url: string | null;
             vapid_key: string | null;
+            colors?: {
+                primary: string | null;
+                menu_from: string | null;
+                menu_to: string | null;
+            } | null;
         } | null,
 );
+
+// Tema del panel por hotel (/ajustes/general/apariencia): pisa las
+// variables CSS del theme en <html> — ahí y no en el root del layout para
+// que también las hereden los modales teleportados a <body>. Sin colores
+// guardados se limpian y vuelve el tema Kuira.
+watchEffect(() => {
+    const colors = tenant.value?.colors;
+    const rootStyle = document.documentElement.style;
+    const apply = (cssVar: string, value: string | null | undefined) =>
+        value
+            ? rootStyle.setProperty(cssVar, value)
+            : rootStyle.removeProperty(cssVar);
+    apply('--color-primary', colors?.primary);
+    apply('--color-theme-1', colors?.menu_from);
+    apply('--color-theme-2', colors?.menu_to);
+});
 
 const { menu, isTenantPanel } = useMenu();
 const brandName = computed(

@@ -55,6 +55,35 @@ class StaffNotificationController extends Controller
         return response()->json(['marked' => $marked]);
     }
 
+    /** Elimina un aviso; si era para todo el staff, desaparece para todos. */
+    public function destroy(Request $request, StaffNotification $notification): JsonResponse
+    {
+        abort_unless(
+            $notification->user_id === null || $notification->user_id === $request->user()?->id,
+            404,
+        );
+
+        $notification->delete();
+
+        return response()->json(['ok' => true]);
+    }
+
+    /** Borrado en masa desde /bandeja/avisos: solo lo que le toca al usuario. */
+    public function destroyBulk(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $deleted = StaffNotification::query()
+            ->for($request->user())
+            ->whereIn('id', $data['ids'])
+            ->delete();
+
+        return response()->json(['deleted' => $deleted]);
+    }
+
     /** @return array<string, mixed> */
     protected function serialize(StaffNotification $n): array
     {
@@ -66,6 +95,7 @@ class StaffNotificationController extends Controller
             'url' => $n->url,
             'read' => $n->read_at !== null,
             'at' => $n->created_at?->diffForHumans(short: true),
+            'at_exact' => $n->created_at?->format('d/m/Y H:i'),
         ];
     }
 }

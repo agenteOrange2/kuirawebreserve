@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Tenant;
 
 use App\Actions\Rooms\ChangeRoomStatus;
+use App\Actions\Rooms\SyncRoomUsageLock;
 use App\Enums\ReservationStatus;
 use App\Enums\RoomStatus;
 use App\Http\Controllers\Controller;
@@ -207,7 +208,29 @@ class RoomController extends Controller
 
         $room->update($data);
 
+        // El candado sigue al contador: editar a mano el conteo o el límite
+        // puede activarlo (con salvaguarda) o retirarlo en el mismo guardado.
+        if (array_key_exists('usage_count', $data) || array_key_exists('usage_limit', $data)) {
+            app(SyncRoomUsageLock::class)->handle($room, $request->user(), ['manual' => true]);
+        }
+
         return response()->json($room->load(['zone', 'roomType']));
+    }
+
+    /**
+     * Botón "Resetear contador": usos a cero y candado fuera; la habitación
+     * vuelve a entrar en disponibilidad y en la rotación.
+     */
+    public function resetUsage(Request $request, Room $room, SyncRoomUsageLock $usage): JsonResponse
+    {
+        $usage->reset($room, $request->user());
+
+        return response()->json([
+            'id' => $room->id,
+            'usage_count' => (int) $room->usage_count,
+            'usage_limit' => $room->usage_limit,
+            'usage_locked' => $room->usageLocked(),
+        ]);
     }
 
     /**
@@ -363,6 +386,10 @@ class RoomController extends Controller
             'optional_charges' => ['sometimes', 'nullable', 'array', 'max:20'],
             'optional_charges.*.concept' => ['required', 'string', 'max:100'],
             'optional_charges.*.amount' => ['required', 'numeric', 'min:0', 'max:99999'],
+            // Contador de usos: el límite es opcional (sin límite = sin
+            // candado) y el conteo se puede ajustar a mano.
+            'usage_limit' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:100000'],
+            'usage_count' => ['sometimes', 'integer', 'min:0', 'max:1000000'],
             'maintenance_notes' => ['nullable', 'string'],
         ];
     }

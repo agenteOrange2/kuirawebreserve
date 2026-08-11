@@ -185,17 +185,28 @@ const money = (n: number) =>
 <template>
     <RazeLayout title="Wizard de reservas">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="min-w-0">
-                    <h1 class="text-lg font-medium">Wizard de reservas</h1>
-                    <p class="mt-0.5 text-sm text-slate-500">
-                        Área aislada: todo lo que controla cómo se comporta
-                        <code
-                            class="rounded bg-slate-100 px-1 py-0.5 dark:bg-darkmode-400"
-                            >/reservar</code
-                        >
-                        vive aquí.
-                    </p>
+            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
+                 círculo + título + acciones a la derecha -->
+            <div
+                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+            >
+                <div class="flex min-w-0 items-center gap-4">
+                    <div
+                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="ShoppingBag" class="h-7 w-7" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-xl font-medium">Wizard de reservas</h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            Área aislada: todo lo que controla cómo se comporta
+                            <code
+                                class="rounded bg-slate-100 px-1 py-0.5 dark:bg-darkmode-400"
+                                >/reservar</code
+                            >
+                            vive aquí.
+                        </p>
+                    </div>
                 </div>
                 <div class="flex flex-wrap gap-2">
                     <Button

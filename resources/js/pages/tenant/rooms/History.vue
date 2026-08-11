@@ -516,7 +516,7 @@ const monthlyOptions = {
                             <div
                                 class="text-[11px] tracking-wide text-slate-500 uppercase"
                             >
-                                Espera en sucia
+                                Espera por limpiar
                             </div>
                             <div class="mt-1 text-sm font-medium">
                                 {{ fmtDuration(cleaningStats.avg_dirty_wait) }}
@@ -564,7 +564,7 @@ const monthlyOptions = {
                                     <template
                                         v-if="cycle.dirty_minutes !== null"
                                     >
-                                        Esperó sucia
+                                        Esperó por limpiar
                                         {{ fmtDuration(cycle.dirty_minutes) }} ·
                                     </template>
                                     <template v-if="!cycle.ongoing">

@@ -39,6 +39,8 @@ class ExperienceWizardController extends Controller
 
         return Inertia::render('tenant/reservar/Experiences', [
             'appearance' => $appearance,
+            // Redes, mapa y sitio del hotel para el pie de la página.
+            'contact' => $property->publicContact(),
             'property' => [
                 'name' => $property->name,
                 'logo_url' => $appearance['logo_url'],

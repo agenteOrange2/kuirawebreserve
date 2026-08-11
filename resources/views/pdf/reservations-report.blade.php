@@ -113,6 +113,24 @@
         </tbody>
     </table>
 
+    <h2>Uso por habitación</h2>
+    <table>
+        <thead>
+            <tr><th>Habitación</th><th class="right">Usos (estancias)</th><th class="right">Ingresos de hospedaje</th></tr>
+        </thead>
+        <tbody>
+            @forelse ($byRoom as $row)
+                <tr>
+                    <td>{{ $row['name'] }}</td>
+                    <td class="right">{{ $row['uses'] }}</td>
+                    <td class="right">${{ number_format($row['revenue'], 2) }}</td>
+                </tr>
+            @empty
+                <tr><td colspan="3" class="muted">Sin estancias en el periodo.</td></tr>
+            @endforelse
+        </tbody>
+    </table>
+
     <h2>Por canal</h2>
     <table>
         <thead>

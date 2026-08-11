@@ -27,6 +27,13 @@ class Tenant extends BaseTenant implements TenantWithDatabase
      */
     protected ?array $resolvedModuleOverrides = null;
 
+    /**
+     * Servicios adicionales contratados, memoizados por request.
+     *
+     * @var \Illuminate\Support\Collection<int, \App\Models\Central\AddonService>|null
+     */
+    protected ?\Illuminate\Support\Collection $resolvedAddonServices = null;
+
     public static function getCustomColumns(): array
     {
         return [
@@ -62,7 +69,8 @@ class Tenant extends BaseTenant implements TenantWithDatabase
 
     /**
      * ¿El hotel tiene este módulo? Único punto de verdad (spec-plan-maestro
-     * E1): override del admin (tenant_modules) ?? incluido en el plan ?? no.
+     * E1): override del admin (tenant_modules) ?? incluido en el plan o en
+     * un servicio adicional contratado ?? no.
      */
     public function hasModule(string $key): bool
     {
@@ -72,7 +80,46 @@ class Tenant extends BaseTenant implements TenantWithDatabase
             return $override;
         }
 
-        return in_array($key, $this->planLimits()['modules'] ?? [], true);
+        return in_array($key, $this->planLimits()['modules'] ?? [], true)
+            || in_array($key, $this->addonModules(), true);
+    }
+
+    /**
+     * Servicios adicionales contratados (activos en el catálogo), con su
+     * precio y módulos. Cobro aparte del plan.
+     *
+     * @return \Illuminate\Support\Collection<int, \App\Models\Central\AddonService>
+     */
+    public function addonServices(): \Illuminate\Support\Collection
+    {
+        return $this->resolvedAddonServices ??= \App\Models\Central\AddonService::query()
+            ->where('active', true)
+            ->whereIn('key', \App\Models\Central\TenantAddonService::query()
+                ->where('tenant_id', $this->id)
+                ->select('addon_service_key'))
+            ->ordered()
+            ->get();
+    }
+
+    /**
+     * Módulos que aportan los servicios adicionales contratados.
+     *
+     * @return list<string>
+     */
+    public function addonModules(): array
+    {
+        return $this->addonServices()
+            ->flatMap(fn (\App\Models\Central\AddonService $s) => $s->modules ?? [])
+            ->unique()->values()->all();
+    }
+
+    /**
+     * Inversión mensual del hotel: plan base + servicios adicionales.
+     */
+    public function monthlyPrice(): int
+    {
+        return (int) ($this->planLimits()['price_monthly'] ?? 0)
+            + (int) $this->addonServices()->sum('price_monthly');
     }
 
     /**

@@ -153,6 +153,46 @@ it('la campana solo entrega los avisos que le tocan al usuario', function () {
         ->and($data['unread'])->toBe(1);
 });
 
+it('eliminar un aviso lo borra para siempre', function () {
+    $notice = app(StaffNotifier::class)->notify(type: 'message', title: 'Para todos');
+
+    $request = Request::create("/api/staff-notifications/{$notice->id}", 'DELETE');
+    $request->setUserResolver(fn () => $this->user);
+
+    app(StaffNotificationController::class)->destroy($request, $notice);
+
+    expect(StaffNotification::count())->toBe(0);
+});
+
+it('no deja eliminar el aviso dirigido a otra persona', function () {
+    $otro = User::factory()->create();
+    $notice = app(StaffNotifier::class)->notify(type: 'message', title: 'Ajeno', userId: $otro->id);
+
+    $request = Request::create("/api/staff-notifications/{$notice->id}", 'DELETE');
+    $request->setUserResolver(fn () => $this->user);
+
+    app(StaffNotificationController::class)->destroy($request, $notice);
+})->throws(Symfony\Component\HttpKernel\Exception\NotFoundHttpException::class);
+
+it('el borrado en masa respeta a quién pertenece cada aviso', function () {
+    $otro = User::factory()->create();
+    $notifier = app(StaffNotifier::class);
+
+    $global = $notifier->notify(type: 'message', title: 'Para todos');
+    $propio = $notifier->notify(type: 'reservation', title: 'Mío', userId: $this->user->id);
+    $ajeno = $notifier->notify(type: 'payment', title: 'Del otro', userId: $otro->id);
+
+    $request = Request::create('/api/staff-notifications', 'DELETE', [
+        'ids' => [$global->id, $propio->id, $ajeno->id],
+    ]);
+    $request->setUserResolver(fn () => $this->user);
+
+    $data = app(StaffNotificationController::class)->destroyBulk($request)->getData(true);
+
+    expect($data['deleted'])->toBe(2)
+        ->and(StaffNotification::pluck('id')->all())->toBe([$ajeno->id]);
+});
+
 it('marcar todo como leído deja el contador en cero', function () {
     $notifier = app(StaffNotifier::class);
     $notifier->notify(type: 'message', title: 'Uno');

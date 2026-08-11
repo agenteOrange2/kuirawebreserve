@@ -20,4 +20,11 @@ Route::middleware(['auth', 'verified'])->prefix('admin/settings')->name('admin.s
     Route::inertia('appearance', 'settings/Appearance')->name('appearance.edit');
 
     Route::get('two-factor', [TwoFactorAuthenticationController::class, 'show'])->name('two-factor.show');
+
+    // SMTP de plataforma: solo el super-admin (los correos a prospectos salen de aquí).
+    Route::middleware('role:platform-admin')->group(function () {
+        Route::get('correo', [\App\Http\Controllers\Admin\EmailSettingsController::class, 'edit'])->name('email.edit');
+        Route::patch('correo', [\App\Http\Controllers\Admin\EmailSettingsController::class, 'update'])->name('email.update');
+        Route::post('correo/prueba', [\App\Http\Controllers\Admin\EmailSettingsController::class, 'test'])->name('email.test');
+    });
 });

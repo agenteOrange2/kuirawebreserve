@@ -77,7 +77,16 @@ class Reservation extends Model
     {
         return LogOptions::defaults()
             ->useLogName('reservation')
-            ->logOnly(['status', 'room_id', 'starts_at', 'ends_at', 'total_amount', 'cancellation_reason'])
+            // Bitácora completa de ediciones: no solo estado/fechas/cuarto —
+            // cambiar huésped, personas, tarifa, notas o cupón también es
+            // "quién modificó una reserva". Los JSON (extras, products) se
+            // quedan fuera: generan diffs ilegibles y sus altas ya dejan
+            // rastro propio.
+            ->logOnly([
+                'status', 'room_id', 'starts_at', 'ends_at', 'total_amount', 'cancellation_reason',
+                'guest_id', 'guest_name', 'num_people', 'adults', 'children', 'notes',
+                'rate_plan_id', 'deposit_amount', 'coupon_code', 'discount_amount', 'eta',
+            ])
             ->logOnlyDirty()
             ->dontSubmitEmptyLogs();
     }

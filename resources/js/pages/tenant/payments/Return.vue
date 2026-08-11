@@ -22,6 +22,9 @@ const props = defineProps<{
         socials: Social[];
     };
     lookupUrl: string;
+    // Acento del hotel: pisa --color-primary para que botones y links se
+    // vean del hotel, no del theme default.
+    accent: string | null;
     notified: { email: boolean; whatsapp: boolean };
     secondary: { code: string; label: string } | null;
     payment: {
@@ -50,6 +53,7 @@ onBeforeUnmount(() => {
 <template>
     <div
         class="flex min-h-screen items-center justify-center bg-slate-100 px-4 dark:bg-darkmode-800"
+        :style="accent ? { '--color-primary': accent } : undefined"
     >
         <div class="box box--stacked w-full max-w-md p-8 text-center">
             <template v-if="payment.status === 'paid'">

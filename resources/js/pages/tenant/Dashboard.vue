@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { Link } from '@inertiajs/vue3';
-import { computed } from 'vue';
+import { Link, router } from '@inertiajs/vue3';
+import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import Chart from '@/components/Base/Chart';
-import { FormSelect } from '@/components/Base/Form';
+import { FormInput, FormSelect } from '@/components/Base/Form';
 import { Tab } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
@@ -55,6 +55,7 @@ interface DepartureRow {
 }
 
 const props = defineProps<{
+    filters: { range: string; from: string | null; to: string | null };
     expiringHolds: {
         id: number;
         code: string;
@@ -62,14 +63,15 @@ const props = defineProps<{
         room: string | null;
         expires_at: string;
     }[];
-    hero: { revenue: string; change: number | null; month: string };
+    hero: { revenue: string; change: number | null; period: string };
     metrics: Metric[];
     series: {
+        label: string;
         revenue: SeriesPoint[];
         occupancy: SeriesPoint[];
-        revenue_today: number;
+        revenue_total: number;
         revenue_change: number | null;
-        occupancy_today: number;
+        occupancy_avg: number;
         occupancy_change: number | null;
     };
     guestStatus: { in_house: number; checked_out: number; pending: number };
@@ -98,6 +100,27 @@ const props = defineProps<{
 const money = (n: number) =>
     '$' +
     new Intl.NumberFormat('es-MX', { maximumFractionDigits: 0 }).format(n ?? 0);
+
+// ── Filtro de periodo (hoy / semana / mes / personalizado) ──
+const range = ref(props.filters.range);
+const customFrom = ref(props.filters.from ?? '');
+const customTo = ref(props.filters.to ?? '');
+
+function applyPeriod() {
+    // El personalizado espera a tener ambas fechas antes de recargar.
+    if (range.value === 'custom' && (!customFrom.value || !customTo.value)) {
+        return;
+    }
+    router.get(
+        route('tenant.dashboard'),
+        {
+            range: range.value,
+            from: range.value === 'custom' ? customFrom.value : undefined,
+            to: range.value === 'custom' ? customTo.value : undefined,
+        },
+        { preserveScroll: true, preserveState: true },
+    );
+}
 
 // Semáforo -> tokens del theme (primary/success/info/warning/pending/dark).
 const dotColor: Record<string, string> = {
@@ -369,7 +392,7 @@ const cellClass =
                             </div>
                             <div class="text-center xl:text-left">
                                 <div class="text-base text-white/90">
-                                    Ingresos de {{ hero.month }}
+                                    Ingresos de {{ hero.period }}
                                 </div>
                                 <div
                                     class="mt-2 flex items-center justify-center xl:justify-start"
@@ -395,8 +418,8 @@ const cellClass =
                                     </div>
                                 </div>
                                 <div class="mt-3 leading-normal text-white/70">
-                                    Pagos de reservas y ventas de POS acumulados
-                                    en el mes.
+                                    Pagos de reservas y ventas de POS en el
+                                    periodo elegido.
                                 </div>
                             </div>
                             <div class="mt-auto w-full">
@@ -431,14 +454,48 @@ const cellClass =
                                         icon="CalendarCheck2"
                                         class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3]"
                                     />
-                                    <FormSelect class="pl-9 sm:w-44">
-                                        <option>Hoy</option>
-                                        <option>Esta semana</option>
-                                        <option>Este mes</option>
+                                    <FormSelect
+                                        v-model="range"
+                                        class="pl-9 sm:w-44"
+                                        @change="applyPeriod"
+                                    >
+                                        <option value="today">Hoy</option>
+                                        <option value="week">
+                                            Esta semana
+                                        </option>
+                                        <option value="month">Este mes</option>
+                                        <option value="custom">
+                                            Personalizado
+                                        </option>
                                     </FormSelect>
                                 </div>
+                                <div
+                                    v-if="range === 'custom'"
+                                    class="flex flex-wrap items-center gap-2"
+                                >
+                                    <span class="text-xs text-slate-500"
+                                        >Del</span
+                                    >
+                                    <FormInput
+                                        v-model="customFrom"
+                                        type="date"
+                                        class="w-36"
+                                        aria-label="Desde"
+                                        @change="applyPeriod"
+                                    />
+                                    <span class="text-xs text-slate-500"
+                                        >al</span
+                                    >
+                                    <FormInput
+                                        v-model="customTo"
+                                        type="date"
+                                        class="w-36"
+                                        aria-label="Hasta"
+                                        @change="applyPeriod"
+                                    />
+                                </div>
                                 <div class="text-xs text-slate-500 sm:ml-auto">
-                                    Indicadores en tiempo real del hotel
+                                    Comparado con el periodo anterior
                                 </div>
                             </div>
                             <div
@@ -510,11 +567,11 @@ const cellClass =
                 >
                     <div class="box box--stacked flex min-w-0 flex-col p-5">
                         <div class="text-base text-slate-500">
-                            Ocupación (7 días)
+                            Ocupación · {{ series.label }}
                         </div>
                         <div class="mt-1 flex items-center">
                             <div class="text-xl font-medium">
-                                {{ series.occupancy_today }}%
+                                {{ series.occupancy_avg }}%
                             </div>
                             <div
                                 v-if="series.occupancy_change !== null"
@@ -549,11 +606,11 @@ const cellClass =
                     </div>
                     <div class="box box--stacked flex min-w-0 flex-col p-5">
                         <div class="text-base text-slate-500">
-                            Ingresos (7 días)
+                            Ingresos · {{ series.label }}
                         </div>
                         <div class="mt-1 flex items-center">
                             <div class="text-xl font-medium">
-                                {{ money(series.revenue_today) }}
+                                {{ money(series.revenue_total) }}
                             </div>
                             <div
                                 v-if="series.revenue_change !== null"

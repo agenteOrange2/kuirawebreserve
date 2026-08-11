@@ -6,6 +6,7 @@ import Button from '@/components/Base/Button';
 import { FormCheck, FormHelp, FormInput } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
@@ -51,6 +52,16 @@ const roleBadge: Record<string, string> = {
     housekeeping: 'bg-warning/10 text-warning',
     kitchen: 'bg-pending/10 text-pending',
     agent: 'bg-dark/10 text-dark',
+};
+
+// Icono por rol: el badge de texto solo se veía plano en la tabla.
+const roleIcon: Record<string, Icon> = {
+    owner: 'Crown',
+    manager: 'BriefcaseBusiness',
+    'front-desk': 'ConciergeBell',
+    housekeeping: 'Brush',
+    kitchen: 'ChefHat',
+    agent: 'Bot',
 };
 
 const atLimit = computed(
@@ -127,9 +138,9 @@ async function bulkDelete() {
         });
         toast.success(
             'Usuarios eliminados',
-            `${data.deleted} eliminado(s)` +
+            `${data.deleted} eliminado${data.deleted === 1 ? '' : 's'}` +
                 (data.skipped
-                    ? ` · ${data.skipped} conservado(s) por actividad o rol`
+                    ? ` · ${data.skipped} conservado${data.skipped === 1 ? '' : 's'} por actividad o rol`
                     : ''),
         );
         selectedIds.value = [];
@@ -245,58 +256,100 @@ async function submitDelete() {
 <template>
     <RazeLayout title="Usuarios">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Usuarios del sistema</h1>
-                    <p class="text-sm text-slate-500">
-                        {{ users.length
-                        }}<span v-if="maxUsers"> de {{ maxUsers }}</span>
-                        usuario(s) · {{ property.name }}
-                    </p>
+            <!-- Header de tarjeta, mismo patrón que el directorio de
+                 huéspedes: icono en círculo + título + acción a la derecha -->
+            <div
+                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+            >
+                <div class="flex items-center gap-4">
+                    <div
+                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="UserCog" class="h-7 w-7" />
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-medium">
+                            Usuarios del sistema
+                        </h1>
+                        <p class="mt-1 text-sm text-slate-500">
+                            Da acceso a tu equipo de {{ property.name }} y
+                            controla qué puede hacer cada quien ·
+                            {{ users.length
+                            }}<span v-if="maxUsers"> de {{ maxUsers }}</span>
+                            usuario{{ users.length === 1 ? '' : 's' }}.
+                        </p>
+                    </div>
                 </div>
                 <Button
                     v-if="canManage"
                     variant="primary"
-                    class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                    class="min-h-11 rounded-[0.5rem] px-5 shadow-md shadow-primary/20"
                     :disabled="atLimit"
+                    :title="
+                        atLimit
+                            ? 'Alcanzaste el límite de usuarios de tu plan'
+                            : undefined
+                    "
                     @click="openCreate"
                 >
-                    <Lucide icon="UserPlus" class="mr-2 h-4 w-4 stroke-[1.3]" />
+                    <Lucide icon="UserPlus" class="mr-2 h-5 w-5 stroke-[1.5]" />
                     Nuevo usuario
                 </Button>
             </div>
 
-            <!-- Buscador + acción masiva -->
-            <div class="mt-4 flex flex-wrap items-center gap-3">
-                <div class="relative w-full sm:w-80">
-                    <Lucide icon="Search" :class="iconInput" />
-                    <FormInput
-                        v-model="search"
-                        type="text"
-                        class="pl-9"
-                        placeholder="Buscar por nombre, correo o teléfono…"
-                    />
+            <!-- Buscador + acción masiva, en su tarjeta (patrón huéspedes) -->
+            <div class="box box--stacked mt-5 p-5">
+                <div class="mb-4 flex items-center gap-3">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                    >
+                        <Lucide icon="Search" class="h-5 w-5" />
+                    </div>
+                    <div>
+                        <div class="text-sm font-medium">
+                            Encuentra a alguien de tu equipo
+                        </div>
+                        <div class="text-xs text-slate-500">
+                            Busca por nombre, correo o teléfono.
+                        </div>
+                    </div>
                 </div>
-                <template v-if="canManage && selectedIds.length">
-                    <span class="text-xs text-slate-500"
-                        >{{ selectedIds.length }} seleccionado(s)</span
-                    >
-                    <button
-                        type="button"
-                        class="text-xs font-medium text-primary hover:underline"
-                        @click="selectedIds = []"
-                    >
-                        Quitar selección
-                    </button>
-                    <Button
-                        variant="danger"
-                        class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
-                        @click="bulkDeleteOpen = true"
-                    >
-                        <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
-                        Eliminar seleccionados
-                    </Button>
-                </template>
+                <div class="flex flex-wrap items-center gap-3">
+                    <div class="relative w-full sm:w-96">
+                        <Lucide
+                            icon="Search"
+                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3.5 h-5 w-5 stroke-[1.5] text-slate-400"
+                        />
+                        <FormInput
+                            v-model="search"
+                            type="search"
+                            class="h-11 pl-11 text-sm"
+                            placeholder="Nombre, correo o teléfono"
+                        />
+                    </div>
+                    <template v-if="canManage && selectedIds.length">
+                        <span class="text-xs text-slate-500"
+                            >{{ selectedIds.length }} seleccionado{{
+                                selectedIds.length === 1 ? '' : 's'
+                            }}</span
+                        >
+                        <button
+                            type="button"
+                            class="text-xs font-medium text-primary hover:underline"
+                            @click="selectedIds = []"
+                        >
+                            Quitar selección
+                        </button>
+                        <Button
+                            variant="danger"
+                            class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                            @click="bulkDeleteOpen = true"
+                        >
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
+                            Eliminar seleccionados
+                        </Button>
+                    </template>
+                </div>
             </div>
 
             <div
@@ -311,174 +364,229 @@ async function submitDelete() {
                 Mejora el plan para agregar más.
             </div>
 
-            <div class="mt-5 overflow-auto lg:overflow-visible">
-                <Table class="border-separate border-spacing-y-[8px]">
-                    <Table.Thead>
-                        <Table.Tr>
-                            <Table.Th
-                                v-if="canManage"
-                                class="w-10 border-b-0 !bg-transparent"
-                            >
-                                <FormCheck.Input
-                                    type="checkbox"
-                                    :checked="allSelected"
-                                    title="Seleccionar todos"
-                                    :disabled="!selectableUsers.length"
-                                    @change="toggleAll"
-                                />
-                            </Table.Th>
-                            <Table.Th class="border-b-0 !bg-transparent"
-                                >Usuario</Table.Th
-                            >
-                            <Table.Th class="border-b-0 !bg-transparent"
-                                >Rol</Table.Th
-                            >
-                            <Table.Th class="border-b-0 !bg-transparent"
-                                >Estado</Table.Th
-                            >
-                            <Table.Th class="border-b-0 !bg-transparent"
-                                >Alta</Table.Th
-                            >
-                            <Table.Th
-                                class="border-b-0 !bg-transparent text-right"
-                                >Acciones</Table.Th
-                            >
-                        </Table.Tr>
-                    </Table.Thead>
-                    <Table.Tbody>
-                        <Table.Tr v-for="u in filteredUsers" :key="u.id">
-                            <Table.Td
-                                v-if="canManage"
-                                :class="cellClass"
-                                class="w-10"
-                            >
-                                <FormCheck.Input
-                                    v-if="!u.is_self"
-                                    type="checkbox"
-                                    :checked="selectedIds.includes(u.id)"
-                                    @change="toggleRow(u.id)"
-                                />
-                            </Table.Td>
-                            <Table.Td :class="cellClass">
-                                <div class="flex items-center gap-3">
-                                    <div
-                                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
-                                    >
-                                        {{ initials(u.name) }}
-                                    </div>
-                                    <div class="min-w-0">
-                                        <div
-                                            class="flex items-center gap-1.5 font-medium"
-                                        >
-                                            {{ u.name }}
-                                            <span
-                                                v-if="u.is_self"
-                                                class="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
-                                                >tú</span
-                                            >
-                                        </div>
-                                        <div
-                                            class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500"
-                                        >
-                                            <span
-                                                class="flex items-center gap-1.5"
-                                            >
-                                                <Lucide
-                                                    icon="Mail"
-                                                    class="h-3 w-3"
-                                                />
-                                                {{ u.email }}
-                                            </span>
-                                            <span
-                                                v-if="u.phone"
-                                                class="flex items-center gap-1.5"
-                                            >
-                                                <Lucide
-                                                    icon="Phone"
-                                                    class="h-3 w-3"
-                                                />
-                                                {{ u.phone }}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </Table.Td>
-                            <Table.Td :class="cellClass">
-                                <span
-                                    v-for="(role, i) in u.roles"
-                                    :key="role"
-                                    class="mr-1 rounded-full px-2 py-0.5 text-xs font-medium"
-                                    :class="
-                                        roleBadge[role] ??
-                                        'bg-slate-100 text-slate-500'
-                                    "
-                                >
-                                    {{ u.role_labels[i] ?? role }}
-                                </span>
-                                <span
-                                    v-if="!u.roles.length"
-                                    class="text-xs text-slate-400"
-                                    >Sin rol</span
-                                >
-                            </Table.Td>
-                            <Table.Td :class="cellClass">
-                                <span
-                                    v-if="u.on_shift"
-                                    class="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
-                                >
-                                    <span
-                                        class="h-1.5 w-1.5 rounded-full bg-success"
-                                    />
-                                    En turno
-                                </span>
-                                <span v-else class="text-xs text-slate-400"
-                                    >—</span
-                                >
-                            </Table.Td>
-                            <Table.Td
-                                :class="cellClass"
-                                class="text-sm whitespace-nowrap text-slate-500"
-                                >{{ u.created_at ?? '—' }}</Table.Td
-                            >
-                            <Table.Td :class="cellClass" class="text-right">
-                                <div
+            <!-- La tabla vive en su tarjeta blanca, no suelta sobre el
+                 fondo de la página (patrón huéspedes) -->
+            <div class="box box--stacked mt-5 p-5">
+                <div class="mb-1">
+                    <h2 class="text-base font-medium">Tu equipo</h2>
+                    <p class="text-xs text-slate-500">
+                        {{ filteredUsers.length }} usuario{{
+                            filteredUsers.length === 1 ? '' : 's'
+                        }}
+                        en la lista.
+                    </p>
+                </div>
+                <div class="overflow-auto lg:overflow-visible">
+                    <Table class="border-separate border-spacing-y-[8px]">
+                        <Table.Thead>
+                            <Table.Tr>
+                                <Table.Th
                                     v-if="canManage"
-                                    class="flex items-center justify-end gap-2"
+                                    class="w-10 border-b-0 !bg-transparent"
                                 >
-                                    <button
-                                        type="button"
-                                        title="Editar"
-                                        class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
-                                        @click="openEdit(u)"
-                                    >
-                                        <Lucide icon="Pencil" class="h-4 w-4" />
-                                    </button>
-                                    <button
-                                        type="button"
-                                        :title="
-                                            u.is_self
-                                                ? 'No puedes eliminar tu propia cuenta'
-                                                : 'Eliminar'
-                                        "
-                                        class="flex h-8 w-8 items-center justify-center rounded-full transition"
+                                    <FormCheck.Input
+                                        type="checkbox"
+                                        :checked="allSelected"
+                                        title="Seleccionar todos"
+                                        :disabled="!selectableUsers.length"
+                                        @change="toggleAll"
+                                    />
+                                </Table.Th>
+                                <Table.Th class="border-b-0 !bg-transparent"
+                                    >Usuario</Table.Th
+                                >
+                                <Table.Th class="border-b-0 !bg-transparent"
+                                    >Rol</Table.Th
+                                >
+                                <Table.Th class="border-b-0 !bg-transparent"
+                                    >Estado</Table.Th
+                                >
+                                <Table.Th class="border-b-0 !bg-transparent"
+                                    >Alta</Table.Th
+                                >
+                                <Table.Th
+                                    class="border-b-0 !bg-transparent text-right"
+                                    >Acciones</Table.Th
+                                >
+                            </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                            <!-- Búsqueda sin coincidencias: decirlo, no dejar
+                             la tabla vacía como si estuviera rota -->
+                            <Table.Tr v-if="!filteredUsers.length">
+                                <Table.Td
+                                    :colspan="canManage ? 6 : 5"
+                                    :class="cellClass"
+                                    class="py-10 text-center"
+                                >
+                                    <Lucide
+                                        icon="SearchX"
+                                        class="mx-auto h-8 w-8 text-slate-300"
+                                    />
+                                    <p class="mt-2 text-sm text-slate-500">
+                                        Nadie coincide con "{{ search.trim() }}"
+                                        — revisa el nombre, correo o teléfono.
+                                    </p>
+                                </Table.Td>
+                            </Table.Tr>
+                            <Table.Tr v-for="u in filteredUsers" :key="u.id">
+                                <Table.Td
+                                    v-if="canManage"
+                                    :class="cellClass"
+                                    class="w-10"
+                                >
+                                    <FormCheck.Input
+                                        v-if="!u.is_self"
+                                        type="checkbox"
+                                        :checked="selectedIds.includes(u.id)"
+                                        @change="toggleRow(u.id)"
+                                    />
+                                </Table.Td>
+                                <Table.Td :class="cellClass">
+                                    <div class="flex items-center gap-3">
+                                        <div
+                                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
+                                        >
+                                            {{ initials(u.name) }}
+                                        </div>
+                                        <div class="min-w-0">
+                                            <div
+                                                class="flex items-center gap-1.5 font-medium"
+                                            >
+                                                {{ u.name }}
+                                                <span
+                                                    v-if="u.is_self"
+                                                    class="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
+                                                    >tú</span
+                                                >
+                                            </div>
+                                            <div
+                                                class="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500"
+                                            >
+                                                <span
+                                                    class="flex items-center gap-1.5"
+                                                >
+                                                    <Lucide
+                                                        icon="Mail"
+                                                        class="h-3 w-3"
+                                                    />
+                                                    {{ u.email }}
+                                                </span>
+                                                <span
+                                                    v-if="u.phone"
+                                                    class="flex items-center gap-1.5"
+                                                >
+                                                    <Lucide
+                                                        icon="Phone"
+                                                        class="h-3 w-3"
+                                                    />
+                                                    {{ u.phone }}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </Table.Td>
+                                <Table.Td :class="cellClass">
+                                    <span
+                                        v-for="(role, i) in u.roles"
+                                        :key="role"
+                                        class="mr-1 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
                                         :class="
-                                            u.is_self
-                                                ? 'cursor-not-allowed text-slate-300 dark:text-darkmode-300'
-                                                : 'text-slate-500 hover:bg-danger/10 hover:text-danger'
-                                        "
-                                        :disabled="u.is_self"
-                                        @click="
-                                            deleteError = null;
-                                            deleting = u;
+                                            roleBadge[role] ??
+                                            'bg-slate-100 text-slate-500'
                                         "
                                     >
-                                        <Lucide icon="Trash2" class="h-4 w-4" />
-                                    </button>
-                                </div>
-                            </Table.Td>
-                        </Table.Tr>
-                    </Table.Tbody>
-                </Table>
+                                        <Lucide
+                                            :icon="
+                                                roleIcon[role] ?? 'UserRound'
+                                            "
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        {{ u.role_labels[i] ?? role }}
+                                    </span>
+                                    <span
+                                        v-if="!u.roles.length"
+                                        class="text-xs text-slate-400"
+                                        >Sin rol</span
+                                    >
+                                </Table.Td>
+                                <Table.Td :class="cellClass">
+                                    <span
+                                        v-if="u.on_shift"
+                                        class="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success"
+                                    >
+                                        <span
+                                            class="h-1.5 w-1.5 rounded-full bg-success"
+                                        />
+                                        En turno
+                                    </span>
+                                    <span
+                                        v-else-if="u.roles.includes('agent')"
+                                        class="inline-flex items-center gap-1.5 rounded-full bg-info/10 px-2.5 py-1 text-xs font-medium text-info"
+                                    >
+                                        <span
+                                            class="h-1.5 w-1.5 rounded-full bg-info"
+                                        />
+                                        Siempre activo
+                                    </span>
+                                    <span
+                                        v-else
+                                        class="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-500 dark:bg-darkmode-400"
+                                    >
+                                        Fuera de turno
+                                    </span>
+                                </Table.Td>
+                                <Table.Td
+                                    :class="cellClass"
+                                    class="text-sm whitespace-nowrap text-slate-500"
+                                    >{{ u.created_at ?? '—' }}</Table.Td
+                                >
+                                <Table.Td :class="cellClass" class="text-right">
+                                    <div
+                                        v-if="canManage"
+                                        class="flex items-center justify-end gap-2"
+                                    >
+                                        <button
+                                            type="button"
+                                            title="Editar"
+                                            class="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                            @click="openEdit(u)"
+                                        >
+                                            <Lucide
+                                                icon="Pencil"
+                                                class="h-4 w-4"
+                                            />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            :title="
+                                                u.is_self
+                                                    ? 'No puedes eliminar tu propia cuenta'
+                                                    : 'Eliminar'
+                                            "
+                                            class="flex h-9 w-9 items-center justify-center rounded-full transition"
+                                            :class="
+                                                u.is_self
+                                                    ? 'cursor-not-allowed text-slate-300 dark:text-darkmode-300'
+                                                    : 'text-slate-500 hover:bg-danger/10 hover:text-danger'
+                                            "
+                                            :disabled="u.is_self"
+                                            @click="
+                                                deleteError = null;
+                                                deleting = u;
+                                            "
+                                        >
+                                            <Lucide
+                                                icon="Trash2"
+                                                class="h-4 w-4"
+                                            />
+                                        </button>
+                                    </div>
+                                </Table.Td>
+                            </Table.Tr>
+                        </Table.Tbody>
+                    </Table>
+                </div>
             </div>
         </div>
 
@@ -724,36 +832,51 @@ async function submitDelete() {
         <!-- Modal eliminar -->
         <Dialog :open="deleting !== null" @close="deleting = null">
             <Dialog.Panel>
-                <div v-if="deleting" class="p-6">
-                    <div class="flex items-start gap-3.5">
+                <!-- Misma anatomía que el modal de crear: header con icono
+                     en círculo y X, cuerpo, footer con borde -->
+                <div v-if="deleting">
+                    <div
+                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                    >
                         <div
                             class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
                         >
                             <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
-                        <div>
+                        <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">
                                 ¿Eliminar a {{ deleting.name }}?
                             </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
+                            <p class="mt-0.5 text-xs text-slate-500">
                                 Perderá el acceso al sistema de inmediato.
                             </p>
                         </div>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            @click="deleting = null"
+                        >
+                            <Lucide icon="X" class="h-5 w-5" />
+                        </button>
+                    </div>
+                    <div class="px-6 py-5">
+                        <div
+                            class="flex items-center gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        >
+                            <Lucide icon="Info" class="h-4 w-4 shrink-0" /> Si
+                            tiene ventas, turnos o cortes registrados no podrá
+                            eliminarse (se conserva por auditoría).
+                        </div>
+                        <p
+                            v-if="deleteError"
+                            class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                        >
+                            {{ deleteError }}
+                        </p>
                     </div>
                     <div
-                        class="mt-4 flex items-center gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
                     >
-                        <Lucide icon="Info" class="h-4 w-4 shrink-0" /> Si tiene
-                        ventas, turnos o cortes registrados no podrá eliminarse
-                        (se conserva por auditoría).
-                    </div>
-                    <p
-                        v-if="deleteError"
-                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
-                    >
-                        {{ deleteError }}
-                    </p>
-                    <div class="mt-6 flex justify-end gap-2">
                         <Button
                             variant="outline-secondary"
                             @click="deleting = null"
@@ -775,38 +898,54 @@ async function submitDelete() {
         <!-- Confirmar borrado masivo -->
         <Dialog :open="bulkDeleteOpen" @close="bulkDeleteOpen = false">
             <Dialog.Panel>
-                <div class="p-5">
-                    <div class="mb-3 flex items-center gap-3">
+                <!-- Misma anatomía que el modal de crear -->
+                <div>
+                    <div
+                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                    >
                         <div
-                            class="flex h-10 w-10 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
                         >
-                            <Lucide icon="Trash2" class="h-5 w-5 text-danger" />
+                            <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
-                        <div>
+                        <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">
-                                Eliminar {{ selectedRows.length }} usuario(s)
+                                Eliminar {{ selectedRows.length }} usuario{{
+                                    selectedRows.length === 1 ? '' : 's'
+                                }}
                             </h2>
-                            <p class="text-xs text-slate-500">
+                            <p class="mt-0.5 text-xs text-slate-500">
                                 Los que tengan ventas, turnos o cortes, o sean
                                 el único dueño, se conservan por auditoría.
                             </p>
                         </div>
-                    </div>
-                    <div
-                        class="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-dashed border-slate-300/70 p-2 text-sm dark:border-darkmode-400"
-                    >
-                        <div
-                            v-for="row in selectedRows"
-                            :key="row.id"
-                            class="flex items-center justify-between gap-2 px-1"
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            @click="bulkDeleteOpen = false"
                         >
-                            <span class="font-medium">{{ row.name }}</span>
-                            <span class="text-xs text-slate-500">{{
-                                row.email
-                            }}</span>
+                            <Lucide icon="X" class="h-5 w-5" />
+                        </button>
+                    </div>
+                    <div class="px-6 py-5">
+                        <div
+                            class="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-dashed border-slate-300/70 p-2 text-sm dark:border-darkmode-400"
+                        >
+                            <div
+                                v-for="row in selectedRows"
+                                :key="row.id"
+                                class="flex items-center justify-between gap-2 px-1"
+                            >
+                                <span class="font-medium">{{ row.name }}</span>
+                                <span class="text-xs text-slate-500">{{
+                                    row.email
+                                }}</span>
+                            </div>
                         </div>
                     </div>
-                    <div class="mt-5 flex justify-end gap-2">
+                    <div
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                    >
                         <Button
                             variant="outline-secondary"
                             @click="bulkDeleteOpen = false"
@@ -817,6 +956,7 @@ async function submitDelete() {
                             :disabled="bulkDeleting"
                             @click="bulkDelete"
                         >
+                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
                             {{ bulkDeleting ? 'Eliminando…' : 'Sí, eliminar' }}
                         </Button>
                     </div>

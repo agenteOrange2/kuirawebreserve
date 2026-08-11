@@ -1,13 +1,25 @@
 <script setup lang="ts">
 import { Head } from '@inertiajs/vue3';
 import axios from 'axios';
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormInput, FormLabel, FormTextarea } from '@/components/Base/Form';
+import {
+    FormInput,
+    FormLabel,
+    FormSelect,
+    FormTextarea,
+} from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
+import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
+import DateRangePicker from '@/components/Booking/DateRangePicker.vue';
 import { useEmbedResize } from '@/composables/useEmbedResize';
 import type { WizardAppearance } from '@/composables/useWizardAppearance';
 import { useWizardAppearance } from '@/composables/useWizardAppearance';
+import {
+    formatFriendlyDateTime,
+    formatStayRange,
+    humanizeMinutes,
+} from '@/lib/bookingFormat';
 
 interface TypePhoto {
     id: number;
@@ -113,6 +125,12 @@ const props = defineProps<{
     hasWizard: boolean;
     hasLookup: boolean;
     hasExperiences: boolean;
+    // Contacto público del hotel (redes, mapa, sitio) para el pie.
+    contact: {
+        website: string | null;
+        maps_url: string | null;
+        socials: { type: string; url: string; icon: Icon }[];
+    };
 }>();
 
 // Widget incrustado: reporta su alto al iframe padre.
@@ -161,6 +179,7 @@ const searching = ref(false);
 const searchError = ref<string | null>(null);
 const searched = ref(false);
 const options = ref<Option[]>([]);
+const resultsEl = ref<HTMLElement | null>(null);
 
 // Por tipo: cuántas habitaciones y cuántas personas POR habitación.
 interface LineState {
@@ -192,6 +211,13 @@ async function search() {
         });
         options.value = data.options;
         searched.value = true;
+        // Los resultados aparecen abajo del botón: sin scroll automático
+        // mucha gente no baja a verlos.
+        await nextTick();
+        resultsEl.value?.scrollIntoView({
+            behavior: 'smooth',
+            block: 'start',
+        });
     } catch (error: any) {
         searchError.value =
             error.response?.data?.message ??
@@ -365,6 +391,19 @@ function removeExperiencePick(sessionId: number) {
 const step = ref<'search' | 'guest' | 'confirm'>('search');
 const guestName = ref('');
 const guestPhone = ref('');
+// Lada del teléfono en internacional +<lada><número>, igual que /reservar
+// y el alta del panel — un número de USA ya no se convierte en mexicano.
+const phoneCountry = ref<'52' | '1' | 'otro'>('52');
+const phoneLada = ref('');
+const guestPhoneForSubmit = computed(() => {
+    const digits = guestPhone.value.replace(/\D/g, '');
+    if (!digits) return guestPhone.value.trim();
+    const code =
+        phoneCountry.value === 'otro'
+            ? phoneLada.value.replace(/\D/g, '')
+            : phoneCountry.value;
+    return code ? `+${code}${digits}` : digits;
+});
 const guestEmail = ref('');
 const notes = ref('');
 const honeypot = ref('');
@@ -391,7 +430,7 @@ async function submitHold() {
         const payload = {
             ...dateParams(),
             guest_name: guestName.value,
-            guest_phone: guestPhone.value,
+            guest_phone: guestPhoneForSubmit.value,
             guest_email: guestEmail.value || null,
             notes: notes.value || null,
             website: honeypot.value,
@@ -552,16 +591,18 @@ const holdCountdown = computed(() => {
     const diff = Date.parse(hold.value.hold_expires_at) - nowMs.value;
     if (diff <= 0) return 'Expiró';
     const m = Math.floor(diff / 60000);
+    // "179:58" parece error de sistema; con horas de margen se lee mejor
+    // "2 h 59 min" y el minutero corre solo en la última hora.
+    if (m >= 60) return `${Math.floor(m / 60)} h ${m % 60} min`;
     return `${m}:${String(Math.floor((diff % 60000) / 1000)).padStart(2, '0')}`;
 });
 
-const formatDateTime = (iso: string) =>
-    new Date(iso).toLocaleString('es-MX', {
-        day: '2-digit',
-        month: 'short',
-        hour: '2-digit',
-        minute: '2-digit',
-    });
+// Resumen del rango según modalidad (mismo criterio que /reservar): por
+// noche cuenta noches; por horas dice a qué hora llegas y sales.
+function stayLabel(startIso: string, endIso: string): string {
+    if (mode.value === 'night') return formatStayRange(startIso, endIso);
+    return `Llegas ${formatFriendlyDateTime(startIso)} · sales ${formatFriendlyDateTime(endIso)}`;
+}
 </script>
 
 <template>
@@ -595,7 +636,7 @@ const formatDateTime = (iso: string) =>
                 <a
                     v-if="property.phone"
                     :href="`tel:${property.phone}`"
-                    class="flex h-9 w-9 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
+                    class="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
                 >
                     <Lucide icon="Phone" class="h-4 w-4" />
                 </a>
@@ -631,10 +672,12 @@ const formatDateTime = (iso: string) =>
                             v-if="hold.starts_at"
                             class="mt-1 text-xs text-slate-500"
                         >
-                            {{ formatDateTime(hold.starts_at)
-                            }}<template v-if="hold.ends_at">
-                                → {{ formatDateTime(hold.ends_at) }}</template
-                            >
+                            <template v-if="hold.ends_at">{{
+                                stayLabel(hold.starts_at, hold.ends_at)
+                            }}</template>
+                            <template v-else>{{
+                                formatFriendlyDateTime(hold.starts_at)
+                            }}</template>
                         </div>
                         <div
                             class="mt-3 space-y-1 border-t border-slate-200 pt-3 text-xs text-slate-500"
@@ -659,7 +702,9 @@ const formatDateTime = (iso: string) =>
                                     }}<template v-if="line.starts_at">
                                         ·
                                         {{
-                                            formatDateTime(line.starts_at)
+                                            formatFriendlyDateTime(
+                                                line.starts_at,
+                                            )
                                         }}</template
                                     ></span
                                 >
@@ -1009,8 +1054,8 @@ const formatDateTime = (iso: string) =>
                             class="mt-2 text-xs text-warning"
                         >
                             Tienen hasta
-                            {{ formatDateTime(hold.hold_expires_at) }} para
-                            pagar en recepción; si no, el grupo se libera.
+                            {{ formatFriendlyDateTime(hold.hold_expires_at) }}
+                            para pagar en recepción; si no, el grupo se libera.
                         </p>
                         <p
                             v-else-if="holdCountdown"
@@ -1053,7 +1098,7 @@ const formatDateTime = (iso: string) =>
                                 </span>
                             </div>
                         </div>
-                        <div class="mt-2 divide-y divide-slate-200/80">
+                        <div class="mt-2 divide-y divide-slate-200">
                             <div
                                 v-for="option in selectedOptions"
                                 :key="option.room_type_id"
@@ -1091,7 +1136,7 @@ const formatDateTime = (iso: string) =>
                         </div>
                         <div
                             v-if="experienceLines.length"
-                            class="mt-2 divide-y divide-slate-200/80 border-t border-slate-200"
+                            class="mt-2 divide-y divide-slate-200 border-t border-slate-200"
                         >
                             <div
                                 v-for="line in experienceLines"
@@ -1108,7 +1153,11 @@ const formatDateTime = (iso: string) =>
                                         {{ line.name }}
                                     </div>
                                     <div class="mt-0.5 text-xs text-slate-400">
-                                        {{ formatDateTime(line.starts_at) }}
+                                        {{
+                                            formatFriendlyDateTime(
+                                                line.starts_at,
+                                            )
+                                        }}
                                     </div>
                                 </div>
                                 <div class="flex shrink-0 items-center gap-2">
@@ -1117,7 +1166,7 @@ const formatDateTime = (iso: string) =>
                                     }}</span>
                                     <button
                                         type="button"
-                                        class="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                        class="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
                                         @click="
                                             removeExperiencePick(
                                                 line.session_id,
@@ -1202,15 +1251,13 @@ const formatDateTime = (iso: string) =>
                                     class="mt-3 grid grid-cols-12 items-end gap-2"
                                 >
                                     <div class="col-span-12 sm:col-span-6">
-                                        <label
-                                            class="mb-1 block text-xs text-slate-500"
-                                            >Fecha y horario</label
-                                        >
-                                        <select
+                                        <FormLabel class="mb-1 text-xs">
+                                            Fecha y horario
+                                        </FormLabel>
+                                        <FormSelect
                                             v-model="
                                                 expDraft[exp.id].session_id
                                             "
-                                            class="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-700 focus:border-primary/40 focus:outline-none"
                                         >
                                             <option value="" disabled>
                                                 Elige una sesión
@@ -1228,15 +1275,18 @@ const formatDateTime = (iso: string) =>
                                                 :value="session.id"
                                             >
                                                 {{
-                                                    formatDateTime(
+                                                    formatFriendlyDateTime(
                                                         session.starts_at,
                                                     )
                                                 }}
                                                 ·
-                                                {{ session.remaining }}
-                                                lugar(es)
+                                                {{
+                                                    session.remaining === 1
+                                                        ? 'queda 1 lugar'
+                                                        : `quedan ${session.remaining} lugares`
+                                                }}
                                             </option>
-                                        </select>
+                                        </FormSelect>
                                     </div>
                                     <div class="col-span-6 sm:col-span-3">
                                         <label
@@ -1246,7 +1296,7 @@ const formatDateTime = (iso: string) =>
                                         <div class="flex items-center gap-2">
                                             <button
                                                 type="button"
-                                                class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
+                                                class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
                                                 :disabled="
                                                     expDraft[exp.id].people <=
                                                     exp.min_people
@@ -1266,14 +1316,14 @@ const formatDateTime = (iso: string) =>
                                                 />
                                             </button>
                                             <span
-                                                class="w-5 text-center text-sm font-medium"
+                                                class="w-8 text-center text-base font-medium"
                                                 >{{
                                                     expDraft[exp.id].people
                                                 }}</span
                                             >
                                             <button
                                                 type="button"
-                                                class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50"
+                                                class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300"
                                                 @click="
                                                     expDraft[exp.id].people =
                                                         Math.min(
@@ -1315,30 +1365,56 @@ const formatDateTime = (iso: string) =>
                     </h2>
                     <div class="mt-3 space-y-4">
                         <div>
-                            <FormLabel>Nombre completo *</FormLabel>
+                            <FormLabel>Nombre completo</FormLabel>
                             <FormInput
                                 v-model="guestName"
                                 type="text"
                                 placeholder="Quien responde por el grupo"
                             />
                         </div>
-                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <div>
-                                <FormLabel>Teléfono *</FormLabel>
+                        <div>
+                            <FormLabel>Teléfono</FormLabel>
+                            <div class="flex flex-wrap gap-2">
+                                <FormSelect
+                                    v-model="phoneCountry"
+                                    class="w-auto shrink-0"
+                                    aria-label="País del teléfono"
+                                >
+                                    <option value="52">México +52</option>
+                                    <option value="1">USA / Canadá +1</option>
+                                    <option value="otro">Otro país</option>
+                                </FormSelect>
+                                <FormInput
+                                    v-if="phoneCountry === 'otro'"
+                                    v-model="phoneLada"
+                                    type="tel"
+                                    inputmode="numeric"
+                                    class="w-20 shrink-0"
+                                    placeholder="Lada"
+                                    aria-label="Lada internacional"
+                                />
                                 <FormInput
                                     v-model="guestPhone"
                                     type="tel"
+                                    inputmode="numeric"
+                                    class="min-w-40 flex-1"
                                     placeholder="10 dígitos"
                                 />
                             </div>
-                            <div>
-                                <FormLabel>Email (opcional)</FormLabel>
-                                <FormInput
-                                    v-model="guestEmail"
-                                    type="email"
-                                    placeholder="tu@correo.com"
-                                />
-                            </div>
+                            <p class="mt-1 text-xs text-slate-400">
+                                Aquí te confirmamos por WhatsApp.
+                            </p>
+                        </div>
+                        <div>
+                            <FormLabel>Email</FormLabel>
+                            <FormInput
+                                v-model="guestEmail"
+                                type="email"
+                                placeholder="tu@correo.com"
+                            />
+                            <p class="mt-1 text-xs text-slate-400">
+                                Te mandamos ahí tu confirmación.
+                            </p>
                         </div>
                         <div>
                             <FormLabel>Notas (opcional)</FormLabel>
@@ -1394,8 +1470,8 @@ const formatDateTime = (iso: string) =>
                     </Button>
                     <p class="mt-2.5 text-center text-[11px] text-slate-400">
                         Todo o nada: si alguna habitación ya no está disponible,
-                        no se aparta ninguna. Se aparta por
-                        {{ holdMinutes }} minutos mientras confirmas.
+                        no se aparta ninguna. El grupo queda apartado
+                        {{ humanizeMinutes(holdMinutes) }} mientras confirmas.
                     </p>
                 </div>
 
@@ -1439,34 +1515,47 @@ const formatDateTime = (iso: string) =>
                         </button>
                     </div>
 
-                    <!-- En celular las fechas se apilan: dos columnas dejan
-                         los date pickers al ras y se ve amontonado -->
-                    <div class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-                        <template v-if="mode === 'night'">
-                            <div>
-                                <FormLabel>Llegada</FormLabel>
-                                <FormInput
-                                    v-model="arriveDate"
-                                    type="date"
-                                    :min="localDateInput(new Date())"
-                                />
+                    <!-- Mismo calendario en caja que /reservar: título e
+                         instrucción explícita, nada de inputs del navegador -->
+                    <div
+                        v-if="mode === 'night'"
+                        class="mt-4 rounded-xl border border-slate-200 p-4 sm:p-5"
+                    >
+                        <div class="flex items-center gap-3">
+                            <div
+                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                            >
+                                <Lucide icon="CalendarDays" class="h-4 w-4" />
                             </div>
-                            <div>
-                                <FormLabel>Salida</FormLabel>
-                                <FormInput
-                                    v-model="departDate"
-                                    type="date"
-                                    :min="arriveDate"
-                                />
+                            <div class="min-w-0">
+                                <div class="text-sm font-medium text-slate-800">
+                                    Elige las fechas del grupo
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    Toca el día que llegan y luego el día que se
+                                    van.
+                                </div>
                             </div>
-                        </template>
-                        <div v-else class="sm:col-span-2">
-                            <FormLabel>Fecha y hora de llegada</FormLabel>
-                            <FormInput
-                                v-model="arriveAt"
-                                type="datetime-local"
-                            />
                         </div>
+                        <DateRangePicker
+                            v-model:start="arriveDate"
+                            v-model:end="departDate"
+                            class="mt-3"
+                        />
+                        <div
+                            class="mt-2 rounded-lg bg-slate-50 px-3 py-2.5 text-center"
+                        >
+                            <div class="text-xs text-slate-500">
+                                Su estancia
+                            </div>
+                            <div class="text-sm font-medium text-slate-800">
+                                {{ formatStayRange(arriveDate, departDate) }}
+                            </div>
+                        </div>
+                    </div>
+                    <div v-else class="mt-4">
+                        <FormLabel>Fecha y hora de llegada</FormLabel>
+                        <FormInput v-model="arriveAt" type="datetime-local" />
                     </div>
 
                     <Button
@@ -1486,7 +1575,11 @@ const formatDateTime = (iso: string) =>
                         {{ searchError }}
                     </p>
 
-                    <div v-if="searched" class="mt-6 space-y-3">
+                    <div
+                        v-if="searched"
+                        ref="resultsEl"
+                        class="mt-6 scroll-mt-4 space-y-3"
+                    >
                         <div
                             v-for="option in options"
                             :key="option.room_type_id"
@@ -1542,7 +1635,7 @@ const formatDateTime = (iso: string) =>
                                             >
                                                 <button
                                                     type="button"
-                                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
+                                                    class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
                                                     :disabled="
                                                         !lines[
                                                             option.room_type_id
@@ -1564,7 +1657,7 @@ const formatDateTime = (iso: string) =>
                                                     />
                                                 </button>
                                                 <span
-                                                    class="w-5 text-center text-sm font-medium"
+                                                    class="w-8 text-center text-base font-medium"
                                                     >{{
                                                         lines[
                                                             option.room_type_id
@@ -1573,7 +1666,7 @@ const formatDateTime = (iso: string) =>
                                                 >
                                                 <button
                                                     type="button"
-                                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
+                                                    class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
                                                     :disabled="
                                                         (lines[
                                                             option.room_type_id
@@ -1617,7 +1710,7 @@ const formatDateTime = (iso: string) =>
                                                 >
                                                     <button
                                                         type="button"
-                                                        class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
+                                                        class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
                                                         :disabled="
                                                             (lines[
                                                                 option
@@ -1640,7 +1733,7 @@ const formatDateTime = (iso: string) =>
                                                         />
                                                     </button>
                                                     <span
-                                                        class="w-5 text-center text-sm font-medium"
+                                                        class="w-8 text-center text-base font-medium"
                                                         >{{
                                                             lines[
                                                                 option
@@ -1650,7 +1743,7 @@ const formatDateTime = (iso: string) =>
                                                     >
                                                     <button
                                                         type="button"
-                                                        class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
+                                                        class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
                                                         :disabled="
                                                             (lines[
                                                                 option
@@ -1691,7 +1784,7 @@ const formatDateTime = (iso: string) =>
                                                 >
                                                     <button
                                                         type="button"
-                                                        class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
+                                                        class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
                                                         :disabled="
                                                             !(
                                                                 lines[
@@ -1716,7 +1809,7 @@ const formatDateTime = (iso: string) =>
                                                         />
                                                     </button>
                                                     <span
-                                                        class="w-5 text-center text-sm font-medium"
+                                                        class="w-8 text-center text-base font-medium"
                                                         >{{
                                                             lines[
                                                                 option
@@ -1726,7 +1819,7 @@ const formatDateTime = (iso: string) =>
                                                     >
                                                     <button
                                                         type="button"
-                                                        class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-50 disabled:opacity-30"
+                                                        class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
                                                         :disabled="
                                                             (lines[
                                                                 option
@@ -1833,7 +1926,55 @@ const formatDateTime = (iso: string) =>
                     experiencias
                 </a>
             </div>
-            <p class="mt-3 text-center text-[11px] text-white/60">
+            <!-- Que la página se sienta DEL hotel: sus redes y cómo llegar -->
+            <div
+                v-if="
+                    contact.socials.length ||
+                    contact.maps_url ||
+                    contact.website
+                "
+                class="mt-6 text-center"
+            >
+                <p class="text-xs font-medium text-white/70">
+                    Síguenos y encuéntranos
+                </p>
+                <div
+                    class="mt-2.5 flex flex-wrap items-center justify-center gap-2.5"
+                >
+                    <a
+                        v-for="social in contact.socials"
+                        :key="social.url"
+                        :href="social.url"
+                        target="_blank"
+                        rel="noopener"
+                        :title="social.type"
+                        class="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white transition hover:bg-white/20"
+                    >
+                        <Lucide :icon="social.icon" class="h-4 w-4" />
+                    </a>
+                    <a
+                        v-if="contact.maps_url"
+                        :href="contact.maps_url"
+                        target="_blank"
+                        rel="noopener"
+                        title="Cómo llegar"
+                        class="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white transition hover:bg-white/20"
+                    >
+                        <Lucide icon="MapPin" class="h-4 w-4" />
+                    </a>
+                    <a
+                        v-if="contact.website"
+                        :href="contact.website"
+                        target="_blank"
+                        rel="noopener"
+                        title="Sitio web"
+                        class="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white transition hover:bg-white/20"
+                    >
+                        <Lucide icon="Globe" class="h-4 w-4" />
+                    </a>
+                </div>
+            </div>
+            <p class="mt-4 text-center text-[11px] text-white/60">
                 Impulsado por KuiraWebReserve · tus datos de pago nunca pasan
                 por este sitio
             </p>
