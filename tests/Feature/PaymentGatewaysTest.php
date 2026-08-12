@@ -245,9 +245,15 @@ it('el bot entrega link de pago cuando hay pasarela activa', function () {
 
     $data = json_decode($response->getContent(), true);
 
+    // El bot comparte el link CORTO /pago/{uuid} (el checkout crudo de
+    // Stripe trae un #fragmento de ~370 chars que el modelo recorta a
+    // veces); la página corta lleva al checkout completo.
+    $paymentRequest = \App\Models\PaymentRequest::latest('id')->first();
+
     expect($response->getStatusCode())->toBe(201)
         ->and($data['method'])->toBe('link_de_pago')
-        ->and($data['payment_link'])->toContain('checkout.stripe.com')
+        ->and($data['payment_link'])->toContain('/pago/'.$paymentRequest->uuid)
+        ->and($paymentRequest->checkout_url)->toContain('checkout.stripe.com')
         ->and((float) $data['amount'])->toBe(200.0);
 });
 

@@ -324,7 +324,13 @@ class AgentToolsController extends Controller
                     'concept' => $paymentRequest->conceptLabel(),
                     'amount' => (float) $paymentRequest->amount,
                     'amount_label' => $paymentRequest->amountLabel(),
-                    'payment_link' => $paymentRequest->checkout_url,
+                    // Link CORTO del hotel (/pago/{uuid}), nunca el checkout
+                    // crudo: el de Stripe mide ~470 caracteres con un
+                    // #fragmento obligatorio que el modelo a veces recorta al
+                    // escribirlo → "link no válido" (bug real 2026-08-12,
+                    // bandeja motellacupula). La página corta trae el botón
+                    // de pago con el URL completo intacto.
+                    'payment_link' => $paymentRequest->publicReturnUrl(),
                     'expires_at' => $paymentRequest->expires_at?->toIso8601String(),
                     'instructions' => 'Comparte el link tal cual: el huésped paga en la página segura del proveedor y la confirmación llega sola al sistema. NUNCA afirmes que el pago fue recibido; el sistema avisará. No pidas datos de tarjeta por el chat.',
                 ], 201);
