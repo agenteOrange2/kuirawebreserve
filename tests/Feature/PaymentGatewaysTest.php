@@ -257,6 +257,38 @@ it('el bot entrega link de pago cuando hay pasarela activa', function () {
         ->and((float) $data['amount'])->toBe(200.0);
 });
 
+it('el saneador del bot reescribe checkouts crudos (aun truncados) al link corto', function () {
+    Http::fake([
+        'api.stripe.com/v1/checkout/sessions' => Http::response(['id' => 'cs_1', 'url' => 'https://checkout.stripe.com/pay/cs_1#fragmento-largo-obligatorio']),
+    ]);
+
+    stripeLink(['tenant_id' => (string) tenant('id')]);
+    $reservation = reservaGateway();
+
+    app(IssuePaymentRequest::class)->handle(
+        $reservation,
+        \App\Models\PaymentRequest::METHOD_GATEWAY,
+        null,
+        \App\Models\Central\PaymentGatewayLink::query()->latest('id')->first(),
+    );
+    $paymentRequest = \App\Models\PaymentRequest::latest('id')->first();
+
+    $brain = app(\App\Services\Agent\AgentBrain::class);
+
+    // Caso real 2026-08-12: el modelo copia el link SIN el #fragmento
+    // (de un mensaje anterior del historial) → Stripe lo rechaza.
+    $truncado = strtok($paymentRequest->checkout_url, '#');
+    $saneado = $brain->sanitizeGatewayLinks("Paga aquí: {$truncado}. Gracias.");
+
+    expect($saneado)->toContain('/pago/'.$paymentRequest->uuid)
+        ->and($saneado)->not->toContain('checkout.stripe.com')
+        ->and($saneado)->toContain('. Gracias.');
+
+    // El link completo también se acorta; un URL ajeno se deja en paz.
+    expect($brain->sanitizeGatewayLinks($paymentRequest->checkout_url))->toContain('/pago/'.$paymentRequest->uuid)
+        ->and($brain->sanitizeGatewayLinks('Visita https://ejemplo.com/x'))->toContain('https://ejemplo.com/x');
+});
+
 it('cambiar de pasarela emite un checkout NUEVO: nunca recicla el link de la otra', function () {
     Http::fake([
         'api.stripe.com/v1/checkout/sessions' => Http::response(['id' => 'cs_1', 'url' => 'https://checkout.stripe.com/pay/cs_1']),

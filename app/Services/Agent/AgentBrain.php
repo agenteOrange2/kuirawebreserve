@@ -143,10 +143,47 @@ class AgentBrain
         return $conversation->messages()->create([
             'direction' => 'out',
             'sender_type' => 'bot',
-            'body' => $text,
+            'body' => $this->sanitizeGatewayLinks($text),
             'meta' => $meta,
             'created_at' => now(),
         ]);
+    }
+
+    /**
+     * Red de seguridad DETERMINISTA para links de pago (bug real 2026-08-12,
+     * bandeja motellacupula): el checkout crudo de Stripe mide ~470 chars con
+     * un #fragmento obligatorio que el modelo recorta a veces — y aunque el
+     * tool ya devuelve el link corto /pago/{uuid}, el modelo puede re-citar
+     * un link roto de un mensaje ANTERIOR del historial. Aquí cualquier URL
+     * de pasarela que aparezca en la respuesta se sustituye por el link corto
+     * del cobro correspondiente (el id de sesión sobrevive al recorte y ubica
+     * el cobro exacto). Si no se encuentra el cobro, se deja tal cual.
+     */
+    public function sanitizeGatewayLinks(string $text): string
+    {
+        $pattern = '~https?://(?:checkout\.stripe\.com|www\.mercadopago\.com(?:\.\w{2})?|www\.(?:sandbox\.)?paypal\.com)/\S+~i';
+
+        return preg_replace_callback($pattern, function (array $match) {
+            $url = rtrim($match[0], '.,;:)]');
+            $trail = substr($match[0], strlen($url));
+
+            if (preg_match('~cs_(?:test|live)_[A-Za-z0-9]+~', $url, $session)) {
+                $needle = $session[0];
+            } else {
+                $needle = mb_substr($url, 0, 90);
+            }
+
+            // Match exacto en PHP sobre los cobros recientes (LIKE escapado
+            // se comporta distinto entre motores de BD).
+            $request = \App\Models\PaymentRequest::query()
+                ->whereNotNull('checkout_url')
+                ->latest('id')
+                ->limit(50)
+                ->get()
+                ->first(fn ($candidate) => str_contains((string) $candidate->checkout_url, $needle));
+
+            return ($request ? $request->publicReturnUrl() : $url).$trail;
+        }, $text) ?? $text;
     }
 
     protected function systemPrompt(?Conversation $conversation = null): string
