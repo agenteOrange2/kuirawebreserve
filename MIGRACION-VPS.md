@@ -9,6 +9,57 @@ Destino: VPS Hostinger, entorno podado exclusivo de kuirawebreserve.
 
 ---
 
+## Bitácora real (25 ago 2026)
+
+El runbook se escribió antes de tocar el VPS. Esto es lo que cambió al ejecutarlo — léelo
+antes de seguir los pasos, porque varios ya no aplican tal cual.
+
+**El VPS no estaba limpio.** Traía Traefik + n8n + Chatwoot + Evolution API corriendo desde
+hacía 7 semanas, dueños de los puertos 80, 443 y 8080. Se eliminaron a petición del dueño
+(era un proyecto de prueba); respaldo en `/root/backups/2026-08-25-pre-wipe/`. Tras el
+borrado, el `docker-compose.yml` de F2.3 volvió a ser válido tal como está escrito.
+
+**El dominio cambió** de `kuirawebreserve.com` a `tureservaenlinea.com` (Namecheap,
+PremiumDNS). El repo, la carpeta del proyecto y los nombres de las bases **no** cambian.
+
+**Cuatro trampas que este documento no traía:**
+
+1. `tar czf ... storage/tenant*` desde el usuario del host **falla en silencio** en carpetas
+   con permisos `700` que pertenecen a root o www-data: genera el archivo igual, con menos
+   contenido del que crees. Hay que hacer el tar **desde dentro del contenedor php**, y
+   contar los archivos de los dos lados antes de confiar en el respaldo.
+
+2. La tabla `domains` de la base central guarda el dominio de cada tenant. Al cambiar de
+   dominio hay que actualizarla o **ningún panel resuelve** — `stancl/tenancy` usa el
+   subdominio como llave.
+
+3. `config/tenancy.php` → `central_domains` debe incluir el dominio nuevo, o el panel
+   central se trata como un tenant inexistente. Hacerlo **en el repo y con commit**, no
+   suelto en el servidor, o el próximo `git pull` se lo lleva.
+
+4. Si publicas registros **AAAA**, la conf de nginx necesita `listen [::]:80;` además de
+   `listen 80;`. Sin eso, los visitantes por IPv6 caen en el server por defecto y ven otra
+   página, mientras que por IPv4 todo se ve bien.
+
+5. **El build del frontend NO se puede hacer con un contenedor de solo Node.** El plugin
+   `@laravel/vite-plugin-wayfinder` ejecuta `php artisan wayfinder:generate` durante el
+   build; con `node:20` a secas falla con `php: not found` antes de transformar un módulo.
+   Se resolvió con `Dockerfile.build` (`FROM webserver-php` + Node 20, imagen `kwr-build`),
+   que hereda las extensiones de PHP de la app. Correrlo en la red de compose.
+
+6. **`docker compose up -d` no recarga nginx** si el contenedor ya estaba arriba. Cambiar
+   un archivo en `nginx/conf.d/` no basta: hace falta `docker compose restart nginx`. Sin
+   eso sigue sirviendo la conf vieja y parece que todo funciona.
+
+7. **`php artisan route:cache` falla** por dos rutas con el mismo nombre
+   `admin.tenants.modules` (`routes/admin.php` líneas 33 y 48). No impide arrancar, pero
+   deja el sitio sin caché de rutas. Ver la sección "Bug de rutas duplicadas" al final.
+
+**`SESSION_DOMAIN` se queda en `null`.** Ponerlo en `.tureservaenlinea.com` compartiría la
+cookie de sesión entre todos los subdominios, o sea entre tenants distintos. No lo cambies.
+
+---
+
 ## Inventario: qué es kuirawebreserve
 
 | Pieza | Detalle |
@@ -20,7 +71,7 @@ Destino: VPS Hostinger, entorno podado exclusivo de kuirawebreserve.
 | DBs tenant | `tenanthoteltest`, `tenanthotelmexico`, `tenantmotellacupula`, `tenantcabanasrealdelasierra` |
 | Colas / cache | Redis (`predis`, la imagen PHP no trae phpredis) |
 | Websockets | Reverb en `:8080`, proxied por nginx en `/app` |
-| Dominios | `kuirawebreserve.com` + **wildcard** `*.kuirawebreserve.com` (cada subdominio = panel de un tenant) |
+| Dominios | `tureservaenlinea.com` + **wildcard** `*.tureservaenlinea.com` (cada subdominio = panel de un tenant) |
 
 ### Servicios que SÍ se migran (7)
 
@@ -338,7 +389,7 @@ Parte del `env.origen` y cambia **solo** estas líneas:
 ```ini
 APP_ENV=production
 APP_DEBUG=false                 # en casa está en true
-APP_URL=https://kuirawebreserve.com
+APP_URL=https://tureservaenlinea.com
 APP_KEY=<<< EL MISMO DE ORIGEN >>>
 
 DB_HOST=mysql                   # nombre del servicio, NO 127.0.0.1
@@ -450,8 +501,8 @@ docker compose ps        # 7 servicios en "running"
 ### 5.1 DNS en Hostinger
 
 ```
-A   kuirawebreserve.com   ->  IP_DEL_VPS
-A   *.kuirawebreserve.com ->  IP_DEL_VPS      <- imprescindible: cada tenant es un subdominio
+A   tureservaenlinea.com   ->  72.60.66.38
+A   *.tureservaenlinea.com ->  72.60.66.38      <- imprescindible: cada tenant es un subdominio
 ```
 
 ### 5.2 Certificado wildcard
@@ -462,7 +513,7 @@ Un wildcard **no** se puede emitir por HTTP-01; requiere DNS-01 (un TXT en
 ```bash
 docker run -it --rm -v ~/webserver/certbot/conf:/etc/letsencrypt \
   certbot/certbot certonly --manual --preferred-challenges dns \
-  -d kuirawebreserve.com -d '*.kuirawebreserve.com'
+  -d tureservaenlinea.com -d '*.tureservaenlinea.com'
 ```
 
 Certbot te dicta el TXT; lo pones en el panel de Hostinger, esperas propagación y
@@ -522,8 +573,8 @@ proyecto), no el de casa con sus 15 proyectos y graphify.
 ```bash
 cd ~/webserver
 docker compose ps                                   # 7 running
-curl -I https://kuirawebreserve.com                 # 200
-curl -I https://hoteltest.kuirawebreserve.com       # 200 (tenant vivo)
+curl -I https://tureservaenlinea.com                 # 200
+curl -I https://hoteltest.tureservaenlinea.com       # 200 (tenant vivo)
 docker compose logs --tail=50 horizon               # sin excepciones
 docker compose logs --tail=50 reverb                # "Server started"
 docker exec -w /var/www/laravel/kuirawebreserve webserver-php-1 php artisan about
@@ -568,3 +619,43 @@ cd ~/webserver && docker compose restart horizon scheduler-reservas reverb
 
 `horizon` y `scheduler-reservas` **siempre** se reinician tras desplegar: cargan el código
 en memoria al arrancar y no lo recargan solos.
+
+
+---
+
+## Bug de rutas duplicadas (pendiente de decisión)
+
+`routes/admin.php` define **dos rutas distintas con el mismo nombre**:
+
+```php
+// línea 33 — la PÁGINA
+Route::get('modulos', [TenantAreaController::class, 'modules'])->name('modules');
+//   => admin.tenants.modules  ->  GET /admin/tenants/{tenant}/modulos
+
+// línea 48 — la ACCIÓN
+Route::patch('tenants/{tenant}/modules', [TenantController::class, 'updateModule'])
+    ->name('tenants.modules');
+//   => admin.tenants.modules  ->  PATCH /admin/tenants/{tenant}/modules
+```
+
+Laravel lo tolera en runtime —gana la última registrada, la `PATCH`— pero `route:cache`
+se niega a serializar y aborta. Efecto secundario en el navegador: la pestaña **"Módulos"**
+de `TenantHeader.vue` (línea 55) genera la URL de la acción `PATCH` y al navegar por `GET`
+no hay ruta que la atienda. `Modules.vue` (línea 82) sí obtiene la URL correcta porque
+manda `router.patch`.
+
+**Arreglo propuesto** (no aplicado; cambia comportamiento de la app):
+
+```php
+// línea 48
+Route::patch('tenants/{tenant}/modules', [TenantController::class, 'updateModule'])
+    ->name('tenants.modules.update');
+```
+
+```ts
+// resources/js/pages/admin/tenants/Modules.vue:82
+route('admin.tenants.modules.update', props.tenant.id)
+```
+
+Con eso la página conserva el nombre corto, la pestaña vuelve a funcionar y `route:cache`
+pasa. Después: `php artisan route:cache` y rebuild del frontend (Wayfinder regenera tipos).
