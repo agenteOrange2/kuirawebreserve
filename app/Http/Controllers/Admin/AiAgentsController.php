@@ -35,10 +35,13 @@ class AiAgentsController extends Controller
 
         $settings = TenantAgentSetting::query()->get()->keyBy('tenant_id');
 
-        // Canales conectados por hotel (Meta + Evolution) para los iconos de
-        // la tabla; la gestión completa vive en admin.ai.channels.
+        // Canales conectados por hotel (Meta + Evolution + Telegram + TikTok)
+        // para los iconos de la tabla; la gestión completa vive en la ficha
+        // del hotel (admin.tenants.channels).
         $metaByTenant = \App\Models\Central\MetaChannelLink::query()->get()->groupBy('tenant_id');
         $evoByTenant = \App\Models\Central\EvolutionChannelLink::query()->get()->groupBy('tenant_id');
+        $telegramByTenant = \App\Models\Central\TelegramChannelLink::query()->get()->groupBy('tenant_id');
+        $tiktokByTenant = \App\Models\Central\TiktokChannelLink::query()->get()->groupBy('tenant_id');
 
         return Inertia::render('admin/AiAgents', [
             'providers' => PlatformAiProvider::query()->orderBy('sort_order')->orderBy('id')->get()
@@ -57,7 +60,7 @@ class AiAgentsController extends Controller
                 'key_hint' => $meta['key_hint'],
                 'models' => $meta['models'],
             ])->values(),
-            'tenants' => Tenant::query()->with('domains')->get()->map(function (Tenant $tenant) use ($usage, $settings, $metaByTenant, $evoByTenant) {
+            'tenants' => Tenant::query()->with('domains')->get()->map(function (Tenant $tenant) use ($usage, $settings, $metaByTenant, $evoByTenant, $telegramByTenant, $tiktokByTenant) {
                 $setting = $settings->get($tenant->id);
                 $planAi = config("plans.{$tenant->plan}.ai", ['enabled' => false, 'monthly_replies' => 0]);
 
@@ -90,43 +93,21 @@ class AiAgentsController extends Controller
                             'active' => (bool) $l->active,
                             'last_event_at' => $l->last_event_at?->diffForHumans(short: true),
                         ]))
+                        ->concat(($telegramByTenant->get($tenant->id) ?? collect())->map(fn ($l) => [
+                            'type' => 'telegram',
+                            'label' => 'Telegram'.($l->name ? " · {$l->name}" : ($l->bot_username ? " · @{$l->bot_username}" : '')),
+                            'active' => (bool) $l->active,
+                            'last_event_at' => $l->last_event_at?->diffForHumans(short: true),
+                        ]))
+                        ->concat(($tiktokByTenant->get($tenant->id) ?? collect())->map(fn ($l) => [
+                            'type' => 'tiktok',
+                            'label' => 'TikTok'.($l->name ? " · {$l->name}" : ''),
+                            'active' => (bool) $l->active,
+                            'last_event_at' => $l->last_event_at?->diffForHumans(short: true),
+                        ]))
                         ->values(),
                 ];
             }),
-        ]);
-    }
-
-    /**
-     * Canales de UN hotel: sus conexiones Meta + Evolution aisladas, con la
-     * configuración del webhook de Meta. Espejo de la vista de contexto.
-     */
-    public function channels(Tenant $tenant): Response
-    {
-        return Inertia::render('admin/AgentChannels', [
-            'tenant' => [
-                'id' => $tenant->id,
-                'name' => $tenant->name ?? $tenant->id,
-                'domain' => $tenant->domains()->first()?->domain,
-            ],
-            'meta' => \App\Models\Central\MetaChannelLink::query()
-                ->where('tenant_id', $tenant->id)->latest()->get()
-                ->map(fn ($link) => app(MetaChannelController::class)->serialize($link))->values(),
-            'evolution' => \App\Models\Central\EvolutionChannelLink::query()
-                ->where('tenant_id', $tenant->id)->orderBy('id')->get()
-                ->map(fn ($link) => [
-                    'id' => $link->id,
-                    'name' => $link->name,
-                    'base_url' => $link->base_url,
-                    'instance' => $link->instance,
-                    'active' => (bool) $link->active,
-                    'last_event_at' => $link->last_event_at?->diffForHumans(short: true),
-                ])->values(),
-            'metaConfig' => [
-                'mode' => config('meta.mode'),
-                'webhook_url' => rtrim(config('app.url'), '/').'/webhooks/meta',
-                'verify_token' => config('meta.verify_token'),
-                'app_configured' => filled(config('meta.app_id')),
-            ],
         ]);
     }
 
@@ -201,26 +182,6 @@ TXT;
         return response()->json([
             'prompt' => $prompt,
             'platform_instructions' => TenantAgentSetting::for($tenant->id)->platform_instructions,
-        ]);
-    }
-
-    /** Vista dedicada "Contexto del bot" por hotel (el ojito). */
-    public function context(Tenant $tenant): \Inertia\Response
-    {
-        $prompt = $tenant->run(fn () => app(\App\Services\Agent\AgentBrain::class)->promptPreview());
-        // Sin esto, la página del ADMIN se renderiza con tenancy inicializada
-        // y el layout pinta el menú del tenant (fuga de contexto).
-        tenancy()->end();
-
-        $settings = TenantAgentSetting::for($tenant->id);
-
-        return \Inertia\Inertia::render('admin/AgentContext', [
-            'tenant' => ['id' => $tenant->id, 'name' => $tenant->name],
-            'platformInstructions' => $settings->platform_instructions,
-            'contextEditable' => (bool) $settings->context_editable,
-            'guidelinesEditable' => (bool) $settings->guidelines_editable,
-            'template' => self::INSTRUCTIONS_TEMPLATE,
-            'prompt' => $prompt,
         ]);
     }
 

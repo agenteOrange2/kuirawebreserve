@@ -124,6 +124,11 @@ class PropertyController extends Controller
             'settings.agent_instructions' => ['nullable', 'string', 'max:4000'],
             // Cobros: cuentas para transferencia (las entrega el bot al
             // solicitar un pago) y confirmación automática al cubrir anticipo.
+            // Catálogo de daños (/ajustes/danos): concepto y precio sugerido
+            // de lo que se cobra al revisar la habitación antes de la salida.
+            'settings.damage_catalog' => ['sometimes', 'array', 'max:40'],
+            'settings.damage_catalog.*.concept' => ['required', 'string', 'max:80'],
+            'settings.damage_catalog.*.amount' => ['required', 'numeric', 'min:0', 'max:1000000'],
             'settings.bank_accounts' => ['sometimes', 'array', 'max:10'],
             'settings.bank_accounts.*.bank' => ['required', 'string', 'max:80'],
             'settings.bank_accounts.*.holder' => ['required', 'string', 'max:120'],

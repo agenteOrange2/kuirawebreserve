@@ -236,7 +236,27 @@ conectan su número/página con OAuth de incrustación — *Embedded Signup*):
 - Widget embebible en el sitio del hotel (script 1 línea), con branding del hotel,
   persistencia de sesión y traspaso a WhatsApp ("sigue la conversación en tu cel").
 
-### 4.6 `P1` — Comentarios y publicaciones de Facebook/Instagram (community management)
+### 4.6 ✅ HECHO (2026-08-20) — Comentarios y publicaciones de Facebook/Instagram (community management)
+Construido como módulo `redes-sociales` (addon `reservas-m3-ia-redes`), en
+`/redes` y `/redes/ajustes`. Piezas: `SocialPost`/`SocialComment` (BD del
+tenant), ramas `feed`/`comments` en `MetaWebhookController` que **encolan**
+`ProcessSocialComment` (primer inbound asíncrono del sistema: una ráfaga de
+comentarios no cabe en el request de un webhook), `SocialCommentClassifier`
+(una llamada LLM, parseo tolerante), `SocialResponder` (decide y ejecuta) y
+métodos de comentarios en `MetaApi`.
+
+El mensaje privado se manda con `recipient: {comment_id}` del Send API porque
+su respuesta trae el `recipient_id`: ese PSID/IGSID es lo que liga el
+comentario con la conversación de la bandeja.
+
+**Queda pendiente:** TikTok (solo ingesta, su API de comentarios sigue cerrada
+a apps sin aprobar), la cola de aprobación del modo copiloto para comentarios,
+y el App Review de Meta con `pages_manage_engagement` e
+`instagram_manage_comments` — sin esos permisos el módulo corre pero Graph
+rechaza cada respuesta.
+
+Diseño original:
+
 El bot no solo contesta DMs: **atiende la fan page**. Vía webhooks `feed` (FB) y
 `comments` (IG) sobre las publicaciones de la página:
 

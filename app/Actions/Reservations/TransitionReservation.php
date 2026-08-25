@@ -153,6 +153,13 @@ class TransitionReservation
                 'num_people' => $reservation->num_people,
                 'vehicle_plate' => $reservation->vehicle_plate,
                 'vehicle_desc' => $reservation->vehicle_desc,
+                // La placa de una reserva también alimenta el registro, pero
+                // hasta el check-in: el carro existe cuando llega, no cuando
+                // alguien lo teclea en el motor web.
+                'vehicle_id' => app(\App\Services\VehicleRegistry::class)->resolve(
+                    ['vehicle_plate' => $reservation->vehicle_plate],
+                    $reservation->guest,
+                )?->id,
                 'check_in_at' => now(),
                 'planned_end_at' => $reservation->ends_at,
                 'status' => Stay::STATUS_ACTIVE,

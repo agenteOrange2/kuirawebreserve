@@ -206,7 +206,10 @@ function confirmDelete(): void {
                             variant="outline-secondary"
                             size="sm"
                         >
-                            <Lucide icon="ExternalLink" class="mr-1.5 h-3.5 w-3.5" />
+                            <Lucide
+                                icon="ExternalLink"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
                             Ver
                         </Button>
                         <Button
@@ -303,10 +306,7 @@ function confirmDelete(): void {
                                 type="button"
                                 @click="uploadInput?.click()"
                             >
-                                <Lucide
-                                    icon="FileText"
-                                    class="mr-2 h-4 w-4"
-                                />
+                                <Lucide icon="FileText" class="mr-2 h-4 w-4" />
                                 {{ uploadForm.file?.name ?? 'Elegir archivo' }}
                             </Button>
                             <input
@@ -395,10 +395,7 @@ function confirmDelete(): void {
                                 type="button"
                                 @click="editInput?.click()"
                             >
-                                <Lucide
-                                    icon="FileText"
-                                    class="mr-2 h-4 w-4"
-                                />
+                                <Lucide icon="FileText" class="mr-2 h-4 w-4" />
                                 {{
                                     editForm.file?.name ??
                                     'Conservar archivo actual'

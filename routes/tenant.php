@@ -224,6 +224,10 @@ Route::middleware([
                 ->name('reservations.reports');
             Route::get('/reservas/reportes/pdf', [ReservationReportsController::class, 'pdf'])
                 ->name('reservations.reports.pdf');
+            // La cuenta de una estancia en PDF: para imprimirla en el
+            // mostrador o mandársela al huésped. Es informativa, no fiscal.
+            Route::get('/estancias/{stay}/cuenta.pdf', [StayController::class, 'folioPdf'])
+                ->name('stays.folio.pdf');
         });
 
         // Resultados del cuestionario de experiencia post-estancia.
@@ -281,6 +285,24 @@ Route::middleware([
             ->middleware(['can:reservations.view', 'module:grupos'])
             ->whereNumber('group')
             ->name('groups.show');
+
+        // Registro de vehículos (caseta): la placa es la ficha y sus estancias
+        // el historial. En motel y en "ambos" — a un hotel puro no le aplica,
+        // ahí quien llega se registra en el CRM de huéspedes.
+        Route::middleware(['can:guests.view', 'mode:motel,both'])->group(function () {
+            Route::get('/vehiculos', [\App\Http\Controllers\Tenant\VehiclesPageController::class, 'index'])
+                ->name('vehicles');
+            // Ficha de una llegada a pie: no hay entidad propia, la visita ES
+            // la estancia. Va antes que /{vehiculo} y ese exige número, así
+            // que no se pisan.
+            Route::get('/vehiculos/a-pie/{stay}', [\App\Http\Controllers\Tenant\VehiclesPageController::class, 'arrival'])
+                ->whereNumber('stay')
+                ->name('vehicles.arrival');
+            Route::get('/vehiculos/{vehicle}', [\App\Http\Controllers\Tenant\VehiclesPageController::class, 'show'])
+                ->whereNumber('vehicle')
+                ->withTrashed() // la ficha de una placa archivada sigue visible
+                ->name('vehicles.show');
+        });
 
         // CRM de huéspedes.
         Route::middleware('can:guests.view')->group(function () {
@@ -368,9 +390,20 @@ Route::middleware([
         // Área aislada de datos generales: contacto, redes, horarios y
         // moneda, políticas y preguntas frecuentes — misma regla de superficie
         // propia que wizard/pagos/mails (feedback isolated-settings-areas).
-        Route::get('/ajustes/general', \App\Http\Controllers\Tenant\GeneralSettingsPageController::class)
-            ->middleware('can:properties.manage')
-            ->name('general-settings');
+        // Hub con una pantalla por tema (mismo patrón que metodos-pago):
+        // era una sola página con todo apilado.
+        Route::middleware('can:properties.manage')->group(function () {
+            Route::get('/ajustes/general', [\App\Http\Controllers\Tenant\GeneralSettingsPageController::class, 'index'])
+                ->name('general-settings');
+            Route::get('/ajustes/general/contacto', [\App\Http\Controllers\Tenant\GeneralSettingsPageController::class, 'contact'])
+                ->name('general-settings.contact');
+            Route::get('/ajustes/general/operacion', [\App\Http\Controllers\Tenant\GeneralSettingsPageController::class, 'operation'])
+                ->name('general-settings.operation');
+            Route::get('/ajustes/general/politicas', [\App\Http\Controllers\Tenant\GeneralSettingsPageController::class, 'policies'])
+                ->name('general-settings.policies');
+            Route::get('/ajustes/general/preguntas-frecuentes', [\App\Http\Controllers\Tenant\GeneralSettingsPageController::class, 'faqs'])
+                ->name('general-settings.faqs');
+        });
 
         // Apariencia del PANEL del hotel: acento y colores del menú lateral
         // por tenant (no confundir con la apariencia del wizard público).
@@ -383,6 +416,12 @@ Route::middleware([
         Route::get('/ajustes/wizard', \App\Http\Controllers\Tenant\WizardSettingsPageController::class)
             ->middleware(['can:properties.manage', 'module:motor-web'])
             ->name('wizard-settings');
+
+        // Buscador del selector de extras: la pantalla ya no se trae el
+        // catálogo completo, lo consulta conforme se escribe.
+        Route::get('/ajustes/wizard/productos', [\App\Http\Controllers\Tenant\WizardSettingsPageController::class, 'searchProducts'])
+            ->middleware(['can:properties.manage', 'module:motor-web'])
+            ->name('wizard-settings.products');
 
         // Área aislada de métodos de pago: pasarelas, cuentas para
         // transferencia, confirmación automática y modo de pago del wizard.
@@ -406,6 +445,11 @@ Route::middleware([
         // Área aislada de avisos al huésped: canal directo de WhatsApp,
         // recordatorios de llegada y agradecimiento post-estancia (encuesta
         // y reseñas). Vivía dentro de Métodos de pago; nada de eso es dinero.
+        // Catálogo de daños que se cobran al revisar la habitación al salir.
+        Route::get('/ajustes/danos', \App\Http\Controllers\Tenant\DamageCatalogPageController::class)
+            ->middleware('can:properties.manage')
+            ->name('damage-catalog');
+
         Route::get('/ajustes/avisos', \App\Http\Controllers\Tenant\GuestNoticesPageController::class)
             ->middleware('can:properties.manage')
             ->name('guest-notices');
@@ -420,6 +464,27 @@ Route::middleware([
         // Área aislada de limpieza y cierre de día: flujo sucia → limpieza
         // → disponible (manual/automático/ambos) y qué pasa con reservadas
         // cuya salida venció sin check-in.
+        // Limpieza con personal: panel del día y camaristas. Ver el panel
+        // exige el mismo permiso que mover el semáforo; registrar exige
+        // housekeeping.manage (lo valida cada endpoint).
+        Route::get('/limpieza', [\App\Http\Controllers\Tenant\HousekeepingPageController::class, 'index'])
+            ->middleware(['can:rooms.update-status', 'module:limpieza'])
+            ->name('housekeeping');
+
+        Route::get('/limpieza/personal', [\App\Http\Controllers\Tenant\HousekeepingPageController::class, 'staff'])
+            ->middleware(['can:housekeeping.manage', 'module:limpieza'])
+            ->name('housekeeping.staff');
+
+        // El reporte mide desempeño de personas: exige ver reportes, no solo
+        // registrar (propietario y gerente).
+        Route::get('/limpieza/reportes', [\App\Http\Controllers\Tenant\HousekeepingReportsController::class, 'index'])
+            ->middleware(['can:reports.view', 'module:limpieza'])
+            ->name('housekeeping.reports');
+
+        Route::get('/limpieza/reportes/pdf', [\App\Http\Controllers\Tenant\HousekeepingReportsController::class, 'pdf'])
+            ->middleware(['can:reports.view', 'module:limpieza'])
+            ->name('housekeeping.reports.pdf');
+
         Route::get('/ajustes/limpieza', \App\Http\Controllers\Tenant\HousekeepingSettingsPageController::class)
             ->middleware('can:properties.manage')
             ->name('housekeeping-settings');
@@ -461,6 +526,38 @@ Route::middleware([
         // todo el staff lo ve y el contenido ya viene acotado a cada quien.
         Route::get('/bandeja/avisos', \App\Http\Controllers\Tenant\StaffNotificationsPageController::class)
             ->name('staff-notifications');
+
+        // Comentarios de publicaciones de Facebook e Instagram atendidos por
+        // el asistente (módulo redes-sociales, addon reservas-m3-ia-redes).
+        Route::get('/redes', \App\Http\Controllers\Tenant\SocialPageController::class)
+            ->middleware(['can:reservations.view', 'module:redes-sociales'])
+            ->name('social');
+
+        // Una publicación con sus comentarios: el trabajo fino tiene su
+        // propia pantalla, no una columna dentro del índice.
+        Route::get('/redes/publicaciones/{post}', \App\Http\Controllers\Tenant\SocialPostPageController::class)
+            ->middleware(['can:reservations.view', 'module:redes-sociales'])
+            ->name('social.post');
+
+        Route::get('/redes/ajustes', \App\Http\Controllers\Tenant\SocialSettingsPageController::class)
+            ->middleware(['can:properties.manage', 'module:redes-sociales'])
+            ->name('social-settings');
+
+        Route::middleware(['can:reservations.manage', 'module:redes-sociales'])->group(function () {
+            Route::patch('/redes/ajustes', [\App\Http\Controllers\Tenant\SocialSettingsPageController::class, 'update'])
+                ->middleware('can:properties.manage')
+                ->name('social-settings.update');
+            Route::post('/redes/sincronizar', [\App\Http\Controllers\Tenant\SocialSyncController::class, 'store'])
+                ->name('social.sync');
+            Route::post('/redes/comentarios/{comment}/responder', [\App\Http\Controllers\Tenant\SocialCommentController::class, 'reply'])
+                ->name('social.comments.reply');
+            Route::post('/redes/comentarios/{comment}/privado', [\App\Http\Controllers\Tenant\SocialCommentController::class, 'privateReply'])
+                ->name('social.comments.private');
+            Route::post('/redes/comentarios/{comment}/ia', [\App\Http\Controllers\Tenant\SocialCommentController::class, 'rerun'])
+                ->name('social.comments.rerun');
+            Route::patch('/redes/comentarios/{comment}/ocultar', [\App\Http\Controllers\Tenant\SocialCommentController::class, 'hide'])
+                ->name('social.comments.hide');
+        });
 
         // Conciliación de pasarelas y transferencias (spec-pagos §9.4).
         // Centro de pagos: transferencias por verificar, saldos vencidos,
@@ -609,6 +706,11 @@ Route::middleware([
         Route::apiResource('rooms', RoomController::class)
             ->only(['index', 'show'])
             ->middleware('can:rooms.view');
+        // Quién ha pasado por la habitación: lo pide el tab de historial del
+        // modal del plano. El detalle de cada estancia sale de su folio.
+        Route::get('rooms/{room}/stays', [RoomController::class, 'stays'])
+            ->middleware('can:rooms.view')
+            ->name('rooms.stays');
         Route::apiResource('rooms', RoomController::class)
             ->only(['store', 'update', 'destroy'])
             ->middleware('can:rooms.manage');
@@ -644,10 +746,49 @@ Route::middleware([
             Route::patch('incidents/{incident}', [\App\Http\Controllers\Tenant\IncidentController::class, 'update'])->name('incidents.update');
             Route::post('incidents/{incident}/photos', [\App\Http\Controllers\Tenant\IncidentController::class, 'storePhoto'])->name('incidents.photos.store');
             Route::delete('incidents/{incident}/photos/{media}', [\App\Http\Controllers\Tenant\IncidentController::class, 'destroyPhoto'])->name('incidents.photos.destroy');
+            // Tiempos objetivo por prioridad (ajuste del hotel, no del ticket).
+            Route::patch('incidents-sla', [\App\Http\Controllers\Tenant\IncidentController::class, 'updateSla'])->name('incidents.sla');
         });
+        // Antes de {incident}: 'bulk' no es un id.
+        Route::delete('incidents/bulk', [\App\Http\Controllers\Tenant\IncidentController::class, 'destroyBulk'])
+            ->middleware(['can:rooms.manage', 'module:incidencias'])
+            ->name('incidents.destroy-bulk');
         Route::delete('incidents/{incident}', [\App\Http\Controllers\Tenant\IncidentController::class, 'destroy'])
             ->middleware(['can:rooms.manage', 'module:incidencias'])
+            ->whereNumber('incident')
             ->name('incidents.destroy');
+
+        // Catálogo de quién repara (personal de casa y proveedores): va con
+        // incidencias avanzadas, igual que el costo de la reparación.
+        Route::middleware(['can:rooms.update-status', 'module:incidencias-avanzado'])->group(function () {
+            Route::post('technicians', [\App\Http\Controllers\Tenant\TechnicianController::class, 'store'])
+                ->name('technicians.store');
+            Route::patch('technicians/{technician}', [\App\Http\Controllers\Tenant\TechnicianController::class, 'update'])
+                ->name('technicians.update');
+            Route::delete('technicians/{technician}', [\App\Http\Controllers\Tenant\TechnicianController::class, 'destroy'])
+                ->name('technicians.destroy');
+        });
+
+        // Limpieza con personal (módulo limpieza): registro del trabajo de
+        // las camaristas. Mismo permiso para quien lo captura — gerente,
+        // recepción o la supervisora de limpieza.
+        Route::middleware(['can:housekeeping.manage', 'module:limpieza'])->group(function () {
+            Route::post('rooms/{room}/cleanings', [\App\Http\Controllers\Tenant\RoomCleaningController::class, 'store'])
+                ->name('cleanings.store');
+            Route::patch('cleanings/{cleaning}', [\App\Http\Controllers\Tenant\RoomCleaningController::class, 'update'])
+                ->name('cleanings.update');
+            Route::post('cleanings', [\App\Http\Controllers\Tenant\RoomCleaningController::class, 'storeManual'])
+                ->name('cleanings.manual');
+            Route::delete('cleanings/{cleaning}', [\App\Http\Controllers\Tenant\RoomCleaningController::class, 'destroy'])
+                ->name('cleanings.destroy');
+
+            Route::post('housekeepers', [\App\Http\Controllers\Tenant\HousekeeperController::class, 'store'])
+                ->name('housekeepers.store');
+            Route::patch('housekeepers/{housekeeper}', [\App\Http\Controllers\Tenant\HousekeeperController::class, 'update'])
+                ->name('housekeepers.update');
+            Route::delete('housekeepers/{housekeeper}', [\App\Http\Controllers\Tenant\HousekeeperController::class, 'destroy'])
+                ->name('housekeepers.destroy');
+        });
 
         // Tarifas (noche / bloque).
         Route::apiResource('rate-plans', RatePlanController::class)
@@ -692,6 +833,11 @@ Route::middleware([
             Route::post('stays/{stay}/id-document', [StayController::class, 'storeDocument'])->name('stays.document.store');
             // Con el huésped adentro: "una noche más" y cambio de cuarto sin
             // tener que registrar su salida y volver a darle entrada.
+            // Segundo momento de la caseta de motel: placa, marca, modelo y
+            // color (o identificación) más el cobro que hizo el encargado.
+            Route::patch('stays/{stay}/arrival', [StayController::class, 'completeArrival'])->name('stays.arrival');
+            // Cargo extra sobre la estancia (daños al revisar la habitación).
+            Route::post('stays/{stay}/charges', [StayController::class, 'addCharge'])->name('stays.charges');
             Route::patch('stays/{stay}/extend', [StayController::class, 'extend'])->name('stays.extend');
             Route::patch('stays/{stay}/room', [StayController::class, 'changeRoom'])->name('stays.change-room');
             Route::patch('stays/{stay}/check-out', [StayController::class, 'checkOut'])->name('stays.check-out');
@@ -710,6 +856,11 @@ Route::middleware([
 
         // POS: ventas y cargo a habitación.
         Route::middleware(['can:orders.manage', 'module:pos'])->group(function () {
+            // Catálogo para vender: lo pide el panel de consumos del plano.
+            // Va aparte de /api/products porque ese exige inventory.manage
+            // (administrar el catálogo) y quien cobra en la caseta no lo
+            // tiene ni tiene por qué tenerlo.
+            Route::get('pos/catalog', [OrderController::class, 'catalog'])->name('pos.catalog');
             Route::get('orders', [OrderController::class, 'index'])->name('orders.index');
             Route::post('orders', [OrderController::class, 'store'])->name('orders.store');
             // Cancelar una venta: devuelve la mercancía al inventario y la
@@ -731,6 +882,8 @@ Route::middleware([
         // Cortes de caja y turnos: módulo corte-caja. El ámbito POS del
         // corte se valida en el controlador, no aquí.
         Route::middleware(['can:orders.manage', 'module:corte-caja'])->group(function () {
+            // Cómo va la caja ahora, en JSON: lo pide el panel del plano.
+            Route::get('cash-cuts/current', [CashCutController::class, 'current'])->name('cashcuts.current');
             Route::post('cash-cuts', [CashCutController::class, 'store'])->name('cashcuts.store');
             Route::post('shifts', [ShiftController::class, 'store'])->name('shifts.store');
             Route::patch('shifts/{shift}/close', [ShiftController::class, 'close'])->name('shifts.close');
@@ -794,6 +947,18 @@ Route::middleware([
             Route::delete('meta-channels/{linkId}', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'destroy'])->name('meta-channels.destroy');
             Route::post('meta-channels/{linkId}/test', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'test'])->name('meta-channels.test');
             Route::post('meta-channels/{linkId}/resubscribe', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'resubscribe'])->name('meta-channels.resubscribe');
+
+            // Bot de Telegram (token de BotFather; el webhook se registra solo).
+            Route::post('telegram-channels', [\App\Http\Controllers\Tenant\TelegramChannelController::class, 'store'])->name('telegram-channels.store');
+            Route::patch('telegram-channels/{linkId}', [\App\Http\Controllers\Tenant\TelegramChannelController::class, 'update'])->name('telegram-channels.update');
+            Route::delete('telegram-channels/{linkId}', [\App\Http\Controllers\Tenant\TelegramChannelController::class, 'destroy'])->name('telegram-channels.destroy');
+            Route::post('telegram-channels/{linkId}/test', [\App\Http\Controllers\Tenant\TelegramChannelController::class, 'test'])->name('telegram-channels.test');
+
+            // Cuenta de TikTok vía Business Messaging API.
+            Route::post('tiktok-channels', [\App\Http\Controllers\Tenant\TiktokChannelController::class, 'store'])->name('tiktok-channels.store');
+            Route::patch('tiktok-channels/{linkId}', [\App\Http\Controllers\Tenant\TiktokChannelController::class, 'update'])->name('tiktok-channels.update');
+            Route::delete('tiktok-channels/{linkId}', [\App\Http\Controllers\Tenant\TiktokChannelController::class, 'destroy'])->name('tiktok-channels.destroy');
+            Route::post('tiktok-channels/{linkId}/test', [\App\Http\Controllers\Tenant\TiktokChannelController::class, 'test'])->name('tiktok-channels.test');
         });
 
         // Bandeja unificada de conversaciones (módulo mensajeria, igual que
@@ -827,6 +992,28 @@ Route::middleware([
             // Cancelar cualquier cobro vivo desde el centro de pagos
             // (reserva, grupo o experiencia).
             Route::delete('payment-requests/{paymentRequest}', [PaymentRequestController::class, 'cancel'])->name('payment-requests.cancel');
+        });
+
+        // Registro de vehículos (motel): el lookup por placa es lo que hace
+        // útil el registro en la caseta — al teclearla, el cajero ve si ese
+        // carro ya vino y si está vetado.
+        Route::get('vehicles/search', [\App\Http\Controllers\Tenant\VehicleController::class, 'search'])
+            ->middleware(['can:guests.view', 'mode:motel,both'])
+            ->name('vehicles.search');
+        // El lookup por placa acompaña al registro exprés, no a la sección:
+        // por eso también vive en modo "ambos", donde el exprés existe.
+        Route::get('vehicles/lookup', [\App\Http\Controllers\Tenant\VehicleController::class, 'lookup'])
+            ->middleware(['can:reservations.manage', 'mode:motel,both'])
+            ->name('vehicles.lookup');
+        Route::middleware(['can:guests.manage', 'mode:motel,both'])->group(function () {
+            Route::patch('vehicles/{vehicle}', [\App\Http\Controllers\Tenant\VehicleController::class, 'update'])
+                ->name('vehicles.update');
+            Route::delete('vehicles/{vehicle}', [\App\Http\Controllers\Tenant\VehicleController::class, 'destroy'])
+                ->withTrashed()
+                ->name('vehicles.destroy');
+            Route::post('vehicles/{vehicle}/restore', [\App\Http\Controllers\Tenant\VehicleController::class, 'restore'])
+                ->withTrashed()
+                ->name('vehicles.restore');
         });
 
         // CRM de huéspedes.
@@ -866,6 +1053,8 @@ Route::middleware([
     InitializeTenancyByDomain::class,
     PreventAccessFromCentralDomains::class,
     App\Http\Middleware\EnsureTenantIsActive::class,
+    // Acentos sin escapar: estas respuestas se le pegan al prompt del bot.
+    App\Http\Middleware\UnescapedJson::class,
     'auth:sanctum',
     'abilities:agent',
     'throttle:60,1',

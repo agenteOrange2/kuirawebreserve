@@ -21,8 +21,7 @@ export function useModules() {
     // Sin panelTenant (páginas públicas) no hay gating de UI interna: esas
     // páginas ya viven detrás de su propio middleware de módulo.
     const hasModule = (key: string): boolean =>
-        page.props.panelTenant === undefined ||
-        modules.value.includes(key);
+        page.props.panelTenant === undefined || modules.value.includes(key);
 
     return { modules, hasModule };
 }

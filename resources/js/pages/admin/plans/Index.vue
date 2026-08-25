@@ -253,7 +253,9 @@ function submitDelete() {
                                 <template v-if="plan.activation_fee">
                                     <span class="mx-1.5 text-slate-300">·</span>
                                     <span class="text-xs"
-                                        >{{ money(plan.activation_fee) }}
+                                        >{{
+                                            money(plan.activation_fee)
+                                        }}
                                         activación</span
                                     >
                                 </template>
@@ -824,8 +826,7 @@ function submitDelete() {
                             </div>
                             <FormHelp class="mt-2">
                                 El núcleo hotelero (plano, reservas,
-                                habitaciones, huéspedes) va en todos los
-                                planes.
+                                habitaciones, huéspedes) va en todos los planes.
                             </FormHelp>
                         </section>
 

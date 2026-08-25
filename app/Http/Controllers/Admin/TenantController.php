@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Property;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\PropertyMode;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -47,7 +48,7 @@ class TenantController extends Controller
                     'reservations_month' => \App\Models\Reservation::where('created_at', '>=', $monthStart)->count(),
                     // Modo de operación: se administra SOLO desde este panel
                     // (crear/editar), el tenant no lo puede tocar.
-                    'mode' => (\App\Models\Property::query()->first()?->settings ?? [])['property_mode'] ?? 'hotel',
+                    'mode' => (\App\Models\Property::query()->first()?->settings ?? [])['property_mode'] ?? PropertyMode::HOTEL,
                 ]),
             );
 
@@ -68,7 +69,7 @@ class TenantController extends Controller
                 'users' => $ops['users'],
                 'rooms' => $ops['rooms'],
                 'reservations_month' => $ops['reservations_month'],
-                'mode' => $ops['mode'] ?? 'hotel',
+                'mode' => $ops['mode'] ?? PropertyMode::HOTEL,
                 'ai_replies' => (int) ($aiUsage[$tenant->id] ?? 0),
             ];
         });
@@ -99,29 +100,20 @@ class TenantController extends Controller
     }
 
     /**
-     * Ficha del cliente: datos del contrato + métricas reales de su
-     * operación (leídas de la BD del tenant) + consumo de IA.
+     * Resumen del hotel: identidad, cómo va su operación y lo último que
+     * pasó. Lo que se administra (plan, módulos, equipo, asistente,
+     * canales, cobros) vive en sub-vistas propias — ver TenantAreaController.
      */
     public function show(Tenant $tenant): Response
     {
-        $plan = config("plans.{$tenant->plan}", []);
         $monthStart = now()->startOfMonth();
+        $plan = config("plans.{$tenant->plan}", []);
 
         $ops = $tenant->run(fn () => [
             'owner' => ($owner = User::role('owner')->first()) ? $owner->only(['name', 'email']) : null,
-            'users' => User::count(),
             // El bot es identidad técnica (rol agent), no personal: se excluye.
-            'users_list' => User::with('roles:id,name')
-                ->whereDoesntHave('roles', fn ($q) => $q->where('name', 'agent'))
-                ->orderBy('name')->get()
-                ->map(fn (User $u) => [
-                    'id' => $u->id,
-                    'name' => $u->name,
-                    'email' => $u->email,
-                    'role' => $u->roles->first()?->name,
-                ])->values(),
-            'assignable_roles' => \App\Http\Controllers\Tenant\UserController::assignableRoles(),
-            'properties' => \App\Models\Property::count(),
+            'users' => User::whereDoesntHave('roles', fn ($q) => $q->where('name', 'agent'))->count(),
+            'properties' => Property::count(),
             'rooms' => \App\Models\Room::count(),
             'guests' => \App\Models\Guest::count(),
             'active_stays' => \App\Models\Stay::where('status', \App\Models\Stay::STATUS_ACTIVE)->count(),
@@ -141,116 +133,16 @@ class TenantController extends Controller
                 ])->values(),
         ]);
 
-        $paymentGate = app(\App\Services\Payments\PaymentMethodGate::class);
-        $paymentMethods = collect(\App\Services\Payments\PaymentMethodGate::METHODS)
-            ->map(fn ($label, $method) => [
-                'method' => $method,
-                'label' => $label,
-                'platform_enabled' => $paymentGate->platformEnabled($method),
-                // El toggle del hotel se muestra tal cual; el efectivo es AND.
-                'tenant_enabled' => \App\Models\Central\PaymentMethodSetting::query()
-                    ->where('tenant_id', $tenant->id)->where('method', $method)->value('enabled') ?? true,
-            ])->values();
-
-        // Módulos: estado efectivo por módulo con su origen (plan u override)
-        // + solicitudes de activación pendientes hechas desde "Tu plan".
-        $moduleOverrides = \App\Models\Central\TenantModule::query()
-            ->where('tenant_id', $tenant->id)
-            ->pluck('enabled', 'module');
-        $moduleRequests = \App\Models\Central\ModuleActivationRequest::query()
-            ->where('tenant_id', $tenant->id)
-            ->pluck('created_at', 'module');
-        $planModules = $plan['modules'] ?? [];
-        $addonModules = $tenant->addonModules();
-
-        $modules = collect(config('modules', []))
-            ->map(function (array $def, string $key) use ($moduleOverrides, $moduleRequests, $planModules, $addonModules) {
-                $override = $moduleOverrides->has($key) ? (bool) $moduleOverrides[$key] : null;
-                $inPlan = in_array($key, $planModules, true);
-                $inAddon = in_array($key, $addonModules, true);
-
-                return [
-                    'key' => $key,
-                    'label' => $def['label'],
-                    'description' => $def['description'],
-                    'available' => $def['available'],
-                    'in_plan' => $inPlan,
-                    // Lo aporta un servicio adicional contratado.
-                    'in_addon' => $inAddon,
-                    'override' => $override, // null = hereda del plan/servicio
-                    'enabled' => $override ?? ($inPlan || $inAddon),
-                    'requested_at' => $moduleRequests->has($key)
-                        ? \Illuminate\Support\Carbon::parse($moduleRequests[$key])->format('d/m/Y')
-                        : null,
-                ];
-            })->values();
-
-        $agentSetting = \App\Models\Central\TenantAgentSetting::for($tenant->id);
-        $aiUsed = \App\Models\Central\TenantAiUsage::repliesThisMonth($tenant->id);
-        $aiTokens = (int) \App\Models\Central\TenantAiUsage::query()
-            ->where('tenant_id', $tenant->id)
-            ->where('date', '>=', $monthStart->toDateString())
-            ->selectRaw('COALESCE(SUM(prompt_tokens) + SUM(completion_tokens), 0) as t')
-            ->value('t');
-
-        // Servicios adicionales: catálogo completo con bandera de
-        // contratado + desglose de la inversión mensual (plan + servicios).
-        $contractedKeys = $tenant->addonServices()->pluck('key');
-        $addonServices = \App\Models\Central\AddonService::query()->ordered()->get()
-            ->map(fn (\App\Models\Central\AddonService $service) => [
-                'key' => $service->key,
-                'name' => $service->name,
-                'summary' => $service->summary,
-                'price_monthly' => (int) $service->price_monthly,
-                'activation_fee' => (int) $service->activation_fee,
-                'modules' => $service->modules ?? [],
-                'requires' => $service->requires,
-                'active' => $service->active,
-                'contracted' => $contractedKeys->contains($service->key),
-            ])->values();
-
-        return Inertia::render('admin/tenants/Show', [
-            'paymentMethods' => $paymentMethods,
-            'modules' => $modules,
-            'addonServices' => $addonServices,
-            'billing' => [
-                'plan_monthly' => (int) ($plan['price_monthly'] ?? 0),
-                'addons_monthly' => (int) $tenant->addonServices()->sum('price_monthly'),
-                'total_monthly' => $tenant->monthlyPrice(),
-            ],
-            'tenant' => [
-                'id' => $tenant->id,
-                'name' => $tenant->name,
-                'plan' => $tenant->plan,
-                'plan_label' => $plan['label'] ?? $tenant->plan,
-                'suspended' => $tenant->isSuspended(),
-                'domain' => $tenant->domains->first()?->domain,
-                'created_at' => $tenant->created_at?->format('d/m/Y'),
-            ],
-            'plan' => [
+        return Inertia::render('admin/tenants/Overview', TenantAreaController::shell($tenant) + [
+            'ops' => $ops,
+            'contract' => [
+                'price_monthly' => $tenant->monthlyPrice(),
+                'addons' => $tenant->addonServices()->count(),
+                'ai_in_plan' => (bool) ($plan['ai']['enabled'] ?? false),
                 'max_properties' => $plan['max_properties'] ?? null,
                 'max_rooms' => $plan['max_rooms'] ?? null,
                 'max_users' => $plan['max_users'] ?? null,
-                'price_monthly' => $plan['price_monthly'] ?? 0,
-                'ai_enabled' => (bool) ($plan['ai']['enabled'] ?? false),
             ],
-            'ops' => $ops,
-            'ai' => [
-                'enabled' => $agentSetting->enabled,
-                // Mismo cálculo que PlatformAgentGate: ajuste del hotel ??
-                // plan + cuota que aporten los servicios adicionales con IA.
-                'limit' => $agentSetting->monthly_reply_limit
-                    ?? (($plan['ai']['monthly_replies'] ?? null) === null
-                        ? null
-                        : (int) $plan['ai']['monthly_replies'] + (int) $tenant->addonServices()->sum('ai_monthly_replies')),
-                'used' => $aiUsed,
-                'tokens' => $aiTokens,
-                'byok_allowed' => $agentSetting->byok_allowed,
-            ],
-            'plans' => collect(config('plans'))->map(fn (array $p, string $key) => [
-                'value' => $key,
-                'label' => $p['label'],
-            ])->values(),
         ]);
     }
 
@@ -268,9 +160,9 @@ class TenantController extends Controller
             ],
             'plan' => ['required', Rule::in(array_keys(config('plans')))],
             // Modo de operación (spec-modo-motel): el tenant nace bien
-            // configurado desde la venta; después puede cambiarlo en sus
-            // ajustes (/ajustes/general).
-            'mode' => ['required', Rule::in(['hotel', 'motel'])],
+            // configurado desde la venta. Lo administra SOLO la plataforma:
+            // hotel, motel o both (opera las dos cosas sin apagar ninguna).
+            'mode' => ['required', Rule::in(PropertyMode::MODES)],
             'owner_name' => ['required', 'string', 'max:255'],
             'owner_email' => ['required', 'email', 'max:255'],
             'owner_password' => ['required', 'string', 'min:8'],
@@ -303,15 +195,13 @@ class TenantController extends Controller
             ]);
             $owner->assignRole('owner');
 
-            // Modo motel: semillas EDITABLES (no derivación en runtime) —
-            // registro exprés + wizard solo adultos + menú pagado al recibir.
+            // Semillas EDITABLES por modo (no derivación en runtime): motel
+            // puro arranca como caseta (solo adultos, menú pagado al
+            // recibir); "ambos" solo fija el modo y conserva los defaults de
+            // hotel. Ver PropertyMode::seedSettings().
             Property::create([
                 'name' => $data['name'],
-                'settings' => $data['mode'] === 'motel' ? [
-                    'property_mode' => 'motel',
-                    'guest_policy' => 'adults_only',
-                    'menu_billing_mode' => 'motel',
-                ] : null,
+                'settings' => PropertyMode::seedSettings($data['mode']),
             ]);
         });
 
@@ -323,7 +213,7 @@ class TenantController extends Controller
         $data = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'plan' => ['required', Rule::in(array_keys(config('plans')))],
-            'mode' => ['required', Rule::in(['hotel', 'motel'])],
+            'mode' => ['required', Rule::in(PropertyMode::MODES)],
         ]);
 
         $tenant->update(collect($data)->only(['name', 'plan'])->all());
@@ -334,7 +224,7 @@ class TenantController extends Controller
         $tenant->run(function () use ($data) {
             $property = Property::query()->first();
 
-            if ($property && (($property->settings['property_mode'] ?? 'hotel') !== $data['mode'])) {
+            if ($property && (($property->settings['property_mode'] ?? PropertyMode::HOTEL) !== $data['mode'])) {
                 $property->update([
                     'settings' => array_merge($property->settings ?? [], ['property_mode' => $data['mode']]),
                 ]);

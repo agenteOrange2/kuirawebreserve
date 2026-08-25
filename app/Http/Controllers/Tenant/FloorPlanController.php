@@ -26,7 +26,10 @@ class FloorPlanController extends Controller
             ->where('property_id', $property->id)
             ->with([
                 'zone:id,name,kind,color',
-                'roomType:id,name,capacity,amenities,check_in_time,check_out_time',
+                'roomType:id,name,icon,capacity,amenities,check_in_time,check_out_time',
+                // Fotos del tipo para el modal: sin este eager load, getMedia
+                // dispara una consulta por habitación.
+                'roomType.media',
                 'roomType.ratePlans' => fn ($query) => $query
                     ->select(['id', 'room_type_id', 'name', 'type', 'price', 'duration_minutes', 'duration_unit', 'duration_value', 'active'])
                     ->where('active', true)
@@ -73,6 +76,12 @@ class FloorPlanController extends Controller
                 'blocks' => fn ($query) => $query
                     ->currentOrFuture()
                     ->orderBy('starts_at'),
+                // Limpieza abierta: el plano muestra quién la trabaja y
+                // ofrece cerrarla sin ir a /limpieza.
+                'openCleaning.housekeeper:id,name',
+                // Fallas sin resolver: marcan el nodo y se listan al abrir
+                // la habitación, para no venderla averiada.
+                'openIncidents',
             ])
             ->orderBy('number')
             ->get()
@@ -89,15 +98,63 @@ class FloorPlanController extends Controller
             // En modo de check-in "automático" puro (/ajustes/limpieza) la
             // llegada la registra el reloj: el botón manual se oculta.
             'manualCheckinAllowed' => app(\App\Services\HousekeepingPolicy::class)->manualCheckInAllowed(),
-            // Registro exprés (modo motel, spec-modo-motel): el modal cobra
-            // en la llegada y necesita saber si hay fianza configurada.
-            'expressCheckin' => app(\App\Services\PropertyMode::class)->expressCheckInEnabled(),
+            // El modo de operación NO viaja como prop: ya va en el share de
+            // Inertia (panelTenant.property_mode) y el plano lo lee con
+            // usePropertyMode. Una segunda copia por página era justo la
+            // divergencia que hacía que "ambos" se comportara como motel.
             'guaranteeAmount' => app(\App\Services\ReservationPolicy::class)->guaranteeEnabled()
                 ? app(\App\Services\ReservationPolicy::class)->guaranteeAmount()
                 : 0,
             // Fotos de identificación en la ficha: mismo permiso que las
             // INE del CRM.
             'canViewDocuments' => $request->user()->can('guests.view-documents'),
+            // Abrir la cuenta de una estancia (folio) exige ver reservas: sin
+            // esto el historial ofrecería un detalle que responde 403.
+            'canViewStays' => $request->user()->can('reservations.view'),
+            // Catálogo de daños (/ajustes/danos) para la revisión de la
+            // habitación al registrar la salida.
+            'damageCatalog' => DamageCatalogPageController::catalog($property),
+            // Catálogo de fallas para reportar una incidencia desde el modal.
+            // Vacío sin el módulo: la regla vive en el servidor, no en la UI.
+            'incidentCategories' => (tenant()?->hasModule('incidencias') ?? true)
+                ? collect(\App\Models\Incident::CATEGORIES)
+                    ->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])
+                    ->values()
+                : [],
+            // Registro de limpieza (módulo limpieza): con él, iniciar y
+            // terminar una limpieza desde el plano pide camarista y checklist
+            // en vez de solo mover el color. Sin el módulo van vacíos y el
+            // plano se comporta exactamente como antes.
+            'housekeepingEnabled' => (bool) (tenant()?->hasModule('limpieza') ?? false)
+                && $request->user()->can('housekeeping.manage'),
+            'housekeepers' => (tenant()?->hasModule('limpieza') ?? false)
+                ? \App\Models\Housekeeper::query()->active()->ordered()->get(['id', 'name'])
+                    ->map(fn (\App\Models\Housekeeper $h) => ['id' => $h->id, 'name' => $h->name])
+                    ->values()
+                : [],
+            'cleaningChecklist' => (tenant()?->hasModule('limpieza') ?? false)
+                ? app(\App\Services\HousekeepingChecklist::class)->tasks(onlyActive: true)
+                : [],
+            'cleaningLinens' => (tenant()?->hasModule('limpieza') ?? false)
+                ? app(\App\Services\HousekeepingChecklist::class)->linens()
+                : [],
+            'cleaningKinds' => \App\Models\RoomCleaning::KINDS,
+
+            // Catálogos para dar de alta o editar una habitación desde el
+            // panel del plano (módulo plano-operativo). Son dos listas de
+            // nombres: el perfil completo sigue viviendo en /habitaciones.
+            'roomTypes' => $request->user()->can('rooms.manage')
+                ? \App\Models\RoomType::query()
+                    ->where('property_id', $property->id)
+                    ->orderBy('name')
+                    ->get(['id', 'name'])
+                : [],
+            'zones' => $request->user()->can('rooms.manage')
+                ? \App\Models\Zone::query()
+                    ->where('property_id', $property->id)
+                    ->orderBy('name')
+                    ->get(['id', 'name'])
+                : [],
         ]);
     }
 }

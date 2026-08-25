@@ -84,7 +84,13 @@ class CashCut extends Model
 
     public function scopeLabel(): string
     {
-        return match ($this->scope) {
+        return self::labelForScope($this->scope);
+    }
+
+    /** Etiqueta de un ámbito suelto (el panel del plano no tiene el modelo). */
+    public static function labelForScope(?string $scope): string
+    {
+        return match ($scope) {
             self::SCOPE_ROOMS => 'Recepción',
             self::SCOPE_POS => 'Punto de venta',
             default => 'Combinado',

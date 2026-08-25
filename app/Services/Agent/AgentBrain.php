@@ -143,7 +143,7 @@ class AgentBrain
         return $conversation->messages()->create([
             'direction' => 'out',
             'sender_type' => 'bot',
-            'body' => $this->sanitizeGatewayLinks($text),
+            'body' => $this->sanitizeChatText($this->sanitizeGatewayLinks($text)),
             'meta' => $meta,
             'created_at' => now(),
         ]);
@@ -186,9 +186,129 @@ class AgentBrain
         }, $text) ?? $text;
     }
 
+    /**
+     * Red de seguridad DETERMINISTA de formato (bug real 2026-08-20, bandeja
+     * motellacupula con MiniMax): los canales muestran el mensaje como TEXTO
+     * PLANO (Telegram/WhatsApp/webchat/bandeja renderizan {{ body }} tal
+     * cual), así que una tabla markdown llega como sopa de barras `|` y las
+     * negritas como asteriscos literales; además los modelos entrenados en
+     * chino a veces fugan caracteres CJK a media frase ("Si告诉我 qué
+     * fecha..."). El prompt ya lo prohíbe, pero esos modelos lo ignoran:
+     * aquí se corrige siempre, sin depender del LLM.
+     */
+    public function sanitizeChatText(string $text): string
+    {
+        // Tablas markdown → un renglón "- celda — celda" por fila (las filas
+        // separadoras |---|---| se descartan).
+        $lines = [];
+        foreach (preg_split('/\R/u', $text) ?: [] as $line) {
+            if (preg_match('/^\s*\|.*\|\s*$/u', $line)) {
+                if (preg_match('/^\s*\|[\s\-:|]+\|\s*$/u', $line)) {
+                    continue;
+                }
+                $cells = array_values(array_filter(
+                    array_map('trim', explode('|', trim($line, " \t|"))),
+                    fn (string $cell) => $cell !== '',
+                ));
+                $lines[] = $cells ? '- '.implode(' — ', $cells) : '';
+
+                continue;
+            }
+            $lines[] = $line;
+        }
+        $text = implode("\n", $lines);
+
+        // Marcas markdown que el huésped vería literales.
+        $text = preg_replace('/(\*\*|__)(.+?)\1/su', '$2', $text) ?? $text;
+        $text = preg_replace('/^#{1,6}\s+/mu', '', $text) ?? $text;
+        $text = preg_replace('/^(\s*)\*\s+/mu', '$1- ', $text) ?? $text;
+        $text = str_replace('`', '', $text);
+
+        $text = $this->stripForeignScriptLeaks($text);
+
+        // Emojis y pictogramas (la política del producto es chat sin emojis).
+        $text = preg_replace(
+            '/[\x{1F000}-\x{1FAFF}\x{2600}-\x{27BF}\x{2300}-\x{23FF}\x{2B00}-\x{2BFF}\x{FE0F}\x{200D}\x{20E3}]/u',
+            '',
+            $text,
+        ) ?? $text;
+
+        // Huecos que dejan los recortes.
+        $text = preg_replace('/ {2,}/u', ' ', $text) ?? $text;
+        $text = preg_replace('/[ \t]+$/mu', '', $text) ?? $text;
+        $text = preg_replace('/\n{3,}/u', "\n\n", $text) ?? $text;
+
+        return trim($text);
+    }
+
+    /**
+     * Quita palabras fugadas de otro alfabeto SIN romper una respuesta que
+     * legítimamente va en ese idioma.
+     *
+     * Los modelos multilingües baratos meten una palabra suelta en su lengua
+     * de entrenamiento a media frase: "Si告诉我 qué fecha" (MiniMax, chino) o
+     * "habitaciones классик" (ruso, en la primera respuesta automática a un
+     * comentario real, 2026-08-20). Pero el bot SÍ debe poder contestar en
+     * ruso a quien escribe en ruso.
+     *
+     * De ahí el criterio: solo se limpia cuando el texto es claramente
+     * latino y lo otro son unas cuantas letras infiltradas. Si el mensaje
+     * está mayormente en el otro alfabeto, se respeta tal cual.
+     */
+    protected function stripForeignScriptLeaks(string $text): string
+    {
+        $foreign = '\x{4E00}-\x{9FFF}\x{3400}-\x{4DBF}\x{F900}-\x{FAFF}'  // han
+            .'\x{3040}-\x{30FF}\x{31F0}-\x{31FF}'                          // kana
+            .'\x{1100}-\x{11FF}\x{AC00}-\x{D7AF}'                          // hangul
+            .'\x{0400}-\x{04FF}\x{0500}-\x{052F}'                          // cirílico
+            .'\x{0370}-\x{03FF}'                                           // griego
+            .'\x{0590}-\x{05FF}\x{0600}-\x{06FF}'                          // hebreo, árabe
+            .'\x{0E00}-\x{0E7F}\x{0900}-\x{097F}';                         // tailandés, devanagari
+
+        $foreignCount = preg_match_all("/[{$foreign}]/u", $text);
+
+        if ($foreignCount === 0) {
+            // Puntuación de ancho completo, que llega sola a veces.
+            return preg_replace('/[\x{3000}-\x{303F}\x{FF01}-\x{FF60}\x{FFE0}-\x{FFEE}]+/u', '', $text) ?? $text;
+        }
+
+        $latinCount = preg_match_all('/\p{Latin}/u', $text);
+
+        // Mayoría latina con infiltrados: se limpia. Si no, es un mensaje en
+        // ese idioma y se deja intacto.
+        if ($latinCount <= $foreignCount * 2) {
+            return $text;
+        }
+
+        return preg_replace(
+            "/[{$foreign}\x{3000}-\x{303F}\x{FF01}-\x{FF60}\x{FFE0}-\x{FFEE}]+/u",
+            '',
+            $text,
+        ) ?? $text;
+    }
+
+    /**
+     * El JSON como lo debe leer el modelo: con acentos y sin barras
+     * escapadas. Las herramientas se llaman en proceso, así que no pasan
+     * por el middleware de la ruta y hay que desescapar aquí.
+     */
+    public static function readable(\Illuminate\Http\JsonResponse $response): string
+    {
+        $content = $response->getContent();
+        $decoded = json_decode((string) $content, true);
+
+        if (! is_array($decoded)) {
+            return (string) $content;
+        }
+
+        return json_encode($decoded, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            ?: (string) $content;
+    }
+
     protected function systemPrompt(?Conversation $conversation = null): string
     {
-        $policies = json_decode($this->tools->policies()->getContent(), true);
+        $policiesJson = self::readable($this->tools->policies());
+        $policies = json_decode($policiesJson, true);
         $guestBlock = $this->guestBlock($conversation);
         $summaryBlock = $this->summaryBlock($conversation);
         $instructionsBlock = $this->instructionsBlock();
@@ -199,7 +319,7 @@ Eres el asistente virtual del hotel "{$policies['hotel']['name']}". Atiendes hu�
 
 DATOS DEL HOTEL (única fuente de verdad — si algo no está aquí ni en tus herramientas, di que no tienes esa información y ofrece comunicarlo con recepción):
 ```json
-{$this->tools->policies()->getContent()}
+{$policiesJson}
 ```
 {$guestBlock}{$summaryBlock}{$instructionsBlock}{$guidelinesBlock}
 REGLAS ESTRICTAS:
@@ -213,11 +333,16 @@ REGLAS ESTRICTAS:
 - PAGOS: si el apartado requiere prepago (requires_prepayment), PRIMERO ofrece al huésped las formas de pago disponibles según payment_options del apartado (pasarelas por su nombre, transferencia, efectivo al llegar) y pregunta cuál prefiere — solo menciona las que existan. Con su elección llama solicitar_pago (metodo y proveedor) y comparte lo que devuelva tal cual: link de pago (paga ahí y el sistema confirma solo), cuentas para transferencia (pide el comprobante por este chat; el hotel lo verifica), o efectivo (dile hasta cuándo queda apartada su habitación y que paga al llegar). Si solo hay UNA opción, no preguntes: úsala directo. NUNCA digas que un pago fue recibido o verificado: eso solo lo confirma el sistema (consultar_reserva) o el personal. Si el huésped insiste en que ya pagó y el sistema no lo refleja, usa transferir_a_humano.
 - NUNCA pidas ni aceptes números de tarjeta por el chat; si el huésped los envía, dile que por seguridad los borre y no los uses.
 - Cita montos exactamente como los devuelven las herramientas (usa *_label).
+- CAPACIDAD Y PERSONAS EXTRA: responde SOLO con "occupancy" de room_types: la tarifa incluye included_guests personas, el máximo es max_guests, y cada persona adicional cuesta extra_guest_fee_label. Si extra_guest_fee existe, NUNCA digas que no hay cobro por persona extra. Si el grupo supera max_guests, sugiere una habitación con más capacidad o transfiere a recepción.
+- FOTOS: si piden fotos de una habitación y su tipo tiene photos_url, comparte ese link tal cual diciendo que ahí están las fotos. Sin photos_url, describe la habitación y ofrece que el personal envíe fotos por este chat.
 - Si el huésped pide VARIAS habitaciones, haz UNA llamada de crear_apartado por cada una y reporta el resultado real de CADA llamada (código de reserva o el error exacto). Nunca resumas dos apartados en uno ni des por hecho uno que no confirmaste con la herramienta.
 - Si una herramienta devuelve un error, comunica al huésped el mensaje EXACTO que devolvió — nunca inventes la causa ni digas "no hay disponibilidad" si la herramienta dijo otra cosa.
 - ADJUNTOS: tú no puedes ver imágenes ni archivos. Cuando un mensaje diga "[adjuntó una imagen o documento]", el archivo SÍ llegó y el personal puede verlo — NUNCA digas que no se recibió ni pidas que lo reenvíe. Si es un comprobante de pago, agradece y di que el personal lo verificará; recuerda que tú no confirmas pagos.
 - Si el huésped pide hablar con una persona, se queja, o pide algo fuera de tu alcance, usa la herramienta transferir_a_humano.
 - Hoy es {$this->today()}. Fechas en formato YYYY-MM-DD HH:MM.
+- FORMATO: tus mensajes se muestran como TEXTO PLANO (WhatsApp, Telegram, webchat) — JAMÁS uses tablas, negritas con asteriscos, títulos con #, ni ningún markdown: el huésped vería los símbolos literales. Para listar opciones usa un renglón corto por opción con guion, ej.: "- Habitación Sencilla: $1,300".
+- IDIOMA: escribe TODO el mensaje en el idioma del huésped (español por defecto); JAMÁS mezcles palabras o caracteres de otro idioma o alfabeto (chino, inglés...) a media frase.
+- Nunca menciones duraciones en horas, horarios de entrada/salida ni vigencias que las herramientas o estos datos no indiquen explícitamente.
 - Sé breve, cálido y profesional; máximo 2-3 oraciones por respuesta salvo que listes opciones. No uses emojis.
 - No saludes de nuevo si la conversación ya empezó: continúa el hilo donde va.
 PROMPT;
@@ -355,7 +480,7 @@ BLOCK;
                     ->withTools($this->toolset($handoff, $conversation, readOnly: true))
                     ->withMaxSteps(6));
 
-                $text = trim($response->text);
+                $text = $this->sanitizeChatText($this->sanitizeGatewayLinks(trim($response->text)));
 
                 if ($text === '') {
                     continue;
@@ -531,7 +656,7 @@ BLOCK;
         $call = function (string $method, array $params = []): string {
             $request = Request::create('/brain', 'POST', $params);
 
-            $respond = fn (\Illuminate\Http\JsonResponse $response) => tap($response->getContent(), function () use ($method, $params, $response) {
+            $respond = fn (\Illuminate\Http\JsonResponse $response) => tap(self::readable($response), function () use ($method, $params, $response) {
                 // Bitácora de fallos de herramientas: sin esto, un "desvarío"
                 // del bot es indiagnosticable (incidente cabañas 2026-07-16).
                 if ($response->getStatusCode() >= 400) {
@@ -699,7 +824,7 @@ BLOCK;
                 ->using(function (string $motivo) use (&$handoff): string {
                     $handoff = true;
 
-                    return json_encode(['ok' => true, 'motivo' => $motivo]);
+                    return json_encode(['ok' => true, 'motivo' => $motivo], JSON_UNESCAPED_UNICODE);
                 }),
         ];
 

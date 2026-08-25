@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { ref } from 'vue';
 import { FormHelp, FormSwitch } from '@/components/Base/Form';
@@ -200,9 +201,20 @@ async function toggleMethod(m: MethodRow) {
                                 </Table.Thead>
                                 <Table.Tbody>
                                     <Table.Tr v-for="g in gateways" :key="g.id">
-                                        <Table.Td class="font-medium">{{
-                                            g.tenant_name
-                                        }}</Table.Td>
+                                        <Table.Td class="font-medium">
+                                            <Link
+                                                :href="
+                                                    route(
+                                                        'admin.tenants.payments',
+                                                        g.tenant_id,
+                                                    )
+                                                "
+                                                class="hover:text-primary"
+                                                title="Ver los cobros de este hotel"
+                                            >
+                                                {{ g.tenant_name }}
+                                            </Link>
+                                        </Table.Td>
                                         <Table.Td>
                                             <div
                                                 class="flex items-center gap-2"

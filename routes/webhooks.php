@@ -24,6 +24,17 @@ Route::post('/webhooks/evolution/{token}/{event?}', [EvolutionWebhookController:
     ->where('token', '[A-Za-z0-9]{32,64}')
     ->name('webhooks.evolution');
 
+// Telegram Bot API: cada bot apunta aquí con su token de vínculo.
+Route::post('/webhooks/telegram/{token}', [\App\Http\Controllers\Webhooks\TelegramWebhookController::class, 'receive'])
+    ->where('token', '[A-Za-z0-9]{32,64}')
+    ->name('webhooks.telegram');
+
+// TikTok Business Messaging: la URL se pega en el panel de la app de
+// TikTok. GET cubre la verificación con challenge de algunas versiones.
+Route::match(['get', 'post'], '/webhooks/tiktok/{token}', [\App\Http\Controllers\Webhooks\TiktokWebhookController::class, 'receive'])
+    ->where('token', '[A-Za-z0-9]{32,64}')
+    ->name('webhooks.tiktok');
+
 // Pasarelas de pago (spec-pagos §3.4): token → tenant + firma del proveedor.
 // Mercado Pago también manda GET/IPN con query params en algunas configs.
 Route::match(['get', 'post'], '/webhooks/payments/{token}', [\App\Http\Controllers\Webhooks\PaymentGatewayWebhookController::class, 'receive'])

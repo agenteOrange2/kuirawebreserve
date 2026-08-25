@@ -19,12 +19,20 @@ class Channel extends Model
     /** WhatsApp vía Evolution API self-hosted (alternativa a Meta Cloud API). */
     public const TYPE_WHATSAPP_EVOLUTION = 'whatsapp_evo';
 
+    /** Bot de Telegram (Bot API, enruta por webhook_token del link central). */
+    public const TYPE_TELEGRAM = 'telegram';
+
+    /** DMs de TikTok vía Business Messaging API. */
+    public const TYPE_TIKTOK = 'tiktok';
+
     public const TYPE_LABELS = [
         'webchat' => 'Webchat',
         'whatsapp' => 'WhatsApp',
         'whatsapp_evo' => 'WhatsApp (Evolution)',
         'messenger' => 'Messenger',
         'instagram' => 'Instagram',
+        'telegram' => 'Telegram',
+        'tiktok' => 'TikTok',
     ];
 
     protected $fillable = [

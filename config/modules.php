@@ -52,7 +52,7 @@ return [
     'redes-sociales' => [
         'label' => 'IA en redes sociales',
         'description' => 'Amplía el asistente para responder comentarios en publicaciones de Facebook, Instagram y TikTok y convertirlos en solicitudes de reserva. Requiere el Asistente IA.',
-        'available' => false,
+        'available' => true,
     ],
 
     'menu-digital' => [
@@ -130,6 +130,12 @@ return [
         'available' => true,
     ],
 
+    'limpieza' => [
+        'label' => 'Limpieza con personal',
+        'description' => 'Registro del trabajo de las camaristas: quién limpió cada habitación, cuánto tardó, qué hizo y cuánta ropa usó, con reporte de rendimiento. El semáforo de limpieza va en todos los planes.',
+        'available' => true,
+    ],
+
     'incidencias' => [
         'label' => 'Incidencias de mantenimiento',
         'description' => 'Tickets de fallas por habitación o área con tipo de falla, prioridad y fotos. El bloqueo básico por mantenimiento va en todos los planes.',
@@ -138,7 +144,7 @@ return [
 
     'incidencias-avanzado' => [
         'label' => 'Incidencias avanzadas',
-        'description' => 'Responsables asignados por incidencia y reportes por periodo con PDF.',
+        'description' => 'Responsables asignados por incidencia, costo de la reparación con catálogo de técnicos y proveedores, y reportes por periodo con PDF.',
         'available' => true,
     ],
 
@@ -163,6 +169,14 @@ return [
     'tablero-avanzado' => [
         'label' => 'Tablero personalizado',
         'description' => 'Edición del plano visual: acomodo drag-and-drop según la distribución real del hotel.',
+        'available' => true,
+    ],
+
+    // OJO: "widget" en este proyecto es el embebido del sitio web
+    // (/widget.js). Estas piezas del plano se llaman paneles a propósito.
+    'plano-operativo' => [
+        'label' => 'Plano operativo',
+        'description' => 'Paneles dentro del plano para trabajar sin salir de ahí: estado de la casa, alta y edición de habitaciones, consumos y cobro, caja del turno.',
         'available' => true,
     ],
 ];

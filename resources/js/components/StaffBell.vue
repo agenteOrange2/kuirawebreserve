@@ -42,6 +42,8 @@ const meta: Record<string, { icon: Icon; tone: string }> = {
     payment: { icon: 'BadgeDollarSign', tone: 'bg-success/10 text-success' },
     survey: { icon: 'Frown', tone: 'bg-danger/10 text-danger' },
     menu: { icon: 'UtensilsCrossed', tone: 'bg-warning/10 text-warning' },
+    social: { icon: 'Share2', tone: 'bg-warning/10 text-warning' },
+    incident: { icon: 'Wrench', tone: 'bg-danger/10 text-danger' },
 };
 
 const metaFor = (type: string) =>

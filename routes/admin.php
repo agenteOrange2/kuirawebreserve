@@ -4,7 +4,9 @@ use App\Http\Controllers\Admin\AiAgentsController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\PlanController;
 use App\Http\Controllers\Admin\PlanProspectController;
+use App\Http\Controllers\Admin\TenantAreaController;
 use App\Http\Controllers\Admin\TenantController;
+use App\Models\Tenant;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -23,6 +25,17 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
 
     Route::resource('tenants', TenantController::class)
         ->only(['index', 'store', 'update', 'destroy']);
+    // Ficha del hotel: portada + un área por sub-vista. Las sub-vistas
+    // van ANTES de 'tenants/{tenant}' para que "plan" o "modulos" no se
+    // resuelvan como un id de tenant.
+    Route::prefix('tenants/{tenant}')->name('tenants.')->group(function () {
+        Route::get('plan', [TenantAreaController::class, 'plan'])->name('plan');
+        Route::get('modulos', [TenantAreaController::class, 'modules'])->name('modules');
+        Route::get('equipo', [TenantAreaController::class, 'team'])->name('team');
+        Route::get('asistente', [TenantAreaController::class, 'assistant'])->name('assistant');
+        Route::get('canales', [TenantAreaController::class, 'channels'])->name('channels');
+        Route::get('cobros', [TenantAreaController::class, 'payments'])->name('payments');
+    });
     Route::get('tenants/{tenant}', [TenantController::class, 'show'])
         ->name('tenants.show');
     Route::patch('tenants/{tenant}/suspend', [TenantController::class, 'toggleSuspend'])
@@ -87,8 +100,13 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
     Route::post('ai-providers/{platformAiProvider}/test', [AiAgentsController::class, 'testProvider'])->name('ai.providers.test');
     Route::patch('ai-tenants/{tenant}', [AiAgentsController::class, 'updateTenant'])->name('ai.tenants.update');
     Route::get('ai-tenants/{tenant}/prompt', [AiAgentsController::class, 'promptPreview'])->name('ai.tenants.prompt');
-    Route::get('agentes-ia/{tenant}/contexto', [AiAgentsController::class, 'context'])->name('ai.tenants.context');
-    Route::get('agentes-ia/{tenant}/canales', [AiAgentsController::class, 'channels'])->name('ai.channels');
+    // El contexto del bot y los canales se mudaron a la ficha del hotel:
+    // son de ESE hotel, no del catálogo de la plataforma. Las URLs viejas
+    // siguen vivas para no romper ligas guardadas.
+    Route::get('agentes-ia/{tenant}/contexto', fn (Tenant $tenant) => redirect()
+        ->route('admin.tenants.assistant', $tenant))->name('ai.tenants.context');
+    Route::get('agentes-ia/{tenant}/canales', fn (Tenant $tenant) => redirect()
+        ->route('admin.tenants.channels', $tenant))->name('ai.channels');
 
     // Apariencia de la plataforma (branding del login, nombre, favicon).
     Route::get('apariencia', [\App\Http\Controllers\Admin\BrandingController::class, 'index'])->name('branding');
@@ -105,6 +123,18 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
     Route::delete('meta-channels/{metaChannelLink}', [\App\Http\Controllers\Admin\MetaChannelController::class, 'destroy'])->name('meta.destroy');
     Route::post('meta-channels/{metaChannelLink}/diagnose', [\App\Http\Controllers\Admin\MetaChannelController::class, 'diagnose'])->name('meta.diagnose');
     Route::post('meta-channels/{metaChannelLink}/resubscribe', [\App\Http\Controllers\Admin\MetaChannelController::class, 'resubscribe'])->name('meta.resubscribe');
+
+    // Bots de Telegram por hotel (alta con token de BotFather).
+    Route::post('telegram-channels', [\App\Http\Controllers\Admin\TelegramChannelController::class, 'store'])->name('telegram.store');
+    Route::patch('telegram-channels/{telegramChannelLink}', [\App\Http\Controllers\Admin\TelegramChannelController::class, 'update'])->name('telegram.update');
+    Route::delete('telegram-channels/{telegramChannelLink}', [\App\Http\Controllers\Admin\TelegramChannelController::class, 'destroy'])->name('telegram.destroy');
+    Route::post('telegram-channels/{telegramChannelLink}/test', [\App\Http\Controllers\Admin\TelegramChannelController::class, 'test'])->name('telegram.test');
+
+    // Cuentas de TikTok (Business Messaging) por hotel.
+    Route::post('tiktok-channels', [\App\Http\Controllers\Admin\TiktokChannelController::class, 'store'])->name('tiktok.store');
+    Route::patch('tiktok-channels/{tiktokChannelLink}', [\App\Http\Controllers\Admin\TiktokChannelController::class, 'update'])->name('tiktok.update');
+    Route::delete('tiktok-channels/{tiktokChannelLink}', [\App\Http\Controllers\Admin\TiktokChannelController::class, 'destroy'])->name('tiktok.destroy');
+    Route::post('tiktok-channels/{tiktokChannelLink}/test', [\App\Http\Controllers\Admin\TiktokChannelController::class, 'test'])->name('tiktok.test');
 
     // Compatibilidad con la URL vieja del starter.
     Route::redirect('/dashboard', '/admin');

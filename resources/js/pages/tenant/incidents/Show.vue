@@ -3,12 +3,20 @@ import { router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormSelect, FormSwitch, FormTextarea } from '@/components/Base/Form';
+import {
+    FormHelp,
+    FormInput,
+    FormSelect,
+    FormSwitch,
+    FormTextarea,
+} from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import TechniciansDialog from './TechniciansDialog.vue';
+import type { TechnicianRow } from './types';
 
 interface IncidentPhoto {
     id: number;
@@ -36,7 +44,24 @@ interface IncidentDetail {
     resolved_at: string | null;
     resolution_notes: string | null;
     created_at: string;
+    due_at: string | null;
+    overdue: boolean;
+    age_hours: number;
+    cost: number | null;
+    technician_id: number | null;
+    technician: string | null;
+    stay_id: number | null;
     photos: IncidentPhoto[];
+}
+
+/** La estancia que causó el daño y lo que se le cobró al huésped. */
+interface StayBlock {
+    id: number;
+    guest: string;
+    check_in_at: string | null;
+    check_out_at: string | null;
+    charges: Array<{ concept: string; amount: number }>;
+    charged_total: number;
 }
 
 interface TimelineEntry {
@@ -50,6 +75,8 @@ const props = defineProps<{
     incident: IncidentDetail;
     timeline: TimelineEntry[];
     staff: Array<{ id: number; name: string }>;
+    technicians: TechnicianRow[];
+    stay: StayBlock | null;
     canManage: boolean;
     canDelete: boolean;
     // Incidencias avanzadas (Empresarial): asignación de responsables.
@@ -104,10 +131,37 @@ function reassign() {
     );
 }
 
+const money = new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency: 'MXN',
+});
+
+// Cuánto falta para el tiempo objetivo (o desde cuándo se pasó).
+const dueLabel = computed(() => {
+    if (props.incident.status === 'resolved' || !props.incident.due_at) {
+        return null;
+    }
+    return props.incident.overdue
+        ? 'Fuera de tiempo'
+        : `Vence ${props.incident.due_at}`;
+});
+
 // ── Resolver ──
 const resolving = ref(false);
 const resolveNotes = ref('');
 const releaseRoom = ref(true);
+const resolveCost = ref('');
+const resolveTechnician = ref<string | number>('');
+const showTechnicians = ref(false);
+
+function openResolve() {
+    resolveNotes.value = '';
+    releaseRoom.value = true;
+    resolveCost.value =
+        props.incident.cost !== null ? String(props.incident.cost) : '';
+    resolveTechnician.value = props.incident.technician_id ?? '';
+    resolving.value = true;
+}
 
 async function confirmResolve() {
     const releasing =
@@ -116,6 +170,11 @@ async function confirmResolve() {
         status: 'resolved',
         resolution_notes: resolveNotes.value || null,
         release_room: releasing,
+        cost: resolveCost.value === '' ? null : Number(resolveCost.value),
+        technician_id:
+            resolveTechnician.value === ''
+                ? null
+                : Number(resolveTechnician.value),
     });
     if (ok) resolving.value = false;
 }
@@ -231,6 +290,18 @@ async function destroy() {
                             >
                                 Reportó huésped
                             </span>
+                            <span
+                                v-if="dueLabel"
+                                class="flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium"
+                                :class="
+                                    incident.overdue
+                                        ? 'bg-danger/10 text-danger'
+                                        : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400 dark:text-slate-300'
+                                "
+                            >
+                                <Lucide icon="Timer" class="h-3.5 w-3.5" />
+                                {{ dueLabel }}
+                            </span>
                         </h1>
                         <p class="mt-1 text-sm text-slate-500">
                             {{ incident.room ?? 'Área general' }} · reportada el
@@ -275,11 +346,7 @@ async function destroy() {
                             variant="primary"
                             class="rounded-[0.5rem] shadow-md shadow-primary/20"
                             :disabled="busy"
-                            @click="
-                                resolveNotes = '';
-                                releaseRoom = true;
-                                resolving = true;
-                            "
+                            @click="openResolve()"
                         >
                             <Lucide icon="CircleCheck" class="mr-2 h-4 w-4" />
                             Resolver
@@ -355,6 +422,31 @@ async function destroy() {
                                     {{ incident.assignee ?? 'Sin asignar' }}
                                 </div>
                             </div>
+                            <template v-if="advanced">
+                                <div>
+                                    <div class="text-xs text-slate-500">
+                                        Costó reparar
+                                    </div>
+                                    <div class="mt-0.5 text-sm font-medium">
+                                        {{
+                                            incident.cost !== null
+                                                ? money.format(incident.cost)
+                                                : 'Sin registrar'
+                                        }}
+                                    </div>
+                                </div>
+                                <div>
+                                    <div class="text-xs text-slate-500">
+                                        Lo reparó
+                                    </div>
+                                    <div class="mt-0.5 text-sm font-medium">
+                                        {{
+                                            incident.technician ??
+                                            'Sin registrar'
+                                        }}
+                                    </div>
+                                </div>
+                            </template>
                         </div>
                         <div v-if="incident.description" class="mt-4">
                             <div class="text-xs text-slate-500">
@@ -377,6 +469,94 @@ async function destroy() {
                             <span v-if="incident.resolution_notes">
                                 {{ incident.resolution_notes }}
                             </span>
+                        </div>
+                    </div>
+
+                    <!-- Estancia que causó el daño: lo que se le cobró
+                         al huésped, junto a lo que costó repararlo -->
+                    <div v-if="stay" class="box box--stacked p-5">
+                        <div
+                            class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            <Lucide icon="Receipt" class="h-3.5 w-3.5" />
+                            Se le cobró al huésped
+                        </div>
+                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div>
+                                <div class="text-xs text-slate-500">
+                                    Huésped
+                                </div>
+                                <div class="mt-0.5 text-sm font-medium">
+                                    {{ stay.guest }}
+                                </div>
+                            </div>
+                            <div>
+                                <div class="text-xs text-slate-500">
+                                    Estancia
+                                </div>
+                                <div class="mt-0.5 text-sm font-medium">
+                                    {{ stay.check_in_at ?? '—' }}
+                                    <template v-if="stay.check_out_at">
+                                        a {{ stay.check_out_at }}
+                                    </template>
+                                </div>
+                            </div>
+                        </div>
+                        <div
+                            v-if="stay.charges.length"
+                            class="mt-4 divide-y divide-dashed divide-slate-200/70 rounded-lg border border-slate-200/70 dark:divide-darkmode-400 dark:border-darkmode-400"
+                        >
+                            <div
+                                v-for="(charge, index) in stay.charges"
+                                :key="index"
+                                class="flex items-center justify-between gap-3 px-3.5 py-2.5 text-sm"
+                            >
+                                <span class="min-w-0 truncate">
+                                    {{ charge.concept }}
+                                </span>
+                                <span class="shrink-0 font-medium">
+                                    {{ money.format(charge.amount) }}
+                                </span>
+                            </div>
+                            <div
+                                class="flex items-center justify-between gap-3 px-3.5 py-2.5 text-sm font-medium"
+                            >
+                                <span>Total cobrado</span>
+                                <span>{{
+                                    money.format(stay.charged_total)
+                                }}</span>
+                            </div>
+                        </div>
+                        <p v-else class="mt-4 text-sm text-slate-400">
+                            No quedó cargo de daño en esa cuenta.
+                        </p>
+                        <div
+                            v-if="advanced && incident.cost !== null"
+                            class="mt-3 rounded-lg px-3.5 py-2.5 text-sm"
+                            :class="
+                                stay.charged_total >= incident.cost
+                                    ? 'bg-success/10 text-success'
+                                    : 'bg-pending/10 text-pending'
+                            "
+                        >
+                            <template
+                                v-if="stay.charged_total >= incident.cost"
+                            >
+                                Reparar costó
+                                {{ money.format(incident.cost) }}: el cobro
+                                alcanzó.
+                            </template>
+                            <template v-else>
+                                Reparar costó
+                                {{ money.format(incident.cost) }} y se cobraron
+                                {{ money.format(stay.charged_total) }}: la casa
+                                puso
+                                {{
+                                    money.format(
+                                        incident.cost - stay.charged_total,
+                                    )
+                                }}.
+                            </template>
                         </div>
                     </div>
 
@@ -536,6 +716,49 @@ async function destroy() {
                                 placeholder="Se cambió el empaque de la regadera…"
                             />
                         </div>
+                        <div v-if="advanced" class="grid gap-4 sm:grid-cols-2">
+                            <div>
+                                <label class="mb-1 block text-sm"
+                                    >Costó reparar (opcional)</label
+                                >
+                                <FormInput
+                                    v-model="resolveCost"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    placeholder="0.00"
+                                />
+                                <FormHelp>
+                                    Material y mano de obra: es lo que suma el
+                                    reporte por habitación.
+                                </FormHelp>
+                            </div>
+                            <div>
+                                <label class="mb-1 block text-sm"
+                                    >Quién lo reparó</label
+                                >
+                                <FormSelect v-model="resolveTechnician">
+                                    <option value="">Sin registrar</option>
+                                    <option
+                                        v-for="technician in technicians"
+                                        :key="technician.id"
+                                        :value="technician.id"
+                                    >
+                                        {{ technician.name }} ·
+                                        {{ technician.kind_label }}
+                                    </option>
+                                </FormSelect>
+                                <FormHelp>
+                                    <button
+                                        type="button"
+                                        class="text-primary"
+                                        @click="showTechnicians = true"
+                                    >
+                                        Administrar la lista
+                                    </button>
+                                </FormHelp>
+                            </div>
+                        </div>
                         <div
                             v-if="incident.room_status === 'maintenance'"
                             class="flex items-center justify-between rounded-lg border border-dashed border-slate-300/70 px-3 py-2.5 dark:border-darkmode-400"
@@ -597,9 +820,7 @@ async function destroy() {
                                 />
                             </div>
                             <div class="min-w-0">
-                                <h2 class="text-base font-medium">
-                                    Evidencia
-                                </h2>
+                                <h2 class="text-base font-medium">Evidencia</h2>
                                 <p class="truncate text-xs text-slate-500">
                                     Foto {{ (viewingIndex ?? 0) + 1 }} de
                                     {{ incident.photos.length }} ·
@@ -700,5 +921,12 @@ async function destroy() {
                 </div>
             </Dialog.Panel>
         </Dialog>
+
+        <TechniciansDialog
+            :open="showTechnicians"
+            :technicians="technicians"
+            :can-manage="canManage"
+            @close="showTechnicians = false"
+        />
     </RazeLayout>
 </template>

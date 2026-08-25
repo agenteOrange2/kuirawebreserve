@@ -287,11 +287,13 @@ class MetaApi
         $graph = rtrim(config('meta.graph_url'), '/');
 
         // Instagram Login: la CUENTA se suscribe a la app por su propia API.
+        // `comments` alimenta el módulo de redes sociales; suscribirlo no
+        // estorba a quien no lo tenga (los eventos se descartan sin módulo).
         if ($this->usesInstagramLogin($link)) {
             try {
                 return Http::withToken($link->access_token)->timeout(10)
                     ->post($this->igGraph().'/me/subscribed_apps', [
-                        'subscribed_fields' => 'messages',
+                        'subscribed_fields' => 'messages,comments',
                     ])
                     ->successful();
             } catch (Throwable $e) {
@@ -311,7 +313,8 @@ class MetaApi
             try {
                 return Http::withToken($link->access_token)->timeout(10)
                     ->post("{$graph}/{$pageId}/subscribed_apps", [
-                        'subscribed_fields' => 'messages,messaging_postbacks',
+                        // feed = comentarios en publicaciones de la página.
+                        'subscribed_fields' => 'messages,messaging_postbacks,feed',
                     ])
                     ->successful();
             } catch (Throwable $e) {
@@ -370,6 +373,706 @@ class MetaApi
 
             return null;
         }
+    }
+
+    /*
+    |--------------------------------------------------------------------------
+    | Comentarios en publicaciones (módulo redes-sociales)
+    |--------------------------------------------------------------------------
+    | Requieren permisos DISTINTOS a los de mensajería: pages_manage_engagement
+    | (Facebook) e instagram_manage_comments (Instagram). Con la app sin esos
+    | permisos aprobados, Graph responde 200 con un error de permisos en el
+    | cuerpo — por eso cada método registra el cuerpo exacto: es la diferencia
+    | entre diagnosticar en minutos o a ciegas.
+    */
+
+    /**
+     * Responde EN PÚBLICO al hilo del comentario. Devuelve el id de la
+     * respuesta creada (para no repetirla) o null si falló.
+     */
+    public function replyToComment(MetaChannelLink $link, string $commentId, string $message): ?string
+    {
+        // Cada red nombra distinto el mismo hilo: en Facebook la respuesta a
+        // un comentario es otro comentario suyo (/comments), en Instagram es
+        // /replies. Usar el edge equivocado devuelve "Object does not exist"
+        // aunque el comentario esté ahí (comprobado en vivo, 2026-08-20).
+        $edge = $link->type === 'instagram' ? 'replies' : 'comments';
+
+        try {
+            $response = Http::withToken($link->access_token)->timeout(10)
+                ->post($this->commentGraph($link)."/{$commentId}/{$edge}", ['message' => $message]);
+
+            if ($response->failed() || $response->json('error')) {
+                $this->logCommentFailure('respuesta pública', $link, $commentId, $response);
+
+                return null;
+            }
+
+            return $response->json('id');
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * Mensaje PRIVADO al autor del comentario (private reply). Meta permite
+     * uno solo por comentario y dentro de los 7 días.
+     *
+     * Se manda por el Send API con recipient.comment_id a propósito: su
+     * respuesta trae `recipient_id`, que es el PSID/IGSID con el que la
+     * bandeja arma la conversación. Sin ese id no habría forma de ligar el
+     * comentario con el DM cuando la persona conteste.
+     *
+     * @return array{message_id: ?string, recipient_id: ?string}|null
+     */
+    public function privateReply(MetaChannelLink $link, string $commentId, string $message): ?array
+    {
+        $endpoint = ($this->usesInstagramLogin($link) ? $this->igGraph() : rtrim(config('meta.graph_url'), '/')).'/me/messages';
+
+        try {
+            $response = Http::withToken($link->access_token)->timeout(10)
+                ->post($endpoint, [
+                    'recipient' => ['comment_id' => $commentId],
+                    'message' => ['text' => $message],
+                ]);
+
+            if ($response->failed() || $response->json('error')) {
+                $this->logCommentFailure('mensaje privado', $link, $commentId, $response);
+
+                return null;
+            }
+
+            return [
+                'message_id' => $response->json('message_id'),
+                'recipient_id' => $response->json('recipient_id'),
+            ];
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * Oculta o vuelve a mostrar un comentario. Ocultar NUNCA borra: el
+     * comentario sigue visible para su autor y la acción es reversible.
+     * Facebook usa is_hidden; Instagram usa hide.
+     */
+    public function hideComment(MetaChannelLink $link, string $commentId, bool $hidden = true): bool
+    {
+        $isInstagram = $link->type === 'instagram';
+
+        try {
+            $response = Http::withToken($link->access_token)->timeout(10)
+                ->post($this->commentGraph($link)."/{$commentId}", $isInstagram
+                    ? ['hide' => $hidden ? 'true' : 'false']
+                    : ['is_hidden' => $hidden ? 'true' : 'false']);
+
+            if ($response->failed() || $response->json('error')) {
+                $this->logCommentFailure($hidden ? 'ocultar' : 'mostrar', $link, $commentId, $response);
+
+                return false;
+            }
+
+            return true;
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
+    }
+
+    /**
+     * Detalle de una publicación (texto, liga e imagen) para poder mostrarla
+     * en el panel junto a sus comentarios.
+     *
+     * @return array<string, mixed>|null
+     */
+    public function postDetail(MetaChannelLink $link, string $postId): ?array
+    {
+        $isInstagram = $link->type === 'instagram';
+
+        try {
+            $response = Http::withToken($link->access_token)->timeout(10)
+                ->get($this->commentGraph($link)."/{$postId}", [
+                    'fields' => $isInstagram
+                        ? 'id,caption,permalink,media_url,thumbnail_url,timestamp,comments_count'
+                        : 'id,message,permalink_url,created_time,full_picture',
+                ]);
+
+            if ($response->failed() || $response->json('error')) {
+                $this->logCommentFailure('detalle de publicación', $link, $postId, $response);
+
+                return null;
+            }
+
+            return $this->normalizePost($response->json(), $isInstagram);
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * Publicaciones de la página o cuenta desde una fecha, ya normalizadas.
+     *
+     * Sigue la paginación de Graph (que devuelve de 25 en 25 aunque se pida
+     * más) hasta agotar el periodo o topar el máximo: sin esto, "escanear el
+     * último año" traía solo la primera página y parecía que no había nada.
+     *
+     * Instagram no acepta `since`/`until` en /media: ahí se pagina y se corta
+     * en cuanto aparece una publicación más vieja que el periodo pedido.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function accountPosts(MetaChannelLink $link, ?\DateTimeInterface $since = null, int $max = 200): array
+    {
+        $isInstagram = $link->type === 'instagram';
+        $accountId = $this->accountId($link);
+
+        if (! $accountId) {
+            return [];
+        }
+
+        $url = $this->commentGraph($link)."/{$accountId}/".($isInstagram ? 'media' : 'posts');
+        $query = [
+            'fields' => $isInstagram
+                ? 'id,caption,permalink,media_url,thumbnail_url,timestamp,comments_count'
+                : 'id,message,permalink_url,created_time,full_picture,comments.summary(true)',
+            'limit' => 50,
+        ];
+
+        if ($since && ! $isInstagram) {
+            $query['since'] = $since->getTimestamp();
+        }
+
+        $posts = [];
+        // Un cursor que se repite (Graph a veces devuelve el mismo `next`)
+        // haría girar el bucle hasta el tope: se corta al primer repetido.
+        $visited = [];
+
+        try {
+            while (count($posts) < $max) {
+                if (isset($visited[$url])) {
+                    break;
+                }
+
+                $visited[$url] = true;
+
+                $response = Http::withToken($link->access_token)->timeout(20)->get($url, $query);
+
+                if ($response->failed() || $response->json('error')) {
+                    $this->logCommentFailure('lista de publicaciones', $link, (string) $accountId, $response);
+
+                    break;
+                }
+
+                $page = $response->json('data') ?? [];
+
+                if ($page === []) {
+                    break;
+                }
+
+                foreach ($page as $post) {
+                    $normalized = $this->normalizePost($post, $isInstagram);
+
+                    // Instagram no filtra por fecha en el servidor: se corta aquí.
+                    if ($since && $normalized['published_at']
+                        && strtotime((string) $normalized['published_at']) < $since->getTimestamp()) {
+                        return $posts;
+                    }
+
+                    $posts[] = $normalized;
+                }
+
+                $next = $response->json('paging.next');
+
+                if (! $next) {
+                    break;
+                }
+
+                // El cursor `next` ya trae todos los parámetros firmados.
+                $url = $next;
+                $query = [];
+            }
+        } catch (Throwable $e) {
+            report($e);
+        }
+
+        // Facebook NO devuelve por /posts todo lo que la página publicó: una
+        // foto o un video suben como historia propia y ahí se comentan. Se
+        // complementan por sus edges y se ligan al post real con
+        // `page_story_id`, que es el id con el que se leen sus comentarios.
+        if (! $isInstagram) {
+            $posts = $this->mergeMediaStories($link, $posts, $since);
+        }
+
+        return $posts;
+    }
+
+    /**
+     * Agrega fotos y videos de la página que no vinieron por /posts.
+     *
+     * @param  array<int, array<string, mixed>>  $posts
+     * @return array<int, array<string, mixed>>
+     */
+    protected function mergeMediaStories(MetaChannelLink $link, array $posts, ?\DateTimeInterface $since): array
+    {
+        $graph = rtrim(config('meta.graph_url'), '/');
+        $known = array_flip(array_column($posts, 'external_id'));
+
+        foreach (['photos' => 'name', 'videos' => 'description'] as $edge => $textField) {
+            try {
+                $response = Http::withToken($link->access_token)->timeout(20)
+                    ->get("{$graph}/{$link->external_id}/{$edge}", [
+                        'fields' => "id,created_time,page_story_id,permalink_url,{$textField},"
+                            .($edge === 'photos' ? 'images,' : 'picture,')
+                            .'comments.summary(true)',
+                        'limit' => 50,
+                    ]);
+
+                if ($response->failed() || $response->json('error')) {
+                    // Sin permiso para este edge no se rompe el escaneo: la
+                    // página puede no tener fotos o videos y da igual.
+                    continue;
+                }
+
+                foreach ($response->json('data') ?? [] as $item) {
+                    // Sin page_story_id no hay hilo de comentarios al cual
+                    // responder: no sirve para este módulo.
+                    $storyId = (string) ($item['page_story_id'] ?? '');
+
+                    if ($storyId === '' || isset($known[$storyId])) {
+                        continue;
+                    }
+
+                    $created = $item['created_time'] ?? null;
+
+                    if ($since && $created && strtotime((string) $created) < $since->getTimestamp()) {
+                        continue;
+                    }
+
+                    $known[$storyId] = true;
+                    $posts[] = [
+                        'external_id' => $storyId,
+                        'message' => $item[$textField] ?? null,
+                        'permalink' => $item['permalink_url'] ?? null,
+                        'media_url' => $item['images'][0]['source'] ?? $item['picture'] ?? null,
+                        'published_at' => $created ? (string) $created : null,
+                        'comments_count' => (int) ($item['comments']['summary']['total_count'] ?? 0),
+                    ];
+                }
+            } catch (Throwable $e) {
+                report($e);
+            }
+        }
+
+        // Más recientes primero, como las entrega /posts.
+        usort($posts, fn (array $a, array $b) => strtotime((string) ($b['published_at'] ?? '1970-01-01'))
+            <=> strtotime((string) ($a['published_at'] ?? '1970-01-01')));
+
+        return $posts;
+    }
+
+    /**
+     * Permisos que el módulo de redes necesita y el token NO trae.
+     *
+     * Caso real (motellacupula, 2026-08-20): el token tenía pages_messaging
+     * — por eso el bot contestaba DMs sin problema — pero le faltaban los de
+     * publicaciones, así que Graph devolvía la página vacía SIN error. Un
+     * fallo mudo que costó varias rondas de diagnóstico manual.
+     *
+     * Devuelve [] cuando no se puede determinar: nunca inventar una alarma.
+     *
+     * @return array<string, string> permiso => para qué sirve
+     */
+    public function missingCommentPermissions(MetaChannelLink $link): array
+    {
+        // Instagram Login no expone scopes por debug_token de la app de
+        // Facebook: ahí no se puede afirmar nada.
+        if ($link->type !== 'messenger') {
+            return [];
+        }
+
+        $needed = [
+            'pages_read_engagement' => 'leer las publicaciones y sus comentarios',
+            'pages_manage_engagement' => 'responder y ocultar comentarios',
+        ];
+
+        $appId = (string) config('meta.app_id');
+        $appSecret = (string) config('meta.app_secret');
+
+        if ($appId === '' || $appSecret === '') {
+            return [];
+        }
+
+        try {
+            $response = Http::timeout(10)->get(rtrim(config('meta.graph_url'), '/').'/debug_token', [
+                'input_token' => $link->access_token,
+                'access_token' => "{$appId}|{$appSecret}",
+            ]);
+
+            $scopes = $response->json('data.scopes');
+
+            if (! is_array($scopes)) {
+                return [];
+            }
+
+            return array_diff_key($needed, array_flip($scopes));
+        } catch (Throwable $e) {
+            report($e);
+
+            return [];
+        }
+    }
+
+    /**
+     * Convierte un token de USUARIO en el token de PÁGINA correspondiente,
+     * de larga duración.
+     *
+     * Por qué existe: activar un permiso en la app NO actualiza los tokens
+     * ya emitidos — un token es una foto de los permisos que había cuando se
+     * generó. Quien conecta tiene que generar uno NUEVO después de conceder
+     * el permiso, y además cambiar el desplegable del Explorador a "token de
+     * página". Ese paso se equivoca casi siempre (motellacupula, 2026-08-20:
+     * tres rondas atorado ahí), así que aquí se acepta el token de usuario
+     * tal cual y el canje lo hace el sistema:
+     *
+     *   token de usuario corto → largo (nunca caduca para la página) → token
+     *   de la página elegida, que hereda sus permisos.
+     *
+     * Devuelve null si ya era token de página o si no se pudo canjear: quien
+     * llama se queda con lo que pegó.
+     */
+    public function pageTokenFrom(string $token, string $pageId): ?string
+    {
+        $graph = rtrim(config('meta.graph_url'), '/');
+        $appId = (string) config('meta.app_id');
+        $appSecret = (string) config('meta.app_secret');
+
+        if ($appId === '' || $appSecret === '' || $pageId === '') {
+            return null;
+        }
+
+        // Los tokens de Instagram Login (IGAA…) no son de esta familia.
+        if (str_starts_with($token, 'IG')) {
+            return null;
+        }
+
+        try {
+            $type = Http::timeout(10)->get("{$graph}/debug_token", [
+                'input_token' => $token,
+                'access_token' => "{$appId}|{$appSecret}",
+            ])->json('data.type');
+
+            if ($type !== 'USER') {
+                return null; // ya es de página (o no se pudo saber): no tocar
+            }
+
+            // Larga duración: sin esto el token de página hereda las ~2 horas
+            // del token corto del Explorador y la conexión muere sola.
+            $long = Http::timeout(10)->get("{$graph}/oauth/access_token", [
+                'grant_type' => 'fb_exchange_token',
+                'client_id' => $appId,
+                'client_secret' => $appSecret,
+                'fb_exchange_token' => $token,
+            ])->json('access_token') ?? $token;
+
+            $accounts = Http::withToken($long)->timeout(10)
+                ->get("{$graph}/me/accounts", ['fields' => 'id,name,access_token', 'limit' => 100]);
+
+            foreach ($accounts->json('data') ?? [] as $page) {
+                if ((string) ($page['id'] ?? '') === $pageId) {
+                    return $page['access_token'] ?? null;
+                }
+            }
+
+            Log::warning('Meta: el token de usuario no administra esa página', [
+                'page_id' => $pageId,
+                'paginas' => array_column($accounts->json('data') ?? [], 'id'),
+            ]);
+
+            return null;
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * Todo lo que le falta a la conexión para que los comentarios funcionen.
+     *
+     * Son TRES capas independientes, y cualquiera de las tres rompe el
+     * módulo en silencio (caso real motellacupula, 2026-08-20 — las tres
+     * fallaban a la vez y ninguna avisaba):
+     *
+     *  1. Permisos del token: sin pages_read_engagement, Graph devuelve el
+     *     muro VACÍO sin error.
+     *  2. Campos del webhook en la app de Meta: sin `feed` (o `comments` en
+     *     Instagram), Meta nunca manda el evento de un comentario nuevo.
+     *  3. Campos suscritos de la página: los repara resubscribe().
+     *
+     * @return array<int, array{tipo: string, detalle: string, accion: string}>
+     */
+    public function commentSetupIssues(MetaChannelLink $link): array
+    {
+        $issues = [];
+        $isInstagram = $link->type === 'instagram';
+
+        if ($missing = $this->missingCommentPermissions($link)) {
+            $issues[] = [
+                'tipo' => 'Permisos del acceso guardado',
+                'detalle' => implode(', ', array_keys($missing)),
+                // El malentendido clásico: activar el permiso en la app no
+                // cambia un acceso ya guardado (es una foto de los permisos
+                // que había al generarlo). Hay que generar otro y pegarlo.
+                'accion' => 'Activar el permiso en la app NO actualiza el acceso que ya está guardado aquí: hay que generar uno nuevo DESPUÉS de conceder el permiso y pegarlo en la conexión. Puedes pegar el token de usuario del Explorador de la API tal cual: el sistema obtiene solo el de la página.',
+            ];
+        }
+
+        // Campo del webhook que trae los comentarios en cada red.
+        $field = $isInstagram ? 'comments' : 'feed';
+
+        if ($this->appWebhookMissing($isInstagram ? 'instagram' : 'page', $field)) {
+            $issues[] = [
+                'tipo' => 'Webhook de la app',
+                'detalle' => $field,
+                'accion' => 'En el panel de la app de Meta, en Webhooks → '
+                    .($isInstagram ? 'Instagram' : 'Página')
+                    .", pulsa Suscribirte en el campo \"{$field}\". Sin esto Meta nunca avisa de un comentario nuevo.",
+            ];
+        }
+
+        if (! $isInstagram && ($fields = $this->pageSubscribedFields($link)) !== null
+            && ! in_array('feed', $fields, true)) {
+            $issues[] = [
+                'tipo' => 'Suscripción de la página',
+                'detalle' => 'feed',
+                'accion' => 'Usa el botón Reparar suscripción del asistente: lo deja listo sin salir del sistema.',
+            ];
+        }
+
+        return $issues;
+    }
+
+    /**
+     * ¿La app de Meta tiene sin suscribir este campo de webhook?
+     * Devuelve false ante la duda: nunca inventar una alarma.
+     */
+    protected function appWebhookMissing(string $object, string $field): bool
+    {
+        $appId = (string) config('meta.app_id');
+        $appSecret = (string) config('meta.app_secret');
+
+        if ($appId === '' || $appSecret === '') {
+            return false;
+        }
+
+        try {
+            $response = Http::timeout(10)->get(rtrim(config('meta.graph_url'), '/')."/{$appId}/subscriptions", [
+                'access_token' => "{$appId}|{$appSecret}",
+            ]);
+
+            $data = $response->json('data');
+
+            if (! is_array($data)) {
+                return false;
+            }
+
+            foreach ($data as $subscription) {
+                if (($subscription['object'] ?? '') !== $object) {
+                    continue;
+                }
+
+                $fields = array_map(
+                    fn ($item) => is_array($item) ? ($item['name'] ?? '') : $item,
+                    $subscription['fields'] ?? [],
+                );
+
+                return ! in_array($field, $fields, true);
+            }
+
+            return false;
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
+    }
+
+    /**
+     * Campos con los que la página está suscrita a la app, o null si no se
+     * pudo consultar.
+     *
+     * @return array<int, string>|null
+     */
+    public function pageSubscribedFields(MetaChannelLink $link): ?array
+    {
+        $pageId = $link->type === 'messenger' ? $link->external_id : $link->waba_id;
+
+        if (! $pageId) {
+            return null;
+        }
+
+        try {
+            $response = Http::withToken($link->access_token)->timeout(10)
+                ->get(rtrim(config('meta.graph_url'), '/')."/{$pageId}/subscribed_apps");
+
+            $data = $response->json('data');
+
+            if (! is_array($data) || $data === []) {
+                return null;
+            }
+
+            return array_values(array_unique(array_merge(
+                ...array_map(fn (array $app) => $app['subscribed_fields'] ?? [], $data),
+            )));
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * Nombre de la cuenta conectada (y si su token sigue vivo). Se usa para
+     * decirle al hotel QUÉ cuenta se escaneó: conectar la página equivocada
+     * es un error mudo, y así deja de serlo.
+     *
+     * @return array{name: ?string, ok: bool, error: ?string}
+     */
+    public function accountIdentity(MetaChannelLink $link): array
+    {
+        $isInstagram = $link->type === 'instagram';
+
+        try {
+            $response = Http::withToken($link->access_token)->timeout(10)
+                ->get($this->commentGraph($link).'/'.($this->usesInstagramLogin($link) ? 'me' : $link->external_id), [
+                    'fields' => $isInstagram ? 'username,name' : 'name',
+                ]);
+
+            if ($response->failed() || $response->json('error')) {
+                return [
+                    'name' => $link->name,
+                    'ok' => false,
+                    'error' => $response->json('error.message') ?? 'no se pudo leer la cuenta',
+                ];
+            }
+
+            return [
+                'name' => $response->json('name') ?? $response->json('username') ?? $link->name,
+                'ok' => true,
+                'error' => null,
+            ];
+        } catch (Throwable $e) {
+            report($e);
+
+            return ['name' => $link->name, 'ok' => false, 'error' => $e->getMessage()];
+        }
+    }
+
+    /**
+     * Comentarios de una publicación, normalizados a la misma forma que
+     * entrega el webhook (para reutilizar el mismo camino de guardado).
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function postComments(MetaChannelLink $link, string $postId, int $limit = 50): array
+    {
+        $isInstagram = $link->type === 'instagram';
+
+        try {
+            $response = Http::withToken($link->access_token)->timeout(15)
+                ->get($this->commentGraph($link)."/{$postId}/comments", [
+                    'fields' => $isInstagram
+                        ? 'id,text,username,from,timestamp,parent_id'
+                        : 'id,message,from,created_time,parent,is_hidden',
+                    'limit' => $limit,
+                ]);
+
+            if ($response->failed() || $response->json('error')) {
+                $this->logCommentFailure('lista de comentarios', $link, $postId, $response);
+
+                return [];
+            }
+
+            return array_map(function (array $comment) use ($isInstagram) {
+                $date = $isInstagram ? ($comment['timestamp'] ?? null) : ($comment['created_time'] ?? null);
+
+                return [
+                    'comment_id' => (string) ($comment['id'] ?? ''),
+                    'parent_id' => isset($comment['parent']['id'])
+                        ? (string) $comment['parent']['id']
+                        : (isset($comment['parent_id']) ? (string) $comment['parent_id'] : null),
+                    'author_id' => isset($comment['from']['id']) ? (string) $comment['from']['id'] : null,
+                    'author_name' => $comment['from']['name'] ?? $comment['username'] ?? null,
+                    'body' => $comment['message'] ?? $comment['text'] ?? null,
+                    'commented_at' => $date ? (string) $date : null,
+                    'hidden' => (bool) ($comment['is_hidden'] ?? false),
+                ];
+            }, $response->json('data') ?? []);
+        } catch (Throwable $e) {
+            report($e);
+
+            return [];
+        }
+    }
+
+    /**
+     * Cuenta dueña de las publicaciones: la página en Messenger, y en
+     * Instagram la propia cuenta (Login) o la del id externo.
+     */
+    public function accountId(MetaChannelLink $link): ?string
+    {
+        return match ($link->type) {
+            'messenger' => $link->external_id,
+            'instagram' => $this->usesInstagramLogin($link) ? 'me' : $link->external_id,
+            default => null,
+        };
+    }
+
+    /**
+     * @param  array<string, mixed>  $post
+     * @return array<string, mixed>
+     */
+    protected function normalizePost(array $post, bool $isInstagram): array
+    {
+        $date = $isInstagram ? ($post['timestamp'] ?? null) : ($post['created_time'] ?? null);
+
+        return [
+            'external_id' => (string) ($post['id'] ?? ''),
+            'message' => $post['caption'] ?? $post['message'] ?? null,
+            'permalink' => $post['permalink'] ?? $post['permalink_url'] ?? null,
+            'media_url' => $post['media_url'] ?? $post['thumbnail_url'] ?? $post['full_picture'] ?? null,
+            'published_at' => $date ? (string) $date : null,
+            // Instagram lo da plano; Facebook dentro del summary del edge.
+            'comments_count' => (int) ($post['comments_count']
+                ?? $post['comments']['summary']['total_count']
+                ?? 0),
+        ];
+    }
+
+    /** Host de Graph para operaciones de comentarios según la ruta del canal. */
+    protected function commentGraph(MetaChannelLink $link): string
+    {
+        return $this->usesInstagramLogin($link)
+            ? $this->igGraph()
+            : rtrim(config('meta.graph_url'), '/');
+    }
+
+    protected function logCommentFailure(string $action, MetaChannelLink $link, string $target, mixed $response): void
+    {
+        Log::warning("Meta: {$action} falló", [
+            'type' => $link->type,
+            'tenant' => $link->tenant_id,
+            'target' => $target,
+            'status' => $response->status(),
+            'body' => $response->json(),
+        ]);
     }
 
     /**

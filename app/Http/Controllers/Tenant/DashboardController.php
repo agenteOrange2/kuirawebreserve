@@ -232,6 +232,9 @@ class DashboardController extends Controller
                 'pending' => $pendingReservations,
             ],
             'roomTypeDistribution' => $roomTypeDistribution,
+            // Mantenimiento pendiente: sin esto una falla puede quedarse
+            // semanas abierta sin que nadie la vea al entrar al panel.
+            'maintenance' => $this->maintenance(),
             'statuses' => $statuses,
             'occupancy' => ['occupied' => $occupied, 'total' => $totalRooms, 'percent' => $occupancyPct, 'reserved' => $reserved, 'available' => $available],
             'arrivals' => $arrivals->map(fn (Reservation $r) => [
@@ -449,4 +452,51 @@ class DashboardController extends Controller
     {
         return '$'.number_format($amount, 0, '.', ',');
     }
+    /**
+     * Mantenimiento pendiente para la portada del panel: cuántas fallas hay
+     * abiertas, cuántas se pasaron de su tiempo y las tres más urgentes.
+     *
+     * Vacío sin el módulo `incidencias`: el bloque no se pinta.
+     *
+     * @return array<string, mixed>|null
+     */
+    protected function maintenance(): ?array
+    {
+        if (! (tenant()?->hasModule('incidencias') ?? false)) {
+            return null;
+        }
+
+        $pending = \App\Models\Incident::query()
+            ->with('room:id,number')
+            ->whereIn('status', [\App\Models\Incident::STATUS_OPEN, \App\Models\Incident::STATUS_IN_PROGRESS])
+            ->get();
+
+        $overdue = $pending->filter(fn (\App\Models\Incident $i) => $i->isOverdue());
+
+        return [
+            'open' => $pending->count(),
+            'overdue' => $overdue->count(),
+            'high' => $pending->where('priority', 'high')->count(),
+            // Primero lo vencido, luego lo urgente, luego lo más viejo: el
+            // orden en que conviene atenderlas.
+            'items' => $pending
+                ->sortByDesc(fn (\App\Models\Incident $i) => [
+                    $i->isOverdue() ? 1 : 0,
+                    $i->priority === 'high' ? 1 : 0,
+                    -$i->created_at->timestamp,
+                ])
+                ->take(3)
+                ->map(fn (\App\Models\Incident $i) => [
+                    'id' => $i->id,
+                    'title' => $i->title,
+                    'room' => $i->room?->number,
+                    'priority' => $i->priority,
+                    'priority_label' => $i->priorityLabel(),
+                    'overdue' => $i->isOverdue(),
+                    'age_hours' => $i->ageHours(),
+                ])
+                ->values(),
+        ];
+    }
+
 }

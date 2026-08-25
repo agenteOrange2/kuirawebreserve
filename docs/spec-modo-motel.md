@@ -122,3 +122,93 @@ Precedentes en el repo que se imitan: `settings['menu_billing_mode']` `'hotel'|'
 - **F2 A pie = nombre + foto de INE**: nombre completo obligatorio (viaja como guest_name), foto del documento con cámara (`capture="environment"`, hasta 2: frente/reverso), staged y subidas tras crear la estancia a `POST api/stays/{stay}/id-document`. `Stay` ahora es HasMedia (colección `id_document`, disco privado `local`); se sirven por `/estancias/{stay}/documento/{media}` con permiso `guests.view-documents` (sin gate de módulo). La ficha de estancia activa del plano muestra "Identificación: INE" + links a fotos (prop `canViewDocuments`).
 - **F3 Reserva-modal motel en el plano** (`floorplan/ReserveModal.vue`): "Crear una reserva" en modo motel ya NO navega a /reservas — abre modal con tarifa en botones, fechas con salida auto (payload rate_plans ahora trae `duration_unit/value`), disponibilidad en vivo (`GET /api/availability`, debounce 400ms, aviso si el cuarto del tap está ocupado), personas con capacidad, nombre+teléfono obligatorios (correo y placas opcionales), y toggle "Cobrar ahora" (efectivo/tarjeta, monto editable precargado al total) → `POST /api/reservations {confirmed:true}` + `POST payments` encadenado. Modo hotel intacto (sigue navegando).
 - Tests: ExpressWalkInTest (7) + StayDocumentTest (3) + suite completa verde.
+
+---
+
+## Iteración 3 [HECHA 2026-08-13] — tercer modo "Ambos"
+
+Primer cambio tras la reunión: hay propiedades que operan **hotel y motel a la vez**, así que el selector del admin deja de ser binario.
+
+- **`PropertyMode::BOTH = 'both'`** (tercer valor de `Property.settings['property_mode']`, con `PropertyMode::MODES` como única lista válida — la usan `store` y `update` del admin).
+- **Semántica del gate**: `isMotel()` pasa a significar *motel puro* y nace `isHotel()`/`isBoth()`; para **encender funcionalidad** se usan `hasMotel()` / `hasHotel()`, que en `both` son ambas true. `expressCheckInEnabled()` ahora cuelga de `hasMotel()`, así que "Ambos" tiene el registro exprés del plano sin perder nada de hotel (el modo nunca apaga funciones de hotel: solo suma atajos de caseta).
+- **Semillas del alta** centralizadas en `PropertyMode::seedSettings()`: motel puro sigue naciendo como caseta (`adults_only` + `menu_billing_mode=motel`); **`both` solo fija el modo** — también vende noches a familias, no puede nacer solo-adultos. Editar el modo sigue sin re-sembrar.
+- **Admin** (`admin/tenants/Index.vue`): las tres tarjetas salen de un `modeOptions` (valor/label/icono/descripción) reusado en crear y editar — el modal de editar sube a `size="lg"` y ahora muestra descripciones; el listado suma un chip con el modo en la columna Operación.
+- Tests: PropertyModeTest cubre `both` (gates cruzados) y las semillas por modo.
+- Pendiente de las etapas E3-E6: sin cambios, siguen diferidas.
+
+---
+
+## Iteración 4 [HECHA 2026-08-13] — el modo separa de verdad, y nace el registro de vehículos
+
+Feedback operando con "Ambos" encendido: *"no diferencia aquí el motel/hotel; si es motel es discreto, cuando es hotel sí pide datos"*. Tenía razón — `expressCheckin` colapsaba `motel` y `both` en un booleano, y en "ambos" el flujo completo de hotel quedaba inalcanzable desde el plano.
+
+### Principio que resuelve todas las bifurcaciones pendientes
+
+**En modo puro decide la configuración; en "Ambos" decide quien atiende, venta por venta.** El sistema no puede adivinar si el que llegó es un cliente de paso o un huésped que se queda: en una propiedad que opera las dos cosas, ambas son válidas en el mismo cuarto el mismo día, y el único que lo sabe está en el mostrador. Corolario para las etapas E3-E6 que siguen diferidas: **"Ambos" es la unión de funcionalidades, nunca la intersección** — donde el modo motel *quita* algo (crédito a habitación en POS, correo y niños en el modal de reservas), en "ambos" se conserva y se ofrece.
+
+### Infraestructura del modo (ya no es un booleano)
+
+- `PropertyMode` gana `label()` / `labelFor()` y la lista `LABELS`.
+- **Middleware `mode:`** (`app/Http/Middleware/EnsurePropertyMode.php`, alias en `bootstrap/app.php`), hermano de `EnsureModuleEnabled`: `mode:motel` o `mode:motel,both`. Ojo con la **firma variádica** — Laravel parte los parámetros por coma, así que un `string $modes` se quedaría solo con el primero (hay test que lo fija). Bloquea con `tenant/FeatureNotForMode.vue`, que a diferencia de `ModuleDisabled` **no ofrece "Ver mi plan"**: el modo no se compra, lo administra la plataforma.
+- **`usePropertyMode()`** (`resources/js/composables/usePropertyMode.ts`), calcado de `useModules`: lee `panelTenant.property_mode`, que ya se compartía pero que nadie leía. El gating de UI deja de viajar como prop página por página, y `FloorPlanController` **dejó de mandar `expressCheckin`**.
+- `useMenu.ts`: `MenuItem` gana `mode?: PropertyModeValue[]` y el filtro suma ese AND, igual que `module` y `permission`.
+- El plano tenía la decisión escrita **dos veces** (ternarios en la ficha + `sheetWalkIn`/`sheetReserve`); ahora es un solo computed `arrivalActions` que consumen la ficha y la hoja de acciones. `RoomActionSheet` recibe la lista y emite `arrival`, sin decidir nada.
+
+Verificado en navegador: en `hotel` dos caminos que navegan a `/reservas`; en `motel` "Registrar llegada" (exprés) y reserva rápida; en `both` **tres** caminos rotulados por lo que sirven.
+
+### Registro de vehículos (solo motel puro)
+
+En caseta no se registra al huésped, se registra el carro. Decisión del usuario: la sección existe **solo en motel puro** (en "ambos" el exprés sigue capturando el vehículo, pero la sección no aparece; cambiarlo es una línea en el middleware y otra en el menú).
+
+- Tabla `vehicles`: `plate` (como se tecleó, en mayúsculas) + **`plate_normalized` único** (A-Z0-9), marca, modelo, color, año, notas, `guest_id` y veto. `stays.vehicle_id` liga la visita.
+- **`Vehicle::normalizePlate()` es la única definición de "la misma placa"** y descarta lo que tiene menos de 4 caracteres útiles: en los datos reales había una placa "ABC" y descripciones tipo "N/A" que habrían creado fichas basura.
+- **`App\Services\VehicleRegistry` es el único escritor** (lo llaman `CreateWalkInStay` y `TransitionReservation`), para que no nazca una tercera representación junto a `stays.vehicle_plate` y `guests.meta['vehicle']`. Enriquece sin pisar, igual que la copia de identificación al Guest.
+- Convivencia declarada: `stays.vehicle_plate` es el **sello histórico** de esa noche (como `guest_name` junto a `guest_id`), `vehicles` es la ficha editable, y `vehicle_desc` se conserva pero deja de pedirse en el exprés.
+- Backfill en la migración (lógica en el servicio, para poder probarla sin migrar): en producción levantó 3 fichas en motellacupula y 3 en hoteltest, y descartó la placa inválida.
+- Sección `/vehiculos` con dos pestañas: **Vehículos** (buscador por placa/marca/modelo, visitas, último ingreso, adentro ahora, vetadas) y **Llegadas a pie** (las estancias con identificación, que ya existían). El número del documento va cifrado y **no se puede buscar en SQL**: la pestaña busca por nombre.
+- Permisos: **sin permiso nuevo**, se reusan `guests.view` y `guests.manage` — un permiso nuevo obligaría a re-sembrar roles en cada DB de tenant.
+- El exprés captura marca, modelo y color, y al teclear la placa consulta `/api/vehicles/lookup`: la segunda visita autocompleta y una placa vetada avisa **antes** de cobrar.
+
+### Iteración 4b [2026-08-13] — la sección también en "ambos", y CRUD completo
+
+- **Vehículos ya existe en `motel` y en `both`** (el usuario revisó su decisión al verlo en vivo): `mode:motel,both` en las rutas y `mode: ['motel','both']` en el menú. Coherente con la regla de unión — una propiedad mixta también recibe carros.
+- **Mismo lenguaje visual que Huéspedes**: encabezado con icono, tarjeta de búsqueda con su explicación, y filas como tarjetas con avatar, badges (Vetada / Archivada / Adentro), entradas con la última visita, botón "Ver ficha" y menú de acciones.
+- **Acciones completas**: ver ficha, editar (modal desde la lista y desde la ficha), y **archivar o eliminar** con la misma política del CRM — con historial se archiva (soft delete, migración `add_soft_deletes_to_vehicles`) y se puede restaurar; sin historial se borra de verdad. `Stay::vehicle()` usa `withTrashed()` para que el historial no pierda la ficha archivada.
+- **Las llegadas a pie ganaron detalle**: no tienen ficha propia porque el dato vive en la estancia, así que el detalle abre en un diálogo con identificación (tipo, nunca el número, que va cifrado), habitación, tarifa, personas, fechas, importe, fotos y notas.
+- **Gotcha que costó 24 tests**: el backfill vivía dentro de la migración y llamaba al modelo; al agregarle soft deletes en la migración siguiente, el modelo empezó a consultar `deleted_at` en un punto del historial donde la columna aún no existía. **Una migración no debe llamar modelos**: el llenado se movió al comando `vehicles:backfill` (`php artisan tenants:run vehicles:backfill`), que además sirve para cualquier tenant que se sume después.
+- Datos de demostración sembrados en **motellacupula** a petición del usuario: 5 vehículos con marca/modelo/color (uno vetado), sus entradas de los últimos días y 3 llegadas a pie. Todo lleva `notes = 'Registro de prueba (demo)'` para poder borrarlo: `Stay::where('notes', 'Registro de prueba (demo)')->forceDelete()` y `Vehicle::where('notes', 'Registro de prueba (demo)')->forceDelete()`.
+
+### Corrección [2026-08-13] — el registro exprés en carro pedía datos de a pie
+
+Reporte del usuario: en "En carro" aparecían nombre completo, identificación, número y foto, que son de la llegada a pie. **Causa exacta**: el aviso de "placa conocida" se insertó ENTRE las dos ramas del modal, y el `v-else` de la rama a pie se emparejó con ese aviso en vez de con la rama del vehículo; así, con `arrival === 'vehicle'` y sin placa conocida, el bloque de a pie se pintaba.
+
+Arreglo: la rama a pie usa condición **explícita** (`v-if="arrival === 'foot'"`) en vez de `v-else`, para que no dependa nunca de qué elemento tenga al lado. Regla para el futuro: en bloques que alguien va a seguir editando, `v-else` es frágil — condición explícita.
+
+Queda como el negocio lo pide: **en carro solo placa, marca, modelo y color**; **a pie, nombre completo, tipo de identificación, número opcional y foto** (hasta dos, frente y reverso).
+
+### Ajuste visual [2026-08-13] — el bloque del vehículo en el exprés
+
+La placa y los datos opcionales compartían retícula de dos columnas, así que la placa —lo único que de verdad se pide en caseta— quedaba del mismo tamaño que un campo opcional, con su texto de ayuda envolviéndose y el color flotando en la columna derecha.
+
+Ahora hay jerarquía: **la placa ocupa el renglón completo**, en caja alta, grande y con espaciado entre letras (se lee de reojo y se teclea igual venga en minúsculas), con su ayuda debajo; y **marca, modelo y color van juntos abajo** bajo el rótulo "Vehículo (opcional)", con el mismo lenguaje de secciones del modal (Tarifa, Llegada, Personas, Cobro). En móvil los tres se apilan solos.
+
+### Ficha del vehículo [2026-08-13] — encabezado, datos y consumos
+
+Reporte del usuario sobre `/vehiculos/{id}`: se veía amontonada, el encabezado no seguía el diseño de la ficha de huésped, no aparecían los datos del vehículo (solo las notas) y faltaba el consumo.
+
+- **Encabezado calcado del de huésped**: retícula `grid-cols-12`, tarjeta a lo ancho con avatar en degradado del theme, la placa como título, insignias de Adentro ahora / Vetada / Archivada, subtítulo con el vehículo y desde cuándo está registrada, y a la derecha "Vehículos" (volver) y "Editar datos". Las cuatro métricas usan las mismas tarjetas con círculo de icono.
+- **"Datos del vehículo"** como sección propia: placa, marca, modelo, color, año y notas — antes solo se veían las notas.
+- **"Consumos", solo con el módulo `pos`** (`tenant()->hasModule('pos')` viaja como `hasPos`): tabla con venta y hora, habitación, productos, estado de cobro e importe, más los totales "Total" y "Por cobrar". El estado distingue **Cobrado** (con su método) de **Cargado a la habitación**, que es lo que decide cómo entra al corte.
+- **Relación con el corte de caja**: no hubo que inventar nada — `CashCutService` ya suma las ventas del POS del turno y lista aparte las cargadas a habitación como pendientes de cobro. La ficha lo dice explícitamente para que quien revisa después sepa si ese dinero ya entró.
+- **Tiempo real**: la ficha se refresca sola cada 45 s y al volver a la pestaña, con recarga parcial de Inertia (`metrics, stays, orders, ordersTotal, ordersPending`) — verificado: al recuperar el foco dispara exactamente esa recarga. Así, si la habitación está en uso, el consumo que se cargue aparece sin recargar a mano.
+- Datos de demostración añadidos en motellacupula para ver la tabla: dos ventas del POS sobre las visitas del Nissan Versa (una cobrada en efectivo y otra cargada a la habitación), marcadas con `notes = 'Registro de prueba (demo)'` y sin `created_by`, así que no entran al corte de nadie.
+
+### Ficha de la llegada a pie [2026-08-13]
+
+A petición del usuario, quien llega a pie tiene ahora **su propia ficha**, no un diálogo: `/vehiculos/a-pie/{stay}`, hermana de la del vehículo y con la misma estructura, para que el mostrador no aprenda dos lenguajes.
+
+- Quien llega a pie **no tiene entidad propia**: la visita ES la estancia, así que la ficha es la de esa estancia. La ruta va antes que `/vehiculos/{vehiculo}` y esa exige número, así que no se pisan; el controlador **aborta 404 si la estancia trae vehículo** (ahí la ficha correcta es la del carro) o si no dejó identificación.
+- Encabezado con avatar, nombre, insignia de Adentro ahora / Estancia cerrada, y botones para volver a la pestaña y —si esa visita sí quedó ligada a un huésped— ver su ficha del CRM.
+- Cuatro métricas (habitación, hospedaje, personas, consumos), "Quién llegó" (nombre, tipo de identificación, el número siempre cifrado y sin mostrar, fotos con permiso, notas), "La estancia" y **"Consumos" con el mismo gate del módulo `pos`** y la misma explicación del corte de caja.
+- Mismo refresco en vivo: cada 45 s y al volver a la pestaña, con recarga parcial.
+- `VehiclesPageController::ordersFor()` quedó como helper único para los consumos, usado por las dos fichas.

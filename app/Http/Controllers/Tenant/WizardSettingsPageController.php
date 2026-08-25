@@ -32,25 +32,20 @@ class WizardSettingsPageController extends Controller
         $settings = $property->settings ?? [];
         $hasPos = (bool) tenant()?->hasModule('pos');
 
+        // SOLO los productos ya elegidos. Antes venía el catálogo completo
+        // y la pantalla pintaba un interruptor por producto: con 69 activos
+        // (motellacupula) ya cansaba, y un inventario de 200 la reventaba.
+        // Para AGREGAR productos está el buscador (searchProducts), que
+        // consulta contra el servidor en vez de traerse todo de una vez.
         $products = $hasPos
-            ? Product::query()
-                ->where('active', true)
-                ->orderBy('category')
-                ->orderBy('name')
-                ->get(['id', 'name', 'category', 'unit', 'price', 'available_in_wizard', 'track_stock', 'stock_qty'])
-                ->map(fn (Product $p) => [
-                    'id' => $p->id,
-                    'name' => $p->name,
-                    'category' => $p->category,
-                    'unit' => $p->unit,
-                    'price' => (float) $p->price,
-                    'available_in_wizard' => $p->available_in_wizard,
-                    // Mismo criterio que BookingExtrasController::products(): un
-                    // producto marcado "visible" pero sin existencias NO aparece
-                    // en el wizard real — sin este dato el admin lo activa, lo ve
-                    // en la lista y no entiende por qué el huésped nunca lo ve.
-                    'in_stock' => ! $p->track_stock || (float) $p->stock_qty > 0,
-                ])
+            ? $this->serializeProducts(
+                Product::query()
+                    ->where('active', true)
+                    ->where('available_in_wizard', true)
+                    ->orderBy('category')
+                    ->orderBy('name')
+                    ->get()
+            )
             : collect();
 
         return Inertia::render('tenant/settings/Wizard', [
@@ -68,6 +63,7 @@ class WizardSettingsPageController extends Controller
             ],
             'hasPosModule' => $hasPos,
             'products' => $products,
+            'productsTotal' => $hasPos ? Product::query()->where('active', true)->count() : 0,
             'paymentReadiness' => $this->paymentReadiness(),
             'canManage' => $request->user()->can('properties.manage'),
         ]);
@@ -102,4 +98,58 @@ class WizardSettingsPageController extends Controller
             'ready' => $gatewayLink !== null || $accountsCount > 0,
         ];
     }
+    /**
+     * Buscador de productos para el selector de extras.
+     *
+     * Devuelve una tanda corta filtrada por nombre o categoría en lugar de
+     * mandar el catálogo entero al navegador: un hotel con inventario real
+     * (cientos de productos) marca apenas una docena como extras, así que
+     * pintarle todo el almacén para encontrar esa docena es justo al revés.
+     */
+    public function searchProducts(Request $request): \Illuminate\Http\JsonResponse
+    {
+        abort_unless((bool) tenant()?->hasModule('pos'), 403);
+
+        $term = trim((string) $request->query('q', ''));
+
+        $products = Product::query()
+            ->where('active', true)
+            ->when($term !== '', fn ($query) => $query->where(
+                fn ($q) => $q->where('name', 'like', "%{$term}%")
+                    ->orWhere('category', 'like', "%{$term}%"),
+            ))
+            ->orderBy('category')
+            ->orderBy('name')
+            ->limit(40)
+            ->get();
+
+        return response()->json([
+            'products' => $this->serializeProducts($products)->values(),
+            // Para avisar "hay más, afina la búsqueda" en vez de mentir con
+            // una lista recortada en silencio.
+            'truncated' => $products->count() === 40,
+        ]);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, Product>  $products
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    protected function serializeProducts(\Illuminate\Support\Collection $products): \Illuminate\Support\Collection
+    {
+        return $products->map(fn (Product $p) => [
+            'id' => $p->id,
+            'name' => $p->name,
+            'category' => $p->category,
+            'unit' => $p->unit,
+            'price' => (float) $p->price,
+            'available_in_wizard' => $p->available_in_wizard,
+            // Mismo criterio que BookingExtrasController::products(): un
+            // producto marcado "visible" pero sin existencias NO aparece
+            // en el wizard real — sin este dato el admin lo activa, lo ve
+            // en la lista y no entiende por qué el huésped nunca lo ve.
+            'in_stock' => ! $p->track_stock || (float) $p->stock_qty > 0,
+        ]);
+    }
+
 }

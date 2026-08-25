@@ -202,6 +202,37 @@ class Room extends Model
         return $this->hasOne(RoomStatusLog::class)->latestOfMany('id');
     }
 
+    public function incidents(): HasMany
+    {
+        return $this->hasMany(Incident::class);
+    }
+
+    /**
+     * Fallas sin resolver: lo que hace que una habitación no debería
+     * venderse aunque el semáforo la muestre libre.
+     */
+    public function openIncidents(): HasMany
+    {
+        return $this->hasMany(Incident::class)
+            ->whereIn('status', [Incident::STATUS_OPEN, Incident::STATUS_IN_PROGRESS])
+            ->orderByRaw("case priority when 'high' then 1 when 'medium' then 2 else 3 end")
+            ->latest('id');
+    }
+
+    public function cleanings(): HasMany
+    {
+        return $this->hasMany(RoomCleaning::class);
+    }
+
+    /**
+     * Limpieza en curso: la que se abrió al marcar "en limpieza" y todavía no
+     * se cierra. El panel la usa para mostrar el cronómetro y quién la hace.
+     */
+    public function openCleaning(): HasOne
+    {
+        return $this->hasOne(RoomCleaning::class)->whereNull('ended_at')->latestOfMany('id');
+    }
+
     public function reservations(): HasMany
     {
         return $this->hasMany(Reservation::class);
@@ -373,6 +404,15 @@ class Room extends Model
             'zone_id' => $this->zone_id,
             'zone_color' => $this->zone?->color,
             'room_type' => $this->roomType?->name,
+            // El id, además del nombre, porque el panel del plano edita el
+            // tipo y necesita preseleccionar el que ya tiene.
+            'room_type_id' => $this->room_type_id,
+            // Icono del tipo (catálogo): en el plano sobrevive al zoom donde
+            // el nombre del tipo ya no se lee.
+            'room_type_icon' => $this->roomType?->icon,
+            // Fotos del tipo: el modal las muestra para describir la
+            // habitación a quien llama por teléfono.
+            'room_type_photos' => $this->roomType?->photosPayload() ?? [],
             'capacity' => $this->effectiveMaxOccupancy(),
             'beds_label' => $this->bedsLabel(),
             'size_m2' => $this->size_m2 !== null ? (float) $this->size_m2 : null,
@@ -397,6 +437,28 @@ class Room extends Model
             'color' => $this->status->color(),
             'label' => $this->status->label(),
             'transitions' => $this->manualStatusTransitions(),
+            // Fallas abiertas: el plano las marca para que nadie venda un
+            // cuarto averiado sin saberlo.
+            'incidents' => $this->relationLoaded('openIncidents')
+                ? $this->openIncidents->map(fn (Incident $incident) => [
+                    'id' => $incident->id,
+                    'title' => $incident->title,
+                    'priority' => $incident->priority,
+                    'priority_label' => $incident->priorityLabel(),
+                    'category_label' => $incident->categoryLabel(),
+                    'overdue' => $incident->isOverdue(),
+                    'age_hours' => $incident->ageHours(),
+                ])->values()->all()
+                : [],
+            // Limpieza en curso (módulo limpieza): quién la trabaja y desde
+            // cuándo, para cerrarla desde el mismo plano.
+            'cleaning' => $this->relationLoaded('openCleaning') && $this->openCleaning
+                ? [
+                    'id' => $this->openCleaning->id,
+                    'housekeeper' => $this->openCleaning->housekeeper?->name,
+                    'minutes' => $this->openCleaning->elapsedMinutes(),
+                ]
+                : null,
             'usage_count' => (int) $this->usage_count,
             'usage_limit' => $this->usage_limit,
             'usage_locked' => $this->usageLocked(),
@@ -455,6 +517,18 @@ class Room extends Model
                 'num_people' => $activeStay->num_people,
                 'vehicle_plate' => $activeStay->vehicle_plate,
                 'vehicle_desc' => $activeStay->vehicle_desc,
+                // Ficha del vehículo (motel): el registro exprés la crea y la
+                // liga; desde el plano se abre para ver visitas anteriores.
+                'vehicle_id' => $activeStay->vehicle_id,
+                // Ficha del CRM, cuando la llegada la trajo: es a quién se
+                // veta junto con la placa si hubo daños.
+                'guest_id' => $activeStay->guest_id,
+                // Caseta de motel: el acceso ya se abrió pero falta capturar
+                // los datos y marcar el cobro (el encargado trae el papel).
+                'arrival_pending' => $activeStay->arrivalPending(),
+                // Lo eligió la caseta al abrir el acceso; el diálogo de
+                // completar abre directo en los campos que corresponden.
+                'arrival_mode' => $activeStay->arrival_mode,
                 // Identificación del huésped a pie (registro exprés motel):
                 // solo tipo y fotos con URL protegida por permiso — el
                 // número cifrado jamás viaja en payloads.

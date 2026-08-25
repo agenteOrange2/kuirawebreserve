@@ -15,6 +15,7 @@ use App\Models\Stay;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\Rule;
 use InvalidArgumentException;
 
@@ -52,6 +53,11 @@ class StayController extends Controller
             'num_people' => ['sometimes', 'integer', 'min:1', 'max:20'],
             'vehicle_plate' => ['nullable', 'string', 'max:20'],
             'vehicle_desc' => ['nullable', 'string', 'max:100'],
+            // Ficha del vehículo (caseta): lo estructurado vive en `vehicles`,
+            // no en la estancia — ver App\Services\VehicleRegistry.
+            'vehicle_brand' => ['nullable', 'string', 'max:40'],
+            'vehicle_model' => ['nullable', 'string', 'max:40'],
+            'vehicle_color' => ['nullable', 'string', 'max:30'],
             // Identificación del huésped a pie (registro exprés, spec-modo-
             // motel): tipo del catálogo del CRM + número (se guarda cifrado).
             'id_document_type' => ['nullable', Rule::in(\App\Models\Guest::DOCUMENT_TYPES)],
@@ -65,6 +71,11 @@ class StayController extends Controller
             // mostrador; el monto SIEMPRE es el de la estancia, nunca del cliente.
             'payment_method' => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Payment::METHODS)],
             'payment_reference' => ['nullable', 'string', 'max:100'],
+            // Caseta de motel: la llegada nace sin sellar y sin cobro, para
+            // completarla cuando el encargado regrese con el papel.
+            'arrival_pending' => ['sometimes', 'boolean'],
+            // En carro o a pie: lo elige la caseta y ya no se vuelve a pedir.
+            'arrival_mode' => ['nullable', Rule::in(['vehicle', 'foot'])],
             // Fianza (depósito en garantía): método presencial; el monto lo
             // decide el ajuste del hotel, nunca el cliente.
             'guarantee_method' => ['nullable', \Illuminate\Validation\Rule::in(['cash', 'card'])],
@@ -248,6 +259,18 @@ class StayController extends Controller
             ->sum(fn (Payment $payment) => $payment->refundableAmount()), 2);
 
         return [
+            // Quién y dónde: lo necesitan el PDF de la cuenta y el mensaje que
+            // se le manda al huésped por WhatsApp.
+            'stay' => [
+                'id' => $stay->id,
+                'room' => $stay->room?->number,
+                'guest_name' => $stay->guest?->full_name ?? $stay->guest_name ?? 'Anónimo',
+                // El contacto vive en el huésped, no en la estancia.
+                'guest_phone' => $stay->guest?->phone,
+                'rate_plan' => $stay->ratePlan?->name,
+                'check_in_at' => $stay->check_in_at?->format('d/m/Y H:i'),
+                'check_out_at' => $stay->check_out_at?->format('d/m/Y H:i'),
+            ],
             'lodging_total' => $folio['lodging_total'],
             'lodging_paid' => $folio['lodging_paid'],
             'lodging_pending' => $folio['lodging_pending'],
@@ -262,7 +285,194 @@ class StayController extends Controller
                     ->map(fn ($line) => ((float) $line->qty).'× '.($line->product?->name ?? 'Producto'))
                     ->implode(', '),
             ])->values(),
+            // TODO lo consumido en la estancia, no solo lo que falta cobrar:
+            // el folio filtra cargos a habitación sin liquidar, así que un
+            // refresco ya cobrado al momento no aparecía en ningún lado. El
+            // panel del plano lo necesita para que el cajero vea qué entregó.
+            'consumption' => $stay->orders()
+                ->with('lines.product:id,name')
+                ->where('status', Order::STATUS_COMPLETED)
+                ->latest()
+                ->get()
+                ->map(fn (Order $order) => [
+                    'id' => $order->id,
+                    'total' => (float) $order->total,
+                    'created_at' => $order->created_at->format('d/m H:i'),
+                    'method' => $order->payment_method,
+                    'method_label' => $order->payment_method === 'room'
+                        ? 'A la cuenta'
+                        : Payment::methodLabel((string) $order->payment_method),
+                    // Cobrado ya: método real, o cargo a habitación liquidado
+                    // en el check-out. Mismo criterio que la ficha del vehículo.
+                    'settled' => $order->settled_at !== null || $order->payment_method !== 'room',
+                    'can_void' => $order->settled_at === null,
+                    'summary' => $order->lines
+                        ->map(fn ($line) => ((float) $line->qty).'× '.($line->product?->name ?? 'Producto'))
+                        ->implode(', '),
+                ])->values(),
+            // Lo que el huésped YA pagó: anticipos, abonos, consumos cobrados
+            // y la fianza. El saldo solo dice lo que falta; esto dice por qué.
+            'payments' => $stay->payments()
+                ->latest('paid_at')
+                ->get()
+                ->map(fn (Payment $payment) => [
+                    'id' => $payment->id,
+                    'amount' => (float) $payment->amount,
+                    'kind' => $payment->kind,
+                    'kind_label' => match ($payment->kind) {
+                        Payment::KIND_LODGING => 'Hospedaje',
+                        Payment::KIND_CONSUMPTION => 'Consumos',
+                        Payment::KIND_GUARANTEE => 'Fianza',
+                        default => 'Pago',
+                    },
+                    'method_label' => Payment::methodLabel((string) $payment->method),
+                    'reference' => $payment->reference,
+                    'paid_at' => $payment->paid_at?->format('d/m H:i'),
+                ])->values(),
         ];
+    }
+
+    /**
+     * Segundo momento de la caseta de motel: el encargado regresó con el papel
+     * y aquí se termina de capturar la llegada — placa, marca, modelo y color
+     * (o la identificación si llegaron a pie) — y se marca el cobro que hizo
+     * en la habitación.
+     *
+     * Se puede sellar SIN datos: el cliente que no quiso darlos existe, y
+     * dejar el aviso de "falta capturar" encendido para siempre es peor que
+     * registrar que no hubo datos.
+     */
+    public function completeArrival(Request $request, Stay $stay): JsonResponse
+    {
+        if ($stay->status !== Stay::STATUS_ACTIVE) {
+            return response()->json([
+                'message' => 'Esa estancia ya no está activa.',
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'vehicle_plate' => ['nullable', 'string', 'max:20'],
+            'vehicle_desc' => ['nullable', 'string', 'max:100'],
+            'vehicle_brand' => ['nullable', 'string', 'max:40'],
+            'vehicle_model' => ['nullable', 'string', 'max:40'],
+            'vehicle_color' => ['nullable', 'string', 'max:30'],
+            'id_document_type' => ['nullable', Rule::in(\App\Models\Guest::DOCUMENT_TYPES)],
+            'id_document_number' => ['nullable', 'string', 'max:60'],
+            // Se corrige solo si la realidad no coincidió con lo que anotó la
+            // caseta (llegaron en carro y resultó que venían a pie).
+            'arrival_mode' => ['nullable', Rule::in(['vehicle', 'foot'])],
+            // Cobro que hizo el encargado en la habitación. El monto SIEMPRE
+            // es lo que falta de hospedaje, nunca lo que mande el cliente.
+            'payment_method' => ['nullable', Rule::in(Payment::METHODS)],
+            'payment_reference' => ['nullable', 'string', 'max:100'],
+            'notes' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        return DB::transaction(function () use ($data, $stay, $request) {
+            $plate = filled($data['vehicle_plate'] ?? null)
+                ? mb_strtoupper(trim($data['vehicle_plate']))
+                : null;
+
+            // Mismo escritor de siempre: la ficha de la placa la resuelve
+            // VehicleRegistry, que normaliza y no duplica.
+            $vehicle = app(\App\Services\VehicleRegistry::class)->resolve(
+                $data,
+                $stay->guest,
+            );
+
+            $stay->fill(array_filter([
+                'vehicle_plate' => $plate,
+                'vehicle_desc' => $data['vehicle_desc'] ?? null,
+                'vehicle_id' => $vehicle?->id,
+                'id_document_type' => $data['id_document_type'] ?? null,
+                'id_document_number' => $data['id_document_number'] ?? null,
+                'arrival_mode' => $data['arrival_mode'] ?? null,
+                'notes' => $data['notes'] ?? null,
+            ], fn ($value) => $value !== null));
+
+            $stay->arrival_completed_at = now();
+            $stay->save();
+
+            // El cobro entra al corte de quien lo captura, no del que abrió el
+            // acceso: es quien tiene el dinero en la mano.
+            if (! empty($data['payment_method'])) {
+                $pending = $stay->folio()['lodging_pending'];
+
+                if ($pending > 0) {
+                    $stay->payments()->create([
+                        'amount' => $pending,
+                        'method' => $data['payment_method'],
+                        'kind' => Payment::KIND_LODGING,
+                        'reference' => $data['payment_reference'] ?? null,
+                        'notes' => 'Hospedaje cobrado en la habitación',
+                        'received_by' => $request->user()?->id,
+                        'paid_at' => now(),
+                        'created_at' => now(),
+                    ]);
+                }
+            }
+
+            return response()->json($this->serializeFolio($stay->fresh()));
+        });
+    }
+
+    /**
+     * Cargo extra sobre una estancia en curso: hoy, los daños que se
+     * encuentran al revisar la habitación antes de dejar salir al cliente.
+     *
+     * Se suma a `extra_charges` y sube el monto de la estancia, así que el
+     * saldo crece y el cobro de la salida ya lo incluye — el check-out se
+     * niega con saldo pendiente salvo que se fuerce, que es justo lo que hace
+     * que nadie salga sin pagar el daño.
+     */
+    public function addCharge(Request $request, Stay $stay): JsonResponse
+    {
+        if ($stay->status !== Stay::STATUS_ACTIVE) {
+            return response()->json([
+                'message' => 'Esa estancia ya no está activa; el cargo va en su cuenta antes de registrar la salida.',
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'concept' => ['required', 'string', 'max:100'],
+            'amount' => ['required', 'numeric', 'min:0.01', 'max:1000000'],
+            'kind' => ['sometimes', 'string', 'max:20'],
+        ]);
+
+        $line = [
+            'concept' => trim($data['concept']),
+            'amount' => round((float) $data['amount'], 2),
+            'kind' => $data['kind'] ?? 'damage',
+        ];
+
+        $stay->extra_charges = [...($stay->extra_charges ?? []), $line];
+        $stay->amount = round((float) $stay->amount + $line['amount'], 2);
+        $stay->save();
+
+        return response()->json($this->serializeFolio($stay->fresh()));
+    }
+
+    /**
+     * La cuenta en PDF, para imprimirla o mandarla. Es informativa: el
+     * comprobante fiscal es otra cosa y este documento lo dice.
+     */
+    public function folioPdf(Stay $stay): \Symfony\Component\HttpFoundation\Response
+    {
+        $stay->load(['room:id,number', 'guest:id,first_name,last_name,phone', 'ratePlan:id,name']);
+        $folio = $this->serializeFolio($stay);
+
+        $pdf = \Barryvdh\DomPDF\Facade\Pdf::loadView('pdf.stay-folio', [
+            'folio' => $folio,
+            'room' => $folio['stay']['room'] ?? '—',
+            'guest' => $folio['stay']['guest_name'],
+            'ratePlan' => $folio['stay']['rate_plan'],
+            'checkIn' => $folio['stay']['check_in_at'],
+            'checkOut' => $folio['stay']['check_out_at'],
+            'property' => \App\Models\Property::query()->value('name') ?? '',
+            'generatedAt' => now()->format('d/m/Y H:i'),
+        ])->setPaper('letter');
+
+        return $pdf->download('cuenta-hab-'.($folio['stay']['room'] ?? $stay->id).'-'.now()->format('Y-m-d-Hi').'.pdf');
     }
 
     /**

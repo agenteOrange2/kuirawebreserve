@@ -141,36 +141,54 @@ async function submit() {
                     variant="outline-secondary"
                     class="rounded-[0.5rem] bg-white"
                 >
-                    <Lucide icon="ArrowLeft" class="mr-2 h-4 w-4 stroke-[1.3]" />
+                    <Lucide
+                        icon="ArrowLeft"
+                        class="mr-2 h-4 w-4 stroke-[1.3]"
+                    />
                     Volver a Métodos de pago
                 </Button>
             </div>
 
-            <form
-                class="box box--stacked mt-5 flex flex-col p-5"
-                @submit.prevent="submit"
-            >
-                <!-- Política de cancelación default del hotel: ventana con reembolso y retención -->
+            <!-- Una tarjeta por tema, con los ajustes como renglones dentro:
+                 label y explicación a la izquierda, control siempre pegado al
+                 borde derecho para que queden alineados entre sí. -->
+            <div class="box box--stacked mt-5">
                 <div
-                    class="rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                    class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
                 >
-                    <div class="flex items-start justify-between gap-4">
-                        <div class="text-sm">
-                            <div class="font-medium">
-                                Política de cancelación
+                    <div class="flex items-center gap-2">
+                        <Lucide
+                            icon="CalendarX2"
+                            class="h-4 w-4 stroke-[1.5] text-primary"
+                        />
+                        <h2 class="text-base font-medium">
+                            Política de cancelación
+                        </h2>
+                    </div>
+                    <p class="mt-1 text-xs text-slate-500">
+                        Hasta cuándo puede cancelar el huésped con reembolso y
+                        qué se retiene después.
+                    </p>
+                </div>
+                <div
+                    class="divide-y divide-dashed divide-slate-200/80 px-5 dark:divide-darkmode-400"
+                >
+                    <div
+                        class="flex flex-wrap items-start justify-between gap-4 py-4"
+                    >
+                        <div class="max-w-2xl min-w-0">
+                            <div class="text-sm font-medium">
+                                Aplicar una política de cancelación
                             </div>
                             <p class="mt-0.5 text-xs text-slate-500">
-                                Hasta cuándo puede cancelar el huésped con
-                                reembolso y qué se retiene después. Se muestra
-                                al reservar, aplica al botón de cancelar de la
-                                consulta pública y calcula el reembolso sugerido
-                                en el panel. Si una tarifa define su propia
-                                política, esa manda para sus reservas. Apagada:
-                                toda cancelación con dinero pagado se revisa a
-                                mano, como siempre.
+                                Se muestra al reservar, gobierna el botón de
+                                cancelar de la consulta pública y calcula el
+                                reembolso sugerido en el panel. Si una tarifa
+                                define la suya, esa manda. Apagada: toda
+                                cancelación con dinero pagado se revisa a mano.
                             </p>
                         </div>
-                        <FormSwitch class="mt-1">
+                        <FormSwitch class="mt-1 shrink-0">
                             <FormSwitch.Input
                                 :checked="form.cancel_policy_enabled"
                                 type="checkbox"
@@ -181,61 +199,82 @@ async function submit() {
                             />
                         </FormSwitch>
                     </div>
+
                     <div
                         v-if="form.cancel_policy_enabled"
-                        class="mt-3 space-y-3 border-t border-dashed border-slate-300/70 pt-3 dark:border-darkmode-400"
+                        class="flex flex-wrap items-start justify-between gap-4 py-4"
                     >
-                        <div class="flex flex-wrap items-center gap-2">
-                            <span class="text-xs text-slate-500"
-                                >Cancelación con reembolso completo hasta</span
-                            >
+                        <div class="max-w-2xl min-w-0">
+                            <div class="text-sm font-medium">
+                                Reembolso completo hasta
+                            </div>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Antes de este plazo, cancelar no cuesta nada.
+                            </p>
+                        </div>
+                        <div class="flex shrink-0 items-center gap-2">
                             <FormInput
                                 v-model.number="form.cancel_free_value"
                                 type="number"
                                 min="1"
                                 max="365"
-                                class="!w-24 text-center"
+                                class="!w-20 text-center"
                             />
                             <FormSelect
                                 v-model="form.cancel_free_unit"
-                                class="!w-40"
+                                class="!w-36"
                             >
                                 <option value="hour">Horas</option>
                                 <option value="day">Días</option>
                                 <option value="week">Semanas</option>
                             </FormSelect>
                             <span class="text-xs text-slate-500"
-                                >antes de la llegada</span
+                                >antes de llegar</span
                             >
                         </div>
-                        <div class="flex flex-wrap items-center gap-2">
-                            <span class="text-xs text-slate-500"
-                                >Después de ese plazo se retiene el</span
+                    </div>
+
+                    <div
+                        v-if="form.cancel_policy_enabled"
+                        class="flex flex-wrap items-start justify-between gap-4 py-4"
+                    >
+                        <div class="max-w-2xl min-w-0">
+                            <div class="text-sm font-medium">
+                                Retención después de ese plazo
+                            </div>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Porcentaje de lo pagado que se queda el hotel.
+                                Con 100 no hay reembolso.
+                            </p>
+                            <FormHelp
+                                v-if="
+                                    errors.cancel_free_value ||
+                                    errors.cancel_free_unit ||
+                                    errors.cancel_penalty_percent
+                                "
+                                class="text-danger"
+                                >{{
+                                    errors.cancel_free_value ??
+                                    errors.cancel_free_unit ??
+                                    errors.cancel_penalty_percent
+                                }}</FormHelp
                             >
+                        </div>
+                        <div class="flex shrink-0 items-center gap-2">
                             <FormInput
                                 v-model.number="form.cancel_penalty_percent"
                                 type="number"
                                 min="0"
                                 max="100"
-                                class="!w-24 text-center"
+                                class="!w-20 text-center"
                             />
                             <span class="text-xs text-slate-500"
-                                >% de lo pagado (100 = no hay reembolso).</span
+                                >% de lo pagado</span
                             >
                         </div>
-                        <FormHelp
-                            v-if="
-                                errors.cancel_free_value ||
-                                errors.cancel_free_unit ||
-                                errors.cancel_penalty_percent
-                            "
-                            class="text-danger"
-                            >{{
-                                errors.cancel_free_value ??
-                                errors.cancel_free_unit ??
-                                errors.cancel_penalty_percent
-                            }}</FormHelp
-                        >
+                    </div>
+
+                    <div v-if="form.cancel_policy_enabled" class="py-4">
                         <div
                             class="flex items-start gap-1.5 rounded-md border border-info/20 bg-info/5 px-3 py-2 text-xs text-slate-600 dark:text-slate-300"
                         >
@@ -249,15 +288,17 @@ async function submit() {
                                 }}"</span
                             >
                         </div>
-                        <div>
-                            <div class="text-xs text-slate-500">
-                                Condiciones adicionales (opcional): se muestran
-                                junto a la política — por ejemplo cómo y en
-                                cuántos días se devuelve el dinero.
+                        <div class="mt-3">
+                            <div class="text-sm font-medium">
+                                Condiciones adicionales (opcional)
                             </div>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Se muestran junto a la política — por ejemplo
+                                cómo y en cuántos días se devuelve el dinero.
+                            </p>
                             <FormTextarea
                                 v-model="form.cancel_policy_text"
-                                class="mt-1.5"
+                                class="mt-2"
                                 rows="2"
                                 maxlength="2000"
                                 placeholder="Ej. Los reembolsos se procesan por el mismo medio de pago en un plazo de 7 días hábiles."
@@ -270,7 +311,7 @@ async function submit() {
                         </div>
                         <p
                             v-if="ratePlansWithCancelPolicy > 0"
-                            class="flex items-start gap-1.5 text-xs text-warning"
+                            class="mt-3 flex items-start gap-1.5 text-xs text-warning"
                         >
                             <Lucide
                                 icon="TriangleAlert"
@@ -282,28 +323,45 @@ async function submit() {
                         </p>
                     </div>
                 </div>
+            </div>
 
-                <!-- Walk-ins de mostrador: cuándo se cobra el hospedaje -->
+            <div class="box box--stacked mt-5">
                 <div
-                    class="mt-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                    class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
                 >
-                    <div class="flex flex-wrap items-start justify-between gap-4">
-                        <div class="text-sm">
-                            <div class="font-medium">
+                    <div class="flex items-center gap-2">
+                        <Lucide
+                            icon="Building2"
+                            class="h-4 w-4 stroke-[1.5] text-primary"
+                        />
+                        <h2 class="text-base font-medium">
+                            Cobros en el mostrador
+                        </h2>
+                    </div>
+                    <p class="mt-1 text-xs text-slate-500">
+                        Qué se cobra cuando el huésped llega, con o sin reserva.
+                    </p>
+                </div>
+                <div
+                    class="divide-y divide-dashed divide-slate-200/80 px-5 dark:divide-darkmode-400"
+                >
+                    <div
+                        class="flex flex-wrap items-start justify-between gap-4 py-4"
+                    >
+                        <div class="max-w-2xl min-w-0">
+                            <div class="text-sm font-medium">
                                 Cobro de huéspedes sin reserva (walk-in)
                             </div>
                             <p class="mt-0.5 text-xs text-slate-500">
-                                Cuándo se cobra el hospedaje de una llegada de
-                                mostrador. Al llegar: el registro pide el método
-                                de pago y el hospedaje entra al corte desde el
-                                inicio (al salir solo consumos). Al salir:
-                                cuenta final con hospedaje y consumos, como
-                                siempre.
+                                Al registrar la llegada: se pide el método de
+                                pago y el hospedaje entra al corte desde el
+                                inicio (al salir solo consumos). Al registrar la
+                                salida: cuenta final con hospedaje y consumos.
                             </p>
                         </div>
                         <FormSelect
                             v-model="form.walkin_charge"
-                            class="!w-64 shrink-0"
+                            class="!w-60 shrink-0"
                         >
                             <option value="checkout">
                                 Al registrar la salida
@@ -313,27 +371,22 @@ async function submit() {
                             </option>
                         </FormSelect>
                     </div>
-                </div>
 
-                <!-- Fianza (depósito en garantía): se cobra al llegar,
-                     se devuelve al salir. No es ingreso, es pasivo. -->
-                <div
-                    class="mt-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
-                >
-                    <div class="flex flex-wrap items-start justify-between gap-4">
-                        <div class="text-sm">
-                            <div class="font-medium">
+                    <div
+                        class="flex flex-wrap items-start justify-between gap-4 py-4"
+                    >
+                        <div class="max-w-2xl min-w-0">
+                            <div class="text-sm font-medium">
                                 Fianza (depósito en garantía)
                             </div>
                             <p class="mt-0.5 text-xs text-slate-500">
-                                Monto fijo por estancia que se cobra al
-                                registrar la llegada (walk-in o check-in) y se
-                                devuelve al registrar la salida. No cuenta como
-                                venta: el corte la muestra aparte y solo ajusta
-                                el efectivo esperado del arqueo.
+                                Monto fijo por estancia que se cobra al llegar y
+                                se devuelve al salir. No cuenta como venta: el
+                                corte la muestra aparte y solo ajusta el
+                                efectivo esperado del arqueo.
                             </p>
                         </div>
-                        <FormSwitch>
+                        <FormSwitch class="mt-1 shrink-0">
                             <FormSwitch.Input
                                 :checked="form.guarantee_enabled"
                                 type="checkbox"
@@ -344,57 +397,55 @@ async function submit() {
                             />
                         </FormSwitch>
                     </div>
+
                     <div
                         v-if="form.guarantee_enabled"
-                        class="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2"
+                        class="flex flex-wrap items-start justify-between gap-4 py-4"
                     >
-                        <div>
-                            <label class="mb-1 block text-sm"
-                                >Monto de la fianza ($)</label
+                        <div class="max-w-2xl min-w-0">
+                            <div class="text-sm font-medium">
+                                Monto de la fianza
+                            </div>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Con monto en 0 la fianza queda apagada aunque el
+                                interruptor esté prendido. Si el personal la
+                                retiene al registrar la salida (daños,
+                                faltantes), se le pide el motivo y queda en el
+                                registro del pago.
+                            </p>
+                            <FormHelp
+                                v-if="errors.guarantee_amount"
+                                class="text-danger"
+                                >{{ errors.guarantee_amount }}</FormHelp
                             >
+                        </div>
+                        <div class="flex shrink-0 items-center gap-2">
+                            <span class="text-sm text-slate-500">$</span>
                             <FormInput
                                 v-model="form.guarantee_amount"
                                 type="number"
                                 step="0.01"
                                 min="0"
                                 placeholder="500.00"
+                                class="!w-32 text-center"
                             />
-                            <FormHelp
-                                v-if="errors.guarantee_amount"
-                                class="text-danger"
-                                >{{ errors.guarantee_amount }}</FormHelp
-                            >
-                            <FormHelp v-else>
-                                Con monto en 0 la fianza queda apagada aunque el
-                                interruptor esté prendido.
-                            </FormHelp>
                         </div>
-                        <p
-                            class="flex items-start gap-1.5 self-center text-xs text-slate-500"
-                        >
-                            <Lucide
-                                icon="Info"
-                                class="mt-0.5 h-3.5 w-3.5 shrink-0"
-                            />
-                            Si el staff la retiene al registrar la salida
-                            (daños, faltantes), se le pide el motivo y queda en
-                            el registro del pago.
-                        </p>
                     </div>
                 </div>
+            </div>
 
-                <div class="mt-5 flex justify-end">
-                    <Button
-                        type="submit"
-                        variant="primary"
-                        class="rounded-[0.5rem] shadow-md shadow-primary/20"
-                        :disabled="saving"
-                    >
-                        <Lucide icon="Check" class="mr-2 h-4 w-4" />
-                        {{ saving ? 'Guardando…' : 'Guardar' }}
-                    </Button>
-                </div>
-            </form>
+            <div class="mt-5 flex justify-end">
+                <Button
+                    type="button"
+                    variant="primary"
+                    class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                    :disabled="saving"
+                    @click="submit"
+                >
+                    <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                    {{ saving ? 'Guardando…' : 'Guardar' }}
+                </Button>
+            </div>
         </div>
     </RazeLayout>
 </template>

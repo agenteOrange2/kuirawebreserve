@@ -28,6 +28,7 @@
 <body>
     @php
         $hours = fn ($h) => $h === null ? '—' : ($h >= 48 ? round($h / 24).' días' : $h.' h');
+        $money = fn ($amount) => '$'.number_format((float) $amount, 2);
     @endphp
 
     <div class="header">
@@ -133,6 +134,67 @@
                 </tr>
             @empty
                 <tr><td colspan="4" class="muted">Sin incidencias en el periodo.</td></tr>
+            @endforelse
+        </tbody>
+    </table>
+
+    <h2>Costo de las reparaciones</h2>
+    <table class="kpis">
+        <tr>
+            <td><div class="value">{{ $money($costs['total']) }}</div><div class="label">Se gastó en reparar</div></td>
+            <td><div class="value">{{ $money($costs['charged']) }}</div><div class="label">Se le cobró al huésped</div></td>
+            <td><div class="value">{{ $money(max(0, $costs['total'] - $costs['charged'])) }}</div><div class="label">Puso la casa</div></td>
+            <td><div class="value">{{ $costs['jobs'] }}</div><div class="label">Trabajos con costo</div></td>
+        </tr>
+    </table>
+    @if ($costs['missing'] > 0)
+        <p class="muted" style="margin-top:6px;">
+            {{ $costs['missing'] }} incidencia(s) resueltas en el periodo no traen costo capturado: la cuenta real puede ser mayor.
+        </p>
+    @endif
+
+    <h2>Qué habitación sale cara</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Habitación</th>
+                <th class="right">Trabajos</th>
+                <th class="right">Costo</th>
+            </tr>
+        </thead>
+        <tbody>
+            @forelse ($costs['byRoom'] as $row)
+                <tr>
+                    <td>{{ $row['name'] }}</td>
+                    <td class="right">{{ $row['jobs'] }}</td>
+                    <td class="right">{{ $money($row['cost']) }}</td>
+                </tr>
+            @empty
+                <tr><td colspan="3" class="muted">Sin costos capturados en el periodo.</td></tr>
+            @endforelse
+        </tbody>
+    </table>
+
+    <h2>Quién hizo el trabajo</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Quién reparó</th>
+                <th>Tipo</th>
+                <th class="right">Trabajos</th>
+                <th class="right">Costo</th>
+            </tr>
+        </thead>
+        <tbody>
+            @forelse ($costs['byTechnician'] as $row)
+                <tr>
+                    <td>{{ $row['name'] }}</td>
+                    <td class="muted">{{ $row['kind'] ?? '—' }}</td>
+                    <td class="right">{{ $row['jobs'] }}</td>
+                    <td class="right">{{ $money($row['cost']) }}</td>
+                </tr>
+            @empty
+                <tr><td colspan="4" class="muted">Sin costos capturados en el periodo.</td></tr>
             @endforelse
         </tbody>
     </table>

@@ -27,6 +27,7 @@ interface ConversationRow {
     assigned_to: number | null;
     assignee: string | null;
     unread: number;
+    from_social: boolean;
     last_message_at: string | null;
     preview: string | null;
     reservation_code: string | null;
@@ -105,6 +106,16 @@ const channelMeta: Record<string, { label: string; icon: Icon; tone: string }> =
             label: 'Instagram',
             icon: 'Instagram',
             tone: 'border-pending/10 bg-pending/10 text-pending',
+        },
+        telegram: {
+            label: 'Telegram',
+            icon: 'Send',
+            tone: 'border-info/10 bg-info/10 text-info',
+        },
+        tiktok: {
+            label: 'TikTok',
+            icon: 'Music2',
+            tone: 'border-dark/10 bg-dark/10 text-dark dark:text-slate-300',
         },
     };
 const statusMeta: Record<string, { label: string; tone: string }> = {
@@ -984,6 +995,12 @@ onBeforeUnmount(() => {
                                                     leadMeta[c.lead_status]
                                                         .label
                                                 }}</span
+                                            >
+                                            <span
+                                                v-if="c.from_social"
+                                                class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                                                title="Nació de un comentario en redes sociales"
+                                                >Comentario</span
                                             >
                                             <span
                                                 v-if="

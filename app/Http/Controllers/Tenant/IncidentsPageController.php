@@ -24,23 +24,43 @@ class IncidentsPageController extends Controller
             'priority' => ['nullable', 'in:low,medium,high'],
             'room' => ['nullable', 'integer'],
             'category' => ['nullable', 'in:'.implode(',', array_keys(Incident::CATEGORIES))],
+            'q' => ['nullable', 'string', 'max:80'],
+            // 'none' = sin responsable, que es el filtro que importa:
+            // lo que nadie tomó.
+            'assignee' => ['nullable', 'string'],
+            'source' => ['nullable', 'in:staff,guest'],
+            'overdue' => ['nullable', 'boolean'],
         ]);
 
         $status = $request->query('status', 'active');
+        $search = trim($request->string('q')->toString());
+        $assignee = $request->query('assignee');
+        $source = $request->query('source');
+        $overdue = $request->boolean('overdue');
 
         $incidents = Incident::query()
-            ->with(['room:id,number,name,status', 'reporter:id,name', 'assignee:id,name', 'resolver:id,name', 'media'])
+            ->with(['room:id,number,name,status', 'reporter:id,name', 'assignee:id,name', 'resolver:id,name', 'technician:id,name', 'media'])
             ->when($status === 'active', fn ($q) => $q->active())
             ->when(in_array($status, Incident::STATUSES, true), fn ($q) => $q->where('status', $status))
             ->when($request->query('priority'), fn ($q, $priority) => $q->where('priority', $priority))
             ->when($request->query('category'), fn ($q, $category) => $q->where('category', $category))
             ->when($request->integer('room'), fn ($q, $room) => $q->where('room_id', $room))
-            ->orderByRaw("field(status, 'open', 'in_progress', 'resolved')")
-            ->orderByRaw("field(priority, 'high', 'medium', 'low')")
+            ->when($search !== '', fn ($q) => $q->search($search))
+            ->when($assignee === 'none', fn ($q) => $q->whereNull('assigned_to'))
+            ->when($assignee !== null && $assignee !== 'none', fn ($q) => $q->where('assigned_to', (int) $assignee))
+            ->when($source, fn ($q, $source) => $q->where('source', $source))
+            ->when($overdue, fn ($q) => $q
+                ->whereIn('status', [Incident::STATUS_OPEN, Incident::STATUS_IN_PROGRESS])
+                ->whereNotNull('due_at')
+                ->where('due_at', '<=', now()))
+            // CASE y no field(): field() es de MySQL y truena en SQLite,
+            // que es donde corren las pruebas.
+            ->orderByRaw("case status when 'open' then 0 when 'in_progress' then 1 else 2 end")
+            ->orderByRaw("case priority when 'high' then 0 when 'medium' then 1 else 2 end")
             ->latest()
-            ->take(100)
-            ->get()
-            ->map(fn (Incident $incident) => self::present($incident));
+            ->paginate(20)
+            ->withQueryString()
+            ->through(fn (Incident $incident) => self::present($incident));
 
         return Inertia::render('tenant/incidents/Index', [
             'incidents' => $incidents,
@@ -52,7 +72,15 @@ class IncidentsPageController extends Controller
                     ->where('status', Incident::STATUS_RESOLVED)
                     ->where('resolved_at', '>=', now()->startOfMonth())
                     ->count(),
+                // Pendientes que ya pasaron su tiempo objetivo: es el número
+                // que dice si el hotel va al corriente o arrastrando fallas.
+                'overdue' => Incident::query()
+                    ->whereIn('status', [Incident::STATUS_OPEN, Incident::STATUS_IN_PROGRESS])
+                    ->whereNotNull('due_at')
+                    ->where('due_at', '<=', now())
+                    ->count(),
             ],
+            'sla' => app(\App\Services\IncidentPolicy::class)->hours(),
             'rooms' => Room::query()
                 ->orderBy('number')
                 ->get(['id', 'number', 'name', 'status'])
@@ -62,10 +90,23 @@ class IncidentsPageController extends Controller
                     'status' => $room->status->getMorphClass(),
                 ]),
             'staff' => User::query()->orderBy('name')->get(['id', 'name']),
+            // Quién repara (personal de casa y proveedores): solo con
+            // incidencias avanzadas, igual que responsables y costos.
+            'technicians' => (tenant() === null || tenant()->hasModule('incidencias-avanzado'))
+                ? \App\Models\Technician::query()->active()->ordered()->get()
+                    ->map(fn (\App\Models\Technician $t) => TechnicianController::present($t))
+                : [],
             'filters' => [
                 'status' => $status,
                 'priority' => $request->query('priority'),
                 'room' => $request->integer('room') ?: null,
+                // Faltaba: sin esto el select de tipo de falla se veía en
+                // blanco aunque el filtro siguiera aplicado.
+                'category' => $request->query('category'),
+                'q' => $search,
+                'assignee' => $assignee,
+                'source' => $source,
+                'overdue' => $overdue,
             ],
             'canManage' => $request->user()->can('rooms.update-status'),
             'canDelete' => $request->user()->can('rooms.manage'),
@@ -102,6 +143,15 @@ class IncidentsPageController extends Controller
             'resolved_at' => $incident->resolved_at?->format('d/m/Y H:i'),
             'resolution_notes' => $incident->resolution_notes,
             'created_at' => $incident->created_at->format('d/m/Y H:i'),
+            // Tiempo objetivo: lo que permite marcar en rojo lo que ya se
+            // pasó, en vez de que todo se vea igual de urgente.
+            'due_at' => $incident->due_at?->format('d/m/Y H:i'),
+            'overdue' => $incident->isOverdue(),
+            'age_hours' => $incident->ageHours(),
+            'cost' => $incident->cost !== null ? (float) $incident->cost : null,
+            'technician_id' => $incident->technician_id,
+            'technician' => $incident->technician?->name,
+            'stay_id' => $incident->stay_id,
             'photos' => $incident->getMedia('photos')->map(fn (Media $media) => [
                 'id' => $media->id,
                 'url' => route('tenant.incidents.photos.show', ['incident' => $incident->id, 'media' => $media->id], false),

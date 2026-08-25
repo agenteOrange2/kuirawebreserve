@@ -66,9 +66,10 @@ class HandleInertiaRequests extends Middleware
                     'menu_from' => ($property?->settings ?? [])['panel_menu_from'] ?? null,
                     'menu_to' => ($property?->settings ?? [])['panel_menu_to'] ?? null,
                 ],
-                // Modo de operación (/ajustes/general): 'motel' enciende el
-                // registro exprés del plano y los atajos de caseta.
-                'property_mode' => ($property?->settings ?? [])['property_mode'] ?? 'hotel',
+                // Modo de operación (lo fija la plataforma en /admin): de aquí
+                // lo lee usePropertyMode() para gatear piezas de UI sin que el
+                // modo viaje como prop página por página.
+                'property_mode' => app(\App\Services\PropertyMode::class)->mode(),
                 // Módulos activos del hotel (plan + overrides): el menú
                 // lateral oculta los items de módulos apagados.
                 'modules' => tenant()->enabledModules(),

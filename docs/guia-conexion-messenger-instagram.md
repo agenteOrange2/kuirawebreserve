@@ -31,8 +31,11 @@ webhook `https://kuirawebreserve.com/webhooks/meta` verificado.
    - Callback: `https://kuirawebreserve.com/webhooks/meta`
    - Verify token: el valor de `META_VERIFY_TOKEN`
    - Campos: **messages** (y `messaging_postbacks` para botones futuros).
+     Con el módulo de redes sociales agrega **feed**: es el que trae los
+     comentarios de las publicaciones (en Instagram el campo es
+     **comments**).
    - Suscribe LA PÁGINA en "Webhooks de página" (o después usa el botón
-     **Reparar suscripción** del admin, que hace exactamente eso).
+     **Reparar suscripción** del admin, que ya suscribe los tres campos).
 5. **Alta en `/admin` → Agentes IA → canales Meta**: Vincular canal:
    - Canal: **Messenger** · Hotel: el tenant
    - ID externo: el **page_id** (Configuración de la página → "Acerca de" →
@@ -116,9 +119,12 @@ pilotar con tus hoteles. Para que CUALQUIER huésped escriba:
 2. **App Review** pidiendo en un solo trámite (nota de spec-pendientes
    §4.8: no pasar dos veces por esto):
    `pages_messaging`, `pages_manage_metadata`, `pages_read_engagement`,
-   `instagram_basic`, `instagram_manage_messages` — y de una vez los de
-   comentarios si vas a querer community management
-   (`pages_manage_engagement`, `instagram_manage_comments`).
+   `instagram_basic`, `instagram_manage_messages` — **y los de comentarios**
+   (`pages_manage_engagement`, `instagram_manage_comments`), que ya NO son
+   opcionales: el módulo `redes-sociales` (addon `reservas-m3-ia-redes`) los
+   necesita para responder y ocultar comentarios. Sin ellos el código corre
+   pero Graph responde error de permisos, visible en el log como
+   "Meta: respuesta pública falló".
    Te pedirán un video screencast del flujo (huésped escribe → bandeja
    responde) — grábalo con el tenant demo.
 3. Cambiar la app a **modo Live** y `META_MODE=production` en el `.env`

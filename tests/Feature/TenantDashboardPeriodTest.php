@@ -13,6 +13,12 @@ use App\Models\User;
 use Illuminate\Http\Request;
 
 beforeEach(function () {
+    // Hora fija: las reservas de prueba llegan a las 15:00 y el periodo
+    // "hoy" va de las 00:00 a AHORA, así que corriendo antes de esa hora la
+    // llegada quedaba en el futuro y el test fallaba por el reloj, no por
+    // el código (fallaba media jornada, cada día).
+    $this->travelTo(now()->startOfDay()->addHours(20));
+
     $this->artisan('migrate', ['--path' => 'database/migrations/tenant']);
 
     $this->property = Property::factory()->create();

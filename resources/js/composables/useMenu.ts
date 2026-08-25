@@ -1,6 +1,7 @@
 import { usePage } from '@inertiajs/vue3';
 import { computed } from 'vue';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
+import type { PropertyModeValue } from '@/composables/usePropertyMode';
 
 export interface MenuItem {
     icon: Icon;
@@ -15,6 +16,13 @@ export interface MenuItem {
     // Permiso (spatie) que exige la ruta del item: sin él, el item se
     // esconde (panelTenant.permissions) — mismo gate que el middleware.
     permission?: string;
+    // Modos de operación en los que existe el item (hotel | motel | both);
+    // ausente = en todos. Es el espejo del middleware `mode:` de la ruta:
+    // hay herramientas que no se compran, simplemente no aplican al negocio.
+    mode?: PropertyModeValue[];
+    // Título alterno según el modo: un motel no se llama "Hotel" en su
+    // propio menú. Solo se define para los modos que cambian el nombre.
+    titleByMode?: Partial<Record<PropertyModeValue, string>>;
     // El TÍTULO de sección es el toggle: se pinta como divider (uppercase)
     // con chevron y colapsa sus items — sin renglón duplicado debajo.
     sectionToggle?: boolean;
@@ -101,6 +109,13 @@ const tenantMenu: Array<MenuItem | string> = [
         module: 'mensajeria',
     },
     {
+        icon: 'Share2',
+        pageName: 'tenant.social',
+        title: 'Redes sociales',
+        permission: 'reservations.view',
+        module: 'redes-sociales',
+    },
+    {
         icon: 'CalendarDays',
         title: 'Reservas',
         subMenu: [
@@ -156,6 +171,9 @@ const tenantMenu: Array<MenuItem | string> = [
     {
         icon: 'BedDouble',
         title: 'Hotel',
+        // En un motel el grupo se llama Motel; operando ambos, "Propiedad",
+        // que es lo único cierto para los dos negocios a la vez.
+        titleByMode: { motel: 'Motel', both: 'Propiedad' },
         subMenu: [
             {
                 icon: 'Users',
@@ -164,10 +182,28 @@ const tenantMenu: Array<MenuItem | string> = [
                 permission: 'guests.view',
             },
             {
+                // En caseta el cliente es el carro: el registro de placas es
+                // el equivalente motelero de Huéspedes. Existe en motel y en
+                // "ambos" — una propiedad mixta también recibe carros, y el
+                // modo "ambos" suma funcionalidad, nunca la resta.
+                icon: 'Car',
+                pageName: 'tenant.vehicles',
+                title: 'Vehículos',
+                permission: 'guests.view',
+                mode: ['motel', 'both'],
+            },
+            {
                 icon: 'BedDouble',
                 pageName: 'tenant.rooms',
                 title: 'Habitaciones',
                 permission: 'rooms.view',
+            },
+            {
+                icon: 'Brush',
+                pageName: 'tenant.housekeeping',
+                title: 'Limpieza',
+                module: 'limpieza',
+                permission: 'rooms.update-status',
             },
             {
                 icon: 'Wrench',
@@ -312,21 +348,31 @@ export function useMenu() {
         const shared = page.props.panelTenant as {
             modules?: string[];
             permissions?: string[];
+            property_mode?: PropertyModeValue;
         } | null;
         const modules = shared?.modules ?? [];
         const permissions = shared?.permissions ?? [];
+        const propertyMode = shared?.property_mode ?? 'hotel';
         const enabled = (item: MenuItem) =>
             (!item.module || modules.includes(item.module)) &&
-            (!item.permission || permissions.includes(item.permission));
+            (!item.permission || permissions.includes(item.permission)) &&
+            (!item.mode || item.mode.includes(propertyMode));
+
+        // El nombre del grupo sigue al negocio: "Hotel" en un hotel,
+        // "Motel" en un motel, "Propiedad" cuando opera los dos.
+        const named = (item: MenuItem): MenuItem =>
+            item.titleByMode?.[propertyMode]
+                ? { ...item, title: item.titleByMode[propertyMode] as string }
+                : item;
 
         const filtered = tenantMenu.flatMap(
             (item): Array<MenuItem | string> => {
                 if (typeof item === 'string') return [item];
                 if (!enabled(item)) return [];
-                if (!item.subMenu) return [item];
+                if (!item.subMenu) return [named(item)];
 
-                const subMenu = item.subMenu.filter(enabled);
-                return subMenu.length ? [{ ...item, subMenu }] : [];
+                const subMenu = item.subMenu.filter(enabled).map(named);
+                return subMenu.length ? [{ ...named(item), subMenu }] : [];
             },
         );
 

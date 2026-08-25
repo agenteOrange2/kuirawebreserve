@@ -382,3 +382,137 @@ it('el turno de otra persona no sirve para el corte propio', function () {
     expect($response->getStatusCode())->toBe(422)
         ->and(CashCut::count())->toBe(0);
 });
+
+/*
+|--------------------------------------------------------------------------
+| Corte en curso en JSON (panel de caja del plano)
+|--------------------------------------------------------------------------
+*/
+
+function currentCash(User $user): array
+{
+    $request = Request::create('/api/cash-cuts/current', 'GET');
+    $request->setUserResolver(fn () => $user);
+
+    return app(CashCutController::class)
+        ->current($request, app(CashCutService::class))
+        ->getData(true);
+}
+
+it('el corte en curso devuelve los mismos totales que la página, por ámbito', function () {
+    seedBothDrawers();
+
+    $data = currentCash($this->user);
+    $scopes = collect($data['scopes'])->keyBy('key');
+    $service = app(CashCutService::class);
+
+    $rooms = $service->openContext($this->user, CashCut::SCOPE_ROOMS);
+    $esperado = $service->compute($this->user, $rooms['from'], $rooms['to'], $rooms['shift'], CashCut::SCOPE_ROOMS);
+
+    expect($scopes->keys()->all())->toBe([CashCut::SCOPE_ROOMS, CashCut::SCOPE_POS])
+        ->and((float) $scopes['rooms']['grand_total'])->toBe((float) $esperado['grand_total'])
+        ->and((float) $scopes['rooms']['expected_cash'])->toBe((float) $esperado['expected_cash'])
+        ->and((float) $scopes['pos']['grand_total'])->toBe(60.0)
+        // El periodo también en ISO: es lo que se manda de vuelta para cerrar.
+        ->and($scopes['pos']['from_iso'])->toBeString()
+        ->and($scopes['pos']['to_iso'])->toBeString()
+        // Sin pedir detalle NO se calculan movimientos ni pendientes: recorren
+        // estancia por estancia y este endpoint se refresca solo.
+        ->and($scopes['pos']['movements'])->toBeNull()
+        ->and($scopes['pos']['pending'])->toBeNull()
+        ->and($data['shift'])->toBeNull();
+});
+
+it('el detalle del corte en curso se calcula solo para el ámbito que se pide', function () {
+    seedBothDrawers();
+
+    $request = Request::create('/api/cash-cuts/current', 'GET', ['detail' => 'pos']);
+    $request->setUserResolver(fn () => $this->user);
+
+    $scopes = collect(
+        app(CashCutController::class)
+            ->current($request, app(CashCutService::class))
+            ->getData(true)['scopes']
+    )->keyBy('key');
+
+    expect($scopes['pos']['movements'])->toHaveCount(1)
+        ->and($scopes['pos']['movements'][0]['concept'])->toContain('Venta POS')
+        ->and($scopes['pos']['pending'])->toHaveKeys(['count', 'total', 'items'])
+        // El otro ámbito no paga el costo de calcularlo.
+        ->and($scopes['rooms']['movements'])->toBeNull()
+        ->and($scopes['rooms']['pending'])->toBeNull();
+});
+
+it('cerrar la caja desde el plano guarda el motivo y el arqueo cuando se cuenta', function () {
+    seedBothDrawers();
+
+    $service = app(CashCutService::class);
+    $context = $service->openContext($this->user, CashCut::SCOPE_POS);
+
+    $request = Request::create('/api/cash-cuts', 'POST', [
+        'user_id' => $this->user->id,
+        'scope' => CashCut::SCOPE_POS,
+        'from' => $context['from']->toIso8601String(),
+        'to' => $context['to']->toIso8601String(),
+        'counted_cash' => 50,
+        'notes' => 'Corte parcial: entrega a gerencia',
+    ]);
+    $request->setUserResolver(fn () => $this->user);
+
+    $cut = app(CashCutController::class)->store($request, $service)->getData(true);
+
+    expect($cut['notes'])->toBe('Corte parcial: entrega a gerencia')
+        ->and((float) $cut['counted_cash'])->toBe(50.0)
+        // Esperaba 60 en efectivo y contaron 50: faltan 10.
+        ->and((float) $cut['difference'])->toBe(-10.0);
+});
+
+it('cerrar la caja sin contar el efectivo se guarda igual, sin arqueo', function () {
+    seedBothDrawers();
+
+    $service = app(CashCutService::class);
+    $context = $service->openContext($this->user, CashCut::SCOPE_POS);
+
+    $request = Request::create('/api/cash-cuts', 'POST', [
+        'user_id' => $this->user->id,
+        'scope' => CashCut::SCOPE_POS,
+        'from' => $context['from']->toIso8601String(),
+        'to' => $context['to']->toIso8601String(),
+        'notes' => 'Cierre rápido por cambio de turno',
+    ]);
+    $request->setUserResolver(fn () => $this->user);
+
+    $cut = app(CashCutController::class)->store($request, $service)->getData(true);
+
+    expect($cut['counted_cash'])->toBeNull()
+        ->and((float) $cut['difference'])->toBe(0.0)
+        ->and($cut['notes'])->toBe('Cierre rápido por cambio de turno');
+});
+
+it('sin ver reservas, el corte en curso no expone la caja de recepción', function () {
+    $cocina = User::factory()->create();
+
+    $scopes = collect(currentCash($cocina)['scopes'])->pluck('key')->all();
+
+    expect($scopes)->toBe([CashCut::SCOPE_POS]);
+});
+
+it('el corte en curso se arma sobre el turno abierto cuando lo hay', function () {
+    $shift = Shift::create([
+        'property_id' => $this->property->id,
+        'user_id' => $this->user->id,
+        'started_at' => now()->subHours(3),
+        'opening_cash' => 500,
+        'created_by' => $this->user->id,
+    ]);
+
+    seedBothDrawers();
+
+    $data = currentCash($this->user);
+    $rooms = collect($data['scopes'])->firstWhere('key', CashCut::SCOPE_ROOMS);
+
+    expect($data['shift']['id'])->toBe($shift->id)
+        ->and((float) $data['shift']['opening_cash'])->toBe(500.0)
+        // El fondo del turno entra al cajón esperado de recepción.
+        ->and((float) $rooms['expected_cash'])->toBe(1300.0);
+});

@@ -58,6 +58,13 @@ Schedule::command('tenants:run reservations:auto-checkin')
     ->everyMinute()
     ->withoutOverlapping();
 
+// Incidencias que pasaron su tiempo objetivo de atención: avisan a la
+// campana una sola vez por ticket. Sin esto, una falla puede quedarse
+// abierta semanas sin que nadie se entere.
+Schedule::command('tenants:run incidents:check-overdue')
+    ->everyFifteenMinutes()
+    ->withoutOverlapping();
+
 // El bot retoma conversaciones: holds por vencer/vencidos, reservas
 // confirmadas y cotizaciones abandonadas (plantillas, sin LLM).
 Schedule::command('tenants:run conversations:follow-up')

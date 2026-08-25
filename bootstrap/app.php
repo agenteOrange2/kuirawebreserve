@@ -54,6 +54,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'ability' => \Laravel\Sanctum\Http\Middleware\CheckForAnyAbility::class,
             // Módulos por plan (spec-plan-maestro E1): module:pos, module:cobros…
             'module' => \App\Http\Middleware\EnsureModuleEnabled::class,
+            // Modo de operación de la propiedad (spec-modo-motel): mode:motel,
+            // mode:motel,both — qué clase de negocio es, no qué compró.
+            'mode' => \App\Http\Middleware\EnsurePropertyMode::class,
         ]);
 
         $middleware->encryptCookies(except: ['appearance', 'sidebar_state']);

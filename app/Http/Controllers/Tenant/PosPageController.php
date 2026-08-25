@@ -7,12 +7,13 @@ use App\Models\Order;
 use App\Models\Product;
 use App\Models\Property;
 use App\Models\Stay;
+use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 
 class PosPageController extends Controller
 {
-    public function __invoke(): Response
+    public function __invoke(Request $request): Response
     {
         $property = Property::firstOrFail();
 
@@ -26,16 +27,11 @@ class PosPageController extends Controller
         return Inertia::render('tenant/pos/Index', [
             'property' => $property->only(['id', 'name']),
             'categories' => $products->pluck('category')->filter()->unique()->sort()->values(),
-            'products' => $products->map(fn (Product $p) => [
-                'id' => $p->id,
-                'name' => $p->name,
-                'category' => $p->category,
-                'type' => $p->type,
-                'price' => $p->price,
-                'track_stock' => $p->track_stock,
-                'stock_qty' => (float) $p->stock_qty,
-                'photo' => $p->photoPayload(),
-            ]),
+            'products' => $products->map(fn (Product $p) => $p->posPayload()),
+            // Habitación preseleccionada al llegar desde el plano
+            // (/pos?stay=N). Sin esto el cajero llegaba y volvía a elegirla
+            // a mano, con el riesgo de cargarle el consumo a otra.
+            'preselectStay' => $request->integer('stay') ?: null,
             'activeStays' => Stay::query()
                 ->active()
                 ->with('room:id,number')

@@ -21,6 +21,7 @@ class RoomType extends Model implements HasMedia
         'property_id',
         'name',
         'description',
+        'icon',
         'capacity',
         'max_adults',
         'max_children',
@@ -28,6 +29,7 @@ class RoomType extends Model implements HasMedia
         'check_in_time',
         'check_out_time',
         'amenities',
+        'photos_url',
         'sort_order',
         'active',
     ];

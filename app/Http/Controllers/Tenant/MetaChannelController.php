@@ -161,8 +161,7 @@ class MetaChannelController extends Controller
     /** Canales de mensajería conectados que cuentan para el plan. */
     protected function connectedChannels(): int
     {
-        return EvolutionChannelLink::query()->where('tenant_id', tenant('id'))->count()
-            + MetaChannelLink::query()->where('tenant_id', tenant('id'))->count();
+        return \App\Services\Channels\ChannelPlanCounter::connected((string) tenant('id'));
     }
 
     protected function ownLink(int $linkId): MetaChannelLink

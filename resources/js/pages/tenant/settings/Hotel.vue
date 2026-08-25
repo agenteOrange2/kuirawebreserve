@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
@@ -22,7 +22,7 @@ interface PlanModuleRow {
     requested: boolean;
 }
 
-defineProps<{
+const props = defineProps<{
     plan: string;
     planCard: {
         label: string;
@@ -42,6 +42,17 @@ const limitPercent = (l: PlanLimitRow) =>
     l.max === null || l.max === 0
         ? 0
         : Math.min(100, Math.round((l.used / l.max) * 100));
+
+// Dos grupos: los activos se leen de un vistazo (nombre y palomita) y
+// los que faltan llevan su descripción y el botón, que es donde el hotel
+// decide. Antes iban los 24 en una sola tira interminable.
+const activeModules = computed(() =>
+    props.planCard.modules.filter((mod) => mod.enabled),
+);
+
+const inactiveModules = computed(() =>
+    props.planCard.modules.filter((mod) => !mod.enabled),
+);
 
 const requestedLocal = reactive<Record<string, boolean>>({});
 const requestingModule = ref<string | null>(null);
@@ -118,139 +129,145 @@ async function requestModule(mod: PlanModuleRow) {
                     </div>
                 </div>
 
-                <div class="mt-5 grid grid-cols-12 gap-5">
+                <!-- Límites: tarjetas compactas en fila. Antes era una
+                     columna estirada a la altura de los 24 módulos, con
+                     huecos enormes entre barra y barra. -->
+                <div
+                    class="mt-5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                >
+                    <Lucide icon="Gauge" class="h-3.5 w-3.5" /> Límites de tu
+                    plan
+                </div>
+                <div
+                    class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5"
+                >
                     <div
-                        class="col-span-12 flex flex-col rounded-[0.6rem] border border-dashed border-slate-300/70 p-5 lg:col-span-5 dark:border-darkmode-400"
+                        v-for="l in planCard.limits"
+                        :key="l.label"
+                        class="rounded-[0.6rem] border border-dashed border-slate-300/70 p-3.5 dark:border-darkmode-400"
                     >
-                        <div
-                            class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                        >
-                            <Lucide icon="Gauge" class="h-3.5 w-3.5" /> Límites
+                        <div class="text-xs text-slate-500">{{ l.label }}</div>
+                        <div class="mt-1 flex items-baseline gap-1">
+                            <span
+                                class="text-lg font-medium"
+                                :class="
+                                    l.max !== null && limitPercent(l) >= 100
+                                        ? 'text-danger'
+                                        : ''
+                                "
+                                >{{ l.used }}</span
+                            >
+                            <span class="text-xs text-slate-400">
+                                {{
+                                    l.max !== null
+                                        ? `de ${l.max}`
+                                        : 'sin límite'
+                                }}
+                            </span>
                         </div>
                         <div
-                            class="flex flex-1 flex-col justify-between gap-3.5"
-                        >
-                            <div v-for="l in planCard.limits" :key="l.label">
-                                <div
-                                    class="mb-1 flex items-center justify-between text-sm"
-                                >
-                                    <span class="text-slate-500">{{
-                                        l.label
-                                    }}</span>
-                                    <span
-                                        class="text-xs"
-                                        :class="
-                                            l.max !== null &&
-                                            limitPercent(l) >= 100
-                                                ? 'font-medium text-danger'
-                                                : 'text-slate-500'
-                                        "
-                                    >
-                                        {{ l.used
-                                        }}{{
-                                            l.max !== null
-                                                ? ` de ${l.max}`
-                                                : ' · sin límite'
-                                        }}
-                                    </span>
-                                </div>
-                                <div
-                                    v-if="l.max !== null"
-                                    class="h-1.5 rounded-full bg-slate-200/70 dark:bg-darkmode-400"
-                                >
-                                    <div
-                                        class="h-1.5 rounded-full"
-                                        :class="
-                                            limitPercent(l) >= 100
-                                                ? 'bg-danger'
-                                                : limitPercent(l) >= 80
-                                                  ? 'bg-warning'
-                                                  : 'bg-primary'
-                                        "
-                                        :style="{
-                                            width: `${limitPercent(l)}%`,
-                                        }"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div
-                        class="col-span-12 flex flex-col rounded-[0.6rem] border border-dashed border-slate-300/70 p-5 lg:col-span-7 dark:border-darkmode-400"
-                    >
-                        <div
-                            class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                        >
-                            <Lucide icon="Blocks" class="h-3.5 w-3.5" /> Módulos
-                        </div>
-                        <div
-                            class="divide-y divide-dashed divide-slate-200/80 dark:divide-darkmode-400"
+                            v-if="l.max !== null"
+                            class="mt-2 h-1.5 rounded-full bg-slate-200/70 dark:bg-darkmode-400"
                         >
                             <div
-                                v-for="mod in planCard.modules"
-                                :key="mod.key"
-                                class="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
-                            >
-                                <div
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border"
-                                    :class="
-                                        mod.enabled
-                                            ? 'border-success/10 bg-success/10 text-success'
-                                            : 'border-slate-200/80 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400/50'
-                                    "
-                                >
-                                    <Lucide
-                                        :icon="mod.enabled ? 'Check' : 'Lock'"
-                                        class="h-3.5 w-3.5"
-                                    />
-                                </div>
-                                <div class="min-w-0 flex-1">
-                                    <div
-                                        class="flex flex-wrap items-center gap-2"
-                                    >
-                                        <span
-                                            class="text-sm font-medium"
-                                            :class="
-                                                mod.enabled
-                                                    ? ''
-                                                    : 'text-slate-400'
-                                            "
-                                            >{{ mod.label }}</span
-                                        >
-                                        <span
-                                            v-if="!mod.available"
-                                            class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending"
-                                        >
-                                            Próximamente
-                                        </span>
-                                    </div>
-                                    <div class="mt-0.5 text-xs text-slate-400">
-                                        {{ mod.description }}
-                                    </div>
-                                </div>
-                                <template v-if="!mod.enabled">
-                                    <span
-                                        v-if="isRequested(mod)"
-                                        class="shrink-0 rounded-full bg-warning/10 px-2.5 py-1 text-xs text-warning"
-                                    >
-                                        Solicitud enviada
-                                    </span>
-                                    <Button
-                                        v-else
-                                        type="button"
-                                        variant="outline-secondary"
-                                        class="shrink-0 !px-3 !py-1 text-xs"
-                                        :disabled="requestingModule === mod.key"
-                                        @click="requestModule(mod)"
-                                    >
-                                        Solicitar activación
-                                    </Button>
-                                </template>
-                            </div>
+                                class="h-1.5 rounded-full"
+                                :class="
+                                    limitPercent(l) >= 100
+                                        ? 'bg-danger'
+                                        : limitPercent(l) >= 80
+                                          ? 'bg-warning'
+                                          : 'bg-primary'
+                                "
+                                :style="{ width: `${limitPercent(l)}%` }"
+                            />
                         </div>
                     </div>
                 </div>
+
+                <!-- Módulos en dos grupos: lo que ya tienes se lee de un
+                     vistazo; lo que no, se explica y se puede solicitar. -->
+                <div
+                    class="mt-6 flex flex-wrap items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                >
+                    <Lucide icon="Blocks" class="h-3.5 w-3.5" /> Módulos
+                    <span class="text-slate-400 normal-case">
+                        ({{ activeModules.length }} de
+                        {{ planCard.modules.length }} activos)
+                    </span>
+                </div>
+
+                <div
+                    v-if="activeModules.length"
+                    class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3"
+                >
+                    <div
+                        v-for="mod in activeModules"
+                        :key="mod.key"
+                        class="flex items-center gap-2.5 rounded-[0.5rem] border border-slate-200/70 px-3 py-2.5 dark:border-darkmode-400"
+                        :title="mod.description"
+                    >
+                        <div
+                            class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                        >
+                            <Lucide icon="Check" class="h-3 w-3" />
+                        </div>
+                        <span class="min-w-0 truncate text-sm">{{
+                            mod.label
+                        }}</span>
+                    </div>
+                </div>
+
+                <template v-if="inactiveModules.length">
+                    <div class="mt-6 text-xs text-slate-500">
+                        No incluidos en tu plan
+                    </div>
+                    <div class="mt-3 grid grid-cols-12 gap-3">
+                        <div
+                            v-for="mod in inactiveModules"
+                            :key="mod.key"
+                            class="col-span-12 flex flex-col gap-3 rounded-[0.6rem] border border-dashed border-slate-300/70 p-4 sm:flex-row sm:items-center xl:col-span-6 dark:border-darkmode-400"
+                        >
+                            <div
+                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/80 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400/50"
+                            >
+                                <Lucide icon="Lock" class="h-3.5 w-3.5" />
+                            </div>
+                            <div class="min-w-0 flex-1">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span
+                                        class="text-sm font-medium text-slate-500"
+                                        >{{ mod.label }}</span
+                                    >
+                                    <span
+                                        v-if="!mod.available"
+                                        class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending"
+                                    >
+                                        Próximamente
+                                    </span>
+                                </div>
+                                <div class="mt-0.5 text-xs text-slate-400">
+                                    {{ mod.description }}
+                                </div>
+                            </div>
+                            <span
+                                v-if="isRequested(mod)"
+                                class="shrink-0 rounded-full bg-warning/10 px-2.5 py-1 text-center text-xs text-warning"
+                            >
+                                Solicitud enviada
+                            </span>
+                            <Button
+                                v-else
+                                type="button"
+                                variant="outline-secondary"
+                                class="shrink-0 !px-3 !py-1 text-xs"
+                                :disabled="requestingModule === mod.key"
+                                @click="requestModule(mod)"
+                            >
+                                Solicitar activación
+                            </Button>
+                        </div>
+                    </div>
+                </template>
             </div>
 
             <!-- Áreas de configuración (cada una con superficie propia) -->
@@ -368,6 +385,30 @@ async function requestModule(mod: PlanModuleRow) {
                             Área aparte: canal de envío, recordatorios de
                             llegada y agradecimiento al salir con encuesta y
                             link de reseñas.
+                        </p>
+                    </div>
+                    <Lucide
+                        icon="ArrowRight"
+                        class="h-4 w-4 shrink-0 text-slate-400"
+                    />
+                </Link>
+
+                <!-- Daños: lo que se cobra al revisar la habitación al salir -->
+                <Link
+                    :href="route('tenant.damage-catalog')"
+                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                >
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Hammer" class="h-5 w-5" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="font-medium">Daños</div>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Área aparte: los conceptos y precios que se cobran
+                            cuando se revisa la habitación antes de dejar salir
+                            al cliente.
                         </p>
                     </div>
                     <Lucide

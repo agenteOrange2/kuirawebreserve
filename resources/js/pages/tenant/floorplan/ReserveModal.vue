@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import axios from 'axios';
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormHelp,
@@ -404,10 +404,23 @@ async function submit() {
         saving.value = false;
     }
 }
+
+// El fondo es estático para que un clic afuera no tire el formulario, pero Esc
+// sí debe cerrar: la tecla es una decisión, no un resbalón del ratón. El
+// Dialog del theme se la traga junto con el clic, así que se escucha aquí.
+function onEscape(event: KeyboardEvent) {
+    if (event.key === 'Escape' && props.open) {
+        emit('close');
+    }
+}
+
+onMounted(() => window.addEventListener('keydown', onEscape));
+onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
 </script>
 
 <template>
-    <Dialog :open="open" size="lg" @close="emit('close')">
+    <!-- staticBackdrop: formulario largo; un clic afuera no lo tira. -->
+    <Dialog :open="open" size="lg" static-backdrop @close="emit('close')">
         <Dialog.Panel>
             <div class="flex max-h-[85vh] flex-col">
                 <!-- Header -->
@@ -431,6 +444,7 @@ async function submit() {
                     <button
                         type="button"
                         class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                        aria-label="Cerrar"
                         @click="emit('close')"
                     >
                         <Lucide icon="X" class="h-5 w-5" />
@@ -812,9 +826,10 @@ async function submit() {
                     </p>
                 </div>
 
-                <!-- Footer -->
+                <!-- Footer. Se apila en móvil: con el plano en pantalla
+                     completa este modal también se usa desde el teléfono. -->
                 <div
-                    class="flex items-center justify-between gap-3 border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    class="flex flex-col gap-3 border-t border-slate-200/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-darkmode-400"
                 >
                     <div class="text-xs text-slate-500">
                         <span

@@ -94,6 +94,27 @@ class Product extends Model implements HasMedia
         ];
     }
 
+    /**
+     * Cómo ve el producto quien vende: la página del POS y el panel de
+     * consumos del plano. En un solo lugar para que no diverjan — si la
+     * caseta ve un precio distinto al del mostrador, el corte no cuadra.
+     *
+     * @return array<string, mixed>
+     */
+    public function posPayload(): array
+    {
+        return [
+            'id' => $this->id,
+            'name' => $this->name,
+            'category' => $this->category,
+            'type' => $this->type,
+            'price' => $this->price,
+            'track_stock' => $this->track_stock,
+            'stock_qty' => (float) $this->stock_qty,
+            'photo' => $this->photoPayload(),
+        ];
+    }
+
     public function recipeItems(): HasMany
     {
         return $this->hasMany(Recipe::class);

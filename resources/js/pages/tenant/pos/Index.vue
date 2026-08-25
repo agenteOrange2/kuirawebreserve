@@ -29,6 +29,8 @@ const props = defineProps<{
     categories: string[];
     products: PosProduct[];
     activeStays: { id: number; label: string }[];
+    // Habitación con la que llega el cajero desde el plano (/pos?stay=N).
+    preselectStay: number | null;
     recentOrders: {
         id: number;
         total: number;
@@ -84,7 +86,9 @@ watch(
     },
     { deep: true },
 );
-const stayId = ref<string | number>('');
+// Si el plano mandó una habitación, se llega con ella puesta: eso es lo que
+// pidió quien tocó "Cargar consumo" ahí.
+const stayId = ref<string | number>(props.preselectStay ?? '');
 const paymentMethod = ref<'cash' | 'card' | 'transfer'>('cash');
 const paymentReference = ref('');
 const discount = ref<number | string>('');

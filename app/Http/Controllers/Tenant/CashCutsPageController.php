@@ -33,16 +33,9 @@ class CashCutsPageController extends Controller
         $selectedUser = $staff->firstWhere('id', $request->integer('user')) ?? $request->user();
 
         // Ámbitos disponibles: Recepción exige ver reservas (cocina queda
-        // fuera) y Punto de venta exige el módulo. Sin contexto de tenant
-        // (tests) el módulo no aplica.
-        $tenant = tenant();
-        $hasPos = $tenant === null || $tenant->hasModule('pos');
-        $canRooms = $request->user()->can('reservations.view');
-
-        $available = array_values(array_filter([
-            $canRooms ? CashCut::SCOPE_ROOMS : null,
-            $hasPos ? CashCut::SCOPE_POS : null,
-        ]));
+        // fuera) y Punto de venta exige el módulo. La regla vive en el
+        // servicio porque el panel de caja del plano consulta la misma.
+        $available = $service->availableScopes($request->user());
 
         $scope = $request->string('scope')->toString();
         if (! in_array($scope, $available, true)) {

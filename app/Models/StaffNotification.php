@@ -25,6 +25,12 @@ class StaffNotification extends Model
     /** Solicitud del menú digital: un huésped pidió productos desde /menu. */
     public const TYPE_MENU = 'menu';
 
+    /** Comentario en redes que necesita a una persona (queja o sin clasificar). */
+    public const TYPE_SOCIAL = 'social';
+
+    /** Falla de mantenimiento: alta prioridad recién abierta, o vencida. */
+    public const TYPE_INCIDENT = 'incident';
+
     protected $fillable = [
         'type',
         'title',

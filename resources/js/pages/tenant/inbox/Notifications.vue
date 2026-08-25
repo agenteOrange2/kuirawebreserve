@@ -61,6 +61,16 @@ const meta: Record<string, { icon: Icon; tone: string; label: string }> = {
         tone: 'bg-success/10 text-success',
         label: 'Pago',
     },
+    social: {
+        icon: 'Share2',
+        tone: 'bg-warning/10 text-warning',
+        label: 'Redes sociales',
+    },
+    incident: {
+        icon: 'Wrench',
+        tone: 'bg-danger/10 text-danger',
+        label: 'Mantenimiento',
+    },
 };
 
 const metaFor = (type: string) =>
@@ -190,11 +200,7 @@ async function submitDelete() {
                     <h1 class="text-lg font-medium">Avisos</h1>
                     <p class="text-sm text-slate-500">
                         {{ notifications.total }} en total ·
-                        {{
-                            unread > 0
-                                ? `${unread} sin leer`
-                                : 'todo leído'
-                        }}
+                        {{ unread > 0 ? `${unread} sin leer` : 'todo leído' }}
                     </p>
                 </div>
                 <div class="flex flex-wrap gap-2">
@@ -240,6 +246,8 @@ async function submitDelete() {
                         <option value="message">Mensajes</option>
                         <option value="reservation">Reservas</option>
                         <option value="payment">Pagos</option>
+                        <option value="social">Redes sociales</option>
+                        <option value="incident">Mantenimiento</option>
                     </FormSelect>
                     <FormSelect v-model="state" class="w-full sm:w-40">
                         <option value="">Todos</option>

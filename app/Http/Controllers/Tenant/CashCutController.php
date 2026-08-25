@@ -16,6 +16,81 @@ use Illuminate\Validation\Rule;
 class CashCutController extends Controller
 {
     /**
+     * Cómo va la caja AHORA: el turno abierto de quien pregunta y los
+     * totales en curso de cada ámbito que puede ver, más los últimos cortes
+     * guardados. Lo consume el panel de caja del plano.
+     *
+     * Es lo mismo que ya muestra /cortes a la misma gente; solo faltaba
+     * poder pedirlo en JSON (hasta ahora viajaba como prop de Inertia).
+     *
+     * Los movimientos y los pendientes NO van por defecto: `pendingSnapshot`
+     * recorre las estancias activas llamando `folio()` una por una, y este
+     * endpoint se refresca solo cada minuto.
+     */
+    public function current(Request $request, CashCutService $service): JsonResponse
+    {
+        $user = $request->user();
+        $scopes = $service->availableScopes($user);
+        $shift = Shift::query()->open()->where('user_id', $user->id)->latest('started_at')->first();
+
+        // Ámbito cuyo rastro se pide expandido (?detail=pos|rooms). No va por
+        // defecto: pendingSnapshot() recorre las estancias activas llamando
+        // folio() una por una, y esto se refresca cada minuto.
+        $detail = $request->string('detail')->toString();
+
+        return response()->json([
+            'shift' => $shift === null ? null : [
+                'id' => $shift->id,
+                'started_at' => $shift->started_at->format('d/m H:i'),
+                'opening_cash' => (float) $shift->opening_cash,
+            ],
+            'scopes' => array_map(function (string $scope) use ($service, $user, $detail) {
+                $context = $service->openContext($user, $scope);
+                $totals = $service->compute($user, $context['from'], $context['to'], $context['shift'], $scope);
+
+                return [
+                    'key' => $scope,
+                    'label' => CashCut::labelForScope($scope),
+                    'from' => $context['from']->format('d/m H:i'),
+                    'to' => $context['to']->format('d/m H:i'),
+                    // En ISO además del formato de pantalla: es lo que hay que
+                    // mandar de vuelta para cerrar la caja de este periodo.
+                    'from_iso' => $context['from']->toIso8601String(),
+                    'to_iso' => $context['to']->toIso8601String(),
+                    'shift_id' => $context['shift']?->id,
+                    'orders_count' => $totals['orders_count'],
+                    'payments_count' => $totals['payments_count'],
+                    'cash_total' => $totals['cash_total'],
+                    'card_total' => $totals['card_total'],
+                    'transfer_total' => $totals['transfer_total'],
+                    'grand_total' => $totals['grand_total'],
+                    'expected_cash' => $totals['expected_cash'],
+                    'movements' => $detail === $scope
+                        ? $service->movements($user, $context['from'], $context['to'], $context['shift'], $scope)
+                        : null,
+                    'pending' => $detail === $scope
+                        ? $service->pendingSnapshot($user, $context['from'], $context['to'], $context['shift'], $scope)
+                        : null,
+                ];
+            }, $scopes),
+            'recent_cuts' => CashCut::query()
+                ->where('user_id', $user->id)
+                ->latest('closed_at')
+                ->take(5)
+                ->get()
+                ->map(fn (CashCut $cut) => [
+                    'id' => $cut->id,
+                    'scope_label' => $cut->scopeLabel(),
+                    'closed_at' => $cut->closed_at?->format('d/m H:i'),
+                    'grand_total' => (float) $cut->grand_total,
+                    'difference' => $cut->counted_cash === null
+                        ? null
+                        : round((float) $cut->counted_cash - (float) $cut->expected_cash, 2),
+                ]),
+        ]);
+    }
+
+    /**
      * Guarda el corte de UN ámbito (recepción o punto de venta): recalcula
      * los agregados en el servidor (fuente de verdad) y registra el arqueo
      * de efectivo (esperado vs. contado). Los cortes nuevos siempre traen

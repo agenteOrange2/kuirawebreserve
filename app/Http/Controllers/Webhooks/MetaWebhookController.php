@@ -3,10 +3,12 @@
 namespace App\Http\Controllers\Webhooks;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\ProcessSocialComment;
 use App\Models\Central\MetaChannelLink;
 use App\Models\Channel;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Models\SocialPost;
 use App\Models\Tenant;
 use App\Services\Agent\AgentBrain;
 use App\Services\Meta\MetaApi;
@@ -110,6 +112,38 @@ class MetaWebhookController extends Controller
                 }
             }
 
+            // ── Comentarios en publicaciones (módulo redes-sociales) ──
+            // field=feed en páginas de Facebook, field=comments en Instagram.
+            // A diferencia de los DMs, esto NO se procesa aquí: un post con
+            // pauta trae ráfagas de comentarios y N llamadas al LLM dentro
+            // del webhook lo tumbarían por timeout (y Meta reintentaría,
+            // duplicando respuestas públicas). Se encola y se contesta fuera.
+            foreach ($entry['changes'] ?? [] as $change) {
+                $comment = self::commentChangeToPayload($entry, $change);
+
+                if (! $comment) {
+                    continue;
+                }
+
+                $link = $this->link(
+                    $comment['network'] === SocialPost::NETWORK_FACEBOOK ? ['messenger'] : ['instagram'],
+                    $entry['id'] ?? null,
+                );
+
+                if ($link) {
+                    // Rastro de llegada: la primera pregunta ante "no
+                    // aparece el comentario" es si Meta siquiera nos llamó.
+                    Log::info('Redes: comentario recibido', [
+                        'tenant' => $link->tenant_id,
+                        'red' => $comment['network'],
+                        'comment_id' => $comment['comment_id'],
+                        'verbo' => $comment['verb'],
+                    ]);
+
+                    ProcessSocialComment::dispatch($link->tenant_id, $link->id, $comment);
+                }
+            }
+
             // ── Instagram Login: DMs en formato "changes" (field messages) ──
             if ($object === 'instagram') {
                 foreach ($entry['changes'] ?? [] as $change) {
@@ -190,6 +224,83 @@ class MetaWebhookController extends Controller
             'body' => (string) $text,
             'external_id' => $value['message']['mid'] ?? null,
         ];
+    }
+
+    /**
+     * Normaliza un comentario de publicación a una forma común. Las dos redes
+     * mandan formas distintas:
+     *
+     * - Facebook (field=feed): value.item=comment, verb=add|edited|remove,
+     *   comment_id, post_id, from.{id,name}, message, created_time (epoch).
+     * - Instagram (field=comments): value.id, text, from.{id,username},
+     *   media.id — sin verb (IG no avisa ediciones ni borrados).
+     *
+     * Devuelve null para lo que no es un comentario y para los ecos de la
+     * propia página (nuestras respuestas vuelven como evento).
+     *
+     * @param  array<string, mixed>  $entry
+     * @param  array<string, mixed>  $change
+     * @return array{network: string, verb: string, comment_id: string, parent_id: ?string, post_id: ?string, post_permalink: ?string, author_id: ?string, author_name: ?string, body: ?string, commented_at: ?string}|null
+     */
+    public static function commentChangeToPayload(array $entry, array $change): ?array
+    {
+        $field = (string) ($change['field'] ?? '');
+        $value = $change['value'] ?? [];
+        $accountId = (string) ($entry['id'] ?? '');
+
+        if ($field === 'feed') {
+            if (($value['item'] ?? '') !== 'comment') {
+                return null; // likes, reacciones, posts nuevos: no es lo nuestro
+            }
+
+            $commentId = (string) ($value['comment_id'] ?? '');
+            $authorId = (string) ($value['from']['id'] ?? '');
+
+            if ($commentId === '' || ($authorId !== '' && $authorId === $accountId)) {
+                return null;
+            }
+
+            $created = $value['created_time'] ?? null;
+
+            return [
+                'network' => SocialPost::NETWORK_FACEBOOK,
+                'verb' => (string) ($value['verb'] ?? 'add'),
+                'comment_id' => $commentId,
+                'parent_id' => isset($value['parent_id']) ? (string) $value['parent_id'] : null,
+                'post_id' => isset($value['post_id']) ? (string) $value['post_id'] : null,
+                'post_permalink' => $value['post']['permalink_url'] ?? null,
+                'author_id' => $authorId ?: null,
+                'author_name' => $value['from']['name'] ?? null,
+                'body' => $value['message'] ?? null,
+                'commented_at' => is_numeric($created)
+                    ? now()->setTimestamp((int) $created)->toDateTimeString()
+                    : null,
+            ];
+        }
+
+        if ($field === 'comments') {
+            $commentId = (string) ($value['id'] ?? '');
+            $authorId = (string) ($value['from']['id'] ?? '');
+
+            if ($commentId === '' || ($authorId !== '' && $authorId === $accountId)) {
+                return null;
+            }
+
+            return [
+                'network' => SocialPost::NETWORK_INSTAGRAM,
+                'verb' => 'add', // Instagram solo notifica altas
+                'comment_id' => $commentId,
+                'parent_id' => isset($value['parent_id']) ? (string) $value['parent_id'] : null,
+                'post_id' => isset($value['media']['id']) ? (string) $value['media']['id'] : null,
+                'post_permalink' => null,
+                'author_id' => $authorId ?: null,
+                'author_name' => $value['from']['username'] ?? null,
+                'body' => $value['text'] ?? null,
+                'commented_at' => null,
+            ];
+        }
+
+        return null;
     }
 
     /**

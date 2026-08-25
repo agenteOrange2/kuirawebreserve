@@ -87,6 +87,7 @@ class IncidentReportsController extends Controller
         // Resueltas en el periodo (aunque se hayan reportado antes): mide
         // el trabajo que el equipo SACÓ, no solo el que entró.
         $resolved = Incident::query()
+            ->with(['room:id,number,name', 'technician:id,name,external', 'stay:id,extra_charges'])
             ->where('status', Incident::STATUS_RESOLVED)
             ->whereBetween('resolved_at', [$from, $to])
             ->when($roomId, fn ($q) => $q->where('room_id', $roomId))
@@ -128,6 +129,7 @@ class IncidentReportsController extends Controller
                     ->when($roomId, fn ($q) => $q->where('room_id', $roomId))
                     ->count(),
             ],
+            'costs' => $this->costs($resolved),
             'series' => $this->buildSeries($from, $to, $reported, $resolved),
             'byPriority' => collect(['high', 'medium', 'low'])->map(fn (string $priority) => [
                 'priority' => $priority,
@@ -168,6 +170,50 @@ class IncidentReportsController extends Controller
                             : null,
                     ];
                 })->sortByDesc('total')->values(),
+        ];
+    }
+
+    /**
+     * El dinero del periodo, medido sobre lo RESUELTO (que es cuando se
+     * paga la reparación, no cuando se reporta la falla): cuánto se gastó,
+     * qué habitación sale cara, quién hizo el trabajo y cuánto de eso se
+     * le alcanzó a cobrar al huésped que lo rompió.
+     *
+     * @param  Collection<int, Incident>  $resolved
+     * @return array<string, mixed>
+     */
+    protected function costs(Collection $resolved): array
+    {
+        $withCost = $resolved->filter(fn (Incident $i) => $i->cost !== null);
+        $charged = $resolved->map(fn (Incident $i) => $i->chargedToGuest())->filter();
+
+        return [
+            'total' => round((float) $withCost->sum(fn (Incident $i) => (float) $i->cost), 2),
+            'jobs' => $withCost->count(),
+            'missing' => $resolved->count() - $withCost->count(),
+            'charged' => round((float) $charged->sum(), 2),
+            'charged_jobs' => $charged->count(),
+            'byRoom' => $withCost
+                ->groupBy(fn (Incident $i) => $i->room
+                    ? trim($i->room->number.' '.($i->room->name ?? ''))
+                    : 'Área general')
+                ->map(fn (Collection $group, string $name) => [
+                    'name' => $name,
+                    'jobs' => $group->count(),
+                    'cost' => round((float) $group->sum(fn (Incident $i) => (float) $i->cost), 2),
+                ])
+                ->sortByDesc('cost')
+                ->values(),
+            'byTechnician' => $withCost
+                ->groupBy(fn (Incident $i) => $i->technician?->name ?? 'Sin registrar')
+                ->map(fn (Collection $group, string $name) => [
+                    'name' => $name,
+                    'kind' => $group->first()->technician?->kindLabel(),
+                    'jobs' => $group->count(),
+                    'cost' => round((float) $group->sum(fn (Incident $i) => (float) $i->cost), 2),
+                ])
+                ->sortByDesc('cost')
+                ->values(),
         ];
     }
 

@@ -20,6 +20,33 @@ beforeEach(function () {
     ]);
 });
 
+it('get_policies expone ocupación real con cobro por persona extra y liga de fotos', function () {
+    $this->roomType->update(['photos_url' => 'https://mimotel.com/habitaciones/sencilla']);
+    $this->room->update(['max_occupancy' => 3]);
+    // Cargo opcional del cuarto (mascota): el bot debe poder citarlo.
+    $this->room->update(['optional_charges' => [['concept' => 'Mascota', 'amount' => 200]]]);
+
+    $payload = json_decode(app(AgentToolsController::class)->policies()->getContent(), true);
+    $type = collect($payload['room_types'])->firstWhere('name', $this->roomType->name);
+
+    expect($type['occupancy']['included_guests'])->toBe(2)
+        ->and($type['occupancy']['max_guests'])->toBe(3)
+        ->and($type['occupancy']['extra_guest_fee'])->toEqual(650)
+        ->and($type['occupancy']['extra_guest_fee_label'])->toContain('$650.00')
+        ->and($type['optional_charges'][0]['concept'])->toBe('Mascota')
+        ->and($type['photos_url'])->toBe('https://mimotel.com/habitaciones/sencilla');
+});
+
+it('get_policies sin cobro por persona extra deja extra_guest_fee en null', function () {
+    $this->room->update(['included_occupancy' => null, 'extra_guest_fee' => null]);
+
+    $payload = json_decode(app(AgentToolsController::class)->policies()->getContent(), true);
+    $type = collect($payload['room_types'])->firstWhere('name', $this->roomType->name);
+
+    expect($type['occupancy']['extra_guest_fee'])->toBeNull()
+        ->and($type['occupancy']['included_guests'])->toBe(3); // cae a capacity
+});
+
 it('create_hold devuelve price_breakdown con la misma lógica que el wizard público (spec-wizard-precios §P2)', function () {
     $plan = RatePlan::factory()->block(720, 900)->create([
         'property_id' => $this->property->id,
@@ -175,4 +202,31 @@ it('solicitar_pago con pasarela elegida pero no conectada explica el error sin s
 
     expect($response->getStatusCode())->toBe(422)
         ->and($response->getData(true)['message'])->toContain('pasarela');
+});
+
+/**
+ * El JSON de las herramientas se le pega entero al prompt del bot y vuelve
+ * como resultado de cada llamada: escapado, el modelo lee "habitación"
+ * en vez de "habitación" — más tokens por cada acento y texto sucio de
+ * vuelta con los modelos chicos.
+ */
+it('las herramientas devuelven acentos, no escapes unicode', function () {
+    $this->roomType->update(['name' => 'Habitación Jacuzzi', 'photos_url' => 'https://mimotel.com/fotos/jacuzzi']);
+
+    $json = \App\Services\Agent\AgentBrain::readable(
+        app(AgentToolsController::class)->policies()
+    );
+
+    expect($json)->toContain('Habitación Jacuzzi')
+        // Ni un solo escape \uXXXX en todo el payload.
+        ->and(preg_match('/\\\\u[0-9a-f]{4}/', $json))->toBe(0)
+        // Las barras de las URLs tampoco se escapan.
+        ->and($json)->toContain('https://mimotel.com/fotos/jacuzzi')
+        ->and(str_contains($json, '\\/'))->toBeFalse();
+});
+
+it('readable no rompe una respuesta que no sea un objeto JSON', function () {
+    $raw = response()->json('texto suelto');
+
+    expect(\App\Services\Agent\AgentBrain::readable($raw))->toBe('"texto suelto"');
 });

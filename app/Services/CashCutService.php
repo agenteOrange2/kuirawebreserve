@@ -20,6 +20,48 @@ use Illuminate\Support\Carbon;
 class CashCutService
 {
     /**
+     * Ámbitos que ESTE usuario puede ver: Recepción exige ver reservas (la
+     * cocina corta solo su venta) y Punto de venta exige el módulo. Sin
+     * contexto de tenant (tests) el módulo no aplica.
+     *
+     * Vive aquí y no en el controlador porque lo consultan la página de
+     * cortes y el panel de caja del plano; duplicado, un permiso nuevo se
+     * arreglaría en un lado y no en el otro.
+     *
+     * @return list<string>
+     */
+    public function availableScopes(User $viewer): array
+    {
+        $tenant = tenant();
+
+        return array_values(array_filter([
+            $viewer->can('reservations.view') ? CashCut::SCOPE_ROOMS : null,
+            $tenant === null || $tenant->hasModule('pos') ? CashCut::SCOPE_POS : null,
+        ]));
+    }
+
+    /**
+     * Periodo "en curso" de un ámbito: si el encargado tiene turno abierto,
+     * el del turno; si no, desde el último corte hasta ahora.
+     *
+     * @return array{shift: ?Shift, from: CarbonInterface, to: CarbonInterface}
+     */
+    public function openContext(User $user, string $scope): array
+    {
+        $shift = Shift::query()
+            ->open()
+            ->where('user_id', $user->id)
+            ->latest('started_at')
+            ->first();
+
+        return [
+            'shift' => $shift,
+            'from' => $shift?->started_at ?? $this->defaultOpenedAt($user, $scope),
+            'to' => Carbon::now(),
+        ];
+    }
+
+    /**
      * Inicio sugerido del periodo PARA UN ÁMBITO: fin del último corte del
      * usuario que haya cubierto ese ámbito (uno 'all' viejo cuenta para
      * ambos — ya contabilizó todo), o su actividad más antigua sin cortar,

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import axios from 'axios';
-import { computed, ref, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormHelp,
@@ -54,6 +54,12 @@ const props = defineProps<{
     open: boolean;
     room: ExpressRoom | null;
     guaranteeAmount: number;
+    /**
+     * Motel puro: la caseta abre el acceso y el encargado cobra en la
+     * habitación. En "ambos" decide quien atiende, así que el interruptor se
+     * ve pero arranca en "cobra la caseta", como el hotel de siempre.
+     */
+    collectorDefault: 'caseta' | 'encargado';
 }>();
 
 const emit = defineEmits<{
@@ -72,6 +78,20 @@ const ratePlanId = ref<number | null>(null);
 const arrival = ref<'vehicle' | 'foot'>('vehicle');
 const plate = ref('');
 const vehicleDesc = ref('');
+// Ficha del vehículo (registro de placas del motel): marca y modelo se
+// capturan estructurados y viven en `vehicles`, no en la estancia.
+const vehicleBrand = ref('');
+const vehicleModel = ref('');
+const vehicleColor = ref('');
+// Lo que ya sabemos de esa placa: se consulta al teclearla, para que la
+// segunda visita no vuelva a pedir lo mismo — y para avisar si está vetada.
+const knownVehicle = ref<{
+    plate: string;
+    label: string | null;
+    visits: number;
+    is_blacklisted: boolean;
+    blacklist_reason: string | null;
+} | null>(null);
 const guestName = ref('');
 const docType = ref('ine');
 const docNumber = ref('');
@@ -79,6 +99,10 @@ const stagedPhotos = ref<StagedPhoto[]>([]);
 const people = ref(1);
 const extraConcepts = ref<string[]>([]);
 const paymentMethod = ref<'cash' | 'card' | 'transfer'>('cash');
+// Quién tiene el dinero en la mano. Con 'encargado' la llegada nace SIN cobro
+// y sin sellar: el acceso se abre ya, y placa, marca, modelo y color se
+// capturan cuando el encargado regrese con el papel.
+const collector = ref<'caseta' | 'encargado'>('caseta');
 const paymentReference = ref('');
 const guaranteeMethod = ref<'cash' | 'card'>('cash');
 
@@ -120,6 +144,10 @@ watch(
         arrival.value = 'vehicle';
         plate.value = '';
         vehicleDesc.value = '';
+        vehicleBrand.value = '';
+        vehicleModel.value = '';
+        vehicleColor.value = '';
+        knownVehicle.value = null;
         guestName.value = '';
         docType.value = 'ine';
         docNumber.value = '';
@@ -129,8 +157,46 @@ watch(
         paymentMethod.value = 'cash';
         paymentReference.value = '';
         guaranteeMethod.value = 'cash';
+        collector.value = props.collectorDefault;
     },
 );
+
+// Al teclear la placa se pregunta si ese carro ya vino: la segunda visita
+// autocompleta marca y modelo (sin pisar lo que el cajero ya escribió) y una
+// placa vetada avisa antes de cobrar, no después.
+let plateTimer: ReturnType<typeof setTimeout> | null = null;
+
+watch(plate, (value) => {
+    if (plateTimer) {
+        clearTimeout(plateTimer);
+    }
+
+    const term = value.trim();
+
+    if (term.length < 4) {
+        knownVehicle.value = null;
+
+        return;
+    }
+
+    plateTimer = setTimeout(async () => {
+        try {
+            const { data } = await axios.get('/api/vehicles/lookup', {
+                params: { plate: term },
+            });
+            knownVehicle.value = data ?? null;
+
+            if (data) {
+                vehicleBrand.value = vehicleBrand.value || (data.brand ?? '');
+                vehicleModel.value = vehicleModel.value || (data.model ?? '');
+                vehicleColor.value = vehicleColor.value || (data.color ?? '');
+            }
+        } catch {
+            // Sin registro de placas (o sin permiso) el exprés sigue igual.
+            knownVehicle.value = null;
+        }
+    }, 400);
+});
 
 const maxPeople = computed(() => modalRoom.value?.capacity ?? 20);
 
@@ -179,8 +245,15 @@ const footNameMissing = computed(
     () => arrival.value === 'foot' && guestName.value.trim() === '',
 );
 
+const laterCapture = computed(() => collector.value === 'encargado');
+
 const canSubmit = computed(
-    () => !saving.value && !!ratePlanId.value && !footNameMissing.value,
+    () =>
+        !saving.value &&
+        !!ratePlanId.value &&
+        // Con captura diferida no se exige el nombre: justo eso es lo que se
+        // va a anotar en la habitación.
+        (laterCapture.value || !footNameMissing.value),
 );
 
 const money = (n: number) =>
@@ -240,6 +313,18 @@ async function submit() {
                 arrival.value === 'vehicle' && vehicleDesc.value.trim() !== ''
                     ? vehicleDesc.value.trim()
                     : undefined,
+            vehicle_brand:
+                arrival.value === 'vehicle' && vehicleBrand.value.trim() !== ''
+                    ? vehicleBrand.value.trim()
+                    : undefined,
+            vehicle_model:
+                arrival.value === 'vehicle' && vehicleModel.value.trim() !== ''
+                    ? vehicleModel.value.trim()
+                    : undefined,
+            vehicle_color:
+                arrival.value === 'vehicle' && vehicleColor.value.trim() !== ''
+                    ? vehicleColor.value.trim()
+                    : undefined,
             id_document_type:
                 arrival.value === 'foot' && docNumber.value.trim() !== ''
                     ? docType.value
@@ -253,8 +338,15 @@ async function submit() {
             extra_charges: extraConcepts.value.length
                 ? extraConcepts.value
                 : undefined,
-            payment_method: paymentMethod.value,
+            arrival_pending: laterCapture.value,
+            // Se guarda aunque no haya datos todavía: es lo que evita que el
+            // diálogo de completar vuelva a preguntar en carro o a pie.
+            arrival_mode: arrival.value,
+            payment_method: laterCapture.value
+                ? undefined
+                : paymentMethod.value,
             payment_reference:
+                !laterCapture.value &&
                 paymentMethod.value !== 'cash' &&
                 paymentReference.value.trim() !== ''
                     ? paymentReference.value.trim()
@@ -302,10 +394,24 @@ async function submit() {
         saving.value = false;
     }
 }
+
+// El fondo es estático para que un clic afuera no tire el formulario, pero Esc
+// sí debe cerrar: la tecla es una decisión, no un resbalón del ratón. El
+// Dialog del theme se la traga junto con el clic, así que se escucha aquí.
+function onEscape(event: KeyboardEvent) {
+    if (event.key === 'Escape' && props.open) {
+        emit('close');
+    }
+}
+
+onMounted(() => window.addEventListener('keydown', onEscape));
+onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
 </script>
 
 <template>
-    <Dialog :open="open" size="lg" @close="emit('close')">
+    <!-- staticBackdrop: es un formulario largo y con dinero de por medio;
+         un clic afuera no debe tirarlo (el theme hace un "zoom" de aviso). -->
+    <Dialog :open="open" size="lg" static-backdrop @close="emit('close')">
         <Dialog.Panel>
             <div class="flex max-h-[85vh] flex-col">
                 <!-- Header -->
@@ -329,6 +435,7 @@ async function submit() {
                     <button
                         type="button"
                         class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                        aria-label="Cerrar"
                         @click="emit('close')"
                     >
                         <Lucide icon="X" class="h-5 w-5" />
@@ -393,6 +500,70 @@ async function submit() {
                         </div>
                     </div>
 
+                    <!-- Quién cobra. En la caseta de un motel el dinero lo
+                         recibe el encargado en la habitación, no aquí: con eso
+                         puesto el acceso se abre ya y la captura queda
+                         pendiente. -->
+                    <div>
+                        <div
+                            class="mb-2.5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            <Lucide icon="HandCoins" class="h-3.5 w-3.5" />
+                            Quién cobra
+                        </div>
+                        <div class="grid grid-cols-2 gap-2.5">
+                            <button
+                                type="button"
+                                class="rounded-lg border px-3 py-3 text-left transition"
+                                :class="
+                                    collector === 'caseta'
+                                        ? 'border-primary bg-primary/5'
+                                        : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
+                                "
+                                @click="collector = 'caseta'"
+                            >
+                                <span class="block text-sm font-medium"
+                                    >Aquí mismo</span
+                                >
+                                <span
+                                    class="mt-0.5 block text-xs text-slate-500"
+                                    >Se cobra y se captura todo ahora</span
+                                >
+                            </button>
+                            <button
+                                type="button"
+                                class="rounded-lg border px-3 py-3 text-left transition"
+                                :class="
+                                    collector === 'encargado'
+                                        ? 'border-primary bg-primary/5'
+                                        : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
+                                "
+                                @click="collector = 'encargado'"
+                            >
+                                <span class="block text-sm font-medium"
+                                    >El encargado, en la habitación</span
+                                >
+                                <span
+                                    class="mt-0.5 block text-xs text-slate-500"
+                                    >Abre el acceso; los datos y el cobro se
+                                    capturan después</span
+                                >
+                            </button>
+                        </div>
+                        <p
+                            v-if="laterCapture"
+                            class="mt-2.5 flex items-start gap-2 rounded-lg bg-pending/10 px-3.5 py-2.5 text-xs text-pending"
+                        >
+                            <Lucide
+                                icon="ClipboardPen"
+                                class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                            />
+                            La habitación quedará marcada como "falta capturar"
+                            hasta que regrese el papel con la placa y el cobro.
+                            Lo de abajo es opcional.
+                        </p>
+                    </div>
+
                     <!-- Llegada: carro o a pie -->
                     <div>
                         <div
@@ -438,11 +609,12 @@ async function submit() {
                             </button>
                         </div>
 
-                        <!-- En carro: la placa es el registro -->
-                        <div
-                            v-if="arrival === 'vehicle'"
-                            class="grid items-start gap-3 sm:grid-cols-2"
-                        >
+                        <!-- En carro: la placa manda y por eso ocupa el
+                             renglón completo y se lee grande; marca, modelo y
+                             color van juntos abajo como lo secundario que son.
+                             Antes compartían retícula y la placa quedaba del
+                             mismo tamaño que un campo opcional. -->
+                        <div v-if="arrival === 'vehicle'" class="space-y-4">
                             <div>
                                 <FormLabel htmlFor="express-plate"
                                     >Placas</FormLabel
@@ -450,7 +622,7 @@ async function submit() {
                                 <FormInput
                                     id="express-plate"
                                     v-model="plate"
-                                    class="uppercase"
+                                    class="h-12 text-center text-lg font-semibold tracking-[0.25em] uppercase"
                                     placeholder="ABC-123-D"
                                     maxlength="20"
                                 />
@@ -459,21 +631,97 @@ async function submit() {
                                     piden.</FormHelp
                                 >
                             </div>
+
                             <div>
-                                <FormLabel htmlFor="express-vehicle"
-                                    >Vehículo (opcional)</FormLabel
+                                <div
+                                    class="mb-2 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
                                 >
-                                <FormInput
-                                    id="express-vehicle"
-                                    v-model="vehicleDesc"
-                                    placeholder="Sedán gris"
-                                    maxlength="100"
-                                />
+                                    <Lucide icon="Car" class="h-3.5 w-3.5" />
+                                    Vehículo (opcional)
+                                </div>
+                                <div class="grid gap-3 sm:grid-cols-3">
+                                    <FormInput
+                                        v-model="vehicleBrand"
+                                        aria-label="Marca"
+                                        placeholder="Marca"
+                                        maxlength="40"
+                                    />
+                                    <FormInput
+                                        v-model="vehicleModel"
+                                        aria-label="Modelo"
+                                        placeholder="Modelo"
+                                        maxlength="40"
+                                    />
+                                    <FormInput
+                                        v-model="vehicleColor"
+                                        aria-label="Color"
+                                        placeholder="Color"
+                                        maxlength="30"
+                                    />
+                                </div>
                             </div>
                         </div>
 
-                        <!-- A pie: nombre + identificación con foto -->
-                        <div v-else class="space-y-3">
+                        <!-- Lo que ya se sabía de esa placa: la segunda visita
+                             no vuelve a preguntar, y si está vetada se avisa
+                             ANTES de registrar. -->
+                        <div
+                            v-if="arrival === 'vehicle' && knownVehicle"
+                            class="flex items-start gap-2.5 rounded-lg border p-3 text-sm"
+                            :class="
+                                knownVehicle.is_blacklisted
+                                    ? 'border-danger/30 bg-danger/5'
+                                    : 'border-info/30 bg-info/5'
+                            "
+                        >
+                            <Lucide
+                                :icon="
+                                    knownVehicle.is_blacklisted
+                                        ? 'ShieldAlert'
+                                        : 'History'
+                                "
+                                class="mt-0.5 h-4 w-4 shrink-0"
+                                :class="
+                                    knownVehicle.is_blacklisted
+                                        ? 'text-danger'
+                                        : 'text-info'
+                                "
+                            />
+                            <div class="min-w-0">
+                                <div class="font-medium">
+                                    <template v-if="knownVehicle.is_blacklisted"
+                                        >Esta placa está vetada</template
+                                    >
+                                    <template v-else
+                                        >Ya estuvo aquí
+                                        {{ knownVehicle.visits }}
+                                        {{
+                                            knownVehicle.visits === 1
+                                                ? 'vez'
+                                                : 'veces'
+                                        }}</template
+                                    >
+                                </div>
+                                <p
+                                    class="mt-0.5 text-slate-600 dark:text-slate-300"
+                                >
+                                    {{
+                                        knownVehicle.is_blacklisted
+                                            ? (knownVehicle.blacklist_reason ??
+                                              'Revisa con el encargado antes de registrar.')
+                                            : (knownVehicle.label ??
+                                              'Sin datos del vehículo capturados.')
+                                    }}
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- A pie: nombre + identificación con foto. Condición
+                             EXPLÍCITA y no `v-else`: el aviso de placa conocida
+                             quedó entre las dos ramas y el v-else se emparejó
+                             con él, así que en carro también se pintaban estos
+                             campos. En carro solo se pide el vehículo. -->
+                        <div v-if="arrival === 'foot'" class="space-y-3">
                             <div>
                                 <FormLabel htmlFor="express-guest-name"
                                     >Nombre completo</FormLabel
@@ -645,7 +893,7 @@ async function submit() {
                     </div>
 
                     <!-- Cobro -->
-                    <div>
+                    <div v-if="!laterCapture">
                         <div
                             class="mb-2.5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
                         >
@@ -721,14 +969,19 @@ async function submit() {
                     </div>
                 </div>
 
-                <!-- Footer -->
+                <!-- Footer. En móvil se apila: desde que el plano se abre en
+                     pantalla completa en el teléfono, este modal se usa de
+                     verdad ahí y en una sola fila la leyenda quedaba en una
+                     columna de tres palabras al lado del botón. -->
                 <div
-                    class="flex items-center justify-between gap-3 border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    class="flex flex-col gap-3 border-t border-slate-200/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-darkmode-400"
                 >
                     <div class="text-xs text-slate-500">
-                        <span class="block"
-                            >El total exacto lo confirma el sistema.</span
-                        >
+                        <span class="block">{{
+                            laterCapture
+                                ? `Quedan ${money(total)} por cobrar en la habitación.`
+                                : 'El total exacto lo confirma el sistema.'
+                        }}</span>
                         <span v-if="guaranteeAmount > 0" class="block"
                             >+ {{ money(guaranteeAmount) }} de fianza (se
                             devuelve al salir).</span
@@ -741,11 +994,16 @@ async function submit() {
                         :disabled="!canSubmit"
                         @click="submit"
                     >
-                        <Lucide icon="Zap" class="mr-2 h-4 w-4" />
+                        <Lucide
+                            :icon="laterCapture ? 'DoorOpen' : 'Zap'"
+                            class="mr-2 h-4 w-4"
+                        />
                         {{
                             saving
                                 ? 'Registrando…'
-                                : `Registrar y cobrar ${money(total)}`
+                                : laterCapture
+                                  ? 'Abrir acceso'
+                                  : `Registrar y cobrar ${money(total)}`
                         }}
                     </Button>
                     <Button

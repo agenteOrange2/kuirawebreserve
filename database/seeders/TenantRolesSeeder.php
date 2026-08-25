@@ -27,6 +27,8 @@ class TenantRolesSeeder extends Seeder
             'inventory.manage',
             'orders.manage',
             'shifts.manage',
+            // Registrar limpiezas y administrar camaristas (módulo limpieza).
+            'housekeeping.manage',
             'guests.view',
             'guests.manage',
             'guests.view-documents',
@@ -48,6 +50,7 @@ class TenantRolesSeeder extends Seeder
                 'inventory.manage',
                 'orders.manage',
                 'shifts.manage',
+                'housekeeping.manage',
                 'guests.view',
                 'guests.manage',
                 'guests.view-documents',
@@ -57,6 +60,7 @@ class TenantRolesSeeder extends Seeder
             'front-desk' => [
                 'rooms.view',
                 'rooms.update-status',
+                'housekeeping.manage',
                 'reservations.view',
                 'reservations.manage',
                 'orders.manage',
@@ -67,6 +71,7 @@ class TenantRolesSeeder extends Seeder
             'housekeeping' => [
                 'rooms.view',
                 'rooms.update-status',
+                'housekeeping.manage',
             ],
             'kitchen' => [
                 'inventory.manage',

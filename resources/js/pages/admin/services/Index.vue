@@ -2,7 +2,12 @@
 import { useForm } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormHelp, FormInput, FormSwitch, FormTextarea } from '@/components/Base/Form';
+import {
+    FormHelp,
+    FormInput,
+    FormSwitch,
+    FormTextarea,
+} from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
@@ -89,8 +94,7 @@ function submit() {
         ...data,
         summary: data.summary === '' ? null : data.summary,
         objective: data.objective === '' ? null : data.objective,
-        recommendation:
-            data.recommendation === '' ? null : data.recommendation,
+        recommendation: data.recommendation === '' ? null : data.recommendation,
         price_monthly: Number(data.price_monthly || 0),
         activation_fee: Number(data.activation_fee || 0),
     })).patch(route('admin.services.update', editing.value.key), {
@@ -148,11 +152,11 @@ function toggleTenant(tenantId: string) {
                     Servicios adicionales
                 </h1>
                 <p class="text-sm text-slate-500">
-                    Se contratan por encima del plan base y se cobran aparte;
-                    lo que incluyen se enciende al hotel en cuanto se contratan
+                    Se contratan por encima del plan base y se cobran aparte; lo
+                    que incluyen se enciende al hotel en cuanto se contratan
                 </p>
             </div>
-            <div class="md:ml-auto flex items-center gap-2">
+            <div class="flex items-center gap-2 md:ml-auto">
                 <span
                     class="flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-500 dark:bg-darkmode-400"
                 >
@@ -214,7 +218,9 @@ function toggleTenant(tenantId: string) {
                                 <span class="text-xs"> MXN/mes</span>
                                 <span class="mx-1.5 text-slate-300">·</span>
                                 <span class="text-xs"
-                                    >{{ money(service.activation_fee) }}
+                                    >{{
+                                        money(service.activation_fee)
+                                    }}
                                     activación</span
                                 >
                             </div>
@@ -253,8 +259,13 @@ function toggleTenant(tenantId: string) {
                             class="flex items-center gap-1.5 rounded-md bg-pending/10 px-2.5 py-1.5 text-xs text-pending"
                         >
                             <Lucide icon="Link" class="h-3.5 w-3.5 shrink-0" />
-                            Amplía "{{ displayTitle(services.find((s) => s.key === service.requires) ?? service) }}":
-                            requiere tenerlo contratado
+                            Amplía "{{
+                                displayTitle(
+                                    services.find(
+                                        (s) => s.key === service.requires,
+                                    ) ?? service,
+                                )
+                            }}": requiere tenerlo contratado
                         </div>
                         <div v-if="service.includes.length" class="mt-auto">
                             <div
@@ -339,7 +350,11 @@ function toggleTenant(tenantId: string) {
                     </div>
                     <div class="min-w-0 flex-1">
                         <h2 class="text-base font-medium">
-                            {{ managingCurrent ? displayTitle(managingCurrent) : '' }}
+                            {{
+                                managingCurrent
+                                    ? displayTitle(managingCurrent)
+                                    : ''
+                            }}
                         </h2>
                         <p class="mt-0.5 text-xs text-slate-500">
                             {{ money(managingCurrent?.price_monthly ?? 0) }}
@@ -391,6 +406,14 @@ function toggleTenant(tenantId: string) {
                                     >Plan {{ tenant.plan_label }}</span
                                 >
                             </span>
+                            <a
+                                :href="route('admin.tenants.plan', tenant.id)"
+                                class="shrink-0 text-xs text-primary"
+                                title="Ver el plan y los servicios de este hotel"
+                                @click.stop
+                            >
+                                Ver hotel
+                            </a>
                         </label>
                         <p
                             v-if="!tenants.length"
@@ -404,11 +427,7 @@ function toggleTenant(tenantId: string) {
         </Dialog>
 
         <!-- Modal editar servicio -->
-        <Dialog
-            :open="editing !== null"
-            size="xl"
-            @close="editing = null"
-        >
+        <Dialog :open="editing !== null" size="xl" @close="editing = null">
             <Dialog.Panel>
                 <form class="flex flex-col" @submit.prevent="submit">
                     <div
@@ -427,8 +446,8 @@ function toggleTenant(tenantId: string) {
                                 Editar servicio adicional
                             </h2>
                             <p class="mt-0.5 text-xs text-slate-500">
-                                Los cambios de precio aplican de inmediato a
-                                los hoteles que lo tienen contratado.
+                                Los cambios de precio aplican de inmediato a los
+                                hoteles que lo tienen contratado.
                             </p>
                         </div>
                         <button

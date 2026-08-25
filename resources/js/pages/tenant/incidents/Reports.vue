@@ -63,7 +63,26 @@ const props = defineProps<{
         guest: number;
     }>;
     guestReported: number;
+    costs: {
+        total: number;
+        jobs: number;
+        missing: number;
+        charged: number;
+        charged_jobs: number;
+        byRoom: Array<{ name: string; jobs: number; cost: number }>;
+        byTechnician: Array<{
+            name: string;
+            kind: string | null;
+            jobs: number;
+            cost: number;
+        }>;
+    };
 }>();
+
+const money = new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency: 'MXN',
+});
 
 // ── Selector de periodo ───────────────────────────────────────
 const periods: { key: string; label: string; icon: Icon }[] = [
@@ -575,6 +594,188 @@ const hoursLabel = (hours: number | null) =>
                         <p v-else class="mt-3 text-sm text-slate-400">
                             Sin incidencias en el periodo.
                         </p>
+                    </div>
+                </div>
+
+                <!-- Costo de las reparaciones: se mide sobre lo resuelto,
+                     que es cuando se paga, no cuando se reporta -->
+                <div class="col-span-12">
+                    <div class="box box--stacked p-5">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <div class="text-base font-medium">
+                                Costo de las reparaciones
+                            </div>
+                            <span class="text-xs text-slate-400">
+                                de lo resuelto en el periodo
+                            </span>
+                        </div>
+                        <div class="mt-3 grid grid-cols-12 gap-3">
+                            <div class="col-span-12 sm:col-span-4">
+                                <div
+                                    class="h-full rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
+                                >
+                                    <div class="text-xs text-slate-500">
+                                        Se gastó
+                                    </div>
+                                    <div class="mt-0.5 text-xl font-medium">
+                                        {{ money.format(costs.total) }}
+                                    </div>
+                                    <div class="mt-0.5 text-xs text-slate-400">
+                                        {{ costs.jobs }} reparación(es) con
+                                        costo capturado
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-span-12 sm:col-span-4">
+                                <div
+                                    class="h-full rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
+                                >
+                                    <div class="text-xs text-slate-500">
+                                        Se le cobró al huésped
+                                    </div>
+                                    <div class="mt-0.5 text-xl font-medium">
+                                        {{ money.format(costs.charged) }}
+                                    </div>
+                                    <div class="mt-0.5 text-xs text-slate-400">
+                                        {{ costs.charged_jobs }} daño(s)
+                                        cargados a una cuenta
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="col-span-12 sm:col-span-4">
+                                <div
+                                    class="h-full rounded-lg border p-3.5"
+                                    :class="
+                                        costs.total - costs.charged > 0
+                                            ? 'border-pending/20 bg-pending/5'
+                                            : 'border-success/20 bg-success/5'
+                                    "
+                                >
+                                    <div class="text-xs text-slate-500">
+                                        Puso la casa
+                                    </div>
+                                    <div class="mt-0.5 text-xl font-medium">
+                                        {{
+                                            money.format(
+                                                Math.max(
+                                                    0,
+                                                    costs.total - costs.charged,
+                                                ),
+                                            )
+                                        }}
+                                    </div>
+                                    <div
+                                        v-if="costs.missing > 0"
+                                        class="mt-0.5 text-xs text-slate-400"
+                                    >
+                                        {{ costs.missing }} resuelta(s) sin
+                                        costo capturado: la cuenta puede ser
+                                        mayor.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="mt-4 grid grid-cols-12 gap-5">
+                            <div class="col-span-12 lg:col-span-6">
+                                <div
+                                    class="text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                >
+                                    Qué habitación sale cara
+                                </div>
+                                <Table
+                                    v-if="costs.byRoom.length"
+                                    class="mt-2.5"
+                                >
+                                    <Table.Thead>
+                                        <Table.Tr>
+                                            <Table.Th>Habitación</Table.Th>
+                                            <Table.Th class="text-right"
+                                                >Trabajos</Table.Th
+                                            >
+                                            <Table.Th class="text-right"
+                                                >Costo</Table.Th
+                                            >
+                                        </Table.Tr>
+                                    </Table.Thead>
+                                    <Table.Tbody>
+                                        <Table.Tr
+                                            v-for="row in costs.byRoom"
+                                            :key="row.name"
+                                        >
+                                            <Table.Td class="font-medium">{{
+                                                row.name
+                                            }}</Table.Td>
+                                            <Table.Td class="text-right">{{
+                                                row.jobs
+                                            }}</Table.Td>
+                                            <Table.Td
+                                                class="text-right font-medium whitespace-nowrap"
+                                                >{{
+                                                    money.format(row.cost)
+                                                }}</Table.Td
+                                            >
+                                        </Table.Tr>
+                                    </Table.Tbody>
+                                </Table>
+                                <p v-else class="mt-2.5 text-sm text-slate-400">
+                                    Nadie capturó costos en el periodo.
+                                </p>
+                            </div>
+                            <div class="col-span-12 lg:col-span-6">
+                                <div
+                                    class="text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                >
+                                    Quién hizo el trabajo
+                                </div>
+                                <Table
+                                    v-if="costs.byTechnician.length"
+                                    class="mt-2.5"
+                                >
+                                    <Table.Thead>
+                                        <Table.Tr>
+                                            <Table.Th>Quién reparó</Table.Th>
+                                            <Table.Th class="text-right"
+                                                >Trabajos</Table.Th
+                                            >
+                                            <Table.Th class="text-right"
+                                                >Costo</Table.Th
+                                            >
+                                        </Table.Tr>
+                                    </Table.Thead>
+                                    <Table.Tbody>
+                                        <Table.Tr
+                                            v-for="row in costs.byTechnician"
+                                            :key="row.name"
+                                        >
+                                            <Table.Td>
+                                                <span class="font-medium">{{
+                                                    row.name
+                                                }}</span>
+                                                <div
+                                                    v-if="row.kind"
+                                                    class="text-[11px] text-slate-400"
+                                                >
+                                                    {{ row.kind }}
+                                                </div>
+                                            </Table.Td>
+                                            <Table.Td class="text-right">{{
+                                                row.jobs
+                                            }}</Table.Td>
+                                            <Table.Td
+                                                class="text-right font-medium whitespace-nowrap"
+                                                >{{
+                                                    money.format(row.cost)
+                                                }}</Table.Td
+                                            >
+                                        </Table.Tr>
+                                    </Table.Tbody>
+                                </Table>
+                                <p v-else class="mt-2.5 text-sm text-slate-400">
+                                    Nadie capturó costos en el periodo.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

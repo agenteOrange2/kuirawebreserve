@@ -6,6 +6,7 @@ import Button from '@/components/Base/Button';
 import {
     FormHelp,
     FormInput,
+    FormLabel,
     FormSelect,
     FormSwitch,
 } from '@/components/Base/Form';
@@ -66,6 +67,28 @@ interface MetaChannelRow {
     created_at: string | null;
 }
 
+interface TelegramChannelRow {
+    id: number;
+    name: string | null;
+    bot_username: string | null;
+    masked_token: string;
+    webhook_url: string;
+    active: boolean;
+    last_event_at: string | null;
+    created_at: string | null;
+}
+
+interface TiktokChannelRow {
+    id: number;
+    name: string | null;
+    business_id: string;
+    masked_token: string;
+    webhook_url: string;
+    active: boolean;
+    last_event_at: string | null;
+    created_at: string | null;
+}
+
 interface MetaDiagnose {
     token_ok: boolean;
     phone: string | null;
@@ -103,6 +126,8 @@ const props = defineProps<{
     ratePlansCount: number;
     evolutionChannels: EvolutionChannelRow[];
     metaChannels: MetaChannelRow[];
+    telegramChannels: TelegramChannelRow[];
+    tiktokChannels: TiktokChannelRow[];
     metaConfig: {
         mode: string;
         webhook_url: string;
@@ -680,6 +705,289 @@ async function copyWebhook(ch: EvolutionChannelRow) {
     copiedWebhookId.value = ch.id;
     setTimeout(() => {
         if (copiedWebhookId.value === ch.id) copiedWebhookId.value = null;
+    }, 2000);
+}
+
+// ── Canal Telegram (Bot API) ──
+const showTelegramForm = ref(false);
+const editingTelegram = ref<TelegramChannelRow | null>(null);
+const telegramForm = reactive({ name: '', bot_token: '', active: true });
+const telegramError = ref<string | null>(null);
+
+function openTelegramCreate() {
+    if (channelLimitReached.value) return;
+    editingTelegram.value = null;
+    telegramForm.name = '';
+    telegramForm.bot_token = '';
+    telegramForm.active = true;
+    telegramError.value = null;
+    showTelegramForm.value = true;
+}
+
+function openTelegramEdit(ch: TelegramChannelRow) {
+    editingTelegram.value = ch;
+    telegramForm.name = ch.name ?? '';
+    telegramForm.bot_token = '';
+    telegramForm.active = ch.active;
+    telegramError.value = null;
+    showTelegramForm.value = true;
+}
+
+async function submitTelegram() {
+    saving.value = true;
+    telegramError.value = null;
+    try {
+        if (editingTelegram.value) {
+            await axios.patch(
+                route(
+                    'tenant.telegram-channels.update',
+                    editingTelegram.value.id,
+                ),
+                {
+                    name: telegramForm.name || null,
+                    bot_token: telegramForm.bot_token || null,
+                    active: telegramForm.active,
+                },
+            );
+            toast.success(
+                'Canal actualizado',
+                'Los cambios ya están aplicados.',
+            );
+        } else {
+            const { data } = await axios.post(
+                route('tenant.telegram-channels.store'),
+                {
+                    name: telegramForm.name || null,
+                    bot_token: telegramForm.bot_token,
+                },
+            );
+            if (data.webhook_configured) {
+                toast.success(
+                    'Bot conectado',
+                    'El webhook quedó registrado; los mensajes de Telegram ya entran a la bandeja.',
+                );
+            } else {
+                toast.success('Bot conectado');
+                toast.error(
+                    'Webhook sin registrar',
+                    'Usa Probar conexión para reintentar el registro del webhook.',
+                );
+            }
+        }
+        showTelegramForm.value = false;
+        router.reload({ only: ['telegramChannels', 'channelLimit'] });
+    } catch (e: any) {
+        const msg =
+            e.response?.data?.message ??
+            (
+                Object.values(e.response?.data?.errors ?? {})[0] as
+                    | string[]
+                    | undefined
+            )?.[0] ??
+            'No se pudo guardar.';
+        telegramError.value = msg;
+        toast.error('No se pudo guardar el canal', msg);
+    } finally {
+        saving.value = false;
+    }
+}
+
+const deletingTelegram = ref<TelegramChannelRow | null>(null);
+async function submitDeleteTelegram() {
+    if (!deletingTelegram.value) return;
+    saving.value = true;
+    try {
+        await axios.delete(
+            route(
+                'tenant.telegram-channels.destroy',
+                deletingTelegram.value.id,
+            ),
+        );
+        deletingTelegram.value = null;
+        toast.success(
+            'Bot desconectado',
+            'Las conversaciones y su historial se conservan en la bandeja.',
+        );
+        router.reload({ only: ['telegramChannels', 'channelLimit'] });
+    } catch (e: any) {
+        toast.error(
+            'No se pudo desconectar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        saving.value = false;
+    }
+}
+
+const testingTelegram = ref<number | null>(null);
+async function testTelegram(ch: TelegramChannelRow) {
+    testingTelegram.value = ch.id;
+    try {
+        const { data } = await axios.post(
+            route('tenant.telegram-channels.test', ch.id),
+        );
+        if (data.connection?.ok) {
+            toast.success(
+                'Bot conectado',
+                `@${data.connection.username ?? ch.bot_username ?? ''}` +
+                    (data.webhook_configured
+                        ? ' — webhook registrado.'
+                        : ' — el webhook no se pudo registrar.'),
+            );
+        } else {
+            toast.error(
+                'Token rechazado',
+                'Telegram no reconoce el token; captura uno nuevo con Editar.',
+            );
+        }
+        router.reload({ only: ['telegramChannels'] });
+    } catch (e: any) {
+        toast.error(
+            'No se pudo probar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        testingTelegram.value = null;
+    }
+}
+
+// ── Canal TikTok (Business Messaging API) ──
+const showTiktokForm = ref(false);
+const editingTiktok = ref<TiktokChannelRow | null>(null);
+const tiktokForm = reactive({
+    name: '',
+    business_id: '',
+    access_token: '',
+    active: true,
+});
+const tiktokError = ref<string | null>(null);
+
+function openTiktokCreate() {
+    if (channelLimitReached.value) return;
+    editingTiktok.value = null;
+    tiktokForm.name = '';
+    tiktokForm.business_id = '';
+    tiktokForm.access_token = '';
+    tiktokForm.active = true;
+    tiktokError.value = null;
+    showTiktokForm.value = true;
+}
+
+function openTiktokEdit(ch: TiktokChannelRow) {
+    editingTiktok.value = ch;
+    tiktokForm.name = ch.name ?? '';
+    tiktokForm.business_id = ch.business_id;
+    tiktokForm.access_token = '';
+    tiktokForm.active = ch.active;
+    tiktokError.value = null;
+    showTiktokForm.value = true;
+}
+
+async function submitTiktok() {
+    saving.value = true;
+    tiktokError.value = null;
+    try {
+        if (editingTiktok.value) {
+            await axios.patch(
+                route('tenant.tiktok-channels.update', editingTiktok.value.id),
+                {
+                    name: tiktokForm.name || null,
+                    business_id: tiktokForm.business_id,
+                    access_token: tiktokForm.access_token || null,
+                    active: tiktokForm.active,
+                },
+            );
+            toast.success(
+                'Canal actualizado',
+                'Los cambios ya están aplicados.',
+            );
+        } else {
+            await axios.post(route('tenant.tiktok-channels.store'), {
+                name: tiktokForm.name || null,
+                business_id: tiktokForm.business_id,
+                access_token: tiktokForm.access_token,
+            });
+            toast.success(
+                'Cuenta vinculada',
+                'Pega la URL del webhook (visible en la tabla) en el panel de tu app de TikTok.',
+            );
+        }
+        showTiktokForm.value = false;
+        router.reload({ only: ['tiktokChannels', 'channelLimit'] });
+    } catch (e: any) {
+        const msg =
+            e.response?.data?.message ??
+            (
+                Object.values(e.response?.data?.errors ?? {})[0] as
+                    | string[]
+                    | undefined
+            )?.[0] ??
+            'No se pudo guardar.';
+        tiktokError.value = msg;
+        toast.error('No se pudo guardar el canal', msg);
+    } finally {
+        saving.value = false;
+    }
+}
+
+const deletingTiktok = ref<TiktokChannelRow | null>(null);
+async function submitDeleteTiktok() {
+    if (!deletingTiktok.value) return;
+    saving.value = true;
+    try {
+        await axios.delete(
+            route('tenant.tiktok-channels.destroy', deletingTiktok.value.id),
+        );
+        deletingTiktok.value = null;
+        toast.success(
+            'Cuenta desconectada',
+            'Las conversaciones y su historial se conservan en la bandeja.',
+        );
+        router.reload({ only: ['tiktokChannels', 'channelLimit'] });
+    } catch (e: any) {
+        toast.error(
+            'No se pudo desconectar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        saving.value = false;
+    }
+}
+
+const testingTiktok = ref<number | null>(null);
+async function testTiktok(ch: TiktokChannelRow) {
+    testingTiktok.value = ch.id;
+    try {
+        const { data } = await axios.post(
+            route('tenant.tiktok-channels.test', ch.id),
+        );
+        if (data.connection?.ok) {
+            toast.success(
+                'Cuenta conectada',
+                data.connection.name ?? ch.business_id,
+            );
+        } else {
+            toast.error(
+                'TikTok rechazó el token',
+                'Revisa el access token y que tu app tenga el permiso de mensajería.',
+            );
+        }
+    } catch (e: any) {
+        toast.error(
+            'No se pudo probar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        testingTiktok.value = null;
+    }
+}
+
+const copiedExtraWebhook = ref<string | null>(null);
+async function copyExtraWebhook(key: string, url: string) {
+    await navigator.clipboard.writeText(url);
+    copiedExtraWebhook.value = key;
+    setTimeout(() => {
+        if (copiedExtraWebhook.value === key) copiedExtraWebhook.value = null;
     }, 2000);
 }
 
@@ -1919,6 +2227,313 @@ async function copyMeta(key: string, value: string) {
                 </div>
             </div>
 
+            <!-- Telegram (Bot API) -->
+            <div class="col-span-12 xl:col-span-6">
+                <div class="box box--stacked flex h-full flex-col">
+                    <div
+                        class="flex flex-wrap items-center gap-4 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                        >
+                            <Lucide icon="Send" class="h-5 w-5" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">Telegram</h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Crea un bot con BotFather, pega su token y el
+                                asistente atiende Telegram desde la bandeja.
+                            </p>
+                        </div>
+                        <Button
+                            variant="primary"
+                            size="sm"
+                            class="shrink-0 rounded-[0.5rem] shadow-md shadow-primary/20"
+                            :disabled="channelLimitReached"
+                            :title="
+                                channelLimitReached
+                                    ? 'Alcanzaste el límite de canales de mensajería de tu plan.'
+                                    : undefined
+                            "
+                            @click="openTelegramCreate"
+                        >
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                            Conectar bot
+                        </Button>
+                    </div>
+                    <div class="flex-1 p-5">
+                        <div
+                            v-if="telegramChannels.length"
+                            class="divide-y divide-dashed divide-slate-300/70"
+                        >
+                            <div
+                                v-for="ch in telegramChannels"
+                                :key="ch.id"
+                                class="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
+                                :class="{ 'opacity-60': !ch.active }"
+                            >
+                                <div class="min-w-0 flex-1">
+                                    <div
+                                        class="flex flex-wrap items-center gap-2"
+                                    >
+                                        <span
+                                            class="truncate text-sm font-medium"
+                                            >{{
+                                                ch.name ||
+                                                (ch.bot_username
+                                                    ? `@${ch.bot_username}`
+                                                    : 'Telegram')
+                                            }}</span
+                                        >
+                                        <span
+                                            class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                            :class="
+                                                ch.active
+                                                    ? 'bg-success/10 text-success'
+                                                    : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                            "
+                                            >{{
+                                                ch.active
+                                                    ? 'Activo'
+                                                    : 'Pausado'
+                                            }}</span
+                                        >
+                                    </div>
+                                    <div
+                                        class="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-[10px] text-slate-400"
+                                    >
+                                        <span v-if="ch.bot_username"
+                                            >@{{ ch.bot_username }}</span
+                                        >
+                                        <span>{{ ch.masked_token }}</span>
+                                        <span
+                                            :class="{
+                                                'text-slate-500':
+                                                    ch.last_event_at,
+                                            }"
+                                            class="font-sans"
+                                            >{{
+                                                ch.last_event_at
+                                                    ? `Último evento hace ${ch.last_event_at}`
+                                                    : 'Sin eventos recibidos'
+                                            }}</span
+                                        >
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    title="Probar conexión"
+                                    :disabled="testingTelegram === ch.id"
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+                                    @click="testTelegram(ch)"
+                                >
+                                    <Lucide
+                                        :icon="
+                                            testingTelegram === ch.id
+                                                ? 'RefreshCw'
+                                                : 'Stethoscope'
+                                        "
+                                        class="h-4 w-4"
+                                        :class="{
+                                            'animate-spin':
+                                                testingTelegram === ch.id,
+                                        }"
+                                    />
+                                </button>
+                                <button
+                                    type="button"
+                                    title="Editar"
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
+                                    @click="openTelegramEdit(ch)"
+                                >
+                                    <Lucide icon="Pencil" class="h-4 w-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    title="Desconectar"
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                    @click="deletingTelegram = ch"
+                                >
+                                    <Lucide icon="Trash2" class="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
+                        <div
+                            v-else
+                            class="rounded-xl border border-dashed border-slate-300/70 px-4 py-8 text-center text-sm text-slate-500 dark:border-darkmode-400"
+                        >
+                            Aún no conectas ningún bot de Telegram.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- TikTok (Business Messaging API) -->
+            <div class="col-span-12 xl:col-span-6">
+                <div class="box box--stacked flex h-full flex-col">
+                    <div
+                        class="flex flex-wrap items-center gap-4 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-dark/10 bg-dark/10 text-dark dark:text-slate-300"
+                        >
+                            <Lucide icon="Music2" class="h-5 w-5" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">TikTok</h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Mensajes directos de tu cuenta business vía la
+                                Business Messaging API; el webhook se pega en tu
+                                app de TikTok.
+                            </p>
+                        </div>
+                        <Button
+                            variant="primary"
+                            size="sm"
+                            class="shrink-0 rounded-[0.5rem] shadow-md shadow-primary/20"
+                            :disabled="channelLimitReached"
+                            :title="
+                                channelLimitReached
+                                    ? 'Alcanzaste el límite de canales de mensajería de tu plan.'
+                                    : undefined
+                            "
+                            @click="openTiktokCreate"
+                        >
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                            Vincular cuenta
+                        </Button>
+                    </div>
+                    <div class="flex-1 p-5">
+                        <div
+                            v-if="tiktokChannels.length"
+                            class="divide-y divide-dashed divide-slate-300/70"
+                        >
+                            <div
+                                v-for="ch in tiktokChannels"
+                                :key="ch.id"
+                                class="flex items-center gap-3 py-3 first:pt-0 last:pb-0"
+                                :class="{ 'opacity-60': !ch.active }"
+                            >
+                                <div class="min-w-0 flex-1">
+                                    <div
+                                        class="flex flex-wrap items-center gap-2"
+                                    >
+                                        <span
+                                            class="truncate text-sm font-medium"
+                                            >{{ ch.name || 'TikTok' }}</span
+                                        >
+                                        <span
+                                            class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                            :class="
+                                                ch.active
+                                                    ? 'bg-success/10 text-success'
+                                                    : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                            "
+                                            >{{
+                                                ch.active
+                                                    ? 'Activo'
+                                                    : 'Pausado'
+                                            }}</span
+                                        >
+                                    </div>
+                                    <div
+                                        class="mt-0.5 flex flex-wrap items-center gap-2 font-mono text-[10px] text-slate-400"
+                                    >
+                                        <span class="truncate">{{
+                                            ch.business_id
+                                        }}</span>
+                                        <span>{{ ch.masked_token }}</span>
+                                        <span
+                                            :class="{
+                                                'text-slate-500':
+                                                    ch.last_event_at,
+                                            }"
+                                            class="font-sans"
+                                            >{{
+                                                ch.last_event_at
+                                                    ? `Último evento hace ${ch.last_event_at}`
+                                                    : 'Sin eventos recibidos'
+                                            }}</span
+                                        >
+                                    </div>
+                                </div>
+                                <button
+                                    type="button"
+                                    :title="
+                                        copiedExtraWebhook === `tt-${ch.id}`
+                                            ? 'Copiada'
+                                            : 'Copiar URL del webhook'
+                                    "
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
+                                    @click="
+                                        copyExtraWebhook(
+                                            `tt-${ch.id}`,
+                                            ch.webhook_url,
+                                        )
+                                    "
+                                >
+                                    <Lucide
+                                        :icon="
+                                            copiedExtraWebhook === `tt-${ch.id}`
+                                                ? 'Check'
+                                                : 'Webhook'
+                                        "
+                                        class="h-4 w-4"
+                                        :class="{
+                                            'text-success':
+                                                copiedExtraWebhook ===
+                                                `tt-${ch.id}`,
+                                        }"
+                                    />
+                                </button>
+                                <button
+                                    type="button"
+                                    title="Probar conexión"
+                                    :disabled="testingTiktok === ch.id"
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary disabled:pointer-events-none disabled:opacity-50"
+                                    @click="testTiktok(ch)"
+                                >
+                                    <Lucide
+                                        :icon="
+                                            testingTiktok === ch.id
+                                                ? 'RefreshCw'
+                                                : 'Stethoscope'
+                                        "
+                                        class="h-4 w-4"
+                                        :class="{
+                                            'animate-spin':
+                                                testingTiktok === ch.id,
+                                        }"
+                                    />
+                                </button>
+                                <button
+                                    type="button"
+                                    title="Editar"
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
+                                    @click="openTiktokEdit(ch)"
+                                >
+                                    <Lucide icon="Pencil" class="h-4 w-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    title="Desconectar"
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                    @click="deletingTiktok = ch"
+                                >
+                                    <Lucide icon="Trash2" class="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
+                        <div
+                            v-else
+                            class="rounded-xl border border-dashed border-slate-300/70 px-4 py-8 text-center text-sm text-slate-500 dark:border-darkmode-400"
+                        >
+                            Aún no vinculas ninguna cuenta de TikTok.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Herramientas -->
             <div
                 v-if="aiPlan.api_allowed"
@@ -3002,6 +3617,345 @@ async function copyMeta(key: string, value: string) {
                                     ? 'Desconectando…'
                                     : 'Sí, desconectar'
                             }}
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Modal conectar/editar bot de Telegram -->
+        <Dialog :open="showTelegramForm" @close="showTelegramForm = false">
+            <Dialog.Panel>
+                <form class="flex flex-col" @submit.prevent="submitTelegram">
+                    <div
+                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
+                        >
+                            <Lucide icon="Send" class="h-5 w-5" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                {{
+                                    editingTelegram
+                                        ? 'Editar bot de Telegram'
+                                        : 'Conectar bot de Telegram'
+                                }}
+                            </h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                {{
+                                    editingTelegram
+                                        ? (editingTelegram.bot_username
+                                              ? `@${editingTelegram.bot_username}`
+                                              : editingTelegram.name) ||
+                                          'Bot conectado'
+                                        : 'Los mensajes del bot entran a tu bandeja y el asistente responde'
+                                }}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            @click="showTelegramForm = false"
+                        >
+                            <Lucide icon="X" class="h-5 w-5" />
+                        </button>
+                    </div>
+                    <div
+                        class="max-h-[85vh] space-y-4 overflow-y-auto px-6 py-5"
+                    >
+                        <div>
+                            <FormLabel>Token del bot</FormLabel>
+                            <FormInput
+                                v-model="telegramForm.bot_token"
+                                type="password"
+                                class="font-mono"
+                                :placeholder="
+                                    editingTelegram
+                                        ? 'Dejar vacío para conservar el actual'
+                                        : '123456789:AAH…'
+                                "
+                                autocomplete="off"
+                            />
+                            <FormHelp>
+                                Abre BotFather en Telegram, crea tu bot con
+                                /newbot y pega aquí el token. Se guarda cifrado
+                                y el webhook se registra solo.
+                            </FormHelp>
+                        </div>
+                        <div>
+                            <FormLabel>Etiqueta (opcional)</FormLabel>
+                            <FormInput
+                                v-model="telegramForm.name"
+                                type="text"
+                                placeholder="Telegram recepción"
+                            />
+                        </div>
+                        <div
+                            v-if="editingTelegram"
+                            class="flex items-center justify-between rounded-lg border border-slate-200/70 px-3 py-2.5 dark:border-darkmode-400"
+                        >
+                            <span class="text-sm">Canal activo</span>
+                            <FormSwitch>
+                                <FormSwitch.Input
+                                    v-model="telegramForm.active"
+                                    type="checkbox"
+                                />
+                            </FormSwitch>
+                        </div>
+                        <p
+                            v-if="telegramError"
+                            class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                        >
+                            {{ telegramError }}
+                        </p>
+                    </div>
+                    <div
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            @click="showTelegramForm = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            class="shadow-md shadow-primary/20"
+                            :disabled="
+                                saving ||
+                                (!editingTelegram && !telegramForm.bot_token)
+                            "
+                        >
+                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                            {{
+                                saving
+                                    ? 'Guardando…'
+                                    : editingTelegram
+                                      ? 'Guardar'
+                                      : 'Conectar'
+                            }}
+                        </Button>
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Modal desconectar bot de Telegram -->
+        <Dialog
+            :open="deletingTelegram !== null"
+            @close="deletingTelegram = null"
+        >
+            <Dialog.Panel>
+                <div v-if="deletingTelegram" class="p-6">
+                    <div class="flex items-start gap-3.5">
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                        >
+                            <Lucide icon="Trash2" class="h-5 w-5" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                ¿Desconectar
+                                {{
+                                    deletingTelegram.name ||
+                                    (deletingTelegram.bot_username
+                                        ? `@${deletingTelegram.bot_username}`
+                                        : 'este bot')
+                                }}?
+                            </h2>
+                            <p class="mt-0.5 text-sm text-slate-500">
+                                El bot deja de recibir y enviar por el
+                                asistente; el historial de conversaciones se
+                                conserva.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-6 flex justify-end gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            @click="deletingTelegram = null"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            :disabled="saving"
+                            @click="submitDeleteTelegram"
+                        >
+                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            {{ saving ? 'Desconectando…' : 'Sí, desconectar' }}
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Modal conectar/editar cuenta de TikTok -->
+        <Dialog :open="showTiktokForm" @close="showTiktokForm = false">
+            <Dialog.Panel>
+                <form class="flex flex-col" @submit.prevent="submitTiktok">
+                    <div
+                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-dark/10 text-dark dark:text-slate-300"
+                        >
+                            <Lucide icon="Music2" class="h-5 w-5" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                {{
+                                    editingTiktok
+                                        ? 'Editar cuenta de TikTok'
+                                        : 'Vincular cuenta de TikTok'
+                                }}
+                            </h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Mensajes directos de tu cuenta business con
+                                respuesta del asistente
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            @click="showTiktokForm = false"
+                        >
+                            <Lucide icon="X" class="h-5 w-5" />
+                        </button>
+                    </div>
+                    <div
+                        class="max-h-[85vh] space-y-4 overflow-y-auto px-6 py-5"
+                    >
+                        <div>
+                            <FormLabel>ID de la cuenta business</FormLabel>
+                            <FormInput
+                                v-model="tiktokForm.business_id"
+                                type="text"
+                                class="font-mono"
+                                placeholder="74123456789…"
+                            />
+                            <FormHelp>
+                                El business_id (u open_id) de tu cuenta en el
+                                panel de la app de TikTok for Business.
+                            </FormHelp>
+                        </div>
+                        <div>
+                            <FormLabel>Access token</FormLabel>
+                            <FormInput
+                                v-model="tiktokForm.access_token"
+                                type="password"
+                                class="font-mono"
+                                :placeholder="
+                                    editingTiktok
+                                        ? 'Dejar vacío para conservar el actual'
+                                        : 'act.…'
+                                "
+                                autocomplete="off"
+                            />
+                            <FormHelp>
+                                Token de tu app de TikTok con permiso de
+                                mensajería. Se guarda cifrado. El webhook se
+                                copia desde la tabla y se pega en el panel de la
+                                app.
+                            </FormHelp>
+                        </div>
+                        <div>
+                            <FormLabel>Etiqueta (opcional)</FormLabel>
+                            <FormInput
+                                v-model="tiktokForm.name"
+                                type="text"
+                                placeholder="TikTok del hotel"
+                            />
+                        </div>
+                        <div
+                            v-if="editingTiktok"
+                            class="flex items-center justify-between rounded-lg border border-slate-200/70 px-3 py-2.5 dark:border-darkmode-400"
+                        >
+                            <span class="text-sm">Canal activo</span>
+                            <FormSwitch>
+                                <FormSwitch.Input
+                                    v-model="tiktokForm.active"
+                                    type="checkbox"
+                                />
+                            </FormSwitch>
+                        </div>
+                        <p
+                            v-if="tiktokError"
+                            class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                        >
+                            {{ tiktokError }}
+                        </p>
+                    </div>
+                    <div
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            @click="showTiktokForm = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            class="shadow-md shadow-primary/20"
+                            :disabled="
+                                saving ||
+                                !tiktokForm.business_id ||
+                                (!editingTiktok && !tiktokForm.access_token)
+                            "
+                        >
+                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                            {{
+                                saving
+                                    ? 'Guardando…'
+                                    : editingTiktok
+                                      ? 'Guardar'
+                                      : 'Vincular'
+                            }}
+                        </Button>
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Modal desconectar cuenta de TikTok -->
+        <Dialog :open="deletingTiktok !== null" @close="deletingTiktok = null">
+            <Dialog.Panel>
+                <div v-if="deletingTiktok" class="p-6">
+                    <div class="flex items-start gap-3.5">
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                        >
+                            <Lucide icon="Trash2" class="h-5 w-5" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                ¿Desconectar
+                                {{ deletingTiktok.name || 'esta cuenta' }}?
+                            </h2>
+                            <p class="mt-0.5 text-sm text-slate-500">
+                                La cuenta deja de recibir y enviar por el
+                                asistente; el historial de conversaciones se
+                                conserva.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-6 flex justify-end gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            @click="deletingTiktok = null"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            :disabled="saving"
+                            @click="submitDeleteTiktok"
+                        >
+                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            {{ saving ? 'Desconectando…' : 'Sí, desconectar' }}
                         </Button>
                     </div>
                 </div>

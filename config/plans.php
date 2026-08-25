@@ -30,6 +30,9 @@ $profesionalToggles = [
     'incidencias',
     'encuestas',
     'promos',
+    // El semáforo de limpieza va en todos los planes; esto agrega el
+    // registro con camaristas, checklist y reporte de rendimiento.
+    'limpieza',
     ...$esencialToggles,
 ];
 
@@ -39,6 +42,7 @@ $empresarialToggles = [
     'encuestas-avanzado',
     'cupones',
     'tablero-avanzado',
+    'plano-operativo',
 ];
 
 return [

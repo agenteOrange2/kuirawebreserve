@@ -13,7 +13,7 @@ import {
     FormTextarea,
 } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
-import Lucide from '@/components/Base/Lucide';
+import Lucide, { type Icon } from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
 import { useModules } from '@/composables/useModules';
 import { useToasts } from '@/composables/useToasts';
@@ -40,12 +40,14 @@ interface RoomTypeRow {
     id: number;
     name: string;
     description: string | null;
+    icon: string | null;
     capacity: number;
     max_adults: number | null;
     max_children: number | null;
     check_in_time: string | null;
     check_out_time: string | null;
     amenities: string[];
+    photos_url: string | null;
     sort_order: number;
     active: boolean;
     // Precio único: derivado de la tarifa activa más barata (null = sin tarifa).
@@ -100,6 +102,9 @@ const props = defineProps<{
     roomTypes: RoomTypeRow[];
     ratePlans: RatePlanRow[];
     zoneKinds: Record<string, string>;
+    // Iconos permitidos para el tipo (los valida el backend con la misma
+    // lista: App\Support\RoomTypeIcons).
+    roomTypeIcons: { value: string; label: string }[];
     totalRooms: number;
     canManage: boolean;
 }>();
@@ -250,12 +255,14 @@ const editingType = ref<RoomTypeRow | null>(null);
 const typeForm = reactive({
     name: '',
     description: '',
+    icon: '',
     capacity: 2,
     max_adults: '' as string | number,
     max_children: '' as string | number,
     check_in_time: '',
     check_out_time: '',
     amenities: [] as string[],
+    photos_url: '',
     price: '' as string | number,
     rate_type: 'night',
     duration_value: 3 as number | string,
@@ -265,16 +272,25 @@ const typeForm = reactive({
 });
 const typeAmenityInput = ref('');
 
+// El icono elegido solo se distinguía por el tooltip: se nombra debajo.
+const selectedIconLabel = computed(
+    () =>
+        props.roomTypeIcons.find((option) => option.value === typeForm.icon)
+            ?.label ?? '',
+);
+
 function openType(type: RoomTypeRow | null) {
     editingType.value = type;
     typeForm.name = type?.name ?? '';
     typeForm.description = type?.description ?? '';
+    typeForm.icon = type?.icon ?? '';
     typeForm.capacity = type?.capacity ?? 2;
     typeForm.max_adults = type?.max_adults ?? '';
     typeForm.max_children = type?.max_children ?? '';
     typeForm.check_in_time = type?.check_in_time ?? '';
     typeForm.check_out_time = type?.check_out_time ?? '';
     typeForm.amenities = [...(type?.amenities ?? [])];
+    typeForm.photos_url = type?.photos_url ?? '';
     typeForm.price = '';
     typeForm.rate_type = 'night';
     typeForm.duration_value = 3;
@@ -381,6 +397,7 @@ function submitType() {
         name: typeForm.name,
         description:
             typeForm.description.trim() === '' ? null : typeForm.description,
+        icon: typeForm.icon === '' ? null : typeForm.icon,
         capacity: typeForm.capacity,
         max_adults:
             typeForm.max_adults === '' ? null : Number(typeForm.max_adults),
@@ -391,6 +408,8 @@ function submitType() {
         check_out_time:
             typeForm.check_out_time === '' ? null : typeForm.check_out_time,
         amenities: typeForm.amenities,
+        photos_url:
+            typeForm.photos_url.trim() === '' ? null : typeForm.photos_url.trim(),
         sort_order:
             typeForm.sort_order === '' ? 0 : Number(typeForm.sort_order),
         active: typeForm.active,
@@ -699,7 +718,8 @@ function submitSeason() {
         ends_on: seasonForm.ends_on === '' ? null : seasonForm.ends_on,
         weekdays: seasonForm.weekdays.length ? seasonForm.weekdays : null,
         // Estancia larga: la temporada solo rige con estas noches o más.
-        min_nights: seasonForm.min_nights === '' ? null : Number(seasonForm.min_nights),
+        min_nights:
+            seasonForm.min_nights === '' ? null : Number(seasonForm.min_nights),
     };
 
     mutate(
@@ -2679,6 +2699,86 @@ async function deleteSeason(season: SeasonRow) {
                                         >Es el texto con el que el widget y los
                                         bots describen la habitación.</FormHelp
                                     >
+                                </div>
+                                <div class="col-span-12">
+                                    <FormLabel htmlFor="type-photos-url"
+                                        >Liga de fotos (página web)</FormLabel
+                                    >
+                                    <FormInput
+                                        id="type-photos-url"
+                                        v-model="typeForm.photos_url"
+                                        type="url"
+                                        placeholder="https://mimotel.com/habitaciones/sencilla"
+                                    />
+                                    <FormHelp
+                                        v-if="errors.photos_url"
+                                        class="text-danger"
+                                        >{{ errors.photos_url }}</FormHelp
+                                    >
+                                    <FormHelp v-else
+                                        >Cuando un huésped pida fotos, el
+                                        asistente le comparte esta liga de tu
+                                        sitio web.</FormHelp
+                                    >
+                                </div>
+                                <!-- Icono del tipo: en el plano el nombre del
+                                     tipo se pierde al alejarse y el icono no,
+                                     así que de un vistazo se distingue una
+                                     sencilla de una suite o una con jacuzzi. -->
+                                <div class="col-span-12">
+                                    <FormLabel>Icono en el plano</FormLabel>
+                                    <div class="flex flex-wrap gap-2">
+                                        <button
+                                            type="button"
+                                            class="flex h-11 w-11 items-center justify-center rounded-lg border text-xs transition"
+                                            :class="
+                                                typeForm.icon === ''
+                                                    ? 'border-primary bg-primary/5 text-primary'
+                                                    : 'border-slate-200/70 text-slate-400 hover:border-slate-300 dark:border-darkmode-400'
+                                            "
+                                            title="Sin icono"
+                                            @click="typeForm.icon = ''"
+                                        >
+                                            <Lucide
+                                                icon="Ban"
+                                                class="h-5 w-5"
+                                            />
+                                        </button>
+                                        <button
+                                            v-for="option in roomTypeIcons"
+                                            :key="option.value"
+                                            type="button"
+                                            class="flex h-11 w-11 items-center justify-center rounded-lg border transition"
+                                            :class="
+                                                typeForm.icon === option.value
+                                                    ? 'border-primary bg-primary/5 text-primary'
+                                                    : 'border-slate-200/70 text-slate-500 hover:border-slate-300 dark:border-darkmode-400 dark:text-slate-300'
+                                            "
+                                            :title="option.label"
+                                            @click="
+                                                typeForm.icon = option.value
+                                            "
+                                        >
+                                            <Lucide
+                                                :icon="option.value as Icon"
+                                                class="h-5 w-5"
+                                            />
+                                        </button>
+                                    </div>
+                                    <FormHelp
+                                        v-if="errors.icon"
+                                        class="text-danger"
+                                        >{{ errors.icon }}</FormHelp
+                                    >
+                                    <FormHelp v-else>
+                                        Se dibuja junto al número en el plano y
+                                        se sigue viendo aunque te alejes, cuando
+                                        el nombre del tipo ya no cabe.<template
+                                            v-if="selectedIconLabel"
+                                        >
+                                            Ahora: {{ selectedIconLabel }}.
+                                        </template>
+                                    </FormHelp>
                                 </div>
                             </div>
                         </section>

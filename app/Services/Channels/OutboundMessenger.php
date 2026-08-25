@@ -7,17 +7,22 @@ use App\Models\Channel;
 use App\Models\Conversation;
 use App\Services\Evolution\EvolutionApi;
 use App\Services\Meta\MetaApi;
+use App\Services\Telegram\TelegramApi;
+use App\Services\Tiktok\TiktokApi;
 
 /**
  * Despachador de salida por canal: cada tipo tiene su transporte (Meta
- * Graph API, Evolution API, ...). El webchat no necesita push — el
- * visitante lee por polling. Punto único para bandeja y follow-ups.
+ * Graph API, Evolution API, Bot API de Telegram, Business API de TikTok).
+ * El webchat no necesita push — el visitante lee por polling. Punto único
+ * para bandeja y follow-ups.
  */
 class OutboundMessenger
 {
     public function __construct(
         protected MetaApi $meta,
         protected EvolutionApi $evolution,
+        protected TelegramApi $telegram,
+        protected TiktokApi $tiktok,
     ) {}
 
     /**
@@ -31,6 +36,8 @@ class OutboundMessenger
         return match (true) {
             in_array($type, MetaChannelLink::TYPES, true) => $this->meta->pushToConversation($conversation, $text),
             $type === Channel::TYPE_WHATSAPP_EVOLUTION => $this->evolution->pushToConversation($conversation, $text, $delayMs),
+            $type === Channel::TYPE_TELEGRAM => $this->telegram->pushToConversation($conversation, $text),
+            $type === Channel::TYPE_TIKTOK => $this->tiktok->pushToConversation($conversation, $text),
             default => false,
         };
     }
@@ -51,6 +58,8 @@ class OutboundMessenger
         return match (true) {
             in_array($type, MetaChannelLink::TYPES, true) => $this->meta->pushMediaToConversation($conversation, $path, $mime, $fileName, $caption),
             $type === Channel::TYPE_WHATSAPP_EVOLUTION => $this->evolution->pushMediaToConversation($conversation, $path, $mime, $fileName, $caption),
+            $type === Channel::TYPE_TELEGRAM => $this->telegram->pushMediaToConversation($conversation, $path, $mime, $fileName, $caption),
+            // TikTok no acepta adjuntos salientes por la Business API.
             default => false,
         };
     }

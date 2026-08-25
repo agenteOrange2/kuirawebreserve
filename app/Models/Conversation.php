@@ -166,4 +166,13 @@ class Conversation extends Model
     {
         return $this->hasMany(Message::class);
     }
+
+    /**
+     * Comentarios de redes sociales que abrieron (o retomaron) esta
+     * conversación: la atribución del embudo post → comentario → DM → reserva.
+     */
+    public function socialComments(): HasMany
+    {
+        return $this->hasMany(SocialComment::class);
+    }
 }

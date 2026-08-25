@@ -59,12 +59,43 @@ class AgentToolsController extends Controller
             'room_types' => RoomType::query()
                 ->where('active', true)
                 ->orderBy('sort_order')
+                ->with('rooms')
                 ->get()
-                ->map(fn (RoomType $type) => [
-                    'name' => $type->name,
-                    'description' => $type->description,
-                    'capacity' => $type->capacity,
-                ])->values(),
+                ->map(function (RoomType $type) {
+                    // Ocupación REAL desde las habitaciones del tipo: personas
+                    // incluidas en la tarifa, máximo permitido y costo por
+                    // persona extra — sin esto el bot inventaba "no hay cobro
+                    // extra" (bug real 2026-08-18, Telegram motellacupula).
+                    $rooms = $type->rooms;
+                    $maxOccupancy = (int) ($rooms->max('max_occupancy') ?: $type->capacity);
+                    $included = $rooms->whereNotNull('included_occupancy')->min('included_occupancy');
+                    $extraFee = $rooms->whereNotNull('extra_guest_fee')->max('extra_guest_fee');
+
+                    return [
+                        'name' => $type->name,
+                        'description' => $type->description,
+                        'occupancy' => [
+                            'included_guests' => $included !== null ? (int) $included : (int) $type->capacity,
+                            'max_guests' => max($maxOccupancy, (int) $type->capacity),
+                            'extra_guest_fee' => $extraFee !== null ? (float) $extraFee : null,
+                            'extra_guest_fee_label' => $extraFee !== null
+                                ? '$'.number_format((float) $extraFee, 2).' por persona extra por noche/periodo'
+                                : null,
+                        ],
+                        // Cargos opcionales del cuarto (mascota, decoración…)
+                        // que recepción aplica al llegar.
+                        'optional_charges' => $rooms
+                            ->flatMap(fn ($room) => $room->optional_charges ?? [])
+                            ->unique('concept')
+                            ->map(fn (array $charge) => [
+                                'concept' => $charge['concept'] ?? '',
+                                'amount_label' => isset($charge['amount']) ? '$'.number_format((float) $charge['amount'], 2) : null,
+                            ])->values(),
+                        // Página del sitio web con fotos: el bot la comparte
+                        // cuando piden fotos de la habitación.
+                        'photos_url' => $type->photos_url,
+                    ];
+                })->values(),
         ]);
     }
 

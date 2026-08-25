@@ -5,6 +5,7 @@ import QRCode from 'qrcode';
 import { reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormHelp, FormInput } from '@/components/Base/Form';
+import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
@@ -88,24 +89,69 @@ const aspects = ref<Aspect[]>(props.aspects.map((a) => ({ ...a })));
 
 const MAX_ASPECTS = 8;
 
-function addAspect() {
-    if (aspects.value.length >= MAX_ASPECTS) return;
-    aspects.value.push({ key: '', label: '' });
+// ── Alta y edición en modal ──
+// La lista muestra el aspecto y su orden; escribir pasa al modal. Antes cada
+// aspecto era un input suelto en fila con sus flechas y su bote de basura.
+const aspectModal = ref(false);
+const editingAspect = ref<number | null>(null);
+const aspectDraft = ref('');
+
+function openAspect(index: number | null) {
+    editingAspect.value = index;
+    aspectDraft.value = index === null ? '' : aspects.value[index].label;
+    Object.keys(errors).forEach((k) => delete errors[k]);
+    aspectModal.value = true;
 }
 
-function removeAspect(index: number) {
-    aspects.value.splice(index, 1);
+// Cada acción persiste sola: no hay un "Guardar" al final que se pueda
+// olvidar tras escribir un aspecto.
+async function saveAspect() {
+    const label = aspectDraft.value.trim();
+
+    if (label === '') {
+        toast.error('Falta el nombre', 'Escribe qué se va a calificar.');
+        return;
+    }
+
+    const previo = [...aspects.value];
+
+    if (editingAspect.value === null) {
+        aspects.value = [...aspects.value, { key: '', label }];
+    } else {
+        aspects.value = aspects.value.map((a, i) =>
+            i === editingAspect.value ? { ...a, label } : a,
+        );
+    }
+
+    const ok = await submit();
+
+    if (ok) {
+        aspectModal.value = false;
+    } else {
+        aspects.value = previo;
+    }
 }
 
-function move(index: number, delta: number) {
+async function removeAspect(index: number) {
+    const previo = [...aspects.value];
+    aspects.value = aspects.value.filter((_, i) => i !== index);
+
+    if (!(await submit())) aspects.value = previo;
+}
+
+async function move(index: number, delta: number) {
     const target = index + delta;
     if (target < 0 || target >= aspects.value.length) return;
+
+    const previo = [...aspects.value];
     const copy = [...aspects.value];
     [copy[index], copy[target]] = [copy[target], copy[index]];
     aspects.value = copy;
+
+    if (!(await submit())) aspects.value = previo;
 }
 
-async function submit() {
+async function submit(): Promise<boolean> {
     saving.value = true;
     Object.keys(errors).forEach((k) => delete errors[k]);
     try {
@@ -131,6 +177,8 @@ async function submit() {
             'Guardado',
             'El cuestionario quedó actualizado; aplica desde el siguiente envío.',
         );
+
+        return true;
     } catch (e: any) {
         const data = e.response?.data;
         if (data?.errors) {
@@ -141,6 +189,8 @@ async function submit() {
         } else {
             toast.error('Error', data?.message ?? 'No se pudo guardar.');
         }
+
+        return false;
     } finally {
         saving.value = false;
     }
@@ -185,263 +235,376 @@ async function submit() {
                         />
                         Volver a Ajustes
                     </Button>
-                    <Button
-                        variant="primary"
-                        class="rounded-[0.5rem]"
-                        :disabled="saving"
-                        @click="submit"
-                    >
-                        <Lucide
-                            :icon="saving ? 'RefreshCw' : 'Save'"
-                            class="mr-2 h-4 w-4"
-                            :class="saving && 'animate-spin'"
-                        />
-                        Guardar cambios
-                    </Button>
                 </div>
             </div>
 
             <div class="mt-5 grid grid-cols-12 gap-6">
                 <!-- Editor de aspectos -->
                 <div class="col-span-12 xl:col-span-7">
-                    <div class="box box--stacked p-5">
+                    <div class="box box--stacked">
                         <div
-                            class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
                         >
-                            <Lucide icon="ListChecks" class="h-3.5 w-3.5" />
-                            Aspectos que se califican
+                            <div class="flex items-center gap-2">
+                                <Lucide
+                                    icon="ListChecks"
+                                    class="h-4 w-4 stroke-[1.5] text-primary"
+                                />
+                                <h2 class="text-base font-medium">
+                                    Aspectos que se califican
+                                </h2>
+                            </div>
+                            <p class="mt-1 text-xs text-slate-500">
+                                Cada aspecto es una pregunta de 1 a 5 estrellas,
+                                opcional para el huésped. El orden de aquí es el
+                                orden en que las verá.
+                            </p>
                         </div>
-                        <p class="text-xs text-slate-500">
-                            Cada aspecto es una pregunta de 1 a 5 estrellas,
-                            opcional para el huésped. El orden de aquí es el
-                            orden en que las verá.
-                        </p>
-
-                        <div class="mt-4 space-y-2.5">
+                        <div class="p-5">
                             <div
-                                v-for="(aspect, index) in aspects"
-                                :key="aspect.key || `nuevo-${index}`"
-                                class="flex items-center gap-2"
+                                v-if="aspects.length"
+                                class="mt-4 flex flex-col gap-2"
                             >
-                                <div class="flex flex-col">
-                                    <button
+                                <div
+                                    v-for="(aspect, index) in aspects"
+                                    :key="aspect.key || `nuevo-${index}`"
+                                    class="flex items-center gap-3 rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
+                                >
+                                    <div class="flex flex-col">
+                                        <button
+                                            type="button"
+                                            class="flex h-5 w-5 items-center justify-center rounded text-slate-400 transition hover:text-primary disabled:opacity-30"
+                                            :disabled="index === 0 || saving"
+                                            title="Subir"
+                                            @click="move(index, -1)"
+                                        >
+                                            <Lucide
+                                                icon="ChevronUp"
+                                                class="h-4 w-4"
+                                            />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="flex h-5 w-5 items-center justify-center rounded text-slate-400 transition hover:text-primary disabled:opacity-30"
+                                            :disabled="
+                                                index === aspects.length - 1 ||
+                                                saving
+                                            "
+                                            title="Bajar"
+                                            @click="move(index, 1)"
+                                        >
+                                            <Lucide
+                                                icon="ChevronDown"
+                                                class="h-4 w-4"
+                                            />
+                                        </button>
+                                    </div>
+                                    <span
+                                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs text-slate-500 dark:bg-darkmode-400"
+                                    >
+                                        {{ index + 1 }}
+                                    </span>
+                                    <span
+                                        class="min-w-0 flex-1 truncate text-sm"
+                                    >
+                                        {{ aspect.label }}
+                                    </span>
+                                    <Button
                                         type="button"
-                                        class="flex h-6 w-6 items-center justify-center rounded text-slate-400 transition hover:text-primary disabled:opacity-30"
-                                        :disabled="index === 0"
-                                        title="Subir"
-                                        @click="move(index, -1)"
+                                        variant="outline-secondary"
+                                        size="sm"
+                                        class="shrink-0 rounded-[0.5rem] bg-white"
+                                        @click="openAspect(index)"
                                     >
                                         <Lucide
-                                            icon="ChevronUp"
-                                            class="h-4 w-4"
+                                            icon="Settings"
+                                            class="mr-1.5 h-3.5 w-3.5"
                                         />
-                                    </button>
+                                        Editar
+                                    </Button>
                                     <button
                                         type="button"
-                                        class="flex h-6 w-6 items-center justify-center rounded text-slate-400 transition hover:text-primary disabled:opacity-30"
-                                        :disabled="index === aspects.length - 1"
-                                        title="Bajar"
-                                        @click="move(index, 1)"
+                                        class="shrink-0 rounded p-1.5 text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                        title="Quitar aspecto"
+                                        :disabled="saving"
+                                        @click="removeAspect(index)"
                                     >
-                                        <Lucide
-                                            icon="ChevronDown"
-                                            class="h-4 w-4"
-                                        />
+                                        <Lucide icon="Trash2" class="h-4 w-4" />
                                     </button>
                                 </div>
-                                <FormInput
-                                    v-model="aspect.label"
-                                    type="text"
-                                    maxlength="60"
-                                    :placeholder="`Aspecto ${index + 1} (Alberca, Desayuno…)`"
-                                    class="flex-1"
-                                />
-                                <button
-                                    type="button"
-                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-danger transition hover:bg-danger/5 dark:border-darkmode-400"
-                                    title="Quitar aspecto"
-                                    @click="removeAspect(index)"
-                                >
-                                    <Lucide icon="Trash2" class="h-4 w-4" />
-                                </button>
                             </div>
+                            <p
+                                v-else
+                                class="mt-4 rounded-lg border border-dashed border-slate-300/70 py-6 text-center text-sm text-slate-500 dark:border-darkmode-400"
+                            >
+                                Sin aspectos: la encuesta pregunta solo la
+                                calificación general y el comentario.
+                            </p>
+
+                            <FormHelp
+                                v-if="errors['settings.survey_aspects']"
+                                class="mt-2 text-danger"
+                            >
+                                {{ errors['settings.survey_aspects'] }}
+                            </FormHelp>
+
+                            <Button
+                                variant="outline-primary"
+                                class="mt-4 rounded-[0.5rem]"
+                                :disabled="
+                                    aspects.length >= MAX_ASPECTS || saving
+                                "
+                                @click="openAspect(null)"
+                            >
+                                <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                                Agregar aspecto
+                            </Button>
+                            <FormHelp>
+                                Hasta {{ MAX_ASPECTS }} aspectos. Sin ninguno,
+                                la encuesta pregunta solo la calificación
+                                general y el comentario. Renombrar un aspecto
+                                conserva sus respuestas anteriores; quitarlo
+                                deja de preguntarlo pero no borra lo ya
+                                respondido.
+                            </FormHelp>
                         </div>
-
-                        <FormHelp
-                            v-if="errors['settings.survey_aspects']"
-                            class="mt-2 text-danger"
-                        >
-                            {{ errors['settings.survey_aspects'] }}
-                        </FormHelp>
-
-                        <Button
-                            variant="outline-primary"
-                            class="mt-4 rounded-[0.5rem]"
-                            :disabled="aspects.length >= MAX_ASPECTS"
-                            @click="addAspect"
-                        >
-                            <Lucide icon="Plus" class="mr-2 h-4 w-4" />
-                            Agregar aspecto
-                        </Button>
-                        <FormHelp>
-                            Hasta {{ MAX_ASPECTS }} aspectos. Sin ninguno, la
-                            encuesta pregunta solo la calificación general y el
-                            comentario. Renombrar un aspecto conserva sus
-                            respuestas anteriores; quitarlo deja de preguntarlo
-                            pero no borra lo ya respondido.
-                        </FormHelp>
                     </div>
                 </div>
 
                 <!-- Vista previa + estado del envío -->
                 <div class="col-span-12 xl:col-span-5">
-                    <div class="box box--stacked p-5">
+                    <div class="box box--stacked">
                         <div
-                            class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
                         >
-                            <Lucide icon="Eye" class="h-3.5 w-3.5" />
-                            Así la ve el huésped
-                        </div>
-                        <div
-                            class="mt-3 rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
-                        >
-                            <div class="text-center">
-                                <div
-                                    class="text-sm font-medium text-slate-700 dark:text-slate-300"
-                                >
-                                    En general
-                                </div>
-                                <div class="mt-1.5 flex justify-center gap-1">
-                                    <Lucide
-                                        v-for="n in 5"
-                                        :key="n"
-                                        icon="Star"
-                                        class="h-6 w-6"
-                                        :class="
-                                            n <= 4
-                                                ? 'fill-current text-warning'
-                                                : 'text-slate-300'
-                                        "
-                                    />
-                                </div>
+                            <div class="flex items-center gap-2">
+                                <Lucide
+                                    icon="Eye"
+                                    class="h-4 w-4 stroke-[1.5] text-primary"
+                                />
+                                <h2 class="text-base font-medium">
+                                    Así la ve el huésped
+                                </h2>
                             </div>
+                        </div>
+                        <div class="p-5">
                             <div
-                                v-if="aspects.some((a) => a.label.trim())"
-                                class="mt-4 space-y-2 border-t border-dashed border-slate-200/70 pt-3 dark:border-darkmode-400"
+                                class="mt-3 rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
                             >
-                                <div
-                                    v-for="(aspect, index) in aspects.filter(
-                                        (a) => a.label.trim(),
-                                    )"
-                                    :key="`preview-${index}`"
-                                    class="flex items-center justify-between gap-3"
-                                >
-                                    <span class="text-sm text-slate-600">{{
-                                        aspect.label
-                                    }}</span>
-                                    <span class="flex gap-0.5">
+                                <div class="text-center">
+                                    <div
+                                        class="text-sm font-medium text-slate-700 dark:text-slate-300"
+                                    >
+                                        En general
+                                    </div>
+                                    <div
+                                        class="mt-1.5 flex justify-center gap-1"
+                                    >
                                         <Lucide
                                             v-for="n in 5"
                                             :key="n"
                                             icon="Star"
-                                            class="h-4 w-4 text-slate-300"
+                                            class="h-6 w-6"
+                                            :class="
+                                                n <= 4
+                                                    ? 'fill-current text-warning'
+                                                    : 'text-slate-300'
+                                            "
                                         />
-                                    </span>
+                                    </div>
                                 </div>
-                            </div>
-                            <div class="mt-4">
                                 <div
-                                    class="rounded-lg border border-slate-200/70 px-3 py-2 text-xs text-slate-400 dark:border-darkmode-400"
+                                    v-if="aspects.some((a) => a.label.trim())"
+                                    class="mt-4 space-y-2 border-t border-dashed border-slate-200/70 pt-3 dark:border-darkmode-400"
                                 >
-                                    ¿Algo que quieras contarnos? (opcional)
+                                    <div
+                                        v-for="(
+                                            aspect, index
+                                        ) in aspects.filter((a) =>
+                                            a.label.trim(),
+                                        )"
+                                        :key="`preview-${index}`"
+                                        class="flex items-center justify-between gap-3"
+                                    >
+                                        <span class="text-sm text-slate-600">{{
+                                            aspect.label
+                                        }}</span>
+                                        <span class="flex gap-0.5">
+                                            <Lucide
+                                                v-for="n in 5"
+                                                :key="n"
+                                                icon="Star"
+                                                class="h-4 w-4 text-slate-300"
+                                            />
+                                        </span>
+                                    </div>
+                                </div>
+                                <div class="mt-4">
+                                    <div
+                                        class="rounded-lg border border-slate-200/70 px-3 py-2 text-xs text-slate-400 dark:border-darkmode-400"
+                                    >
+                                        ¿Algo que quieras contarnos? (opcional)
+                                    </div>
                                 </div>
                             </div>
-                        </div>
 
-                        <div
-                            class="mt-4 flex items-start gap-2 rounded-lg px-3.5 py-2.5 text-xs"
-                            :class="
-                                sending.thanks_enabled && sending.survey_enabled
-                                    ? 'bg-success/10 text-success'
-                                    : 'bg-warning/10 text-warning'
-                            "
-                        >
-                            <Lucide
-                                :icon="
+                            <div
+                                class="mt-4 flex items-start gap-2 rounded-lg px-3.5 py-2.5 text-xs"
+                                :class="
                                     sending.thanks_enabled &&
                                     sending.survey_enabled
-                                        ? 'CircleCheck'
-                                        : 'TriangleAlert'
+                                        ? 'bg-success/10 text-success'
+                                        : 'bg-warning/10 text-warning'
                                 "
-                                class="mt-0.5 h-4 w-4 shrink-0"
-                            />
-                            <span>
-                                <template
-                                    v-if="
+                            >
+                                <Lucide
+                                    :icon="
                                         sending.thanks_enabled &&
                                         sending.survey_enabled
+                                            ? 'CircleCheck'
+                                            : 'TriangleAlert'
                                     "
-                                >
-                                    El envío está activo: el link de la encuesta
-                                    viaja con el agradecimiento al completar
-                                    cada estancia.
-                                </template>
-                                <template v-else>
-                                    El envío está apagado. Se activa en
-                                    <Link
-                                        :href="route('tenant.guest-notices')"
-                                        class="font-medium underline"
-                                        >Avisos al huésped</Link
-                                    >, junto al agradecimiento al salir.
-                                </template>
-                            </span>
-                        </div>
+                                    class="mt-0.5 h-4 w-4 shrink-0"
+                                />
+                                <span>
+                                    <template
+                                        v-if="
+                                            sending.thanks_enabled &&
+                                            sending.survey_enabled
+                                        "
+                                    >
+                                        El envío está activo: el link de la
+                                        encuesta viaja con el agradecimiento al
+                                        completar cada estancia.
+                                    </template>
+                                    <template v-else>
+                                        El envío está apagado. Se activa en
+                                        <Link
+                                            :href="
+                                                route('tenant.guest-notices')
+                                            "
+                                            class="font-medium underline"
+                                            >Avisos al huésped</Link
+                                        >, junto al agradecimiento al salir.
+                                    </template>
+                                </span>
+                            </div>
 
-                        <p class="mt-3 text-xs text-slate-500">
-                            {{ answeredCount }} respuesta(s) recibidas hasta
-                            hoy. Los cambios aplican desde el siguiente envío;
-                            las respuestas anteriores no se pierden.
-                        </p>
+                            <p class="mt-3 text-xs text-slate-500">
+                                {{ answeredCount }} respuesta(s) recibidas hasta
+                                hoy. Los cambios aplican desde el siguiente
+                                envío; las respuestas anteriores no se pierden.
+                            </p>
+                        </div>
                     </div>
 
                     <!-- QR por habitación -->
-                    <div class="box box--stacked mt-5 p-5">
+                    <div class="box box--stacked mt-5">
                         <div
-                            class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
                         >
-                            <Lucide icon="QrCode" class="h-3.5 w-3.5" />
-                            QR dentro de la habitación
-                        </div>
-                        <p class="mt-2 text-sm text-slate-500">
-                            Cada habitación tiene una liga fija: al escanearla,
-                            el huésped cae en la encuesta de SU estancia (la
-                            que está en curso o la salida reciente). Imprime
-                            los carteles y pégalos en las habitaciones.
-                        </p>
-                        <div class="mt-4 flex flex-wrap items-center gap-3">
-                            <Button
-                                variant="outline-primary"
-                                class="rounded-[0.5rem] bg-white"
-                                :disabled="!qrRooms.length || printingQr"
-                                @click="printQrCodes"
-                            >
+                            <div class="flex items-center gap-2">
                                 <Lucide
-                                    icon="Printer"
-                                    class="mr-2 h-4 w-4 stroke-[1.3]"
+                                    icon="QrCode"
+                                    class="h-4 w-4 stroke-[1.5] text-primary"
                                 />
-                                {{
-                                    printingQr
-                                        ? 'Generando…'
-                                        : `Imprimir códigos (${qrRooms.length})`
-                                }}
-                            </Button>
-                            <span class="text-xs text-slate-400">
-                                Un cartel por habitación, listos para recortar.
-                            </span>
+                                <h2 class="text-base font-medium">
+                                    QR dentro de la habitación
+                                </h2>
+                            </div>
+                            <p class="mt-1 text-xs text-slate-500">
+                                Cada habitación tiene una liga fija: al
+                                escanearla, el huésped cae en la encuesta de SU
+                                estancia (la que está en curso o la salida
+                                reciente). Imprime los carteles y pégalos en las
+                                habitaciones.
+                            </p>
+                        </div>
+                        <div class="p-5">
+                            <div class="mt-4 flex flex-wrap items-center gap-3">
+                                <Button
+                                    variant="outline-primary"
+                                    class="rounded-[0.5rem] bg-white"
+                                    :disabled="!qrRooms.length || printingQr"
+                                    @click="printQrCodes"
+                                >
+                                    <Lucide
+                                        icon="Printer"
+                                        class="mr-2 h-4 w-4 stroke-[1.3]"
+                                    />
+                                    {{
+                                        printingQr
+                                            ? 'Generando…'
+                                            : `Imprimir códigos (${qrRooms.length})`
+                                    }}
+                                </Button>
+                                <span class="text-xs text-slate-400">
+                                    Un cartel por habitación, listos para
+                                    recortar.
+                                </span>
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
+
+        <!-- Alta y edición del aspecto en modal. -->
+        <Dialog :open="aspectModal" @close="aspectModal = false">
+            <Dialog.Panel>
+                <Dialog.Title>
+                    <div
+                        class="flex h-10 w-10 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="ListChecks" class="h-5 w-5" />
+                    </div>
+                    <h2 class="ml-3 text-base font-medium">
+                        {{
+                            editingAspect === null
+                                ? 'Agregar aspecto'
+                                : 'Editar aspecto'
+                        }}
+                    </h2>
+                </Dialog.Title>
+                <Dialog.Description>
+                    <label class="mb-1 block text-sm">¿Qué se califica?</label>
+                    <FormInput
+                        v-model="aspectDraft"
+                        type="text"
+                        maxlength="60"
+                        placeholder="Limpieza, Atención, Alberca..."
+                        @keyup.enter="saveAspect"
+                    />
+                    <FormHelp>
+                        El huésped lo verá como una pregunta de 1 a 5 estrellas,
+                        opcional. Renombrarlo conserva las respuestas que ya
+                        tenía.
+                    </FormHelp>
+                    <FormHelp
+                        v-if="errors['settings.survey_aspects']"
+                        class="text-danger"
+                    >
+                        {{ errors['settings.survey_aspects'] }}
+                    </FormHelp>
+                </Dialog.Description>
+                <Dialog.Footer>
+                    <Button
+                        variant="outline-secondary"
+                        class="mr-2 w-24"
+                        @click="aspectModal = false"
+                    >
+                        Cancelar
+                    </Button>
+                    <Button
+                        variant="primary"
+                        class="w-28"
+                        :disabled="saving"
+                        @click="saveAspect"
+                    >
+                        {{ saving ? 'Guardando…' : 'Guardar' }}
+                    </Button>
+                </Dialog.Footer>
+            </Dialog.Panel>
+        </Dialog>
     </RazeLayout>
 </template>

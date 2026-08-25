@@ -82,6 +82,11 @@ class CreateWalkInStay
                 }
             }
 
+            // Registro de vehículos (caseta): la placa gana ficha propia con
+            // marca y modelo, y la estancia queda ligada. Si lo tecleado no
+            // puede ser una placa, devuelve null y no se crea nada.
+            $vehicle = app(\App\Services\VehicleRegistry::class)->resolve($data, $guest);
+
             // Cargos extra de la ficha: personas sobre las incluidas +
             // cargos opcionales elegidos (mascota, decoración…).
             $extraCharges = $room->extraChargeLines(
@@ -96,10 +101,27 @@ class CreateWalkInStay
                 'guest_id' => $guest?->id,
                 'guest_name' => $data['guest_name'] ?? $guest?->full_name,
                 'num_people' => $data['num_people'] ?? 1,
-                'vehicle_plate' => $data['vehicle_plate'] ?? null,
+                // En mayúsculas: las placas se escriben así y el histórico se
+                // lee mejor parejo. El panel ya lo hacía en el cliente; aquí
+                // queda garantizado venga de donde venga la llamada.
+                'vehicle_plate' => isset($data['vehicle_plate']) && $data['vehicle_plate'] !== ''
+                    ? mb_strtoupper(trim($data['vehicle_plate']))
+                    : null,
                 'vehicle_desc' => $data['vehicle_desc'] ?? null,
+                'vehicle_id' => $vehicle?->id,
+                // Cómo llegaron, tal como lo eligió quien atendió: al
+                // completar el registro no se vuelve a preguntar.
+                'arrival_mode' => in_array($data['arrival_mode'] ?? null, ['vehicle', 'foot'], true)
+                    ? $data['arrival_mode']
+                    : null,
                 'id_document_type' => $data['id_document_type'] ?? null,
                 'id_document_number' => $data['id_document_number'] ?? null,
+                // Caseta de motel en dos momentos: con `arrival_pending` la
+                // llegada nace sin sellar — el acceso se abre ya, y los datos
+                // del carro y el cobro se completan cuando el encargado
+                // regresa con el papel. Sin la bandera todo sigue igual: la
+                // llegada se captura completa de una vez.
+                'arrival_completed_at' => ! empty($data['arrival_pending']) ? null : now(),
                 'check_in_at' => $start,
                 'planned_end_at' => $end,
                 'status' => Stay::STATUS_ACTIVE,

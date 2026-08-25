@@ -33,10 +33,13 @@ class CatalogPageController extends Controller
                     'kind_label' => $zone->kindLabel(),
                 ]),
             'zoneKinds' => Zone::KINDS,
+            // Selector de icono del tipo: la lista vive en el backend para
+            // que el picker y la validación no se separen nunca.
+            'roomTypeIcons' => \App\Support\RoomTypeIcons::forSelect(),
             'roomTypes' => RoomType::query()
                 ->select([
-                    'id', 'name', 'description', 'capacity', 'max_adults', 'max_children',
-                    'check_in_time', 'check_out_time', 'amenities',
+                    'id', 'name', 'description', 'icon', 'capacity', 'max_adults', 'max_children',
+                    'check_in_time', 'check_out_time', 'amenities', 'photos_url',
                     'sort_order', 'active',
                 ])
                 ->where('property_id', $property->id)

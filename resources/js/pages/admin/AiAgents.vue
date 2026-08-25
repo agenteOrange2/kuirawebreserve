@@ -220,12 +220,14 @@ async function testProvider(p: ProviderRow) {
     }
 }
 
-// ── Canales conectados por hotel (iconos; la gestión vive en admin.ai.channels) ──
+// ── Canales por hotel (iconos; se gestionan en la ficha del hotel) ──
 const channelIcon: Record<string, string> = {
     whatsapp: 'MessageCircle',
     whatsapp_evo: 'MessageCircle',
     messenger: 'Facebook',
     instagram: 'Instagram',
+    telegram: 'Send',
+    tiktok: 'Music2',
 };
 
 // ── Configuración por tenant ──
@@ -553,7 +555,12 @@ const cellClass =
                                 </td>
                                 <td :class="cellClass" class="px-5 py-3.5">
                                     <Link
-                                        :href="route('admin.ai.channels', t.id)"
+                                        :href="
+                                            route(
+                                                'admin.tenants.channels',
+                                                t.id,
+                                            )
+                                        "
                                         title="Gestionar canales de este hotel"
                                         class="inline-flex items-center gap-1.5"
                                     >
@@ -603,12 +610,12 @@ const cellClass =
                                         </FormSwitch>
                                         <button
                                             type="button"
-                                            title="Ver contexto del bot"
+                                            title="Abrir el asistente de este hotel"
                                             class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
                                             @click="
                                                 router.visit(
                                                     route(
-                                                        'admin.ai.tenants.context',
+                                                        'admin.tenants.assistant',
                                                         t.id,
                                                     ),
                                                 )

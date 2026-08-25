@@ -3,7 +3,13 @@ import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormHelp, FormInput, FormSelect, FormSwitch } from '@/components/Base/Form';
+import {
+    FormHelp,
+    FormInput,
+    FormSelect,
+    FormSwitch,
+} from '@/components/Base/Form';
+import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
@@ -68,6 +74,51 @@ const visibleProviders = computed<{ provider: string; label: string }[]>(() =>
     Object.entries(props.gatewayProviders)
         .filter(([p]) => providerAllowed(p) || gatewayFor(p))
         .map(([provider, label]) => ({ provider, label })),
+);
+
+// Las llaves se capturan una vez y casi no se vuelven a tocar: viven en un
+// modal, no en la lista. Antes los tres formularios completos estaban
+// abiertos a la vez y la pregunta diaria ("¿está cobrando?") quedaba
+// enterrada bajo ellos.
+const modalProvider = ref<string | null>(null);
+
+const openGateway = (provider: string) => {
+    modalProvider.value = provider;
+};
+
+const modalLabel = computed(() =>
+    modalProvider.value
+        ? (props.gatewayProviders[modalProvider.value] ?? modalProvider.value)
+        : '',
+);
+
+// Conectadas primero: son las que se revisan.
+const sortedProviders = computed(() =>
+    [...visibleProviders.value].sort(
+        (a, b) =>
+            (gatewayFor(b.provider) ? 1 : 0) - (gatewayFor(a.provider) ? 1 : 0),
+    ),
+);
+
+// Una pasarela activa en modo prueba NO cobra dinero real. Es el error caro
+// de esta pantalla: se ve "Activa" en verde y el hotel cree que ya vende.
+const activeTestGateways = computed(() =>
+    visibleProviders.value
+        .filter(
+            ({ provider }) =>
+                gatewayFor(provider)?.active &&
+                gatewayFor(provider)?.mode === 'test',
+        )
+        .map(({ label }) => label),
+);
+
+const activeLiveCount = computed(
+    () =>
+        visibleProviders.value.filter(
+            ({ provider }) =>
+                gatewayFor(provider)?.active &&
+                gatewayFor(provider)?.mode === 'live',
+        ).length,
 );
 
 const gwFieldHints: Record<
@@ -231,9 +282,42 @@ async function copyWebhookUrl(link: GatewayLink) {
                     variant="outline-secondary"
                     class="rounded-[0.5rem] bg-white"
                 >
-                    <Lucide icon="ArrowLeft" class="mr-2 h-4 w-4 stroke-[1.3]" />
+                    <Lucide
+                        icon="ArrowLeft"
+                        class="mr-2 h-4 w-4 stroke-[1.3]"
+                    />
                     Volver a Métodos de pago
                 </Button>
+            </div>
+
+            <!-- Lo primero que debe saberse: una pasarela "Activa" en modo
+                 prueba no cobra un peso. Antes era una etiqueta chiquita
+                 entre otras cuatro y se leía como si todo estuviera bien. -->
+            <div
+                v-if="hasCobrosModule && activeTestGateways.length"
+                class="box box--stacked mt-5 flex items-start gap-3 border-l-4 border-l-warning p-5"
+            >
+                <div
+                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-warning/20 bg-warning/10 text-warning"
+                >
+                    <Lucide icon="TriangleAlert" class="h-5 w-5" />
+                </div>
+                <div class="min-w-0 text-sm">
+                    <div class="font-medium">
+                        {{ activeTestGateways.join(' y ') }}
+                        {{ activeTestGateways.length > 1 ? 'están' : 'está' }}
+                        en modo prueba
+                    </div>
+                    <p class="mt-0.5 text-xs text-slate-500">
+                        Los links que emita el asistente funcionan, pero el
+                        dinero no es real y nunca llega a tu cuenta. Cuando
+                        termines de probar, cambia las llaves por las de
+                        producción y ajusta el modo.
+                        <span v-if="activeLiveCount === 0" class="font-medium">
+                            Hoy ningún cobro en línea es real.
+                        </span>
+                    </p>
+                </div>
             </div>
 
             <div class="box box--stacked mt-5 p-5">
@@ -272,13 +356,13 @@ async function copyWebhookUrl(link: GatewayLink) {
                     </div>
                 </div>
 
-                <div v-else class="grid grid-cols-12 gap-4">
+                <div v-else class="space-y-3">
                     <div
-                        v-for="{ provider, label } in visibleProviders"
+                        v-for="{ provider, label } in sortedProviders"
                         :key="provider"
-                        class="col-span-12 rounded-lg border border-slate-200/70 p-4 xl:col-span-6 dark:border-darkmode-400"
+                        class="rounded-lg border border-slate-200/70 dark:border-darkmode-400"
                     >
-                        <div class="flex items-center gap-2.5">
+                        <div class="flex flex-wrap items-center gap-2.5 p-4">
                             <div
                                 class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                             >
@@ -299,6 +383,11 @@ async function copyWebhookUrl(link: GatewayLink) {
                                         v-else-if="gatewayFor(provider)"
                                         class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
                                         >Pausada</span
+                                    >
+                                    <span
+                                        v-else
+                                        class="rounded-full border border-dashed border-slate-300/70 px-2 py-0.5 text-[10px] text-slate-400 dark:border-darkmode-400"
+                                        >Sin conectar</span
                                     >
                                     <span
                                         v-if="
@@ -343,140 +432,36 @@ async function copyWebhookUrl(link: GatewayLink) {
                                     "
                                 />
                             </FormSwitch>
-                        </div>
-
-                        <div
-                            v-if="providerAllowed(provider)"
-                            class="mt-4 space-y-3"
-                        >
-                            <div>
-                                <label class="mb-1 block text-sm">{{
-                                    gwFieldHints[provider]?.public
-                                }}</label>
-                                <FormInput
-                                    v-model="gwForms[provider].public_key"
-                                    type="text"
-                                    placeholder="Llave pública"
-                                />
-                            </div>
-                            <div>
-                                <label class="mb-1 block text-sm">{{
-                                    gwFieldHints[provider]?.secret
-                                }}</label>
-                                <FormInput
-                                    v-model="gwForms[provider].secret_key"
-                                    type="password"
-                                    :placeholder="
-                                        gatewayFor(provider)
-                                            ? `Guardada (${gatewayFor(provider)?.masked_secret}) — escribe para reemplazar`
-                                            : 'Llave secreta'
-                                    "
-                                />
-                            </div>
-                            <div>
-                                <label class="mb-1 block text-sm"
-                                    >Secreto del webhook</label
-                                >
-                                <FormInput
-                                    v-model="gwForms[provider].webhook_secret"
-                                    type="password"
-                                    :placeholder="
-                                        gatewayFor(provider)?.has_webhook_secret
-                                            ? 'Guardado — escribe para reemplazar'
-                                            : gwFieldHints[provider]?.webhook
-                                    "
-                                />
-                                <FormHelp>{{
-                                    gwFieldHints[provider]?.webhook
-                                }}</FormHelp>
-                            </div>
-                            <div>
-                                <label class="mb-1 block text-sm">Modo</label>
-                                <FormSelect
-                                    v-model="gwForms[provider].mode"
-                                    class="!py-1.5 text-sm"
-                                >
-                                    <option value="test">
-                                        Prueba (sandbox)
-                                    </option>
-                                    <option value="live">Producción</option>
-                                </FormSelect>
-                                <FormHelp>
-                                    El entorno real lo dicta la llave: sk_test_
-                                    = sandbox (tarjeta 4242), sk_live_ =
-                                    producción con cobros reales. Este selector
-                                    se corrige solo al guardar.
-                                </FormHelp>
-                            </div>
-
-                            <div
-                                v-if="gatewayFor(provider)"
-                                class="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 dark:bg-darkmode-700"
+                            <Button
+                                v-if="providerAllowed(provider)"
+                                :variant="
+                                    gatewayFor(provider)
+                                        ? 'outline-secondary'
+                                        : 'outline-primary'
+                                "
+                                size="sm"
+                                class="shrink-0 rounded-[0.5rem] bg-white"
+                                @click="openGateway(provider)"
                             >
-                                <span
-                                    class="min-w-0 flex-1 truncate font-mono text-xs text-slate-500"
-                                    :title="gatewayFor(provider)?.webhook_url"
-                                    >{{
-                                        gatewayFor(provider)?.webhook_url
-                                    }}</span
-                                >
-                                <button
-                                    type="button"
-                                    class="shrink-0 rounded p-1 text-slate-400 transition hover:bg-primary/10 hover:text-primary"
-                                    title="Copiar URL del webhook"
-                                    @click="
-                                        copyWebhookUrl(gatewayFor(provider)!)
+                                <Lucide
+                                    :icon="
+                                        gatewayFor(provider)
+                                            ? 'Settings'
+                                            : 'Plus'
                                     "
-                                >
-                                    <Lucide icon="Copy" class="h-3.5 w-3.5" />
-                                </button>
-                            </div>
-
-                            <div class="flex items-center gap-2 pt-1">
-                                <Button
-                                    variant="primary"
-                                    size="sm"
-                                    class="rounded-[0.5rem]"
-                                    :disabled="gwBusy === provider"
-                                    @click="saveGateway(provider)"
-                                >
-                                    <Lucide
-                                        icon="Check"
-                                        class="mr-1.5 h-3.5 w-3.5"
-                                    />
-                                    {{
-                                        gwBusy === provider
-                                            ? 'Guardando…'
-                                            : gatewayFor(provider)
-                                              ? 'Guardar cambios'
-                                              : 'Conectar'
-                                    }}
-                                </Button>
-                                <Button
-                                    v-if="gatewayFor(provider)"
-                                    variant="outline-secondary"
-                                    size="sm"
-                                    class="rounded-[0.5rem] bg-white"
-                                    title="Prueba las llaves GUARDADAS — si acabas de escribirlas, primero usa Guardar cambios"
-                                    :disabled="gwBusy === provider"
-                                    @click="testGateway(gatewayFor(provider)!)"
-                                >
-                                    <Lucide
-                                        icon="PlugZap"
-                                        class="mr-1.5 h-3.5 w-3.5"
-                                    />
-                                    Probar conexión
-                                </Button>
-                            </div>
-                            <FormHelp v-if="gatewayFor(provider)">
-                                "Probar conexión" usa las llaves guardadas: si
-                                acabas de escribir llaves nuevas, guarda
-                                primero.
-                            </FormHelp>
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                {{
+                                    gatewayFor(provider)
+                                        ? 'Llaves y webhook'
+                                        : 'Conectar'
+                                }}
+                            </Button>
                         </div>
+
                         <p
-                            v-else
-                            class="mt-3 flex items-start gap-1.5 text-xs text-slate-400"
+                            v-if="!providerAllowed(provider)"
+                            class="flex items-start gap-1.5 px-4 pb-4 text-xs text-slate-400"
                         >
                             <Lucide
                                 icon="Info"
@@ -507,5 +492,165 @@ async function copyWebhookUrl(link: GatewayLink) {
                 </div>
             </div>
         </div>
+
+        <!-- Llaves y webhook en modal: dan foco y dejan la lista limpia. -->
+        <Dialog
+            :open="modalProvider !== null"
+            size="lg"
+            @close="modalProvider = null"
+        >
+            <Dialog.Panel v-if="modalProvider">
+                <Dialog.Title>
+                    <div
+                        class="flex h-10 w-10 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="CreditCard" class="h-5 w-5" />
+                    </div>
+                    <h2 class="ml-3 text-base font-medium">
+                        {{ modalLabel }}
+                    </h2>
+                    <span
+                        v-if="gatewayFor(modalProvider)?.mode === 'test'"
+                        class="ml-2 rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning"
+                        >Modo prueba</span
+                    >
+                </Dialog.Title>
+                <Dialog.Description>
+                    <div class="space-y-3">
+                        <div>
+                            <label class="mb-1 block text-sm">{{
+                                gwFieldHints[modalProvider]?.public
+                            }}</label>
+                            <FormInput
+                                v-model="gwForms[modalProvider].public_key"
+                                type="text"
+                                placeholder="Llave pública"
+                            />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm">{{
+                                gwFieldHints[modalProvider]?.secret
+                            }}</label>
+                            <FormInput
+                                v-model="gwForms[modalProvider].secret_key"
+                                type="password"
+                                :placeholder="
+                                    gatewayFor(modalProvider)
+                                        ? `Guardada (${gatewayFor(modalProvider)?.masked_secret}) — escribe para reemplazar`
+                                        : 'Llave secreta'
+                                "
+                            />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Secreto del webhook</label
+                            >
+                            <FormInput
+                                v-model="gwForms[modalProvider].webhook_secret"
+                                type="password"
+                                :placeholder="
+                                    gatewayFor(modalProvider)
+                                        ?.has_webhook_secret
+                                        ? 'Guardado — escribe para reemplazar'
+                                        : gwFieldHints[modalProvider]?.webhook
+                                "
+                            />
+                            <FormHelp>{{
+                                gwFieldHints[modalProvider]?.webhook
+                            }}</FormHelp>
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm">Modo</label>
+                            <FormSelect
+                                v-model="gwForms[modalProvider].mode"
+                                class="!py-1.5 text-sm"
+                            >
+                                <option value="test">Prueba (sandbox)</option>
+                                <option value="live">Producción</option>
+                            </FormSelect>
+                            <FormHelp>
+                                El entorno real lo dicta la llave: sk_test_ =
+                                sandbox (tarjeta 4242), sk_live_ = producción
+                                con cobros reales. Este selector se corrige solo
+                                al guardar.
+                            </FormHelp>
+                        </div>
+
+                        <div
+                            v-if="gatewayFor(modalProvider)"
+                            class="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-2 dark:bg-darkmode-700"
+                        >
+                            <span
+                                class="min-w-0 flex-1 truncate font-mono text-xs text-slate-500"
+                                :title="gatewayFor(modalProvider)?.webhook_url"
+                                >{{
+                                    gatewayFor(modalProvider)?.webhook_url
+                                }}</span
+                            >
+                            <button
+                                type="button"
+                                class="shrink-0 rounded p-1 text-slate-400 transition hover:bg-primary/10 hover:text-primary"
+                                title="Copiar URL del webhook"
+                                @click="
+                                    copyWebhookUrl(gatewayFor(modalProvider)!)
+                                "
+                            >
+                                <Lucide icon="Copy" class="h-3.5 w-3.5" />
+                            </button>
+                        </div>
+
+                        <div class="flex items-center gap-2 pt-1">
+                            <Button
+                                variant="primary"
+                                size="sm"
+                                class="rounded-[0.5rem]"
+                                :disabled="gwBusy === modalProvider"
+                                @click="saveGateway(modalProvider)"
+                            >
+                                <Lucide
+                                    icon="Check"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                {{
+                                    gwBusy === modalProvider
+                                        ? 'Guardando…'
+                                        : gatewayFor(modalProvider)
+                                          ? 'Guardar cambios'
+                                          : 'Conectar'
+                                }}
+                            </Button>
+                            <Button
+                                v-if="gatewayFor(modalProvider)"
+                                variant="outline-secondary"
+                                size="sm"
+                                class="rounded-[0.5rem] bg-white"
+                                title="Prueba las llaves GUARDADAS — si acabas de escribirlas, primero usa Guardar cambios"
+                                :disabled="gwBusy === modalProvider"
+                                @click="testGateway(gatewayFor(modalProvider)!)"
+                            >
+                                <Lucide
+                                    icon="PlugZap"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Probar conexión
+                            </Button>
+                        </div>
+                        <FormHelp v-if="gatewayFor(modalProvider)">
+                            "Probar conexión" usa las llaves guardadas: si
+                            acabas de escribir llaves nuevas, guarda primero.
+                        </FormHelp>
+                    </div>
+                </Dialog.Description>
+                <Dialog.Footer>
+                    <Button
+                        variant="outline-secondary"
+                        class="w-24"
+                        @click="modalProvider = null"
+                    >
+                        Cerrar
+                    </Button>
+                </Dialog.Footer>
+            </Dialog.Panel>
+        </Dialog>
     </RazeLayout>
 </template>

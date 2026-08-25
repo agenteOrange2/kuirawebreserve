@@ -30,10 +30,16 @@ class Stay extends Model implements HasMedia
         'guest_id',
         'guest_name',
         'num_people',
+        // Placa TAL COMO se tecleó esa noche: sello histórico, igual que
+        // guest_name junto a guest_id. La ficha editable vive en `vehicles`
+        // y el vínculo es vehicle_id, que solo escribe VehicleRegistry.
         'vehicle_plate',
         'vehicle_desc',
+        'vehicle_id',
         'id_document_type',
         'id_document_number',
+        'arrival_completed_at',
+        'arrival_mode',
         'check_in_at',
         'planned_end_at',
         'check_out_at',
@@ -53,6 +59,9 @@ class Stay extends Model implements HasMedia
             'planned_end_at' => 'datetime',
             'check_out_at' => 'datetime',
             'thanks_sent_at' => 'datetime',
+            // Caseta en dos momentos: null = falta terminar de capturar la
+            // llegada (placa o identificación) y marcar el cobro.
+            'arrival_completed_at' => 'datetime',
             'amount' => 'decimal:2',
             'extra_charges' => 'array',
             // Identificación del huésped a pie (registro exprés de caseta):
@@ -101,6 +110,12 @@ class Stay extends Model implements HasMedia
         return $this->belongsTo(Guest::class)->withTrashed();
     }
 
+    public function vehicle(): BelongsTo
+    {
+        // withTrashed: una ficha archivada sigue visible en el historial.
+        return $this->belongsTo(Vehicle::class)->withTrashed();
+    }
+
     public function orders(): HasMany
     {
         return $this->hasMany(Order::class);
@@ -122,6 +137,17 @@ class Stay extends Model implements HasMedia
      *
      * @return array<string, mixed>
      */
+    /**
+     * ¿Falta terminar de capturar esta llegada? Es el estado intermedio de la
+     * caseta de motel: el acceso ya se abrió, pero los datos del carro y el
+     * cobro llegan cuando el encargado regresa con el papel.
+     */
+    public function arrivalPending(): bool
+    {
+        return $this->status === self::STATUS_ACTIVE
+            && $this->arrival_completed_at === null;
+    }
+
     public function folio(): array
     {
         // Hospedaje: con reserva manda su control de pagos; walk-in sin

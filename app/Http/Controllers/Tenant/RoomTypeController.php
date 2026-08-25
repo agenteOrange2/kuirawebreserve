@@ -102,6 +102,9 @@ class RoomTypeController extends Controller
     {
         return [
             'description' => ['nullable', 'string'],
+            // Lista cerrada: el plano pinta el icono tal cual (ver
+            // App\Support\RoomTypeIcons).
+            'icon' => ['nullable', Rule::in(\App\Support\RoomTypeIcons::keys())],
             'capacity' => ['sometimes', 'integer', 'min:1', 'max:20'],
             'max_adults' => ['nullable', 'integer', 'min:1', 'max:20'],
             'max_children' => ['nullable', 'integer', 'min:0', 'max:20'],
@@ -109,6 +112,8 @@ class RoomTypeController extends Controller
             'check_out_time' => ['nullable', 'date_format:H:i'],
             'amenities' => ['sometimes', 'nullable', 'array'],
             'amenities.*' => ['string', 'max:100'],
+            // Página pública con fotos del tipo (el bot la comparte).
+            'photos_url' => ['sometimes', 'nullable', 'url', 'max:500'],
             'sort_order' => ['sometimes', 'integer', 'min:0'],
             'active' => ['sometimes', 'boolean'],
         ];

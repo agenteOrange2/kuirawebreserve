@@ -9,6 +9,7 @@ import {
     FormSelect,
     FormSwitch,
 } from '@/components/Base/Form';
+import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
@@ -34,6 +35,7 @@ const props = defineProps<{
     };
     hasPosModule: boolean;
     products: ProductRow[];
+    productsTotal: number;
     paymentReadiness: {
         gateway_connected: boolean;
         gateway_provider: string | null;
@@ -125,7 +127,7 @@ const extrasStepActive = computed(
     () =>
         props.hasPosModule &&
         extrasEnabled.value &&
-        props.products.some((p) => localProducts[p.id] && p.in_stock),
+        selected.value.some((p) => p.in_stock),
 );
 const previewSteps = computed(() => {
     const steps = ['Fechas', 'Tus datos'];
@@ -134,16 +136,15 @@ const previewSteps = computed(() => {
     return steps;
 });
 
-const localProducts = reactive<Record<number, boolean>>(
-    Object.fromEntries(
-        props.products.map((p) => [p.id, p.available_in_wizard]),
-    ),
-);
 const busyProduct = ref<number | null>(null);
 
-const productsByCategory = computed(() => {
+// Los elegidos se llevan en memoria para poder quitarlos y agregarlos sin
+// recargar; la pantalla ya solo recibe estos, no el catálogo entero.
+const selected = ref<ProductRow[]>([...props.products]);
+
+const selectedByCategory = computed(() => {
     const groups = new Map<string, ProductRow[]>();
-    props.products.forEach((p) => {
+    selected.value.forEach((p) => {
         const key = p.category ?? 'Sin categoría';
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key)!.push(p);
@@ -151,24 +152,62 @@ const productsByCategory = computed(() => {
     return [...groups.entries()];
 });
 
-const selectedProductsCount = computed(
-    () => Object.values(localProducts).filter(Boolean).length,
-);
+const selectedProductsCount = computed(() => selected.value.length);
+
 const outOfStockSelectedCount = computed(
-    () =>
-        props.products.filter((p) => localProducts[p.id] && !p.in_stock).length,
+    () => selected.value.filter((p) => !p.in_stock).length,
 );
 
-async function toggleProduct(product: ProductRow) {
-    const next = !localProducts[product.id];
-    localProducts[product.id] = next;
+// ── Buscador (modal) ──
+const pickerOpen = ref(false);
+const pickerTerm = ref('');
+const pickerResults = ref<ProductRow[]>([]);
+const pickerTruncated = ref(false);
+const pickerLoading = ref(false);
+let pickerTimer: ReturnType<typeof setTimeout> | undefined;
+
+function openPicker() {
+    pickerOpen.value = true;
+    pickerTerm.value = '';
+    searchProducts();
+}
+
+// Se espera a que deje de teclear: sin esto cada letra dispara una consulta.
+function onPickerType() {
+    if (pickerTimer) clearTimeout(pickerTimer);
+    pickerTimer = setTimeout(searchProducts, 250);
+}
+
+async function searchProducts() {
+    pickerLoading.value = true;
+    try {
+        const { data } = await axios.get(
+            route('tenant.wizard-settings.products'),
+            {
+                params: { q: pickerTerm.value },
+            },
+        );
+        pickerResults.value = data.products;
+        pickerTruncated.value = data.truncated;
+    } catch {
+        toast.error('No se pudo buscar', 'Intenta de nuevo.');
+    } finally {
+        pickerLoading.value = false;
+    }
+}
+
+const isSelected = (id: number) => selected.value.some((p) => p.id === id);
+
+async function setAvailability(product: ProductRow, next: boolean) {
     busyProduct.value = product.id;
     try {
         await axios.patch(`/api/products/${product.id}`, {
             available_in_wizard: next,
         });
+        selected.value = next
+            ? [...selected.value, { ...product, available_in_wizard: true }]
+            : selected.value.filter((p) => p.id !== product.id);
     } catch (e: any) {
-        localProducts[product.id] = !next; // revertir
         toast.error(
             'No se pudo actualizar',
             e.response?.data?.message ?? product.name,
@@ -571,13 +610,36 @@ const money = (n: number) =>
                                     >
                                 </div>
                                 <template v-else>
-                                    <div class="mb-4 text-xs text-slate-500">
-                                        {{ selectedProductsCount }} de
-                                        {{ products.length }} producto(s)
-                                        visibles en el wizard. Marca solo lo que
-                                        quieras vender sin que tu personal lo
-                                        capture.
+                                    <div
+                                        class="mb-4 flex flex-wrap items-center justify-between gap-3"
+                                    >
+                                        <div class="text-xs text-slate-500">
+                                            <span
+                                                class="font-medium text-slate-600 dark:text-slate-300"
+                                                >{{
+                                                    selectedProductsCount
+                                                }}
+                                                producto(s)</span
+                                            >
+                                            en el wizard, de
+                                            {{ productsTotal }} en tu
+                                            inventario.
+                                        </div>
+                                        <Button
+                                            v-if="canManage"
+                                            variant="outline-primary"
+                                            size="sm"
+                                            class="rounded-[0.5rem] bg-white"
+                                            @click="openPicker"
+                                        >
+                                            <Lucide
+                                                icon="Plus"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            Agregar productos
+                                        </Button>
                                     </div>
+
                                     <div
                                         v-if="outOfStockSelectedCount > 0"
                                         class="mb-4 flex items-center gap-2 rounded-md border border-warning/30 bg-warning/5 px-3 py-2.5 text-xs text-slate-600 dark:text-slate-300"
@@ -592,12 +654,34 @@ const money = (n: number) =>
                                         registres stock en Inventario, aunque el
                                         interruptor esté activo.
                                     </div>
-                                    <div class="space-y-5">
+
+                                    <!-- Solo lo elegido: la pregunta que
+                                         responde esta pantalla es "¿qué vende
+                                         mi wizard?", no "¿qué hay en mi
+                                         almacén?". Para agregar está el
+                                         buscador. -->
+                                    <div
+                                        v-if="selectedProductsCount === 0"
+                                        class="rounded-lg border border-dashed border-slate-300/70 py-8 text-center text-sm text-slate-500 dark:border-darkmode-400"
+                                    >
+                                        Todavía no ofreces ningún producto en el
+                                        wizard.
+                                        <button
+                                            v-if="canManage"
+                                            type="button"
+                                            class="font-medium text-primary hover:underline"
+                                            @click="openPicker"
+                                        >
+                                            Elige los primeros
+                                        </button>
+                                    </div>
+
+                                    <div v-else class="space-y-5">
                                         <div
                                             v-for="[
                                                 category,
                                                 items,
-                                            ] in productsByCategory"
+                                            ] in selectedByCategory"
                                             :key="category"
                                         >
                                             <div
@@ -608,15 +692,10 @@ const money = (n: number) =>
                                             <div
                                                 class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3"
                                             >
-                                                <label
+                                                <div
                                                     v-for="p in items"
                                                     :key="p.id"
-                                                    class="flex cursor-pointer items-center justify-between gap-2 rounded-lg border p-3 text-sm transition"
-                                                    :class="
-                                                        localProducts[p.id]
-                                                            ? 'border-primary/30 bg-primary/5'
-                                                            : 'border-slate-200/70 dark:border-darkmode-400'
-                                                    "
+                                                    class="flex items-center justify-between gap-2 rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm"
                                                 >
                                                     <span class="min-w-0">
                                                         <span
@@ -641,26 +720,27 @@ const money = (n: number) =>
                                                             Sin existencias
                                                         </span>
                                                     </span>
-                                                    <FormSwitch
-                                                        class="shrink-0"
+                                                    <button
+                                                        v-if="canManage"
+                                                        type="button"
+                                                        class="shrink-0 rounded-full p-1.5 text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                                        title="Quitar del wizard"
+                                                        :disabled="
+                                                            busyProduct === p.id
+                                                        "
+                                                        @click="
+                                                            setAvailability(
+                                                                p,
+                                                                false,
+                                                            )
+                                                        "
                                                     >
-                                                        <FormSwitch.Input
-                                                            :checked="
-                                                                localProducts[
-                                                                    p.id
-                                                                ]
-                                                            "
-                                                            type="checkbox"
-                                                            :disabled="
-                                                                busyProduct ===
-                                                                p.id
-                                                            "
-                                                            @change="
-                                                                toggleProduct(p)
-                                                            "
+                                                        <Lucide
+                                                            icon="X"
+                                                            class="h-4 w-4"
                                                         />
-                                                    </FormSwitch>
-                                                </label>
+                                                    </button>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -671,5 +751,116 @@ const money = (n: number) =>
                 </div>
             </div>
         </div>
+
+        <!-- Buscador de productos: consulta al servidor conforme escribes,
+             en vez de traerse el inventario completo a la pantalla. -->
+        <Dialog :open="pickerOpen" size="lg" @close="pickerOpen = false">
+            <Dialog.Panel>
+                <Dialog.Title>
+                    <div
+                        class="flex h-10 w-10 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Package" class="h-5 w-5" />
+                    </div>
+                    <h2 class="ml-3 text-base font-medium">
+                        Agregar productos al wizard
+                    </h2>
+                </Dialog.Title>
+                <Dialog.Description>
+                    <div class="relative">
+                        <Lucide
+                            icon="Search"
+                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                        />
+                        <FormInput
+                            v-model="pickerTerm"
+                            class="pl-9"
+                            placeholder="Busca por nombre o categoría"
+                            @input="onPickerType"
+                        />
+                    </div>
+
+                    <div
+                        v-if="pickerLoading"
+                        class="py-8 text-center text-sm text-slate-500"
+                    >
+                        Buscando...
+                    </div>
+
+                    <div
+                        v-else-if="pickerResults.length === 0"
+                        class="py-8 text-center text-sm text-slate-500"
+                    >
+                        No hay productos que coincidan.
+                    </div>
+
+                    <div
+                        v-else
+                        class="mt-3 max-h-[50vh] space-y-2 overflow-y-auto pr-1"
+                    >
+                        <div
+                            v-for="p in pickerResults"
+                            :key="p.id"
+                            class="flex items-center justify-between gap-3 rounded-lg border p-3 text-sm"
+                            :class="
+                                isSelected(p.id)
+                                    ? 'border-primary/30 bg-primary/5'
+                                    : 'border-slate-200/70 dark:border-darkmode-400'
+                            "
+                        >
+                            <div class="min-w-0">
+                                <div class="truncate font-medium">
+                                    {{ p.name }}
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    {{ p.category ?? 'Sin categoría' }} ·
+                                    {{ money(p.price) }} / {{ p.unit }}
+                                </div>
+                                <div
+                                    v-if="!p.in_stock"
+                                    class="mt-0.5 flex items-center gap-1 text-xs text-warning"
+                                >
+                                    <Lucide
+                                        icon="TriangleAlert"
+                                        class="h-3 w-3"
+                                    />
+                                    Sin existencias
+                                </div>
+                            </div>
+                            <Button
+                                :variant="
+                                    isSelected(p.id)
+                                        ? 'outline-secondary'
+                                        : 'outline-primary'
+                                "
+                                size="sm"
+                                class="shrink-0 rounded-[0.5rem] bg-white"
+                                :disabled="busyProduct === p.id"
+                                @click="setAvailability(p, !isSelected(p.id))"
+                            >
+                                {{ isSelected(p.id) ? 'Quitar' : 'Agregar' }}
+                            </Button>
+                        </div>
+
+                        <p
+                            v-if="pickerTruncated"
+                            class="pt-1 text-center text-xs text-slate-500"
+                        >
+                            Se muestran los primeros 40. Escribe para afinar la
+                            búsqueda.
+                        </p>
+                    </div>
+                </Dialog.Description>
+                <Dialog.Footer>
+                    <Button
+                        variant="outline-secondary"
+                        class="w-24"
+                        @click="pickerOpen = false"
+                    >
+                        Listo
+                    </Button>
+                </Dialog.Footer>
+            </Dialog.Panel>
+        </Dialog>
     </RazeLayout>
 </template>

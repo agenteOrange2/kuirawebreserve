@@ -76,6 +76,21 @@ const props = defineProps<{
     };
     guestStatus: { in_house: number; checked_out: number; pending: number };
     roomTypeDistribution: { label: string; count: number }[];
+    // Mantenimiento pendiente (null sin el módulo incidencias).
+    maintenance: {
+        open: number;
+        overdue: number;
+        high: number;
+        items: {
+            id: number;
+            title: string;
+            room: string | null;
+            priority: string;
+            priority_label: string;
+            overdue: boolean;
+            age_hours: number;
+        }[];
+    } | null;
     statuses: StatusCount[];
     occupancy: {
         occupied: number;
@@ -96,6 +111,15 @@ const props = defineProps<{
     plan: { name: string; max_rooms: number | null; max_users: number | null };
     recentActivity: ActivityRow[];
 }>();
+
+// Antigüedad en palabras: "hace 3 días" pesa más que "454 h".
+const ageLabel = (hours: number) => {
+    if (hours < 1) return 'recién';
+    if (hours < 24) return `hace ${hours} h`;
+    const days = Math.floor(hours / 24);
+
+    return `hace ${days} ${days === 1 ? 'día' : 'días'}`;
+};
 
 const money = (n: number) =>
     '$' +
@@ -298,6 +322,69 @@ const cellClass =
                             <span class="font-normal"
                                 >expira {{ hold.expires_at }}</span
                             >
+                        </Link>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mantenimiento pendiente: una falla abierta no puede
+                 esperar a que alguien entre a /incidencias. -->
+            <div
+                v-if="maintenance && maintenance.open > 0"
+                class="col-span-12 -mb-5"
+            >
+                <div
+                    class="box box--stacked p-4"
+                    :class="
+                        maintenance.overdue > 0
+                            ? 'border-l-4 border-l-danger'
+                            : 'border-l-4 border-l-pending'
+                    "
+                >
+                    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <div
+                            class="flex items-center gap-2 text-sm font-medium"
+                        >
+                            <Lucide
+                                icon="Wrench"
+                                class="h-4 w-4"
+                                :class="
+                                    maintenance.overdue > 0
+                                        ? 'text-danger'
+                                        : 'text-pending'
+                                "
+                            />
+                            <template v-if="maintenance.overdue > 0">
+                                {{ maintenance.overdue }} falla(s) sin atender
+                            </template>
+                            <template v-else>
+                                {{ maintenance.open }} falla(s) pendiente(s)
+                            </template>
+                        </div>
+                        <Link
+                            v-for="item in maintenance.items"
+                            :key="item.id"
+                            :href="route('tenant.incidents.show', item.id)"
+                            class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition"
+                            :class="
+                                item.overdue
+                                    ? 'bg-danger/10 text-danger hover:bg-danger/20'
+                                    : 'bg-pending/10 text-pending hover:bg-pending/20'
+                            "
+                        >
+                            <template v-if="item.room"
+                                >Hab. {{ item.room }} ·
+                            </template>
+                            {{ item.title }}
+                            <span class="font-normal">
+                                {{ ageLabel(item.age_hours) }}
+                            </span>
+                        </Link>
+                        <Link
+                            :href="route('tenant.incidents')"
+                            class="text-xs font-medium text-primary hover:underline"
+                        >
+                            Ver todas
                         </Link>
                     </div>
                 </div>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
-import { computed, reactive, ref } from 'vue';
+import { computed, reactive, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormHelp,
@@ -15,6 +15,9 @@ import Lucide from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import SlaDialog from './SlaDialog.vue';
+import TechniciansDialog from './TechniciansDialog.vue';
+import type { SlaHours, TechnicianRow } from './types';
 
 interface IncidentPhoto {
     id: number;
@@ -42,6 +45,13 @@ interface IncidentRow {
     resolved_at: string | null;
     resolution_notes: string | null;
     created_at: string;
+    due_at: string | null;
+    overdue: boolean;
+    age_hours: number;
+    cost: number | null;
+    technician_id: number | null;
+    technician: string | null;
+    stay_id: number | null;
     photos: IncidentPhoto[];
 }
 
@@ -51,17 +61,40 @@ interface RoomOption {
     status: string;
 }
 
+interface PaginationLink {
+    url: string | null;
+    label: string;
+    active: boolean;
+}
+
 const props = defineProps<{
-    incidents: IncidentRow[];
+    incidents: {
+        data: IncidentRow[];
+        links: PaginationLink[];
+        total: number;
+        from: number | null;
+        to: number | null;
+    };
     categories: Record<string, string>;
-    kpis: { open: number; in_progress: number; resolved_month: number };
+    kpis: {
+        open: number;
+        in_progress: number;
+        resolved_month: number;
+        overdue: number;
+    };
     rooms: RoomOption[];
     staff: Array<{ id: number; name: string }>;
+    technicians: TechnicianRow[];
+    sla: SlaHours;
     filters: {
         status: string;
         priority: string | null;
         room: number | null;
         category?: string | null;
+        q: string;
+        assignee: string | null;
+        source: string | null;
+        overdue: boolean;
     };
     canManage: boolean;
     canDelete: boolean;
@@ -70,8 +103,25 @@ const props = defineProps<{
 }>();
 
 const toast = useToasts();
-const incidents = ref<IncidentRow[]>([...props.incidents]);
+const incidents = ref<IncidentRow[]>([...props.incidents.data]);
+// La página en sí (totales y ligas); `incidents` es la copia mutable de
+// las filas visibles, que cambia en vivo al resolver o asignar.
+const paginator = computed(() => props.incidents);
 const kpis = reactive({ ...props.kpis });
+
+// Al cambiar de página o de filtro llegan props nuevos: la copia local
+// (que se muta en vivo al resolver o asignar) tiene que seguirlos.
+watch(
+    () => props.incidents,
+    (page) => {
+        incidents.value = [...page.data];
+        selectedIds.value = [];
+    },
+);
+watch(
+    () => props.kpis,
+    (fresh) => Object.assign(kpis, fresh),
+);
 
 const priorityClass = (priority: IncidentRow['priority']) =>
     priority === 'high'
@@ -105,7 +155,23 @@ const filterState = reactive({
     priority: props.filters.priority ?? '',
     room: props.filters.room ?? '',
     category: props.filters.category ?? '',
+    q: props.filters.q ?? '',
+    assignee: props.filters.assignee ?? '',
+    source: props.filters.source ?? '',
+    overdue: props.filters.overdue,
 });
+
+const filtersActive = computed(
+    () =>
+        filterState.status !== 'active' ||
+        filterState.priority !== '' ||
+        filterState.room !== '' ||
+        filterState.category !== '' ||
+        filterState.q.trim() !== '' ||
+        filterState.assignee !== '' ||
+        filterState.source !== '' ||
+        filterState.overdue,
+);
 
 function applyFilters() {
     router.get(
@@ -115,9 +181,86 @@ function applyFilters() {
             priority: filterState.priority || undefined,
             room: filterState.room || undefined,
             category: filterState.category || undefined,
+            q: filterState.q.trim() || undefined,
+            assignee: filterState.assignee || undefined,
+            source: filterState.source || undefined,
+            overdue: filterState.overdue || undefined,
         },
-        { preserveScroll: true },
+        {
+            preserveScroll: true,
+            preserveState: true,
+            replace: true,
+            only: ['incidents', 'kpis', 'filters'],
+        },
     );
+}
+
+function clearFilters() {
+    Object.assign(filterState, {
+        status: 'active',
+        priority: '',
+        room: '',
+        category: '',
+        q: '',
+        assignee: '',
+        source: '',
+        overdue: false,
+    });
+    applyFilters();
+}
+
+// El buscador va solo, con respiro: escribir "regadera" no debe disparar
+// ocho consultas.
+let searchTimer: ReturnType<typeof setTimeout> | null = null;
+watch(
+    () => filterState.q,
+    () => {
+        if (searchTimer) clearTimeout(searchTimer);
+        searchTimer = setTimeout(applyFilters, 350);
+    },
+);
+
+// ── Selección múltiple y borrado en bloque ──
+const selectedIds = ref<number[]>([]);
+const bulkDeleteOpen = ref(false);
+const bulkDeleting = ref(false);
+
+const allSelected = computed(
+    () =>
+        incidents.value.length > 0 &&
+        incidents.value.every((i) => selectedIds.value.includes(i.id)),
+);
+
+function toggleRow(id: number) {
+    selectedIds.value = selectedIds.value.includes(id)
+        ? selectedIds.value.filter((x) => x !== id)
+        : [...selectedIds.value, id];
+}
+
+function toggleAll() {
+    selectedIds.value = allSelected.value
+        ? []
+        : incidents.value.map((i) => i.id);
+}
+
+async function bulkDelete() {
+    bulkDeleting.value = true;
+    try {
+        const { data } = await axios.delete('/api/incidents/bulk', {
+            data: { ids: selectedIds.value },
+        });
+        toast.success('Listo', `${data.deleted} incidencia(s) eliminada(s).`);
+        selectedIds.value = [];
+        bulkDeleteOpen.value = false;
+        router.reload({ only: ['incidents', 'kpis'] });
+    } catch (e: any) {
+        toast.error(
+            'No se pudo eliminar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        bulkDeleting.value = false;
+    }
 }
 
 // ── Modal reportar/editar ──
@@ -150,6 +293,18 @@ const canSetMaintenance = computed(
         !editing.value &&
         selectedRoom.value !== null &&
         ['available', 'dirty', 'cleaning'].includes(selectedRoom.value.status),
+);
+
+// Una falla urgente casi siempre impide vender el cuarto: la casilla se
+// pre-marca al elegir prioridad alta, visible para desmarcarla. Forzarlo
+// sería quitarle al hotel una decisión de venta que es suya.
+watch(
+    () => form.priority,
+    (priority) => {
+        if (priority === 'high' && canSetMaintenance.value) {
+            form.set_maintenance = true;
+        }
+    },
 );
 
 function openForm(incident: IncidentRow | null = null) {
@@ -306,16 +461,37 @@ async function patchStatus(
     }
 }
 
+// ── Tiempos objetivo y catálogo de quién repara ──
+const slaHours = ref<SlaHours>({ ...props.sla });
+const showSla = ref(false);
+const showTechnicians = ref(false);
+
+// Cuánto tiempo queda (o cuánto lleva vencida) en palabras: "vence en 3 h"
+// dice más que una fecha suelta a media tabla.
+function dueLabel(incident: IncidentRow): string | null {
+    if (incident.status === 'resolved' || !incident.due_at) return null;
+    return incident.overdue ? 'Vencida' : `Vence ${incident.due_at}`;
+}
+
+const money = new Intl.NumberFormat('es-MX', {
+    style: 'currency',
+    currency: 'MXN',
+});
+
 // ── Modal resolver ──
 const resolving = ref<IncidentRow | null>(null);
 const resolveNotes = ref('');
 const releaseRoom = ref(true);
+const resolveCost = ref<string>('');
+const resolveTechnician = ref<string | number>('');
 const resolvingBusy = ref(false);
 
 function openResolve(incident: IncidentRow) {
     resolving.value = incident;
     resolveNotes.value = '';
     releaseRoom.value = true;
+    resolveCost.value = incident.cost !== null ? String(incident.cost) : '';
+    resolveTechnician.value = incident.technician_id ?? '';
     Object.keys(errors).forEach((k) => delete errors[k]);
 }
 
@@ -327,6 +503,13 @@ async function confirmResolve() {
     const data = await patchStatus(resolving.value, 'resolved', {
         resolution_notes: resolveNotes.value || null,
         release_room: releasing,
+        // Costo y técnico solo existen con incidencias avanzadas; el
+        // backend los ignora si el módulo está apagado.
+        cost: resolveCost.value === '' ? null : Number(resolveCost.value),
+        technician_id:
+            resolveTechnician.value === ''
+                ? null
+                : Number(resolveTechnician.value),
     });
     resolvingBusy.value = false;
     if (data) {
@@ -392,6 +575,24 @@ async function destroy() {
                         class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
                     >
                         <Button
+                            v-if="canManage"
+                            variant="outline-secondary"
+                            class="min-h-11 rounded-[0.5rem] bg-white"
+                            @click="showSla = true"
+                        >
+                            <Lucide icon="Timer" class="mr-2 h-4 w-4" />
+                            Tiempos
+                        </Button>
+                        <Button
+                            v-if="advanced && canManage"
+                            variant="outline-secondary"
+                            class="min-h-11 rounded-[0.5rem] bg-white"
+                            @click="showTechnicians = true"
+                        >
+                            <Lucide icon="HardHat" class="mr-2 h-4 w-4" />
+                            Quién repara
+                        </Button>
+                        <Button
                             v-if="advanced"
                             as="a"
                             :href="route('tenant.incidents.reports')"
@@ -415,7 +616,7 @@ async function destroy() {
             </div>
 
             <!-- KPIs -->
-            <div class="col-span-12 sm:col-span-4">
+            <div class="col-span-12 sm:col-span-6 lg:col-span-3">
                 <div
                     class="box box--stacked flex h-full items-center gap-4 p-5"
                 >
@@ -430,7 +631,7 @@ async function destroy() {
                     </div>
                 </div>
             </div>
-            <div class="col-span-12 sm:col-span-4">
+            <div class="col-span-12 sm:col-span-6 lg:col-span-3">
                 <div
                     class="box box--stacked flex h-full items-center gap-4 p-5"
                 >
@@ -447,7 +648,7 @@ async function destroy() {
                     </div>
                 </div>
             </div>
-            <div class="col-span-12 sm:col-span-4">
+            <div class="col-span-12 sm:col-span-6 lg:col-span-3">
                 <div
                     class="box box--stacked flex h-full items-center gap-4 p-5"
                 >
@@ -466,62 +667,188 @@ async function destroy() {
                     </div>
                 </div>
             </div>
+            <div class="col-span-12 sm:col-span-6 lg:col-span-3">
+                <div
+                    class="box box--stacked flex h-full items-center gap-4 p-5"
+                    :class="kpis.overdue > 0 ? 'ring-1 ring-danger/30' : ''"
+                >
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border"
+                        :class="
+                            kpis.overdue > 0
+                                ? 'border-danger/10 bg-danger/10 text-danger'
+                                : 'border-slate-200/70 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400'
+                        "
+                    >
+                        <Lucide icon="Timer" class="h-5 w-5" />
+                    </div>
+                    <div>
+                        <div class="text-xl font-medium">
+                            {{ kpis.overdue }}
+                        </div>
+                        <div class="text-sm text-slate-500">
+                            Fuera de tiempo
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- Filtros + listado -->
             <div class="col-span-12">
                 <div class="box box--stacked">
                     <div
-                        class="flex flex-col gap-3 border-b border-slate-200/70 p-5 sm:flex-row sm:items-center dark:border-darkmode-400"
+                        class="flex flex-col gap-3 border-b border-slate-200/70 p-5 dark:border-darkmode-400"
                     >
-                        <FormSelect
-                            v-model="filterState.status"
-                            class="sm:w-44"
-                            @change="applyFilters"
+                        <div class="flex flex-col gap-3 sm:flex-row">
+                            <div class="relative sm:flex-1">
+                                <Lucide
+                                    icon="Search"
+                                    class="absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-slate-400"
+                                />
+                                <FormInput
+                                    v-model="filterState.q"
+                                    class="pl-9"
+                                    placeholder="Buscar por falla, nota o habitación…"
+                                />
+                            </div>
+                            <div class="flex flex-wrap items-center gap-2">
+                                <button
+                                    type="button"
+                                    class="flex min-h-11 items-center gap-1.5 rounded-lg border px-3 text-sm transition"
+                                    :class="
+                                        filterState.overdue
+                                            ? 'border-danger/30 bg-danger/10 font-medium text-danger'
+                                            : 'border-slate-200/70 text-slate-500 dark:border-darkmode-400'
+                                    "
+                                    @click="
+                                        filterState.overdue =
+                                            !filterState.overdue;
+                                        applyFilters();
+                                    "
+                                >
+                                    <Lucide icon="Timer" class="h-4 w-4" />
+                                    Fuera de tiempo
+                                </button>
+                                <button
+                                    v-if="filtersActive"
+                                    type="button"
+                                    class="flex min-h-11 items-center gap-1.5 rounded-lg border border-slate-200/70 px-3 text-sm text-slate-500 dark:border-darkmode-400"
+                                    @click="clearFilters"
+                                >
+                                    <Lucide icon="X" class="h-4 w-4" />
+                                    Limpiar
+                                </button>
+                            </div>
+                        </div>
+                        <div
+                            class="flex flex-col gap-3 sm:flex-row sm:flex-wrap"
                         >
-                            <option value="active">Pendientes</option>
-                            <option value="all">Todas</option>
-                            <option value="open">Abiertas</option>
-                            <option value="in_progress">En proceso</option>
-                            <option value="resolved">Resueltas</option>
-                        </FormSelect>
-                        <FormSelect
-                            v-model="filterState.priority"
-                            class="sm:w-44"
-                            @change="applyFilters"
-                        >
-                            <option value="">Toda prioridad</option>
-                            <option value="high">Alta</option>
-                            <option value="medium">Media</option>
-                            <option value="low">Baja</option>
-                        </FormSelect>
-                        <FormSelect
-                            v-model="filterState.room"
-                            class="sm:w-56"
-                            @change="applyFilters"
-                        >
-                            <option value="">Todas las habitaciones</option>
-                            <option
-                                v-for="room in rooms"
-                                :key="room.id"
-                                :value="room.id"
+                            <FormSelect
+                                v-model="filterState.status"
+                                class="sm:w-44"
+                                @change="applyFilters"
                             >
-                                {{ room.label }}
-                            </option>
-                        </FormSelect>
-                        <FormSelect
-                            v-model="filterState.category"
-                            class="sm:w-56"
-                            @change="applyFilters"
-                        >
-                            <option value="">Todo tipo de falla</option>
-                            <option
-                                v-for="(label, value) in categories"
-                                :key="value"
-                                :value="value"
+                                <option value="active">Pendientes</option>
+                                <option value="all">Todas</option>
+                                <option value="open">Abiertas</option>
+                                <option value="in_progress">En proceso</option>
+                                <option value="resolved">Resueltas</option>
+                            </FormSelect>
+                            <FormSelect
+                                v-model="filterState.priority"
+                                class="sm:w-44"
+                                @change="applyFilters"
                             >
-                                {{ label }}
-                            </option>
-                        </FormSelect>
+                                <option value="">Toda prioridad</option>
+                                <option value="high">Alta</option>
+                                <option value="medium">Media</option>
+                                <option value="low">Baja</option>
+                            </FormSelect>
+                            <FormSelect
+                                v-model="filterState.room"
+                                class="sm:w-56"
+                                @change="applyFilters"
+                            >
+                                <option value="">Todas las habitaciones</option>
+                                <option
+                                    v-for="room in rooms"
+                                    :key="room.id"
+                                    :value="room.id"
+                                >
+                                    {{ room.label }}
+                                </option>
+                            </FormSelect>
+                            <FormSelect
+                                v-model="filterState.category"
+                                class="sm:w-56"
+                                @change="applyFilters"
+                            >
+                                <option value="">Todo tipo de falla</option>
+                                <option
+                                    v-for="(label, value) in categories"
+                                    :key="value"
+                                    :value="value"
+                                >
+                                    {{ label }}
+                                </option>
+                            </FormSelect>
+                            <FormSelect
+                                v-if="advanced"
+                                v-model="filterState.assignee"
+                                class="sm:w-48"
+                                @change="applyFilters"
+                            >
+                                <option value="">Cualquier responsable</option>
+                                <option value="none">Sin asignar</option>
+                                <option
+                                    v-for="person in staff"
+                                    :key="person.id"
+                                    :value="String(person.id)"
+                                >
+                                    {{ person.name }}
+                                </option>
+                            </FormSelect>
+                            <FormSelect
+                                v-model="filterState.source"
+                                class="sm:w-44"
+                                @change="applyFilters"
+                            >
+                                <option value="">Quien la reportó</option>
+                                <option value="staff">El equipo</option>
+                                <option value="guest">Un huésped</option>
+                            </FormSelect>
+                        </div>
+                    </div>
+
+                    <!-- Barra de selección: aparece solo con algo marcado -->
+                    <div
+                        v-if="selectedIds.length"
+                        class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 bg-primary/5 px-5 py-3 dark:border-darkmode-400"
+                    >
+                        <span class="text-sm font-medium">
+                            {{ selectedIds.length }} seleccionada(s)
+                        </span>
+                        <div class="flex items-center gap-2">
+                            <Button
+                                variant="outline-secondary"
+                                size="sm"
+                                class="bg-white"
+                                @click="selectedIds = []"
+                                >Quitar selección</Button
+                            >
+                            <Button
+                                v-if="canDelete"
+                                variant="danger"
+                                size="sm"
+                                @click="bulkDeleteOpen = true"
+                            >
+                                <Lucide
+                                    icon="Trash2"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Eliminar
+                            </Button>
+                        </div>
                     </div>
 
                     <template v-if="incidents.length">
@@ -535,6 +862,15 @@ async function destroy() {
                                 <div
                                     class="flex items-center justify-between gap-2"
                                 >
+                                    <input
+                                        v-if="canDelete"
+                                        type="checkbox"
+                                        class="form-check-input shrink-0"
+                                        :checked="
+                                            selectedIds.includes(incident.id)
+                                        "
+                                        @change="toggleRow(incident.id)"
+                                    />
                                     <Link
                                         :href="
                                             route(
@@ -542,7 +878,7 @@ async function destroy() {
                                                 incident.id,
                                             )
                                         "
-                                        class="min-w-0 truncate font-medium"
+                                        class="min-w-0 flex-1 truncate font-medium"
                                     >
                                         {{ incident.title }}
                                     </Link>
@@ -579,9 +915,26 @@ async function destroy() {
                                     >
                                         Reportó huésped
                                     </span>
+                                    <span
+                                        v-if="dueLabel(incident)"
+                                        class="rounded-full px-2 py-0.5 font-medium"
+                                        :class="
+                                            incident.overdue
+                                                ? 'bg-danger/10 text-danger'
+                                                : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400 dark:text-slate-300'
+                                        "
+                                    >
+                                        {{ dueLabel(incident) }}
+                                    </span>
                                     <span>{{ incident.created_at }}</span>
                                     <span v-if="incident.assignee">
                                         Atiende: {{ incident.assignee }}
+                                    </span>
+                                    <span v-if="incident.cost !== null">
+                                        Costó {{ money.format(incident.cost) }}
+                                        <template v-if="incident.technician">
+                                            · {{ incident.technician }}
+                                        </template>
                                     </span>
                                 </div>
                                 <div
@@ -643,6 +996,14 @@ async function destroy() {
                             <Table>
                                 <Table.Thead>
                                     <Table.Tr>
+                                        <Table.Th v-if="canDelete" class="w-10">
+                                            <input
+                                                type="checkbox"
+                                                class="form-check-input"
+                                                :checked="allSelected"
+                                                @change="toggleAll"
+                                            />
+                                        </Table.Th>
                                         <Table.Th>Incidencia</Table.Th>
                                         <Table.Th class="whitespace-nowrap"
                                             >Habitación</Table.Th
@@ -670,6 +1031,18 @@ async function destroy() {
                                         v-for="incident in incidents"
                                         :key="incident.id"
                                     >
+                                        <Table.Td v-if="canDelete">
+                                            <input
+                                                type="checkbox"
+                                                class="form-check-input"
+                                                :checked="
+                                                    selectedIds.includes(
+                                                        incident.id,
+                                                    )
+                                                "
+                                                @change="toggleRow(incident.id)"
+                                            />
+                                        </Table.Td>
                                         <Table.Td>
                                             <Link
                                                 :href="
@@ -751,9 +1124,37 @@ async function destroy() {
                                             >
                                                 {{ incident.status_label }}
                                             </span>
+                                            <div
+                                                v-if="dueLabel(incident)"
+                                                class="mt-1 flex items-center gap-1 text-[11px] whitespace-nowrap"
+                                                :class="
+                                                    incident.overdue
+                                                        ? 'font-medium text-danger'
+                                                        : 'text-slate-400'
+                                                "
+                                            >
+                                                <Lucide
+                                                    icon="Timer"
+                                                    class="h-3 w-3"
+                                                />
+                                                {{ dueLabel(incident) }}
+                                            </div>
                                         </Table.Td>
                                         <Table.Td class="whitespace-nowrap">
                                             {{ incident.assignee ?? '—' }}
+                                            <div
+                                                v-if="incident.cost !== null"
+                                                class="mt-0.5 text-[11px] text-slate-400"
+                                            >
+                                                {{
+                                                    money.format(incident.cost)
+                                                }}
+                                                <template
+                                                    v-if="incident.technician"
+                                                >
+                                                    · {{ incident.technician }}
+                                                </template>
+                                            </div>
                                         </Table.Td>
                                         <Table.Td
                                             class="text-xs whitespace-nowrap text-slate-500"
@@ -875,6 +1276,47 @@ async function destroy() {
                                     </Table.Tr>
                                 </Table.Tbody>
                             </Table>
+                        </div>
+
+                        <!-- Paginación: antes se cortaba en 100 sin avisar -->
+                        <div
+                            class="flex flex-col items-center gap-3 border-t border-slate-200/70 px-5 py-4 sm:flex-row sm:justify-between dark:border-darkmode-400"
+                        >
+                            <p class="text-xs text-slate-500">
+                                Mostrando {{ paginator.from ?? 0 }}–{{
+                                    paginator.to ?? 0
+                                }}
+                                de {{ paginator.total }}
+                            </p>
+                            <div
+                                v-if="paginator.links.length > 3"
+                                class="flex flex-wrap justify-center gap-1"
+                            >
+                                <template
+                                    v-for="(link, i) in paginator.links"
+                                    :key="i"
+                                >
+                                    <Link
+                                        v-if="link.url"
+                                        :href="link.url"
+                                        preserve-state
+                                        preserve-scroll
+                                        class="rounded-md px-3 py-1.5 text-sm"
+                                        :class="
+                                            link.active
+                                                ? 'bg-primary text-white'
+                                                : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                                        "
+                                    >
+                                        <span v-html="link.label" />
+                                    </Link>
+                                    <span
+                                        v-else
+                                        class="px-3 py-1.5 text-sm text-slate-400"
+                                        v-html="link.label"
+                                    />
+                                </template>
+                            </div>
                         </div>
                     </template>
                     <div
@@ -1238,6 +1680,49 @@ async function destroy() {
                                 placeholder="Se cambió el empaque de la regadera…"
                             />
                         </div>
+                        <div v-if="advanced" class="grid gap-4 sm:grid-cols-2">
+                            <div>
+                                <label class="mb-1 block text-sm"
+                                    >Costó reparar (opcional)</label
+                                >
+                                <FormInput
+                                    v-model="resolveCost"
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    placeholder="0.00"
+                                />
+                                <FormHelp>
+                                    Material y mano de obra: es lo que suma el
+                                    reporte por habitación.
+                                </FormHelp>
+                            </div>
+                            <div>
+                                <label class="mb-1 block text-sm"
+                                    >Quién lo reparó</label
+                                >
+                                <FormSelect v-model="resolveTechnician">
+                                    <option value="">Sin registrar</option>
+                                    <option
+                                        v-for="technician in technicians"
+                                        :key="technician.id"
+                                        :value="technician.id"
+                                    >
+                                        {{ technician.name }} ·
+                                        {{ technician.kind_label }}
+                                    </option>
+                                </FormSelect>
+                                <FormHelp>
+                                    <button
+                                        type="button"
+                                        class="text-primary"
+                                        @click="showTechnicians = true"
+                                    >
+                                        Administrar la lista
+                                    </button>
+                                </FormHelp>
+                            </div>
+                        </div>
                         <div
                             v-if="resolving?.room_status === 'maintenance'"
                             class="flex items-center justify-between rounded-lg border border-dashed border-slate-300/70 px-3 py-2.5 dark:border-darkmode-400"
@@ -1316,5 +1801,59 @@ async function destroy() {
                 </div>
             </Dialog.Panel>
         </Dialog>
+
+        <Dialog :open="bulkDeleteOpen" @close="bulkDeleteOpen = false">
+            <Dialog.Panel>
+                <div class="p-5 text-center">
+                    <Lucide
+                        icon="AlertTriangle"
+                        class="mx-auto mb-3 h-12 w-12 text-danger"
+                    />
+                    <h2 class="text-base font-medium">
+                        ¿Eliminar {{ selectedIds.length }} incidencia(s)?
+                    </h2>
+                    <p class="mt-2 text-sm text-slate-500">
+                        Se borran los tickets y sus fotos. Lo que ya se atendió
+                        conviene dejarlo como resuelto: es el historial de la
+                        habitación.
+                    </p>
+                    <div class="mt-5 flex justify-center gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            class="min-h-11"
+                            @click="bulkDeleteOpen = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            class="min-h-11"
+                            :disabled="bulkDeleting"
+                            @click="bulkDelete"
+                        >
+                            {{ bulkDeleting ? 'Eliminando…' : 'Sí, eliminar' }}
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <SlaDialog
+            :open="showSla"
+            :sla="slaHours"
+            @close="showSla = false"
+            @saved="
+                (hours) => {
+                    slaHours = hours;
+                    router.reload({ only: ['incidents', 'kpis', 'sla'] });
+                }
+            "
+        />
+
+        <TechniciansDialog
+            :open="showTechnicians"
+            :technicians="technicians"
+            :can-manage="canManage"
+            @close="showTechnicians = false"
+        />
     </RazeLayout>
 </template>

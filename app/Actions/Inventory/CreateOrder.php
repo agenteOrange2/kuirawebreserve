@@ -20,7 +20,7 @@ class CreateOrder
     public function __construct(protected RecordStockMovement $recordMovement) {}
 
     /**
-     * @param  array{stay_id?: int|null, notes?: string|null, discount?: float|null, tip?: float|null, lines: array<int, array{product_id: int, qty: float}>}  $data
+     * @param  array{stay_id?: int|null, charge_to_room?: bool|null, notes?: string|null, discount?: float|null, tip?: float|null, lines: array<int, array{product_id: int, qty: float}>}  $data
      *
      * @throws InsufficientStockException
      */
@@ -37,7 +37,23 @@ class CreateOrder
 
             // Lo que se carga a la habitación se cobra en el check-out, no
             // ahora; para el corte de caja no es efectivo en mano todavía.
-            $method = $stay ? 'room' : ($data['payment_method'] ?? 'cash');
+            //
+            // `charge_to_room` permite lo contrario: cobrar en el momento un
+            // consumo de un cuarto en uso (la caseta del motel entrega y
+            // cobra ahí mismo). La venta CONSERVA su stay_id —así sigue
+            // contando en el historial del cuarto y del vehículo— pero se
+            // guarda con el método real, así que el corte la cuenta y el
+            // folio deja de verla (ese filtro es `payment_method = 'room'`
+            // sin liquidar). Ojo: NO se sella `settled_at`; ese sello
+            // significa "se liquidó en el check-out" y VoidOrder lo usa para
+            // prohibir cancelar — una venta de mostrador cobrada al momento
+            // tiene que poder cancelarse como cualquier otra.
+            //
+            // El default es `true` a propósito: sin la bandera, todo llamador
+            // existente se comporta exactamente igual que antes. Quién la
+            // manda lo decide la UI según el modo de operación.
+            $chargeToRoom = $stay !== null && ($data['charge_to_room'] ?? true);
+            $method = $chargeToRoom ? 'room' : ($data['payment_method'] ?? 'cash');
 
             $order = Order::create([
                 'property_id' => $data['property_id'],

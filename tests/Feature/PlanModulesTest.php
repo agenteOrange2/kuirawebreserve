@@ -30,7 +30,7 @@ it('backfill: los planes existentes reciben los módulos que ya otorgaban', func
         ->and(Plan::find('esencial')->modules)->toBe(['tarifas-flexibles', 'corte-caja', 'bitacora'])
         ->and(Plan::find('profesional')->modules)->toContain('corte-caja', 'encuestas')
         ->and(Plan::find('profesional')->modules)->not->toContain('cupones', 'encuestas-avanzado')
-        ->and(Plan::find('empresarial')->modules)->toContain('cupones', 'encuestas-avanzado', 'incidencias-avanzado', 'tablero-avanzado');
+        ->and(Plan::find('empresarial')->modules)->toContain('cupones', 'encuestas-avanzado', 'incidencias-avanzado', 'tablero-avanzado', 'plano-operativo');
 });
 
 it('toConfigArray expone modules y deriva ai.enabled del módulo agente-ia', function () {
@@ -117,10 +117,15 @@ it('el escalonado comercial gatea de verdad por plan', function () {
         ->and($profesional->hasModule('incidencias-avanzado'))->toBeFalse()
         ->and($profesional->hasModule('cupones'))->toBeFalse()
         ->and($profesional->hasModule('tablero-avanzado'))->toBeFalse()
+        // Los paneles del plano nacen como control avanzado: el Esencial y
+        // el Profesional los contratan aparte, no vienen incluidos.
+        ->and($esencial->hasModule('plano-operativo'))->toBeFalse()
+        ->and($profesional->hasModule('plano-operativo'))->toBeFalse()
         // Empresarial: todo lo del Profesional más los avanzados.
         ->and($empresarial->hasModule('corte-caja'))->toBeTrue()
         ->and($empresarial->hasModule('encuestas-avanzado'))->toBeTrue()
         ->and($empresarial->hasModule('incidencias-avanzado'))->toBeTrue()
         ->and($empresarial->hasModule('cupones'))->toBeTrue()
-        ->and($empresarial->hasModule('tablero-avanzado'))->toBeTrue();
+        ->and($empresarial->hasModule('tablero-avanzado'))->toBeTrue()
+        ->and($empresarial->hasModule('plano-operativo'))->toBeTrue();
 });

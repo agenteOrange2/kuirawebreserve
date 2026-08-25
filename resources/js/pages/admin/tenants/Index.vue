@@ -10,7 +10,7 @@ import {
     FormSelect,
 } from '@/components/Base/Form';
 import { Dialog, Menu } from '@/components/Base/Headless';
-import Lucide from '@/components/Base/Lucide';
+import Lucide, { type Icon } from '@/components/Base/Lucide';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
 interface TenantRow {
@@ -66,6 +66,44 @@ const initials = (name: string) =>
 const cellClass =
     'box shadow-[5px_3px_5px_#00000005] first:border-l last:border-r first:rounded-l-[0.6rem] last:rounded-r-[0.6rem] rounded-l-none rounded-r-none border-x-0 dark:bg-darkmode-600';
 
+// ── Modo de operación (spec-modo-motel) ──
+// Lo administra SOLO la plataforma, al crear y al editar. "Ambos" es una
+// propiedad que opera hotel y motel a la vez: no apaga nada, suma los
+// atajos de caseta a la operación de hotel.
+type PropertyMode = 'hotel' | 'motel' | 'both';
+
+const modeOptions: {
+    value: PropertyMode;
+    label: string;
+    icon: Icon;
+    description: string;
+}[] = [
+    {
+        value: 'hotel',
+        label: 'Hotel',
+        icon: 'Building2',
+        description: 'Flujo clásico de reservas y recepción.',
+    },
+    {
+        value: 'motel',
+        label: 'Motel',
+        icon: 'CarFront',
+        description:
+            'Registro exprés en el plano con placa o identificación y cobro en la llegada.',
+    },
+    {
+        value: 'both',
+        label: 'Ambos',
+        // No "Layers": ese icono ya es el de Planes en esta misma página.
+        icon: 'Blend',
+        description:
+            'Opera como hotel y como motel: conserva las dos funcionalidades.',
+    },
+];
+
+const modeOption = (mode: string) =>
+    modeOptions.find((option) => option.value === mode) ?? modeOptions[0];
+
 // ── Búsqueda y filtros (en cliente: el listado carga completo) ──
 const search = ref('');
 const statusFilter = ref<'all' | 'active' | 'suspended'>('all');
@@ -97,8 +135,9 @@ const createForm = useForm({
     name: '',
     subdomain: '',
     plan: props.plans.find((p) => p.active)?.value ?? 'basic',
-    // Modo de operación: motel enciende el registro exprés del plano y
-    // siembra wizard solo-adultos + menú pagado al recibir (editables).
+    // Modo de operación: motel y ambos encienden el registro exprés del
+    // plano; motel puro además siembra wizard solo-adultos + menú pagado al
+    // recibir (semillas editables por el hotel).
     mode: 'hotel',
     owner_name: '',
     owner_email: '',
@@ -534,6 +573,16 @@ function submitDelete() {
                                     </div>
                                 </td>
                                 <td :class="cellClass" class="px-5 py-3.5">
+                                    <span
+                                        class="mb-1.5 flex w-fit items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-400"
+                                        title="Modo de operación"
+                                    >
+                                        <Lucide
+                                            :icon="modeOption(t.mode).icon"
+                                            class="h-3 w-3 stroke-[1.5]"
+                                        />
+                                        {{ modeOption(t.mode).label }}
+                                    </span>
                                     <div
                                         class="flex items-center gap-3 text-xs text-slate-500"
                                     >
@@ -847,72 +896,44 @@ function submitDelete() {
                         <!-- Modo de operación (spec-modo-motel) -->
                         <div>
                             <FormLabel>Modo de operación</FormLabel>
-                            <div class="grid gap-3 sm:grid-cols-2">
+                            <div class="grid gap-3 sm:grid-cols-3">
                                 <button
+                                    v-for="option in modeOptions"
+                                    :key="option.value"
                                     type="button"
-                                    class="flex w-full items-start gap-3 rounded-lg border p-3.5 text-left transition"
+                                    class="flex h-full w-full items-start gap-3 rounded-lg border p-3.5 text-left transition"
                                     :class="
-                                        createForm.mode === 'hotel'
+                                        createForm.mode === option.value
                                             ? 'border-primary bg-primary/5'
                                             : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
                                     "
-                                    @click="createForm.mode = 'hotel'"
+                                    @click="createForm.mode = option.value"
                                 >
                                     <Lucide
-                                        icon="Building2"
+                                        :icon="option.icon"
                                         class="mt-0.5 h-4 w-4 shrink-0"
                                         :class="
-                                            createForm.mode === 'hotel'
+                                            createForm.mode === option.value
                                                 ? 'text-primary'
                                                 : 'text-slate-400'
                                         "
                                     />
                                     <span class="min-w-0">
-                                        <span class="block text-sm font-medium"
-                                            >Hotel</span
+                                        <span
+                                            class="block text-sm font-medium"
+                                            >{{ option.label }}</span
                                         >
                                         <span
                                             class="mt-0.5 block text-xs text-slate-500"
-                                            >Flujo clásico de reservas y
-                                            recepción.</span
-                                        >
-                                    </span>
-                                </button>
-                                <button
-                                    type="button"
-                                    class="flex w-full items-start gap-3 rounded-lg border p-3.5 text-left transition"
-                                    :class="
-                                        createForm.mode === 'motel'
-                                            ? 'border-primary bg-primary/5'
-                                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
-                                    "
-                                    @click="createForm.mode = 'motel'"
-                                >
-                                    <Lucide
-                                        icon="CarFront"
-                                        class="mt-0.5 h-4 w-4 shrink-0"
-                                        :class="
-                                            createForm.mode === 'motel'
-                                                ? 'text-primary'
-                                                : 'text-slate-400'
-                                        "
-                                    />
-                                    <span class="min-w-0">
-                                        <span class="block text-sm font-medium"
-                                            >Motel</span
-                                        >
-                                        <span
-                                            class="mt-0.5 block text-xs text-slate-500"
-                                            >Registro exprés en el plano con
-                                            placa o identificación y cobro en la
-                                            llegada.</span
+                                            >{{ option.description }}</span
                                         >
                                     </span>
                                 </button>
                             </div>
                             <FormHelp
-                                >El tenant puede cambiarlo después en sus
-                                ajustes (Datos generales).</FormHelp
+                                >Lo administra la plataforma: el hotel no lo ve
+                                en sus ajustes. Se puede cambiar después desde
+                                "Editar".</FormHelp
                             >
                             <FormHelp
                                 v-if="createForm.errors.mode"
@@ -1022,7 +1043,7 @@ function submitDelete() {
         </Dialog>
 
         <!-- Modal: editar -->
-        <Dialog :open="editing !== null" @close="editing = null">
+        <Dialog :open="editing !== null" size="lg" @close="editing = null">
             <Dialog.Panel>
                 <div class="p-5">
                     <div class="mb-4 flex items-center gap-3">
@@ -1064,59 +1085,45 @@ function submitDelete() {
                         </div>
                         <div>
                             <FormLabel>Modo de operación</FormLabel>
-                            <div class="grid gap-3 sm:grid-cols-2">
+                            <div class="grid gap-3 sm:grid-cols-3">
                                 <button
+                                    v-for="option in modeOptions"
+                                    :key="option.value"
                                     type="button"
-                                    class="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition"
+                                    class="flex h-full w-full items-start gap-3 rounded-lg border p-3.5 text-left transition"
                                     :class="
-                                        editForm.mode === 'hotel'
+                                        editForm.mode === option.value
                                             ? 'border-primary bg-primary/5'
                                             : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
                                     "
-                                    @click="editForm.mode = 'hotel'"
+                                    @click="editForm.mode = option.value"
                                 >
                                     <Lucide
-                                        icon="Building2"
+                                        :icon="option.icon"
                                         class="mt-0.5 h-4 w-4 shrink-0"
                                         :class="
-                                            editForm.mode === 'hotel'
+                                            editForm.mode === option.value
                                                 ? 'text-primary'
                                                 : 'text-slate-400'
                                         "
                                     />
-                                    <span class="text-sm font-medium"
-                                        >Hotel</span
-                                    >
-                                </button>
-                                <button
-                                    type="button"
-                                    class="flex w-full items-start gap-3 rounded-lg border p-3 text-left transition"
-                                    :class="
-                                        editForm.mode === 'motel'
-                                            ? 'border-primary bg-primary/5'
-                                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
-                                    "
-                                    @click="editForm.mode = 'motel'"
-                                >
-                                    <Lucide
-                                        icon="CarFront"
-                                        class="mt-0.5 h-4 w-4 shrink-0"
-                                        :class="
-                                            editForm.mode === 'motel'
-                                                ? 'text-primary'
-                                                : 'text-slate-400'
-                                        "
-                                    />
-                                    <span class="text-sm font-medium"
-                                        >Motel</span
-                                    >
+                                    <span class="min-w-0">
+                                        <span
+                                            class="block text-sm font-medium"
+                                            >{{ option.label }}</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block text-xs text-slate-500"
+                                            >{{ option.description }}</span
+                                        >
+                                    </span>
                                 </button>
                             </div>
                             <FormHelp
-                                >Motel enciende el registro exprés del plano
-                                (placa o identificación y cobro en la llegada).
-                                Cambiarlo no toca lo demás que el hotel ya
-                                configuró.</FormHelp
+                                >Motel y Ambos encienden el registro exprés del
+                                plano (placa o identificación y cobro en la
+                                llegada). Cambiar el modo no toca lo demás que
+                                el hotel ya configuró.</FormHelp
                             >
                             <FormHelp
                                 v-if="editForm.errors.mode"

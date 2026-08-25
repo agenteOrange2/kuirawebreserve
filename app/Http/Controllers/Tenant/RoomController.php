@@ -5,9 +5,12 @@ namespace App\Http\Controllers\Tenant;
 use App\Actions\Rooms\ChangeRoomStatus;
 use App\Actions\Rooms\SyncRoomUsageLock;
 use App\Enums\ReservationStatus;
+use App\Models\Reservation;
 use App\Enums\RoomStatus;
 use App\Http\Controllers\Controller;
+use App\Models\Order;
 use App\Models\Room;
+use App\Models\Stay;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -16,6 +19,67 @@ use Spatie\ModelStates\Exceptions\CouldNotPerformTransition;
 
 class RoomController extends Controller
 {
+    /**
+     * Quién ha pasado por esta habitación. Lo pide el tab de historial del
+     * modal del plano, donde cada estancia se abre para ver su cuenta.
+     *
+     * Trae el consumo agregado por estancia para que la lista ya diga algo sin
+     * tener que abrir una por una; el detalle (qué se consumió y qué se pagó)
+     * sale del folio de la estancia, que ya existe.
+     */
+    public function stays(Room $room): JsonResponse
+    {
+        $stays = Stay::query()
+            ->where('room_id', $room->id)
+            ->with(['guest:id,first_name,last_name', 'ratePlan:id,name'])
+            ->withSum(
+                ['orders as consumos_total' => fn ($query) => $query->where('status', Order::STATUS_COMPLETED)],
+                'total',
+            )
+            ->latest('check_in_at')
+            ->take(10)
+            ->get()
+            ->map(fn (Stay $stay) => [
+                'id' => $stay->id,
+                'guest_name' => $stay->guest?->full_name ?? $stay->guest_name ?? 'Anónimo',
+                'rate_plan' => $stay->ratePlan?->name,
+                'channel' => $stay->channel,
+                'check_in_at' => $stay->check_in_at?->format('d/m/Y H:i'),
+                'check_out_at' => $stay->check_out_at?->format('d/m/Y H:i'),
+                'active' => $stay->status === Stay::STATUS_ACTIVE,
+                'amount' => (float) $stay->amount,
+                'consumos_total' => round((float) ($stay->consumos_total ?? 0), 2),
+                // El motel identifica la visita por la placa, no por el nombre.
+                'vehicle_plate' => $stay->vehicle_plate,
+                // Ficha del vehículo, si la llegada entró en carro.
+                'vehicle_id' => $stay->vehicle_id,
+            ]);
+
+        // Lo que viene para esta habitación: sirve para saber hasta cuándo se
+        // puede extender a quien está adentro sin pisar a nadie.
+        $upcoming = Reservation::query()
+            ->where('room_id', $room->id)
+            ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
+            ->where('ends_at', '>=', now())
+            ->with(['guest:id,first_name,last_name', 'ratePlan:id,name'])
+            ->orderBy('starts_at')
+            ->take(10)
+            ->get()
+            ->map(fn (Reservation $reservation) => [
+                'id' => $reservation->id,
+                'code' => $reservation->displayCode(),
+                'guest_name' => $reservation->guest?->full_name ?? $reservation->guest_name ?? 'Anónimo',
+                'rate_plan' => $reservation->ratePlan?->name,
+                'status_label' => $reservation->status->label(),
+                'starts_at' => $reservation->starts_at->format('d/m/Y H:i'),
+                'ends_at' => $reservation->ends_at->format('d/m/Y H:i'),
+                'starts_today' => $reservation->starts_at->isToday(),
+                'total_amount' => (float) $reservation->total_amount,
+            ]);
+
+        return response()->json(['stays' => $stays, 'upcoming' => $upcoming]);
+    }
+
     public function index(Request $request): JsonResponse
     {
         return response()->json(

@@ -24,6 +24,8 @@ class IncidentController extends Controller
     {
         $validated = $request->validate([
             'room_id' => ['nullable', 'integer', 'exists:rooms,id'],
+            // La estancia que causó el daño (la manda el check-out).
+            'stay_id' => ['nullable', 'integer', 'exists:stays,id'],
             'title' => ['required', 'string', 'max:120'],
             'category' => ['nullable', Rule::in(array_keys(Incident::CATEGORIES))],
             'source' => ['nullable', Rule::in([Incident::SOURCE_STAFF, Incident::SOURCE_GUEST])],
@@ -43,6 +45,7 @@ class IncidentController extends Controller
 
         $incident = Incident::create([
             'room_id' => $validated['room_id'] ?? null,
+            'stay_id' => $validated['stay_id'] ?? null,
             'title' => $validated['title'],
             'category' => $validated['category'] ?? null,
             'source' => $validated['source'] ?? Incident::SOURCE_STAFF,
@@ -68,7 +71,19 @@ class IncidentController extends Controller
             }
         }
 
-        return response()->json(IncidentsPageController::present($incident->fresh(['room', 'reporter', 'assignee', 'resolver'])), 201);
+        // Una falla de prioridad alta no puede depender de que alguien
+        // entre a /incidencias: suena la campana en el momento.
+        if ($incident->priority === 'high') {
+            $this->notifyStaff(
+                $incident,
+                'Falla de prioridad alta',
+                $incident->room
+                    ? "Habitación {$incident->room->number}: {$incident->title}"
+                    : $incident->title,
+            );
+        }
+
+        return response()->json(IncidentsPageController::present($incident->fresh(['room', 'reporter', 'assignee', 'resolver', 'technician'])), 201);
     }
 
     public function update(Request $request, Incident $incident, ChangeRoomStatus $changeStatus): JsonResponse
@@ -83,6 +98,8 @@ class IncidentController extends Controller
             'assigned_to' => ['sometimes', 'nullable', 'integer', 'exists:users,id'],
             'status' => ['sometimes', 'required', Rule::in(Incident::STATUSES)],
             'resolution_notes' => ['sometimes', 'nullable', 'string', 'max:2000'],
+            'cost' => ['sometimes', 'nullable', 'numeric', 'min:0', 'max:999999.99'],
+            'technician_id' => ['sometimes', 'nullable', 'integer', 'exists:technicians,id'],
             'release_room' => ['nullable', 'boolean'],
         ]);
 
@@ -93,7 +110,7 @@ class IncidentController extends Controller
         // tocan responsables.
         $tenant = tenant();
         if ($tenant !== null && ! $tenant->hasModule('incidencias-avanzado')) {
-            unset($validated['assigned_to']);
+            unset($validated['assigned_to'], $validated['cost'], $validated['technician_id']);
         }
 
         $incident->fill($validated);
@@ -107,6 +124,10 @@ class IncidentController extends Controller
                 $incident->resolved_by = null;
                 $incident->resolved_at = null;
                 $incident->resolution_notes = null;
+                // Si vuelve a estar rota, lo que costó la vez pasada deja de
+                // ser el costo de arreglarla: se recaptura al cerrar de nuevo.
+                $incident->cost = null;
+                $incident->technician_id = null;
             }
         }
 
@@ -127,7 +148,7 @@ class IncidentController extends Controller
             );
         }
 
-        return response()->json(IncidentsPageController::present($incident->fresh(['room', 'reporter', 'assignee', 'resolver'])));
+        return response()->json(IncidentsPageController::present($incident->fresh(['room', 'reporter', 'assignee', 'resolver', 'technician'])));
     }
 
     public function destroy(Incident $incident): JsonResponse
@@ -135,6 +156,26 @@ class IncidentController extends Controller
         $incident->delete();
 
         return response()->json(['deleted' => true]);
+    }
+
+    /**
+     * Borrado en bloque desde el listado: la limpieza de fin de mes de los
+     * tickets viejos, sin ir de uno en uno.
+     */
+    public function destroyBulk(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1', 'max:200'],
+            'ids.*' => ['integer'],
+        ]);
+
+        $deleted = 0;
+        foreach (Incident::query()->whereIn('id', $data['ids'])->get() as $incident) {
+            $incident->delete();
+            $deleted++;
+        }
+
+        return response()->json(['deleted' => $deleted]);
     }
 
     /** Sube una foto de evidencia al disco privado. */
@@ -146,7 +187,7 @@ class IncidentController extends Controller
 
         $incident->addMediaFromRequest('file')->toMediaCollection('photos');
 
-        return response()->json(IncidentsPageController::present($incident->fresh(['room', 'reporter', 'assignee', 'resolver'])), 201);
+        return response()->json(IncidentsPageController::present($incident->fresh(['room', 'reporter', 'assignee', 'resolver', 'technician'])), 201);
     }
 
     public function showPhoto(Incident $incident, Media $media): BinaryFileResponse
@@ -170,6 +211,52 @@ class IncidentController extends Controller
 
         $media->delete();
 
-        return response()->json(IncidentsPageController::present($incident->fresh(['room', 'reporter', 'assignee', 'resolver'])));
+        return response()->json(IncidentsPageController::present($incident->fresh(['room', 'reporter', 'assignee', 'resolver', 'technician'])));
+    }
+
+    /**
+     * Aviso a la campana del panel. StaffNotifier ya deduplica por sujeto:
+     * el mismo ticket refresca su aviso en vez de apilar otro.
+     */
+    protected function notifyStaff(Incident $incident, string $title, string $body): void
+    {
+        app(\App\Services\StaffNotifier::class)->notify(
+            type: \App\Models\StaffNotification::TYPE_INCIDENT,
+            title: $title,
+            body: $body,
+            url: '/incidencias/'.$incident->id,
+            subject: $incident,
+        );
+    }
+
+    /**
+     * Tiempos objetivo por prioridad. Son tres números y viven en los
+     * ajustes del hotel: se editan en un modal desde /incidencias en vez de
+     * abrir una pantalla de configuración para eso.
+     */
+    public function updateSla(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'high' => ['required', 'integer', 'min:1', 'max:'.\App\Services\IncidentPolicy::MAX_HOURS],
+            'medium' => ['required', 'integer', 'min:1', 'max:'.\App\Services\IncidentPolicy::MAX_HOURS],
+            'low' => ['required', 'integer', 'min:1', 'max:'.\App\Services\IncidentPolicy::MAX_HOURS],
+        ]);
+
+        $policy = app(\App\Services\IncidentPolicy::class);
+        $policy->save($data);
+
+        // Los plazos vigentes se recalculan: cambiar la política y que los
+        // tickets abiertos conserven el plazo viejo sería mentir.
+        Incident::query()
+            ->whereIn('status', [Incident::STATUS_OPEN, Incident::STATUS_IN_PROGRESS])
+            ->get()
+            ->each(function (Incident $incident) use ($policy) {
+                $incident->forceFill([
+                    'due_at' => $policy->dueAt($incident->priority, $incident->created_at),
+                    'overdue_notified_at' => null,
+                ])->saveQuietly();
+            });
+
+        return response()->json(['ok' => true, 'sla' => $policy->hours()]);
     }
 }

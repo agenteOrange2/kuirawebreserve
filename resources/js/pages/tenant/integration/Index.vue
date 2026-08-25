@@ -434,9 +434,27 @@ async function discardSuggestion(row: SuggestionRow) {
                 {{ generalError }}
             </div>
 
+            <!-- La página va en pasos: el hotelero llega sin saber por
+                 dónde empezar, y antes eran cuatro tarjetas del mismo peso
+                 visual, una tras otra, sin decir qué hacer primero. -->
+            <div class="mt-7 flex items-baseline gap-3">
+                <span
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary"
+                    >1</span
+                >
+                <div class="min-w-0">
+                    <h2 class="text-base font-medium">
+                        Comparte tu liga de reservas
+                    </h2>
+                    <p class="mt-0.5 text-xs text-slate-500">
+                        Funciona desde ya, sin instalar nada.
+                    </p>
+                </div>
+            </div>
+
             <!-- Tu página de reservas: la URL del wizard público -->
             <div
-                class="box box--stacked mt-5 flex flex-wrap items-center gap-4 p-5"
+                class="box box--stacked mt-3 flex flex-wrap items-center gap-4 p-5"
             >
                 <div
                     class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
@@ -493,8 +511,24 @@ async function discardSuggestion(row: SuggestionRow) {
                 </div>
             </div>
 
+            <div class="mt-8 flex items-baseline gap-3">
+                <span
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary"
+                    >2</span
+                >
+                <div class="min-w-0">
+                    <h2 class="text-base font-medium">
+                        Muéstralo dentro de tu sitio web
+                    </h2>
+                    <p class="mt-0.5 text-xs text-slate-500">
+                        Elige qué se puede reservar desde tu página y copia el
+                        código donde lo quieras.
+                    </p>
+                </div>
+            </div>
+
             <!-- Widgets incrustables: pega el wizard en tu WordPress o en cualquier sitio -->
-            <div class="box box--stacked mt-5">
+            <div class="box box--stacked mt-3">
                 <div
                     class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
                 >
@@ -508,12 +542,12 @@ async function discardSuggestion(row: SuggestionRow) {
                         </h2>
                     </div>
                     <p class="mt-1 text-xs text-slate-500">
-                        Pega el wizard en tu página con el shortcode (WordPress
-                        con el plugin KuiraWebReserve Habitaciones, descargable
-                        en "Sitios conectados") o con el script (cualquier
-                        sitio). Los precios, cupos y fotos SIEMPRE están en
-                        vivo: lo que cambies aquí se refleja al instante en tu
-                        página, sin re-publicar nada.
+                        Enciende lo que quieras que se pueda reservar desde tu
+                        página y copia su código: shortcode si usas WordPress
+                        con el plugin, o script para cualquier otro sitio. Los
+                        precios, cupos y fotos SIEMPRE están en vivo: lo que
+                        cambies aquí se refleja al instante en tu página, sin
+                        re-publicar nada.
                     </p>
                 </div>
                 <div
@@ -666,9 +700,59 @@ async function discardSuggestion(row: SuggestionRow) {
                 </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 gap-6">
+            <div
+                class="box box--stacked mt-4 flex flex-wrap items-center gap-4 p-5"
+            >
+                <div
+                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                >
+                    <Lucide icon="Blocks" class="h-5 w-5" />
+                </div>
+                <div class="min-w-0 flex-1">
+                    <div class="font-medium">¿Tu sitio es WordPress?</div>
+                    <p class="mt-0.5 text-xs text-slate-500">
+                        Instala el plugin (Plugins → Añadir nuevo → Subir), pega
+                        tu dominio y un token de abajo, y usa
+                        <code
+                            class="rounded bg-slate-100 px-1.5 py-0.5 font-mono dark:bg-darkmode-400"
+                            >[kuirawebreserve_rooms]</code
+                        >
+                        para las tarjetas de habitaciones con foto y precio en
+                        vivo. Trae botón "Probar conexión".
+                    </p>
+                </div>
+                <Button
+                    as="a"
+                    href="/downloads/kuirawebreserve-rooms.zip"
+                    download
+                    variant="outline-primary"
+                    size="sm"
+                    class="shrink-0 rounded-[0.5rem] bg-white"
+                >
+                    <Lucide icon="Download" class="mr-1.5 h-3.5 w-3.5" />
+                    Descargar plugin
+                </Button>
+            </div>
+
+            <div class="mt-8 flex items-baseline gap-3">
+                <span
+                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary"
+                    >3</span
+                >
+                <div class="min-w-0">
+                    <h2 class="text-base font-medium">
+                        Conecta tu sitio para los precios en vivo
+                    </h2>
+                    <p class="mt-0.5 text-xs text-slate-500">
+                        Un token por sitio. Sin esto, tu página no puede leer el
+                        catálogo.
+                    </p>
+                </div>
+            </div>
+
+            <div class="mt-3 grid grid-cols-12 gap-6">
                 <!-- Tokens -->
-                <div class="col-span-12 xl:col-span-7">
+                <div class="col-span-12">
                     <div class="box box--stacked flex h-full flex-col">
                         <div
                             class="flex items-center gap-2 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
@@ -820,72 +904,78 @@ async function discardSuggestion(row: SuggestionRow) {
                                 </Button>
                             </div>
                         </div>
-                        <div
-                            class="border-t border-dashed border-slate-300/70 px-5 py-3.5 text-xs text-slate-500"
+                        <!-- Lo técnico se pliega: el dueño del hotel no
+                             necesita ver headers HTTP para usar esto, y su
+                             desarrollador lo encuentra en un clic. -->
+                        <details
+                            class="group border-t border-dashed border-slate-300/70 px-5 py-3.5"
                         >
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span
-                                    class="font-medium text-slate-600 dark:text-slate-300"
-                                    >Endpoint del catálogo:</span
-                                >
-                                <code
-                                    class="rounded bg-slate-100 px-1.5 py-0.5 font-mono dark:bg-darkmode-400"
-                                    >{{ catalogUrl }}</code
-                                >
-                                <button
-                                    type="button"
-                                    class="text-primary hover:underline"
-                                    @click="
-                                        copyText(catalogUrl, 'Endpoint copiado')
-                                    "
-                                >
-                                    Copiar
-                                </button>
-                            </div>
-                            <p class="mt-1.5">
-                                El sitio manda el token en el header
-                                Authorization (Bearer) DESDE SU SERVIDOR y
-                                cachea unos minutos. El token nunca va en el
-                                navegador del visitante. Devuelve tipos con
-                                fotos, amenidades y precio "desde" en vivo; no
-                                crea reservas ni expone huéspedes.
-                            </p>
-                            <div
-                                class="mt-3 flex flex-wrap items-center gap-2 border-t border-dashed border-slate-300/70 pt-3"
+                            <summary
+                                class="flex cursor-pointer list-none items-center gap-2 text-xs font-medium text-slate-500"
                             >
-                                <span
-                                    class="font-medium text-slate-600 dark:text-slate-300"
-                                    >Plugin para WordPress:</span
-                                >
-                                <a
-                                    href="/downloads/kuirawebreserve-rooms.zip"
-                                    download
-                                    class="flex items-center gap-1 font-medium text-primary hover:underline"
-                                >
-                                    <Lucide
-                                        icon="Download"
-                                        class="h-3.5 w-3.5"
-                                    />
-                                    Descargar kuirawebreserve-rooms.zip
-                                </a>
+                                <Lucide
+                                    icon="ChevronRight"
+                                    class="h-3.5 w-3.5 transition group-open:rotate-90"
+                                />
+                                Detalles técnicos (para quien programa tu sitio)
+                            </summary>
+                            <div class="mt-3 text-xs text-slate-500">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span
+                                        class="font-medium text-slate-600 dark:text-slate-300"
+                                        >Endpoint del catálogo:</span
+                                    >
+                                    <code
+                                        class="rounded bg-slate-100 px-1.5 py-0.5 font-mono break-all dark:bg-darkmode-400"
+                                        >{{ catalogUrl }}</code
+                                    >
+                                    <button
+                                        type="button"
+                                        class="text-primary hover:underline"
+                                        @click="
+                                            copyText(
+                                                catalogUrl,
+                                                'Endpoint copiado',
+                                            )
+                                        "
+                                    >
+                                        Copiar
+                                    </button>
+                                </div>
+                                <p class="mt-2">
+                                    El sitio manda el token en el header
+                                    Authorization (Bearer) DESDE SU SERVIDOR y
+                                    cachea unos minutos. El token nunca va en el
+                                    navegador del visitante. Devuelve tipos con
+                                    fotos, amenidades y precio "desde" en vivo;
+                                    no crea reservas ni expone huéspedes.
+                                </p>
                             </div>
-                            <p class="mt-1.5">
-                                Instálalo en Plugins → Añadir nuevo → Subir,
-                                pega tu dominio y el token, y usa
-                                <code
-                                    class="rounded bg-slate-100 px-1.5 py-0.5 font-mono dark:bg-darkmode-400"
-                                    >[kuirawebreserve_rooms]</code
-                                >
-                                para las tarjetas de habitaciones con foto y
-                                precio vivo. Trae botón "Probar conexión" para
-                                corroborar que todo quedó.
-                            </p>
-                        </div>
+                        </details>
                     </div>
                 </div>
 
-                <!-- Agente importador -->
-                <div class="col-span-12 xl:col-span-5">
+                <!-- Agente importador: es una tarea distinta (traer
+                     contenido de fuera), no un vecino de la tabla de tokens.
+                     Antes iban lado a lado forzando la misma altura. -->
+                <div class="col-span-12 mt-4 flex items-baseline gap-3">
+                    <span
+                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-medium text-slate-500 dark:bg-darkmode-400"
+                    >
+                        <Lucide icon="Sparkles" class="h-3.5 w-3.5" />
+                    </span>
+                    <div class="min-w-0">
+                        <h2 class="text-base font-medium">
+                            Opcional: trae el contenido de tu sitio actual
+                        </h2>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            El asistente lee tu página y propone habitaciones,
+                            fotos y textos para dar de alta aquí.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="col-span-12">
                     <div class="box box--stacked flex h-full flex-col">
                         <div
                             class="flex items-center gap-2 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"

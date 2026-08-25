@@ -286,7 +286,11 @@ class InboxController extends Controller
             ->withExists(['reservation as payment_pending_verification' => fn ($q) => $q
                 ->whereHas('paymentRequests', fn ($pr) => $pr
                     ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
-                    ->where('status', \App\Models\PaymentRequest::STATUS_PENDING))]);
+                    ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)),
+                // De dónde salió la conversación: saber que nació de un
+                // comentario cambia el tono con el que se contesta.
+                'socialComments as from_social'])
+            ;
     }
 
     /**
@@ -309,6 +313,7 @@ class InboxController extends Controller
             'assigned_to' => $c->assigned_to,
             'assignee' => $c->assignee?->name,
             'unread' => (int) ($c->unread_count ?? 0),
+            'from_social' => (bool) ($c->from_social ?? false),
             'last_message_at' => $c->last_message_at?->diffForHumans(short: true),
             'preview' => $c->last_message_preview,
             // Chip de pago (spec-pagos §9.3) para conversaciones con reserva.

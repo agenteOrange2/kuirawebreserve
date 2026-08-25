@@ -143,10 +143,21 @@ class AgentPageController extends Controller
                 'verify_token' => config('meta.verify_token'),
                 'app_configured' => filled(config('meta.app_id')),
             ],
+            // Bot de Telegram conectado por el hotel (token de BotFather).
+            'telegramChannels' => \App\Models\Central\TelegramChannelLink::query()
+                ->where('tenant_id', tenant('id'))
+                ->orderBy('id')
+                ->get()
+                ->map(fn ($link) => app(TelegramChannelController::class)->serialize($link)),
+            // Cuenta de TikTok conectada vía Business Messaging API.
+            'tiktokChannels' => \App\Models\Central\TiktokChannelLink::query()
+                ->where('tenant_id', tenant('id'))
+                ->orderBy('id')
+                ->get()
+                ->map(fn ($link) => app(TiktokChannelController::class)->serialize($link)),
             'channelLimit' => [
                 'max' => tenant()->planLimit('max_channels'),
-                'used' => \App\Models\Central\EvolutionChannelLink::query()->where('tenant_id', tenant('id'))->count()
-                    + \App\Models\Central\MetaChannelLink::query()->where('tenant_id', tenant('id'))->count(),
+                'used' => \App\Services\Channels\ChannelPlanCounter::connected((string) tenant('id')),
             ],
         ]);
     }

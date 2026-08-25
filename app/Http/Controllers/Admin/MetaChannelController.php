@@ -34,9 +34,26 @@ class MetaChannelController extends Controller
             return response()->json(['message' => 'Ese número/página ya está vinculado a un hotel.'], 422);
         }
 
+        $data['access_token'] = $this->resolveToken($data['type'], $data['external_id'], $data['access_token']);
+
         $link = MetaChannelLink::create($data + ['active' => true]);
 
         return response()->json($this->serialize($link), 201);
+    }
+
+    /**
+     * Acepta el token de USUARIO del Explorador de la API y lo canjea por el
+     * de la página: es el paso donde más se atora quien conecta (hay que
+     * cambiar un desplegable que nadie ve). Si ya venía el de página, o el
+     * canje no procede, se guarda tal cual lo pegaron.
+     */
+    protected function resolveToken(string $type, string $externalId, string $token): string
+    {
+        if (! in_array($type, ['messenger', 'instagram'], true)) {
+            return $token;
+        }
+
+        return app(MetaApi::class)->pageTokenFrom($token, $externalId) ?? $token;
     }
 
     public function update(Request $request, MetaChannelLink $metaChannelLink): JsonResponse
@@ -53,6 +70,14 @@ class MetaChannelController extends Controller
         // Token vacío al editar = conservar el actual.
         if (array_key_exists('access_token', $data) && blank($data['access_token'])) {
             unset($data['access_token']);
+        }
+
+        if (isset($data['access_token'])) {
+            $data['access_token'] = $this->resolveToken(
+                $metaChannelLink->type,
+                (string) ($data['external_id'] ?? $metaChannelLink->external_id),
+                $data['access_token'],
+            );
         }
 
         // El mismo número/página/cuenta no puede vivir en dos hoteles.
