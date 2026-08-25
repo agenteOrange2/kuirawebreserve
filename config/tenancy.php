@@ -20,6 +20,7 @@ return [
         'localhost',
         'kuirawebreserve.la',
         'kuirawebreserve.com',
+        'tureservaenlinea.com',
     ],
 
     /**
