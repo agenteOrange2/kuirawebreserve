@@ -606,20 +606,40 @@ En el navegador, con la consola abierta:
 
 ## Despliegues posteriores
 
+Todo esto lo hace **`/root/webserver/deploy.sh`** en el VPS:
+
 ```bash
-cd ~/webserver/projects/laravel/kuirawebreserve
-git pull origin main
-docker exec -w /var/www/laravel/kuirawebreserve webserver-php-1 composer install --no-dev -o
-docker run --rm -v "$PWD":/app -w /app node:20 sh -c "npm ci && npm run build"
-docker exec -w /var/www/laravel/kuirawebreserve webserver-php-1 php artisan migrate --force
-docker exec -w /var/www/laravel/kuirawebreserve webserver-php-1 php artisan tenants:migrate
-docker exec -w /var/www/laravel/kuirawebreserve webserver-php-1 php artisan optimize
-cd ~/webserver && docker compose restart horizon scheduler-reservas reverb
+ssh root@72.60.66.38 /root/webserver/deploy.sh
 ```
 
-`horizon` y `scheduler-reservas` **siempre** se reinician tras desplegar: cargan el código
-en memoria al arrancar y no lo recargan solos.
+Qué hace y por qué, en orden:
 
+1. **Aborta si hay cambios sin commitear en el servidor.** Un `git pull` encima de
+   ediciones hechas a mano las pisa o se queda a medias.
+2. `git pull --ff-only origin main`. Si no hay nada nuevo, termina ahí y no toca nada.
+3. **Modo mantenimiento**, con un `trap` que devuelve el sitio aunque algo reviente
+   a media migración.
+4. `composer install` **solo si cambió `composer.lock`**.
+5. Build del front **solo si cambió `resources/`, `package*.json` o el tooling** —
+   y con la imagen `kwr-build`, no con `node:20`. Ver trampa 5 de la bitácora.
+6. `migrate --force` **y** `tenants:migrate`. El segundo es el que se olvida: sin él
+   la migración solo entra en la base central y los paneles de hotel truenan con
+   *"column not found"*.
+7. `config:cache`, `view:cache` y `route:cache` (este último tolera el fallo por
+   rutas duplicadas, ver la sección del bug).
+8. `chown` de `storage/` y `bootstrap/cache` a `www-data`: todo lo anterior corrió
+   como root dentro del contenedor.
+9. `docker compose restart horizon reverb scheduler-reservas`. Los tres cargan el
+   código en memoria al arrancar y no lo recargan solos — el sitio ya muestra la
+   versión nueva mientras las colas siguen ejecutando la vieja.
+
+> El script vive **fuera del repo** (es config del servidor, con rutas del VPS).
+> Si lo cambias, cámbialo en el servidor.
+
+Un commit **no** despliega nada por sí solo: `git push` llega a GitHub y ahí se queda.
+El VPS solo cambia cuando alguien corre `deploy.sh`. Si algún día quieres despliegue
+automático en cada push a `main`, es GitHub Actions con una llave de deploy — pero
+conviene esperar a tener tests, o un commit a medias en `main` se publica solo.
 
 ---
 
