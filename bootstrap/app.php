@@ -36,10 +36,13 @@ return Application::configure(basePath: dirname(__DIR__))
         ['middleware' => ['universal', 'web', \Stancl\Tenancy\Middleware\InitializeTenancyByDomain::class]],
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        // Detrás del túnel/proxy de Cloudflare: sin esto Laravel no ve el
-        // esquema https de X-Forwarded-Proto y generaría URLs http (mixed
-        // content). El origen solo es alcanzable vía túnel, '*' es seguro.
-        $middleware->trustProxies(at: '*');
+        // DESACTIVADO 2026-08-26: aqui NO hay proxy delante. nginx habla FastCGI
+        // con php-fpm y ya pasa la IP real en REMOTE_ADDR; confiar en cualquier
+        // proxy dejaba falsificar X-Forwarded-For y saltarse todos los throttle:*.
+        // $middleware->trustProxies(at: '*');
+        //
+        // El https NO depende de esto: nginx manda fastcgi_param HTTPS on.
+        // Con Cloudflare delante, aqui van SUS rangos de IP, nunca el comodin.
 
         // Marcador para Stancl\Tenancy\Features\UniversalRoutes: las rutas con
         // este grupo funcionan tanto en dominio central como en tenants.
