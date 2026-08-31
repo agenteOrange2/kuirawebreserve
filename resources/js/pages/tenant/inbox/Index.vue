@@ -640,6 +640,26 @@ function onVisibilityChange() {
 onMounted(() => {
     poller = setInterval(refreshIfVisible, 60000);
     document.addEventListener('visibilitychange', onVisibilityChange);
+
+    // Enlace directo a un hilo (?conversation=ID): lo usa la lista de
+    // espera para enseñar el aviso que mandó el asistente. Si el hilo no
+    // está en la carga actual (archivado, muy viejo), no se abre nada.
+    const wanted = Number(
+        new URLSearchParams(window.location.search).get('conversation'),
+    );
+
+    if (wanted) {
+        const found = props.conversations.find((c) => c.id === wanted);
+
+        if (found) {
+            open(found);
+        } else {
+            toast.error(
+                'No encontramos esa conversación',
+                'Puede estar archivada o fuera de la lista actual.',
+            );
+        }
+    }
 });
 onBeforeUnmount(() => {
     if (poller) clearInterval(poller);
@@ -653,32 +673,32 @@ onBeforeUnmount(() => {
         <div class="mt-2">
             <!-- Encabezado -->
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5"
             >
-                <div class="flex items-center gap-4">
+                <div class="flex items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Inbox" class="h-7 w-7" />
+                        <Lucide icon="Inbox" class="h-4 w-4" />
                     </div>
                     <div>
-                        <div class="flex flex-wrap items-center gap-2.5">
-                            <h1 class="text-xl font-medium">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <h1 class="text-base font-medium">
                                 Bandeja de conversaciones
                             </h1>
                             <span
                                 v-if="pendingCount"
-                                class="rounded-full bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning"
+                                class="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
                                 >{{ pendingCount }} esperan humano</span
                             >
                         </div>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <p class="mt-0.5 text-xs text-slate-500">
                             {{ property.name }} · todos los canales en un solo
                             lugar
                         </p>
                     </div>
                 </div>
-                <div class="flex flex-wrap items-center gap-2.5">
+                <div class="flex flex-wrap items-center gap-2">
                     <!-- Permiso de notificaciones: solo se pide con un clic,
                          que es lo que exigen los navegadores. -->
                     <Button
@@ -687,19 +707,19 @@ onBeforeUnmount(() => {
                             alerts.permission.value === 'default'
                         "
                         variant="outline-primary"
-                        class="min-h-11 rounded-[0.5rem] bg-white"
+                        class="rounded-[0.5rem] bg-white text-xs"
                         title="Avisar aunque la pestaña esté en segundo plano"
                         @click="alerts.requestPermission"
                     >
                         <Lucide
                             icon="BellRing"
-                            class="mr-2 h-4 w-4 stroke-[1.5]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
                         />
                         Activar avisos
                     </Button>
                     <Button
                         variant="outline-secondary"
-                        class="min-h-11 rounded-[0.5rem] bg-white"
+                        class="rounded-[0.5rem] bg-white text-xs"
                         :title="
                             alerts.muted.value
                                 ? 'Los mensajes nuevos no suenan'
@@ -709,18 +729,18 @@ onBeforeUnmount(() => {
                     >
                         <Lucide
                             :icon="alerts.muted.value ? 'BellOff' : 'Bell'"
-                            class="h-4 w-4 stroke-[1.5]"
+                            class="h-3.5 w-3.5 stroke-[1.5]"
                             :class="alerts.muted.value ? 'text-slate-400' : ''"
                         />
                     </Button>
                     <Button
                         variant="outline-secondary"
-                        class="min-h-11 rounded-[0.5rem] bg-white"
+                        class="rounded-[0.5rem] bg-white text-xs"
                         @click="channelsOpen = true"
                     >
                         <Lucide
                             icon="Radio"
-                            class="mr-2 h-4 w-4 stroke-[1.5]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
                         />
                         Canales
                         <span
@@ -733,11 +753,11 @@ onBeforeUnmount(() => {
                         :href="route('tenant.webchat')"
                         target="_blank"
                         variant="outline-secondary"
-                        class="min-h-11 rounded-[0.5rem] bg-white"
+                        class="rounded-[0.5rem] bg-white text-xs"
                     >
                         <Lucide
                             icon="ExternalLink"
-                            class="mr-2 h-4 w-4 stroke-[1.5]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
                         />
                         Ver webchat
                     </Button>
@@ -748,7 +768,7 @@ onBeforeUnmount(() => {
             <div class="box box--stacked mt-5 grid grid-cols-12">
                 <!-- Lista de conversaciones (en móvil se muestra lista O hilo) -->
                 <div
-                    class="col-span-12 h-[calc(100dvh-12.5rem)] min-h-[480px] flex-col border-slate-200/60 xl:col-span-4 xl:flex xl:h-[calc(100vh-16rem)] xl:min-h-[560px] xl:border-r dark:border-darkmode-400"
+                    class="col-span-12 h-[calc(100dvh-11.5rem)] min-h-[480px] flex-col border-slate-200/60 xl:col-span-4 xl:flex xl:h-[calc(100vh-15rem)] xl:min-h-[560px] xl:border-r dark:border-darkmode-400"
                     :class="selected ? 'hidden' : 'flex'"
                 >
                     <!-- Búsqueda y pestañas -->
@@ -759,18 +779,18 @@ onBeforeUnmount(() => {
                             <div class="relative min-w-0 flex-1">
                                 <Lucide
                                     icon="Search"
-                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-5 w-5 stroke-[1.5] text-slate-400"
+                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.5] text-slate-400"
                                 />
                                 <input
                                     v-model="search"
                                     type="search"
                                     placeholder="Buscar nombre, mensaje o folio"
-                                    class="h-10 w-full rounded-lg border border-slate-200 pr-3 pl-10 text-sm transition outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                    class="h-9 w-full rounded-lg border border-slate-200 pr-3 pl-9 text-xs transition outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-darkmode-400 dark:bg-darkmode-600"
                                 />
                             </div>
                             <FormSelect
                                 v-model="leadFilter"
-                                class="shrink-0 text-sm sm:!w-auto"
+                                class="shrink-0 text-xs sm:!w-auto"
                             >
                                 <option value="all">Embudo: todos</option>
                                 <option value="quoting">Cotizando</option>
@@ -801,7 +821,7 @@ onBeforeUnmount(() => {
                                     },
                                 ]"
                                 :key="f.key"
-                                class="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-[0.5rem] px-2 text-sm font-medium transition"
+                                class="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-[0.5rem] px-2 text-xs font-medium transition"
                                 :class="
                                     tab === f.key
                                         ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
@@ -875,7 +895,7 @@ onBeforeUnmount(() => {
                         <template v-for="g in groups" :key="g.key">
                             <div
                                 v-if="g.label"
-                                class="sticky top-0 z-10 flex items-center gap-2 border-y border-slate-200/60 bg-slate-50/95 px-4 py-2 backdrop-blur-sm first:border-t-0 dark:border-darkmode-400 dark:bg-darkmode-700/95"
+                                class="sticky top-0 z-10 flex items-center gap-2 border-y border-slate-200/60 bg-slate-50/95 px-3.5 py-1.5 backdrop-blur-sm first:border-t-0 dark:border-darkmode-400 dark:bg-darkmode-700/95"
                             >
                                 <Lucide
                                     :icon="
@@ -911,7 +931,7 @@ onBeforeUnmount(() => {
                                     :key="c.id"
                                     role="button"
                                     tabindex="0"
-                                    class="group flex w-full cursor-pointer items-start gap-3.5 px-4 py-4 text-left transition hover:bg-slate-50 dark:hover:bg-darkmode-400/40"
+                                    class="group flex w-full cursor-pointer items-start gap-3 px-3.5 py-3 text-left transition hover:bg-slate-50 dark:hover:bg-darkmode-400/40"
                                     :class="{
                                         'bg-primary/5': selected?.id === c.id,
                                         'bg-primary/[0.03]':
@@ -923,12 +943,12 @@ onBeforeUnmount(() => {
                                 >
                                     <div class="relative shrink-0">
                                         <div
-                                            class="flex h-12 w-12 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-sm font-semibold text-white"
+                                            class="flex h-10 w-10 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
                                         >
                                             {{ initials(c.name) }}
                                         </div>
                                         <div
-                                            class="absolute -right-1 -bottom-1 flex h-5.5 w-5.5 items-center justify-center rounded-full border-2 border-white dark:border-darkmode-600"
+                                            class="absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white dark:border-darkmode-600"
                                             :class="
                                                 channelMeta[c.channel]?.tone ??
                                                 'bg-slate-100'
@@ -940,7 +960,7 @@ onBeforeUnmount(() => {
                                                         ?.icon ??
                                                     'MessageCircle'
                                                 "
-                                                class="h-3 w-3"
+                                                class="h-2.5 w-2.5"
                                             />
                                         </div>
                                     </div>
@@ -964,7 +984,7 @@ onBeforeUnmount(() => {
                                             class="mt-1 flex items-center gap-2"
                                         >
                                             <span
-                                                class="truncate text-sm text-slate-500"
+                                                class="truncate text-xs text-slate-500"
                                                 >{{ c.preview ?? '—' }}</span
                                             >
                                             <span
@@ -974,7 +994,7 @@ onBeforeUnmount(() => {
                                             >
                                         </div>
                                         <div
-                                            class="mt-2 flex flex-wrap items-center gap-1.5"
+                                            class="mt-1.5 flex flex-wrap items-center gap-1.5"
                                         >
                                             <span
                                                 class="rounded-full px-2 py-0.5 text-[11px] font-medium"
@@ -1095,12 +1115,12 @@ onBeforeUnmount(() => {
                         </template>
                         <div
                             v-if="!filtered.length"
-                            class="flex flex-col items-center gap-3 py-16 text-center"
+                            class="flex flex-col items-center gap-3 py-12 text-center"
                         >
                             <div
-                                class="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary"
+                                class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
                             >
-                                <Lucide icon="MessagesSquare" class="h-7 w-7" />
+                                <Lucide icon="MessagesSquare" class="h-5 w-5" />
                             </div>
                             <p class="px-6 text-sm text-slate-500">
                                 {{
@@ -1119,7 +1139,7 @@ onBeforeUnmount(() => {
 
                 <!-- Hilo -->
                 <div
-                    class="col-span-12 h-[calc(100dvh-12.5rem)] min-h-[480px] flex-col xl:col-span-8 xl:flex xl:h-[calc(100vh-16rem)] xl:min-h-[560px]"
+                    class="col-span-12 h-[calc(100dvh-11.5rem)] min-h-[480px] flex-col xl:col-span-8 xl:flex xl:h-[calc(100vh-15rem)] xl:min-h-[560px]"
                     :class="selected ? 'flex' : 'hidden'"
                 >
                     <template v-if="selected">
@@ -1129,21 +1149,21 @@ onBeforeUnmount(() => {
                         >
                             <button
                                 type="button"
-                                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 xl:hidden dark:hover:bg-darkmode-400"
+                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 xl:hidden dark:hover:bg-darkmode-400"
                                 title="Volver a la lista"
                                 @click="closeThread"
                             >
-                                <Lucide icon="ChevronLeft" class="h-6 w-6" />
+                                <Lucide icon="ChevronLeft" class="h-5 w-5" />
                             </button>
                             <div
-                                class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-sm font-semibold text-white"
+                                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
                             >
                                 {{ initials(selected.name) }}
                             </div>
                             <div class="min-w-0 flex-1">
                                 <div class="flex items-center gap-2.5">
                                     <span
-                                        class="truncate text-base font-medium"
+                                        class="truncate text-sm font-medium"
                                         >{{ selected.name }}</span
                                     >
                                     <Link
@@ -1159,14 +1179,14 @@ onBeforeUnmount(() => {
                                     >
                                 </div>
                                 <div
-                                    class="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-slate-500"
+                                    class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500"
                                 >
                                     <Lucide
                                         :icon="
                                             channelMeta[selected.channel]
                                                 ?.icon ?? 'MessageCircle'
                                         "
-                                        class="h-4 w-4"
+                                        class="h-3.5 w-3.5"
                                     />
                                     <span class="mr-1">{{
                                         channelMeta[selected.channel]?.label ??
@@ -1234,7 +1254,7 @@ onBeforeUnmount(() => {
                                 <Button
                                     v-if="selected.summary"
                                     variant="outline-secondary"
-                                    class="h-10 rounded-[0.5rem] bg-white"
+                                    class="h-9 rounded-[0.5rem] bg-white text-xs"
                                     :class="{
                                         '!border-primary/40 !text-primary':
                                             showSummary,
@@ -1243,7 +1263,7 @@ onBeforeUnmount(() => {
                                 >
                                     <Lucide
                                         icon="Sparkles"
-                                        class="h-4 w-4 sm:mr-2"
+                                        class="h-3.5 w-3.5 sm:mr-1.5"
                                     />
                                     <span class="hidden sm:inline"
                                         >Resumen IA</span
@@ -1252,7 +1272,7 @@ onBeforeUnmount(() => {
                                 <Button
                                     v-if="selected.status !== 'resolved'"
                                     variant="outline-secondary"
-                                    class="hidden h-10 rounded-[0.5rem] bg-white md:inline-flex"
+                                    class="hidden h-9 rounded-[0.5rem] bg-white text-xs md:inline-flex"
                                     @click="
                                         patchConversation(
                                             { status: 'resolved' },
@@ -1262,7 +1282,7 @@ onBeforeUnmount(() => {
                                 >
                                     <Lucide
                                         icon="CircleCheck"
-                                        class="h-4 w-4 sm:mr-2"
+                                        class="h-3.5 w-3.5 sm:mr-1.5"
                                     />
                                     <span class="hidden sm:inline"
                                         >Resolver</span
@@ -1274,7 +1294,7 @@ onBeforeUnmount(() => {
                                         !selected.archived
                                     "
                                     variant="outline-secondary"
-                                    class="hidden h-10 rounded-[0.5rem] bg-white md:inline-flex"
+                                    class="hidden h-9 rounded-[0.5rem] bg-white text-xs md:inline-flex"
                                     @click="
                                         patchConversation(
                                             { status: 'open' },
@@ -1284,7 +1304,7 @@ onBeforeUnmount(() => {
                                 >
                                     <Lucide
                                         icon="RotateCcw"
-                                        class="h-4 w-4 sm:mr-2"
+                                        class="h-3.5 w-3.5 sm:mr-1.5"
                                     />
                                     <span class="hidden sm:inline"
                                         >Reabrir</span
@@ -1293,13 +1313,13 @@ onBeforeUnmount(() => {
                                 <Button
                                     v-if="selected.archived"
                                     variant="outline-secondary"
-                                    class="hidden h-10 rounded-[0.5rem] bg-white md:inline-flex"
+                                    class="hidden h-9 rounded-[0.5rem] bg-white text-xs md:inline-flex"
                                     :disabled="archivingId === selected.id"
                                     @click="setArchived(selected, false)"
                                 >
                                     <Lucide
                                         icon="ArchiveRestore"
-                                        class="h-4 w-4 sm:mr-2"
+                                        class="h-3.5 w-3.5 sm:mr-1.5"
                                     />
                                     <span class="hidden sm:inline"
                                         >Restaurar</span
@@ -1307,7 +1327,7 @@ onBeforeUnmount(() => {
                                 </Button>
                                 <FormSelect
                                     :model-value="selected.assigned_to ?? ''"
-                                    class="min-w-0 flex-1 text-sm md:!w-auto md:max-w-[12rem] md:flex-none"
+                                    class="min-w-0 flex-1 text-xs md:!w-auto md:max-w-[12rem] md:flex-none"
                                     @update:model-value="
                                         (v: string) =>
                                             patchConversation(
@@ -1327,12 +1347,12 @@ onBeforeUnmount(() => {
                                 </FormSelect>
                                 <Menu>
                                     <Menu.Button
-                                        class="flex h-10 w-10 items-center justify-center rounded-[0.5rem] border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:bg-darkmode-600 dark:hover:bg-darkmode-400"
+                                        class="flex h-9 w-9 items-center justify-center rounded-[0.5rem] border border-slate-200 bg-white text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:bg-darkmode-600 dark:hover:bg-darkmode-400"
                                         title="Más acciones"
                                     >
                                         <Lucide
                                             icon="MoreVertical"
-                                            class="h-5 w-5"
+                                            class="h-4 w-4"
                                         />
                                     </Menu.Button>
                                     <Menu.Items
@@ -1476,7 +1496,7 @@ onBeforeUnmount(() => {
                         <!-- Resumen IA (memoria del bot) -->
                         <div
                             v-if="showSummary && selected.summary"
-                            class="border-b border-dashed border-slate-300/70 bg-primary/[0.03] px-5 py-4"
+                            class="border-b border-dashed border-slate-300/70 bg-primary/[0.03] px-4 py-3"
                         >
                             <div class="flex items-start gap-3">
                                 <div
@@ -1505,7 +1525,7 @@ onBeforeUnmount(() => {
                         <!-- Mensajes -->
                         <div
                             ref="threadRef"
-                            class="flex-1 space-y-4 overflow-y-auto bg-slate-50/60 px-5 py-5 dark:bg-darkmode-700/40"
+                            class="flex-1 space-y-3 overflow-y-auto bg-slate-50/60 px-4 py-4 dark:bg-darkmode-700/40"
                         >
                             <div
                                 v-if="threadLoading"
@@ -1528,7 +1548,7 @@ onBeforeUnmount(() => {
                                 >
                                     <div class="max-w-[85%] sm:max-w-[72%]">
                                         <div
-                                            class="rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-line"
+                                            class="rounded-2xl px-3.5 py-2 text-sm leading-relaxed whitespace-pre-line"
                                             :class="
                                                 m.direction === 'in'
                                                     ? 'rounded-bl-md border border-slate-200 bg-white text-slate-700 dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-200'
@@ -1572,7 +1592,7 @@ onBeforeUnmount(() => {
                                             </div>
                                         </div>
                                         <div
-                                            class="mt-1.5 flex items-center gap-1.5 text-xs text-slate-400"
+                                            class="mt-1 flex items-center gap-1.5 text-xs text-slate-400"
                                             :class="
                                                 m.direction === 'in'
                                                     ? ''
@@ -1614,7 +1634,7 @@ onBeforeUnmount(() => {
                         >
                             <div
                                 v-if="selected.bot_enabled"
-                                class="mb-3 flex items-center gap-2.5 rounded-lg bg-primary/5 px-3.5 py-2.5 text-sm text-slate-500"
+                                class="mb-3 flex items-center gap-2.5 rounded-lg bg-primary/5 px-3.5 py-2 text-xs text-slate-500"
                             >
                                 <Lucide
                                     icon="Bot"
@@ -1627,7 +1647,7 @@ onBeforeUnmount(() => {
                             <!-- Copiloto: borrador con aprobación humana -->
                             <div
                                 v-if="suggestLoading"
-                                class="mb-3 flex items-center gap-2.5 rounded-lg border border-dashed border-primary/30 bg-primary/[0.03] px-3.5 py-3 text-sm text-slate-500"
+                                class="mb-3 flex items-center gap-2.5 rounded-lg border border-dashed border-primary/30 bg-primary/[0.03] px-3.5 py-2.5 text-xs text-slate-500"
                             >
                                 <Lucide
                                     icon="Sparkles"
@@ -1637,7 +1657,7 @@ onBeforeUnmount(() => {
                             </div>
                             <div
                                 v-else-if="suggestion"
-                                class="mb-3 rounded-lg border border-primary/20 bg-primary/[0.04] p-4"
+                                class="mb-3 rounded-lg border border-primary/20 bg-primary/[0.04] p-3.5"
                             >
                                 <div
                                     class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
@@ -1702,7 +1722,7 @@ onBeforeUnmount(() => {
                                 <Button
                                     v-if="llmReady && !suggestion"
                                     variant="outline-secondary"
-                                    class="h-11 rounded-[0.5rem] bg-white"
+                                    class="h-10 rounded-[0.5rem] bg-white text-xs"
                                     :disabled="suggestLoading"
                                     title="Pídele al copiloto un borrador de respuesta"
                                     @click="fetchSuggestion"
@@ -1720,7 +1740,7 @@ onBeforeUnmount(() => {
                                     v-model="reply"
                                     rows="2"
                                     placeholder="Responder como staff…"
-                                    class="max-h-40 min-h-[68px] flex-1 resize-none overflow-y-auto rounded-lg border border-slate-200 px-4 py-3 text-sm transition outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                    class="max-h-40 min-h-[56px] flex-1 resize-none overflow-y-auto rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm transition outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-darkmode-400 dark:bg-darkmode-600"
                                     @input="autosizeReply"
                                     @keydown.enter.exact.prevent="sendReply"
                                 />
@@ -1733,16 +1753,16 @@ onBeforeUnmount(() => {
                                 />
                                 <Button
                                     variant="outline-secondary"
-                                    class="h-11 rounded-[0.5rem] bg-white px-3"
+                                    class="h-10 rounded-[0.5rem] bg-white px-3"
                                     title="Adjuntar foto o PDF"
                                     :disabled="sending"
                                     @click="attachmentInput?.click()"
                                 >
-                                    <Lucide icon="Paperclip" class="h-5 w-5" />
+                                    <Lucide icon="Paperclip" class="h-4 w-4" />
                                 </Button>
                                 <Button
                                     variant="primary"
-                                    class="h-11 rounded-[0.5rem] px-4 shadow-md shadow-primary/20"
+                                    class="h-10 rounded-[0.5rem] px-4 shadow-md shadow-primary/20"
                                     title="Enviar (Enter)"
                                     :disabled="
                                         sending ||
@@ -1752,7 +1772,7 @@ onBeforeUnmount(() => {
                                 >
                                     <Lucide
                                         icon="SendHorizontal"
-                                        class="h-5 w-5"
+                                        class="h-4 w-4"
                                     />
                                 </Button>
                             </div>
@@ -1760,7 +1780,7 @@ onBeforeUnmount(() => {
                             <!-- Archivo elegido, antes de mandarlo -->
                             <div
                                 v-if="attachment"
-                                class="mt-2 flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-sm dark:bg-darkmode-400"
+                                class="mt-2 flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-xs dark:bg-darkmode-400"
                             >
                                 <Lucide
                                     icon="Paperclip"
@@ -1787,13 +1807,15 @@ onBeforeUnmount(() => {
                         class="flex flex-1 flex-col items-center justify-center gap-4 text-center"
                     >
                         <div
-                            class="flex h-16 w-16 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
                         >
-                            <Lucide icon="MessagesSquare" class="h-8 w-8" />
+                            <Lucide icon="MessagesSquare" class="h-5 w-5" />
                         </div>
                         <div>
-                            <p class="font-medium">Elige una conversación</p>
-                            <p class="mt-1 text-sm text-slate-500">
+                            <p class="text-sm font-medium">
+                                Elige una conversación
+                            </p>
+                            <p class="mt-1 text-xs text-slate-500">
                                 El hilo completo se muestra aquí, con el
                                 copiloto listo para ayudarte.
                             </p>
@@ -1863,9 +1885,9 @@ onBeforeUnmount(() => {
                 <div v-if="deleting" class="p-6">
                     <div class="flex items-start gap-3.5">
                         <div
-                            class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
                         >
-                            <Lucide icon="Trash2" class="h-6 w-6" />
+                            <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
                         <div>
                             <h2 class="text-base font-medium">
@@ -1903,9 +1925,9 @@ onBeforeUnmount(() => {
                 <div class="p-6">
                     <div class="flex items-start gap-3.5">
                         <div
-                            class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
                         >
-                            <Lucide icon="Trash2" class="h-6 w-6" />
+                            <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
                         <div>
                             <h2 class="text-base font-medium">
@@ -1948,9 +1970,9 @@ onBeforeUnmount(() => {
                 <div class="p-5">
                     <div class="mb-4 flex items-center gap-3">
                         <div
-                            class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <Lucide icon="Radio" class="h-6 w-6" />
+                            <Lucide icon="Radio" class="h-5 w-5" />
                         </div>
                         <div>
                             <h2 class="text-base font-medium">
@@ -1966,11 +1988,11 @@ onBeforeUnmount(() => {
                         <div
                             v-for="ch in channels"
                             :key="ch.id"
-                            class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
+                            class="rounded-xl border border-slate-200/70 p-3.5 dark:border-darkmode-400"
                         >
                             <div class="flex flex-wrap items-center gap-3">
                                 <div
-                                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border"
+                                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border"
                                     :class="channelMeta[ch.type]?.tone"
                                 >
                                     <Lucide
@@ -1978,7 +2000,7 @@ onBeforeUnmount(() => {
                                             channelMeta[ch.type]?.icon ??
                                             'MessageCircle'
                                         "
-                                        class="h-5 w-5"
+                                        class="h-4 w-4"
                                     />
                                 </div>
                                 <div class="min-w-0 flex-1">
@@ -2002,7 +2024,7 @@ onBeforeUnmount(() => {
                                         v-for="(m, key) in modeMeta"
                                         :key="key"
                                         type="button"
-                                        class="flex h-9 items-center gap-1.5 rounded-[0.5rem] px-3 text-xs font-medium transition"
+                                        class="flex h-8 items-center gap-1.5 rounded-[0.5rem] px-3 text-xs font-medium transition"
                                         :class="
                                             ch.mode === key
                                                 ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'

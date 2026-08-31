@@ -5,12 +5,14 @@ import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormCheck,
+    FormDate,
     FormHelp,
     FormInput,
     FormLabel,
     FormSelect,
     FormSwitch,
     FormTextarea,
+    FormTime,
 } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide, { type Icon } from '@/components/Base/Lucide';
@@ -71,6 +73,7 @@ interface RatePlanRow {
     min_advance_value: number | null;
     min_advance_label: string | null;
     deposit_percent: string | null;
+    deposit_amount: string | null;
     payment_due_unit: string | null;
     payment_due_value: number | null;
     payment_due_label: string | null;
@@ -272,6 +275,13 @@ const typeForm = reactive({
 });
 const typeAmenityInput = ref('');
 
+/** Sugerencias que aún no tiene el tipo (el resto ya está en su lista). */
+const availableAmenitySuggestions = computed(() =>
+    AMENITY_SUGGESTIONS.filter(
+        (amenity) => !typeForm.amenities.includes(amenity),
+    ),
+);
+
 // El icono elegido solo se distinguía por el tooltip: se nombra debajo.
 const selectedIconLabel = computed(
     () =>
@@ -409,7 +419,9 @@ function submitType() {
             typeForm.check_out_time === '' ? null : typeForm.check_out_time,
         amenities: typeForm.amenities,
         photos_url:
-            typeForm.photos_url.trim() === '' ? null : typeForm.photos_url.trim(),
+            typeForm.photos_url.trim() === ''
+                ? null
+                : typeForm.photos_url.trim(),
         sort_order:
             typeForm.sort_order === '' ? 0 : Number(typeForm.sort_order),
         active: typeForm.active,
@@ -481,6 +493,17 @@ function toggleTypeRow(id: number) {
 const plansForType = (typeId: number) =>
     props.ratePlans.filter((plan) => plan.room_type_id === typeId);
 
+// "33%" o "$1,500 fijos"; null = la tarifa no exige anticipo.
+function depositLabel(plan: RatePlanRow): string | null {
+    if (plan.deposit_percent && Number(plan.deposit_percent) > 0) {
+        return `${Number(plan.deposit_percent)}%`;
+    }
+    if (plan.deposit_amount && Number(plan.deposit_amount) > 0) {
+        return `${money(plan.deposit_amount)} fijos`;
+    }
+    return null;
+}
+
 // Tarifas cuyo tipo ya no existe (defensivo; no debería ocurrir).
 const orphanPlans = computed(() => {
     const knownIds = new Set(props.roomTypes.map((type) => type.id));
@@ -491,6 +514,16 @@ const orphanPlans = computed(() => {
 const typesWithoutRate = computed(() =>
     props.roomTypes.filter((t) => !t.has_active_rate),
 );
+
+/** Tarifas que hoy se pueden vender: es lo que resume el encabezado. */
+const activeRatesCount = computed(
+    () => props.ratePlans.filter((plan) => plan.active).length,
+);
+
+const stripItem = 'inline-flex items-center gap-1.5 text-slate-500';
+const stripValue = 'font-medium text-slate-700 dark:text-slate-300';
+const stripDivider =
+    'hidden h-3.5 w-px bg-slate-300/70 sm:block dark:bg-darkmode-400';
 
 function occupancyBreakdown(type: RoomTypeRow): string | null {
     const parts: string[] = [];
@@ -513,7 +546,10 @@ const planForm = reactive({
     min_advance_value: 1 as number | string,
     min_advance_unit: 'hour',
     has_prepayment: false,
+    // El anticipo se captura como % del total O como monto fijo en pesos.
+    deposit_mode: 'percent' as 'percent' | 'amount',
     deposit_percent: 20 as number | string,
+    deposit_amount: '' as number | string,
     payment_due_value: 1 as number | string,
     payment_due_unit: 'week',
     has_cancel_policy: false,
@@ -534,10 +570,16 @@ function openPlan(plan: RatePlanRow | null) {
     planForm.has_advance = Boolean(plan?.min_advance_value);
     planForm.min_advance_value = plan?.min_advance_value ?? 4;
     planForm.min_advance_unit = plan?.min_advance_unit ?? 'hour';
-    planForm.has_prepayment = Boolean(plan?.deposit_percent);
+    planForm.has_prepayment = Boolean(
+        plan?.deposit_percent || plan?.deposit_amount,
+    );
+    planForm.deposit_mode = plan?.deposit_amount ? 'amount' : 'percent';
     planForm.deposit_percent = plan?.deposit_percent
         ? Number(plan.deposit_percent)
         : 20;
+    planForm.deposit_amount = plan?.deposit_amount
+        ? Number(plan.deposit_amount)
+        : '';
     planForm.payment_due_value = plan?.payment_due_value ?? 1;
     planForm.payment_due_unit = plan?.payment_due_unit ?? 'week';
     planForm.has_cancel_policy = Boolean(plan?.cancel_free_value);
@@ -572,9 +614,14 @@ function submitPlan() {
         min_advance_value: planForm.has_advance
             ? planForm.min_advance_value
             : null,
-        deposit_percent: planForm.has_prepayment
-            ? planForm.deposit_percent
-            : null,
+        deposit_percent:
+            planForm.has_prepayment && planForm.deposit_mode === 'percent'
+                ? planForm.deposit_percent
+                : null,
+        deposit_amount:
+            planForm.has_prepayment && planForm.deposit_mode === 'amount'
+                ? planForm.deposit_amount
+                : null,
         payment_due_unit: planForm.has_prepayment
             ? planForm.payment_due_unit
             : null,
@@ -755,21 +802,107 @@ async function deleteSeason(season: SeasonRow) {
 <template>
     <RazeLayout title="Zonas, tipos y tarifas">
         <div class="mt-2">
-            <div
-                class="box box--stacked flex items-center gap-3.5 p-5 sm:gap-4"
-            >
+            <div class="box box--stacked overflow-hidden">
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                    class="flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
                 >
-                    <Lucide icon="Shapes" class="h-5 w-5 sm:h-7 sm:w-7" />
+                    <div class="flex min-w-0 items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="Shapes" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <h1 class="text-base font-medium">
+                                Zonas, tipos de habitación y tarifas
+                            </h1>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                {{ property.name }} · sobre esto se apoyan las
+                                habitaciones y las reservas.
+                            </p>
+                        </div>
+                    </div>
+                    <div
+                        v-if="canManage"
+                        class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:shrink-0 md:items-center md:gap-2"
+                    >
+                        <Button
+                            variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
+                            @click="openZone(null)"
+                        >
+                            <Lucide icon="Map" class="mr-1.5 h-3.5 w-3.5" />
+                            Nueva zona
+                        </Button>
+                        <Button
+                            variant="primary"
+                            class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                            @click="openType(null)"
+                        >
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                            Nuevo tipo
+                        </Button>
+                    </div>
                 </div>
-                <div class="min-w-0">
-                    <h1 class="text-lg font-medium sm:text-xl">
-                        Zonas, tipos de habitación y tarifas
-                    </h1>
-                    <p class="mt-1 text-sm text-slate-500">
-                        {{ property.name }}
-                    </p>
+
+                <!-- Cómo va armado el catálogo, de un vistazo -->
+                <div
+                    class="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-slate-200/60 bg-slate-50/70 px-4 py-3 text-xs sm:px-5 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                >
+                    <span :class="stripItem">
+                        <Lucide
+                            icon="Map"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span :class="stripValue">{{ zones.length }}</span>
+                        {{ zones.length === 1 ? 'zona' : 'zonas' }}
+                    </span>
+                    <span :class="stripDivider" />
+                    <span :class="stripItem">
+                        <Lucide
+                            icon="BedDouble"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span :class="stripValue">{{ roomTypes.length }}</span>
+                        {{ roomTypes.length === 1 ? 'tipo' : 'tipos' }}
+                    </span>
+                    <span :class="stripDivider" />
+                    <span :class="stripItem">
+                        <Lucide
+                            icon="Tag"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span :class="stripValue">{{ activeRatesCount }}</span>
+                        {{
+                            activeRatesCount === 1
+                                ? 'tarifa activa'
+                                : 'tarifas activas'
+                        }}
+                    </span>
+                    <span :class="stripDivider" />
+                    <span :class="stripItem">
+                        <Lucide
+                            icon="DoorOpen"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span :class="stripValue">{{ totalRooms }}</span>
+                        {{ totalRooms === 1 ? 'habitación' : 'habitaciones' }}
+                    </span>
+                    <span
+                        v-if="typesWithoutRate.length"
+                        class="inline-flex items-center gap-1.5 rounded-full bg-warning/10 px-2.5 py-1 text-[11px] font-medium text-warning md:ml-auto"
+                        title="Un tipo sin tarifa activa no se puede reservar"
+                    >
+                        <Lucide icon="TriangleAlert" class="h-3.5 w-3.5" />
+                        {{ typesWithoutRate.length }} tipo(s) sin tarifa
+                    </span>
+                    <span
+                        v-else-if="roomTypes.length"
+                        class="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success md:ml-auto"
+                    >
+                        <Lucide icon="CircleCheck" class="h-3.5 w-3.5" />
+                        Todos los tipos con tarifa
+                    </span>
                 </div>
             </div>
 
@@ -781,14 +914,14 @@ async function deleteSeason(season: SeasonRow) {
             </div>
 
             <!-- Guía: cómo funciona el catálogo -->
-            <div class="box box--stacked mt-5 overflow-hidden">
+            <div class="box box--stacked mt-4 overflow-hidden">
                 <div
-                    class="flex items-center gap-3 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                    class="flex items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
                     <div
                         class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Compass" class="h-5 w-5" />
+                        <Lucide icon="Compass" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
                         <h2 class="text-sm font-medium">
@@ -811,10 +944,10 @@ async function deleteSeason(season: SeasonRow) {
                         />
                     </button>
                 </div>
-                <div v-if="showGuide" class="grid gap-4 p-5 md:grid-cols-3">
+                <div v-if="showGuide" class="grid gap-3 p-4 md:grid-cols-3">
                     <!-- Paso 1: Zonas -->
                     <div
-                        class="flex flex-col rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400"
+                        class="flex flex-col rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
                     >
                         <div class="flex items-center gap-2.5">
                             <div
@@ -822,7 +955,9 @@ async function deleteSeason(season: SeasonRow) {
                             >
                                 1
                             </div>
-                            <div class="flex items-center gap-1.5 font-medium">
+                            <div
+                                class="flex items-center gap-1.5 text-sm font-medium"
+                            >
                                 <Lucide
                                     icon="Map"
                                     class="h-4 w-4 text-primary"
@@ -861,7 +996,7 @@ async function deleteSeason(season: SeasonRow) {
                     </div>
                     <!-- Paso 2: Tipos y tarifas -->
                     <div
-                        class="flex flex-col rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400"
+                        class="flex flex-col rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
                     >
                         <div class="flex items-center gap-2.5">
                             <div
@@ -869,7 +1004,9 @@ async function deleteSeason(season: SeasonRow) {
                             >
                                 2
                             </div>
-                            <div class="flex items-center gap-1.5 font-medium">
+                            <div
+                                class="flex items-center gap-1.5 text-sm font-medium"
+                            >
                                 <Lucide
                                     icon="BedDouble"
                                     class="h-4 w-4 text-info"
@@ -919,7 +1056,7 @@ async function deleteSeason(season: SeasonRow) {
                     </div>
                     <!-- Paso 3: Habitaciones -->
                     <div
-                        class="flex flex-col rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400"
+                        class="flex flex-col rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
                     >
                         <div class="flex items-center gap-2.5">
                             <div
@@ -927,7 +1064,9 @@ async function deleteSeason(season: SeasonRow) {
                             >
                                 3
                             </div>
-                            <div class="flex items-center gap-1.5 font-medium">
+                            <div
+                                class="flex items-center gap-1.5 text-sm font-medium"
+                            >
                                 <Lucide
                                     icon="DoorOpen"
                                     class="h-4 w-4 text-success"
@@ -976,22 +1115,22 @@ async function deleteSeason(season: SeasonRow) {
                 </div>
             </div>
 
-            <div class="mt-6 grid grid-cols-12 items-stretch gap-6">
+            <div class="mt-4 grid grid-cols-12 items-stretch gap-5">
                 <!-- Zonas -->
                 <div class="col-span-12 flex flex-col xl:col-span-4">
                     <div class="box box--stacked flex flex-1 flex-col">
                         <div
-                            class="flex items-center justify-between gap-3 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                            class="flex items-center justify-between gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                         >
                             <div class="flex items-center gap-2.5">
                                 <div
-                                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+                                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary"
                                 >
                                     1
                                 </div>
                                 <div>
                                     <h2
-                                        class="flex items-center gap-1.5 text-base font-medium"
+                                        class="flex items-center gap-1.5 text-sm font-medium"
                                     >
                                         Zonas / pisos
                                         <span
@@ -1012,15 +1151,17 @@ async function deleteSeason(season: SeasonRow) {
                             <Button
                                 v-if="canManage"
                                 variant="outline-primary"
-                                size="sm"
-                                class="rounded-[0.5rem]"
+                                class="h-8 rounded-[0.5rem] text-xs"
                                 @click="openZone(null)"
                             >
-                                <Lucide icon="Plus" class="mr-1 h-4 w-4" />
+                                <Lucide
+                                    icon="Plus"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
                                 Agregar
                             </Button>
                         </div>
-                        <div class="overflow-x-auto p-5">
+                        <div class="overflow-x-auto p-4">
                             <Table v-if="zones.length">
                                 <Table.Tbody>
                                     <Table.Tr
@@ -1055,35 +1196,29 @@ async function deleteSeason(season: SeasonRow) {
                                             hab.</Table.Td
                                         >
                                         <Table.Td v-if="canManage">
-                                            <div
-                                                class="flex justify-end gap-2 sm:gap-3"
-                                            >
-                                                <a
-                                                    href="#"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-primary sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                            <div class="flex justify-end gap-1">
+                                                <button
+                                                    type="button"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
                                                     title="Editar zona"
-                                                    @click.prevent="
-                                                        openZone(zone)
-                                                    "
+                                                    @click="openZone(zone)"
                                                 >
                                                     <Lucide
                                                         icon="Pencil"
                                                         class="h-4 w-4"
                                                     />
-                                                </a>
-                                                <a
-                                                    href="#"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-danger sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
                                                     title="Eliminar zona"
-                                                    @click.prevent="
-                                                        deleteZone(zone)
-                                                    "
+                                                    @click="deleteZone(zone)"
                                                 >
                                                     <Lucide
                                                         icon="Trash2"
                                                         class="h-4 w-4"
                                                     />
-                                                </a>
+                                                </button>
                                             </div>
                                         </Table.Td>
                                     </Table.Tr>
@@ -1091,12 +1226,12 @@ async function deleteSeason(season: SeasonRow) {
                             </Table>
                             <div
                                 v-else
-                                class="flex flex-col items-center gap-3 py-8 text-center"
+                                class="flex flex-col items-center gap-2.5 py-8 text-center"
                             >
                                 <div
-                                    class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+                                    class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
                                 >
-                                    <Lucide icon="Map" class="h-6 w-6" />
+                                    <Lucide icon="Map" class="h-5 w-5" />
                                 </div>
                                 <div>
                                     <p class="text-sm font-medium">
@@ -1110,11 +1245,13 @@ async function deleteSeason(season: SeasonRow) {
                                 <Button
                                     v-if="canManage"
                                     variant="outline-primary"
-                                    size="sm"
-                                    class="rounded-[0.5rem]"
+                                    class="h-9 rounded-[0.5rem] text-xs"
                                     @click="openZone(null)"
                                 >
-                                    <Lucide icon="Plus" class="mr-1 h-4 w-4" />
+                                    <Lucide
+                                        icon="Plus"
+                                        class="mr-1.5 h-3.5 w-3.5"
+                                    />
                                     Crear primera zona
                                 </Button>
                             </div>
@@ -1126,17 +1263,17 @@ async function deleteSeason(season: SeasonRow) {
                 <div class="col-span-12 flex flex-col xl:col-span-8">
                     <div class="box box--stacked flex flex-1 flex-col">
                         <div
-                            class="flex items-center justify-between gap-3 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                            class="flex items-center justify-between gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                         >
                             <div class="flex items-center gap-2.5">
                                 <div
-                                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-info/10 text-xs font-semibold text-info"
+                                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-info/10 text-[11px] font-semibold text-info"
                                 >
                                     2
                                 </div>
                                 <div>
                                     <h2
-                                        class="flex items-center gap-1.5 text-base font-medium"
+                                        class="flex items-center gap-1.5 text-sm font-medium"
                                     >
                                         Tipos y tarifas
                                         <span
@@ -1158,11 +1295,13 @@ async function deleteSeason(season: SeasonRow) {
                             <Button
                                 v-if="canManage"
                                 variant="outline-primary"
-                                size="sm"
-                                class="rounded-[0.5rem]"
+                                class="h-8 rounded-[0.5rem] text-xs"
                                 @click="openType(null)"
                             >
-                                <Lucide icon="Plus" class="mr-1 h-4 w-4" />
+                                <Lucide
+                                    icon="Plus"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
                                 Agregar tipo
                             </Button>
                         </div>
@@ -1177,7 +1316,7 @@ async function deleteSeason(season: SeasonRow) {
                                          propio renglón (compartir fila
                                          aplastaba el nombre en tiritas). -->
                                     <div
-                                        class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3.5 transition-colors hover:bg-slate-50/70 sm:px-5 dark:hover:bg-darkmode-600/40"
+                                        class="flex cursor-pointer flex-wrap items-center gap-x-3 gap-y-1.5 px-4 py-3 transition-colors hover:bg-slate-50/70 sm:px-5 dark:hover:bg-darkmode-600/40"
                                         :class="!type.active && 'opacity-60'"
                                         @click="toggleTypeRow(type.id)"
                                     >
@@ -1193,18 +1332,19 @@ async function deleteSeason(season: SeasonRow) {
                                             <div
                                                 class="flex flex-wrap items-center gap-2"
                                             >
-                                                <span class="font-medium">{{
-                                                    type.name
-                                                }}</span>
+                                                <span
+                                                    class="text-sm font-medium"
+                                                    >{{ type.name }}</span
+                                                >
                                                 <span
                                                     v-if="!type.active"
-                                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
                                                 >
                                                     Inactivo
                                                 </span>
                                                 <span
                                                     v-if="!type.has_active_rate"
-                                                    class="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                                                    class="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
                                                     title="Agrega una tarifa activa para poder reservar este tipo"
                                                 >
                                                     Sin tarifa — no reservable
@@ -1240,7 +1380,7 @@ async function deleteSeason(season: SeasonRow) {
                                                     v-if="
                                                         type.price_from !== null
                                                     "
-                                                    class="text-sm font-medium"
+                                                    class="text-xs font-medium"
                                                 >
                                                     Desde
                                                     {{ money(type.price_from) }}
@@ -1248,14 +1388,14 @@ async function deleteSeason(season: SeasonRow) {
                                             </div>
                                             <div
                                                 v-if="canManage"
-                                                class="flex shrink-0 gap-1.5 sm:gap-2.5"
+                                                class="flex shrink-0 gap-1"
                                                 @click.stop
                                             >
-                                                <a
-                                                    href="#"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-success sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                <button
+                                                    type="button"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-success/10 hover:text-success"
                                                     title="Agregar tarifa"
-                                                    @click.prevent="
+                                                    @click="
                                                         openPlanForType(type.id)
                                                     "
                                                 >
@@ -1263,46 +1403,40 @@ async function deleteSeason(season: SeasonRow) {
                                                         icon="Tag"
                                                         class="h-4 w-4"
                                                     />
-                                                </a>
-                                                <a
-                                                    href="#"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-slate-500 sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
                                                     title="Duplicar tipo con sus tarifas"
-                                                    @click.prevent="
-                                                        duplicateType(type)
-                                                    "
+                                                    @click="duplicateType(type)"
                                                 >
                                                     <Lucide
                                                         icon="Copy"
                                                         class="h-4 w-4"
                                                     />
-                                                </a>
-                                                <a
-                                                    href="#"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-primary sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
                                                     title="Editar tipo"
-                                                    @click.prevent="
-                                                        openType(type)
-                                                    "
+                                                    @click="openType(type)"
                                                 >
                                                     <Lucide
                                                         icon="Pencil"
                                                         class="h-4 w-4"
                                                     />
-                                                </a>
-                                                <a
-                                                    href="#"
-                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/70 text-danger sm:h-auto sm:w-auto sm:rounded-none sm:border-0 dark:border-darkmode-400"
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
                                                     title="Eliminar tipo"
-                                                    @click.prevent="
-                                                        deleteType(type)
-                                                    "
+                                                    @click="deleteType(type)"
                                                 >
                                                     <Lucide
                                                         icon="Trash2"
                                                         class="h-4 w-4"
                                                     />
-                                                </a>
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -1310,38 +1444,53 @@ async function deleteSeason(season: SeasonRow) {
                                     <!-- Ficha y tarifas del tipo (expandido) -->
                                     <div
                                         v-if="expandedTypes.has(type.id)"
-                                        class="bg-slate-50/60 px-5 pb-4 dark:bg-darkmode-600/30"
+                                        class="bg-slate-50/60 px-4 py-3 sm:px-5 dark:bg-darkmode-600/30"
                                     >
-                                        <!-- Ficha comercial: lo que ve la web, el bot y el importador -->
+                                        <!-- Ficha comercial: lo que ve la web, el bot y el importador.
+                                             Tarjeta blanca con aire propio — pegada a la fila se leía
+                                             como texto amontonado. -->
                                         <div
                                             v-if="
                                                 type.description ||
                                                 type.amenities.length
                                             "
-                                            class="border-b border-dashed border-slate-300/70 py-3"
+                                            class="mb-3 rounded-lg border border-slate-200/70 bg-white p-3.5 dark:border-darkmode-400 dark:bg-darkmode-600"
                                         >
                                             <p
                                                 v-if="type.description"
-                                                class="text-xs leading-relaxed text-slate-600 dark:text-slate-300"
+                                                class="max-w-3xl text-xs leading-relaxed text-slate-600 dark:text-slate-300"
                                             >
                                                 {{ type.description }}
                                             </p>
                                             <div
                                                 v-if="type.amenities.length"
-                                                class="mt-2 flex flex-wrap gap-1.5"
+                                                :class="
+                                                    type.description
+                                                        ? 'mt-3 border-t border-dashed border-slate-200/70 pt-3 dark:border-darkmode-400'
+                                                        : ''
+                                                "
                                             >
-                                                <span
-                                                    v-for="amenity in type.amenities"
-                                                    :key="amenity"
-                                                    class="rounded-full bg-white px-2 py-0.5 text-xs text-slate-500 shadow-sm dark:bg-darkmode-400 dark:text-slate-300"
+                                                <div
+                                                    class="mb-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                                                 >
-                                                    {{ amenity }}
-                                                </span>
+                                                    Amenidades
+                                                </div>
+                                                <div
+                                                    class="flex flex-wrap gap-2"
+                                                >
+                                                    <span
+                                                        v-for="amenity in type.amenities"
+                                                        :key="amenity"
+                                                        class="rounded-full border border-slate-200/70 bg-slate-50 px-2.5 py-1 text-[11px] text-slate-600 dark:border-darkmode-300 dark:bg-darkmode-400 dark:text-slate-300"
+                                                    >
+                                                        {{ amenity }}
+                                                    </span>
+                                                </div>
                                             </div>
                                         </div>
                                         <div
                                             v-else
-                                            class="border-b border-dashed border-slate-300/70 py-3 text-xs text-slate-400"
+                                            class="mb-3 rounded-lg border border-dashed border-slate-300/70 px-3.5 py-2.5 text-xs text-slate-400 dark:border-darkmode-400"
                                         >
                                             Sin descripción ni amenidades aún —
                                             edítalas en el tipo o impórtalas
@@ -1438,13 +1587,10 @@ async function deleteSeason(season: SeasonRow) {
                                                     Anticipo:
                                                     <template
                                                         v-if="
-                                                            plan.deposit_percent
+                                                            depositLabel(plan)
                                                         "
-                                                        >{{
-                                                            Number(
-                                                                plan.deposit_percent,
-                                                            )
-                                                        }}%<template
+                                                        >{{ depositLabel(plan)
+                                                        }}<template
                                                             v-if="
                                                                 plan.payment_due_label
                                                             "
@@ -1603,14 +1749,16 @@ async function deleteSeason(season: SeasonRow) {
                                                         >
                                                             <template
                                                                 v-if="
-                                                                    plan.deposit_percent
+                                                                    depositLabel(
+                                                                        plan,
+                                                                    )
                                                                 "
                                                             >
                                                                 {{
-                                                                    Number(
-                                                                        plan.deposit_percent,
+                                                                    depositLabel(
+                                                                        plan,
                                                                     )
-                                                                }}%
+                                                                }}
                                                                 <span
                                                                     v-if="
                                                                         plan.payment_due_label
@@ -1792,15 +1940,50 @@ async function deleteSeason(season: SeasonRow) {
             </div>
         </div>
 
-        <!-- Modal tarifa -->
+        <!-- Modal tarifa: header con icono + cuerpo scrolleable + footer fijo -->
         <Dialog :open="showPlanForm" @close="showPlanForm = false">
             <Dialog.Panel>
-                <div class="p-5">
-                    <h2 class="mb-4 text-base font-medium">
-                        {{ editingPlan ? 'Editar tarifa' : 'Nueva tarifa' }}
-                    </h2>
-                    <form class="space-y-4" @submit.prevent="submitPlan">
-                        <div class="grid grid-cols-2 gap-4">
+                <form class="flex flex-col" @submit.prevent="submitPlan">
+                    <div
+                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 sm:px-6 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                        >
+                            <Lucide icon="Tag" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                {{
+                                    editingPlan
+                                        ? 'Editar tarifa'
+                                        : 'Nueva tarifa'
+                                }}
+                            </h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Precio, anticipo y reglas con las que se
+                                reserva.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            @click="showPlanForm = false"
+                        >
+                            <Lucide icon="X" class="h-4 w-4" />
+                        </button>
+                    </div>
+
+                    <div
+                        class="max-h-[calc(100dvh-14rem)] space-y-4 overflow-y-auto px-5 py-4 sm:max-h-[70vh] sm:px-6"
+                    >
+                        <div
+                            class="flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            <Lucide icon="Coins" class="h-3.5 w-3.5" />
+                            Lo básico
+                        </div>
+                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div>
                                 <FormLabel htmlFor="plan-roomtype"
                                     >Tipo de habitación</FormLabel
@@ -1808,6 +1991,7 @@ async function deleteSeason(season: SeasonRow) {
                                 <FormSelect
                                     id="plan-roomtype"
                                     v-model="planForm.room_type_id"
+                                    class="h-9 text-xs"
                                 >
                                     <option
                                         v-for="type in roomTypes"
@@ -1832,6 +2016,7 @@ async function deleteSeason(season: SeasonRow) {
                                     v-model="planForm.name"
                                     type="text"
                                     placeholder="Rato 3 horas"
+                                    class="h-9 text-xs"
                                 />
                                 <FormHelp
                                     v-if="errors.name"
@@ -1841,12 +2026,13 @@ async function deleteSeason(season: SeasonRow) {
                             </div>
                         </div>
 
-                        <div class="grid grid-cols-2 gap-4">
+                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div>
                                 <FormLabel htmlFor="plan-type">Cobro</FormLabel>
                                 <FormSelect
                                     id="plan-type"
                                     v-model="planForm.type"
+                                    class="h-9 text-xs"
                                 >
                                     <option value="night">Por noche</option>
                                     <option
@@ -1870,6 +2056,7 @@ async function deleteSeason(season: SeasonRow) {
                                     type="number"
                                     step="0.01"
                                     min="0"
+                                    class="h-9 text-xs"
                                 />
                                 <FormHelp
                                     v-if="errors.price"
@@ -1920,7 +2107,13 @@ async function deleteSeason(season: SeasonRow) {
                         </div>
 
                         <div
-                            class="rounded-md border border-slate-200/70 p-3 dark:border-darkmode-400"
+                            class="flex items-center gap-2 pt-1 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            <Lucide icon="CalendarClock" class="h-3.5 w-3.5" />
+                            Reglas al reservar
+                        </div>
+                        <div
+                            class="rounded-md border border-slate-200/70 p-3.5 dark:border-darkmode-400"
                         >
                             <FormCheck>
                                 <FormCheck.Input
@@ -1977,7 +2170,7 @@ async function deleteSeason(season: SeasonRow) {
                         </div>
 
                         <div
-                            class="rounded-md border border-slate-200/70 p-3 dark:border-darkmode-400"
+                            class="rounded-md border border-slate-200/70 p-3.5 dark:border-darkmode-400"
                         >
                             <FormCheck>
                                 <FormCheck.Input
@@ -1994,25 +2187,108 @@ async function deleteSeason(season: SeasonRow) {
                                 class="mt-3 space-y-3"
                             >
                                 <div>
-                                    <FormLabel htmlFor="plan-deposit"
-                                        >Anticipo al reservar (%)</FormLabel
+                                    <FormLabel>Anticipo al reservar</FormLabel>
+                                    <!-- % del total o monto fijo en pesos:
+                                         excluyentes, se guarda solo el del
+                                         modo elegido. -->
+                                    <div
+                                        class="mb-2.5 inline-flex rounded-md border border-slate-200/80 p-0.5 dark:border-darkmode-400"
                                     >
-                                    <FormInput
-                                        id="plan-deposit"
-                                        v-model.number="
-                                            planForm.deposit_percent
+                                        <button
+                                            type="button"
+                                            class="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition"
+                                            :class="
+                                                planForm.deposit_mode ===
+                                                'percent'
+                                                    ? 'bg-primary text-white shadow-sm'
+                                                    : 'text-slate-500 hover:text-primary'
+                                            "
+                                            @click="
+                                                planForm.deposit_mode =
+                                                    'percent'
+                                            "
+                                        >
+                                            <Lucide
+                                                icon="Percent"
+                                                class="h-3.5 w-3.5"
+                                            />
+                                            % del total
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="flex items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium transition"
+                                            :class="
+                                                planForm.deposit_mode ===
+                                                'amount'
+                                                    ? 'bg-primary text-white shadow-sm'
+                                                    : 'text-slate-500 hover:text-primary'
+                                            "
+                                            @click="
+                                                planForm.deposit_mode = 'amount'
+                                            "
+                                        >
+                                            <Lucide
+                                                icon="Banknote"
+                                                class="h-3.5 w-3.5"
+                                            />
+                                            Monto fijo ($)
+                                        </button>
+                                    </div>
+                                    <template
+                                        v-if="
+                                            planForm.deposit_mode === 'percent'
                                         "
-                                        type="number"
-                                        min="1"
-                                        max="100"
-                                        step="0.5"
-                                        class="w-32"
-                                    />
-                                    <FormHelp
-                                        v-if="errors.deposit_percent"
-                                        class="text-danger"
-                                        >{{ errors.deposit_percent }}</FormHelp
                                     >
+                                        <FormInput
+                                            id="plan-deposit"
+                                            v-model.number="
+                                                planForm.deposit_percent
+                                            "
+                                            type="number"
+                                            min="1"
+                                            max="100"
+                                            step="0.5"
+                                            class="w-32"
+                                        />
+                                        <FormHelp
+                                            v-if="errors.deposit_percent"
+                                            class="text-danger"
+                                            >{{
+                                                errors.deposit_percent
+                                            }}</FormHelp
+                                        >
+                                        <FormHelp v-else
+                                            >Ej: 33 → al reservar se cobra el
+                                            33% del total de la
+                                            estancia.</FormHelp
+                                        >
+                                    </template>
+                                    <template v-else>
+                                        <FormInput
+                                            id="plan-deposit-amount"
+                                            v-model.number="
+                                                planForm.deposit_amount
+                                            "
+                                            type="number"
+                                            min="1"
+                                            step="0.01"
+                                            placeholder="1500"
+                                            class="w-40"
+                                        />
+                                        <FormHelp
+                                            v-if="errors.deposit_amount"
+                                            class="text-danger"
+                                            >{{
+                                                errors.deposit_amount
+                                            }}</FormHelp
+                                        >
+                                        <FormHelp v-else
+                                            >Se cobra esa cantidad al reservar,
+                                            sin importar las noches; nunca más
+                                            que el total de la
+                                            estancia.</FormHelp
+                                        >
+                                    </template>
                                 </div>
                                 <div>
                                     <FormLabel
@@ -2064,7 +2340,7 @@ async function deleteSeason(season: SeasonRow) {
                         </div>
 
                         <div
-                            class="rounded-md border border-slate-200/70 p-3 dark:border-darkmode-400"
+                            class="rounded-md border border-slate-200/70 p-3.5 dark:border-darkmode-400"
                         >
                             <FormCheck>
                                 <FormCheck.Input
@@ -2167,23 +2443,29 @@ async function deleteSeason(season: SeasonRow) {
                                 >Tarifa activa</FormCheck.Label
                             >
                         </FormCheck>
+                    </div>
 
-                        <div class="flex justify-end gap-2 pt-2">
-                            <Button
-                                type="button"
-                                variant="outline-secondary"
-                                @click="showPlanForm = false"
-                                >Cancelar</Button
-                            >
-                            <Button
-                                type="submit"
-                                variant="primary"
-                                :disabled="saving"
-                                >Guardar</Button
-                            >
-                        </div>
-                    </form>
-                </div>
+                    <div
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 sm:px-6 dark:border-darkmode-400"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            class="h-9 px-5 text-xs"
+                            @click="showPlanForm = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            class="h-9 px-5 text-xs shadow-md shadow-primary/20"
+                            :disabled="saving"
+                        >
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
+                            {{ saving ? 'Guardando...' : 'Guardar tarifa' }}
+                        </Button>
+                    </div>
+                </form>
             </Dialog.Panel>
         </Dialog>
 
@@ -2318,6 +2600,7 @@ async function deleteSeason(season: SeasonRow) {
                                         v-model="seasonForm.name"
                                         type="text"
                                         placeholder="Semana Santa"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.name"
@@ -2332,6 +2615,7 @@ async function deleteSeason(season: SeasonRow) {
                                     <FormSelect
                                         id="season-kind"
                                         v-model="seasonForm.kind"
+                                        class="h-9 text-xs"
                                     >
                                         <option value="season">
                                             Temporada
@@ -2345,10 +2629,10 @@ async function deleteSeason(season: SeasonRow) {
                                     <FormLabel htmlFor="season-starts"
                                         >Desde</FormLabel
                                     >
-                                    <FormInput
+                                    <FormDate
                                         id="season-starts"
                                         v-model="seasonForm.starts_on"
-                                        type="date"
+                                        input-class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.starts_on"
@@ -2360,10 +2644,10 @@ async function deleteSeason(season: SeasonRow) {
                                     <FormLabel htmlFor="season-ends"
                                         >Hasta</FormLabel
                                     >
-                                    <FormInput
+                                    <FormDate
                                         id="season-ends"
                                         v-model="seasonForm.ends_on"
-                                        type="date"
+                                        input-class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.ends_on"
@@ -2415,6 +2699,7 @@ async function deleteSeason(season: SeasonRow) {
                                         type="number"
                                         step="0.01"
                                         min="0"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         >Sustituye el precio normal ({{
@@ -2436,6 +2721,7 @@ async function deleteSeason(season: SeasonRow) {
                                         v-model.number="seasonForm.priority"
                                         type="number"
                                         min="0"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         >Si se solapa con otra, gana la de
@@ -2454,6 +2740,7 @@ async function deleteSeason(season: SeasonRow) {
                                         min="1"
                                         max="365"
                                         placeholder="Sin mínimo"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         >Solo aplica cuando la estancia alcanza
@@ -2520,6 +2807,7 @@ async function deleteSeason(season: SeasonRow) {
                                 v-model="zoneForm.name"
                                 type="text"
                                 placeholder="Planta baja"
+                                class="h-9 text-xs"
                             />
                             <FormHelp v-if="errors.name" class="text-danger">{{
                                 errors.name
@@ -2533,6 +2821,7 @@ async function deleteSeason(season: SeasonRow) {
                                 <FormSelect
                                     id="zone-kind"
                                     v-model="zoneForm.kind"
+                                    class="h-9 text-xs"
                                 >
                                     <option
                                         v-for="(label, value) in zoneKinds"
@@ -2555,6 +2844,7 @@ async function deleteSeason(season: SeasonRow) {
                                     v-model.number="zoneForm.sort_order"
                                     type="number"
                                     min="0"
+                                    class="h-9 text-xs"
                                 />
                                 <FormHelp
                                     v-if="errors.sort_order"
@@ -2597,12 +2887,14 @@ async function deleteSeason(season: SeasonRow) {
                             <Button
                                 type="button"
                                 variant="outline-secondary"
+                                class="h-9 px-5 text-xs"
                                 @click="showZoneForm = false"
                                 >Cancelar</Button
                             >
                             <Button
                                 type="submit"
                                 variant="primary"
+                                class="h-9 px-5 text-xs"
                                 :disabled="saving"
                                 >Guardar</Button
                             >
@@ -2619,14 +2911,14 @@ async function deleteSeason(season: SeasonRow) {
             >
                 <form class="flex flex-col" @submit.prevent="submitType">
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-7 py-5 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                         >
                             <Lucide
                                 icon="BedDouble"
-                                class="h-5 w-5 text-primary"
+                                class="h-4 w-4 text-primary"
                             />
                         </div>
                         <div class="min-w-0 flex-1">
@@ -2649,22 +2941,22 @@ async function deleteSeason(season: SeasonRow) {
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                             @click="showTypeForm = false"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
 
                     <div
-                        class="max-h-[calc(100dvh-12.5rem)] space-y-7 overflow-y-auto px-5 py-5 sm:max-h-[70vh] sm:px-7 sm:py-6"
+                        class="max-h-[calc(100dvh-12.5rem)] space-y-5 overflow-y-auto px-5 py-4 sm:max-h-[70vh]"
                     >
                         <!-- Identidad -->
                         <section>
                             <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                             >
                                 <Lucide icon="BadgeCheck" class="h-3.5 w-3.5" />
                                 Identidad
                             </div>
-                            <div class="grid grid-cols-12 gap-5">
+                            <div class="grid grid-cols-12 gap-4">
                                 <div class="col-span-12">
                                     <FormLabel htmlFor="type-name"
                                         >Nombre</FormLabel
@@ -2674,6 +2966,7 @@ async function deleteSeason(season: SeasonRow) {
                                         v-model="typeForm.name"
                                         type="text"
                                         placeholder="Suite"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.name"
@@ -2689,6 +2982,7 @@ async function deleteSeason(season: SeasonRow) {
                                         id="type-description"
                                         v-model="typeForm.description"
                                         placeholder="Suite amplia con jacuzzi y balcón…"
+                                        class="text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.description"
@@ -2709,6 +3003,7 @@ async function deleteSeason(season: SeasonRow) {
                                         v-model="typeForm.photos_url"
                                         type="url"
                                         placeholder="https://mimotel.com/habitaciones/sencilla"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.photos_url"
@@ -2730,7 +3025,7 @@ async function deleteSeason(season: SeasonRow) {
                                     <div class="flex flex-wrap gap-2">
                                         <button
                                             type="button"
-                                            class="flex h-11 w-11 items-center justify-center rounded-lg border text-xs transition"
+                                            class="flex h-9 w-9 items-center justify-center rounded-lg border text-xs transition"
                                             :class="
                                                 typeForm.icon === ''
                                                     ? 'border-primary bg-primary/5 text-primary'
@@ -2741,14 +3036,14 @@ async function deleteSeason(season: SeasonRow) {
                                         >
                                             <Lucide
                                                 icon="Ban"
-                                                class="h-5 w-5"
+                                                class="h-4 w-4"
                                             />
                                         </button>
                                         <button
                                             v-for="option in roomTypeIcons"
                                             :key="option.value"
                                             type="button"
-                                            class="flex h-11 w-11 items-center justify-center rounded-lg border transition"
+                                            class="flex h-9 w-9 items-center justify-center rounded-lg border transition"
                                             :class="
                                                 typeForm.icon === option.value
                                                     ? 'border-primary bg-primary/5 text-primary'
@@ -2761,7 +3056,7 @@ async function deleteSeason(season: SeasonRow) {
                                         >
                                             <Lucide
                                                 :icon="option.value as Icon"
-                                                class="h-5 w-5"
+                                                class="h-4 w-4"
                                             />
                                         </button>
                                     </div>
@@ -2785,7 +3080,7 @@ async function deleteSeason(season: SeasonRow) {
 
                         <!-- Fotos (solo al editar: la galería se liga al tipo ya guardado) -->
                         <section
-                            class="border-t border-dashed border-slate-300/70 pt-5"
+                            class="border-t border-dashed border-slate-300/70 pt-4"
                         >
                             <div
                                 class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
@@ -2908,15 +3203,15 @@ async function deleteSeason(season: SeasonRow) {
 
                         <!-- Capacidad -->
                         <section
-                            class="border-t border-dashed border-slate-300/70 pt-5"
+                            class="border-t border-dashed border-slate-300/70 pt-4"
                         >
                             <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                             >
                                 <Lucide icon="Users" class="h-3.5 w-3.5" />
                                 Capacidad
                             </div>
-                            <div class="grid grid-cols-12 gap-5">
+                            <div class="grid grid-cols-12 gap-4">
                                 <div class="col-span-12 sm:col-span-4">
                                     <FormLabel htmlFor="type-capacity"
                                         >Capacidad (pax)</FormLabel
@@ -2927,6 +3222,7 @@ async function deleteSeason(season: SeasonRow) {
                                         type="number"
                                         min="1"
                                         max="20"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.capacity"
@@ -2944,6 +3240,7 @@ async function deleteSeason(season: SeasonRow) {
                                         type="number"
                                         min="0"
                                         placeholder="—"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.max_adults"
@@ -2961,6 +3258,7 @@ async function deleteSeason(season: SeasonRow) {
                                         type="number"
                                         min="0"
                                         placeholder="—"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.max_children"
@@ -2974,15 +3272,15 @@ async function deleteSeason(season: SeasonRow) {
                         <!-- Precio único: solo se captura al crear; después vive en las tarifas -->
                         <section
                             v-if="!editingType"
-                            class="border-t border-dashed border-slate-300/70 pt-5"
+                            class="border-t border-dashed border-slate-300/70 pt-4"
                         >
                             <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                             >
                                 <Lucide icon="Tag" class="h-3.5 w-3.5" /> Precio
                                 y modalidad
                             </div>
-                            <div class="grid grid-cols-12 gap-5">
+                            <div class="grid grid-cols-12 gap-4">
                                 <div class="col-span-12 sm:col-span-4">
                                     <FormLabel htmlFor="type-price"
                                         >Precio ($)</FormLabel
@@ -2994,6 +3292,7 @@ async function deleteSeason(season: SeasonRow) {
                                         step="0.01"
                                         min="0.01"
                                         placeholder="650.00"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.price"
@@ -3008,6 +3307,7 @@ async function deleteSeason(season: SeasonRow) {
                                     <FormSelect
                                         id="type-rate-type"
                                         v-model="typeForm.rate_type"
+                                        class="h-9 text-xs"
                                     >
                                         <option value="night">Por noche</option>
                                         <option
@@ -3069,7 +3369,7 @@ async function deleteSeason(season: SeasonRow) {
                         </section>
                         <section
                             v-else
-                            class="border-t border-dashed border-slate-300/70 pt-5"
+                            class="border-t border-dashed border-slate-300/70 pt-4"
                         >
                             <div
                                 class="flex items-start gap-2 rounded-lg border border-info/20 bg-info/5 px-3 py-2.5 text-xs text-slate-600 dark:text-slate-300"
@@ -3090,23 +3390,23 @@ async function deleteSeason(season: SeasonRow) {
 
                         <!-- Horarios -->
                         <section
-                            class="border-t border-dashed border-slate-300/70 pt-5"
+                            class="border-t border-dashed border-slate-300/70 pt-4"
                         >
                             <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                             >
                                 <Lucide icon="Clock" class="h-3.5 w-3.5" />
                                 Horarios
                             </div>
-                            <div class="grid grid-cols-12 gap-5">
+                            <div class="grid grid-cols-12 gap-4">
                                 <div class="col-span-12 sm:col-span-4">
                                     <FormLabel htmlFor="type-checkin"
                                         >Check-in</FormLabel
                                     >
-                                    <FormInput
+                                    <FormTime
                                         id="type-checkin"
                                         v-model="typeForm.check_in_time"
-                                        type="time"
+                                        input-class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.check_in_time"
@@ -3118,10 +3418,10 @@ async function deleteSeason(season: SeasonRow) {
                                     <FormLabel htmlFor="type-checkout"
                                         >Check-out</FormLabel
                                     >
-                                    <FormInput
+                                    <FormTime
                                         id="type-checkout"
                                         v-model="typeForm.check_out_time"
-                                        type="time"
+                                        input-class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.check_out_time"
@@ -3134,57 +3434,101 @@ async function deleteSeason(season: SeasonRow) {
 
                         <!-- Amenidades -->
                         <section
-                            class="border-t border-dashed border-slate-300/70 pt-5"
+                            class="border-t border-dashed border-slate-300/70 pt-4"
                         >
                             <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                             >
                                 <Lucide icon="Sparkles" class="h-3.5 w-3.5" />
                                 Amenidades
                             </div>
-                            <FormInput
-                                id="type-amenities"
-                                v-model="typeAmenityInput"
-                                type="text"
-                                maxlength="100"
-                                placeholder="Escribe y presiona Enter (TV, minibar, jacuzzi…)"
-                                @keydown.enter.prevent="addTypeAmenity"
-                            />
+                            <!-- Lo que ya tiene el tipo va primero, en su
+                                 propia caja; las sugerencias quedan abajo en
+                                 un cajón con tope de alto para que la lista
+                                 no se coma el modal. -->
                             <div
-                                v-if="typeForm.amenities.length"
-                                class="mt-2 flex flex-wrap gap-1.5"
+                                class="rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
                             >
-                                <span
-                                    v-for="(
-                                        amenity, index
-                                    ) in typeForm.amenities"
-                                    :key="amenity"
-                                    class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs dark:bg-darkmode-400"
+                                <div
+                                    class="mb-2 flex items-center justify-between gap-2"
                                 >
-                                    {{ amenity }}
-                                    <button
-                                        type="button"
-                                        class="text-slate-400 hover:text-danger"
-                                        title="Quitar"
-                                        @click="removeTypeAmenity(index)"
+                                    <span class="text-xs font-medium">
+                                        Incluye esta habitación
+                                    </span>
+                                    <span class="text-[11px] text-slate-400">
+                                        {{ typeForm.amenities.length }}
+                                        elegida(s)
+                                    </span>
+                                </div>
+                                <div
+                                    v-if="typeForm.amenities.length"
+                                    class="mb-2 flex flex-wrap gap-1.5"
+                                >
+                                    <span
+                                        v-for="(
+                                            amenity, index
+                                        ) in typeForm.amenities"
+                                        :key="amenity"
+                                        class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary"
                                     >
-                                        <Lucide icon="X" class="h-3 w-3" />
-                                    </button>
-                                </span>
-                            </div>
-                            <!-- Sugerencias comunes (spec-integracion-sitios §5): un clic agrega -->
-                            <div class="mt-3 flex flex-wrap gap-2 sm:gap-1.5">
-                                <button
-                                    v-for="suggestion in AMENITY_SUGGESTIONS.filter(
-                                        (a) => !typeForm.amenities.includes(a),
-                                    )"
-                                    :key="suggestion"
-                                    type="button"
-                                    class="rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:border-primary hover:text-primary sm:px-2 sm:py-0.5 sm:text-xs sm:text-slate-500 dark:border-darkmode-400 dark:text-slate-300"
-                                    @click="typeForm.amenities.push(suggestion)"
+                                        {{ amenity }}
+                                        <button
+                                            type="button"
+                                            class="text-primary/60 transition hover:text-danger"
+                                            title="Quitar"
+                                            @click="removeTypeAmenity(index)"
+                                        >
+                                            <Lucide icon="X" class="h-3 w-3" />
+                                        </button>
+                                    </span>
+                                </div>
+                                <p
+                                    v-else
+                                    class="mb-2 text-[11px] text-slate-400"
                                 >
-                                    + {{ suggestion }}
-                                </button>
+                                    Todavía sin amenidades: elige de la lista o
+                                    escribe la tuya.
+                                </p>
+                                <div class="relative">
+                                    <Lucide
+                                        icon="Plus"
+                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-3.5 w-3.5 text-slate-400"
+                                    />
+                                    <FormInput
+                                        id="type-amenities"
+                                        v-model="typeAmenityInput"
+                                        type="text"
+                                        maxlength="100"
+                                        class="h-9 pl-9 text-xs"
+                                        placeholder="Escribe una y presiona Enter (TV, minibar, jacuzzi)"
+                                        @keydown.enter.prevent="addTypeAmenity"
+                                    />
+                                </div>
+                            </div>
+
+                            <!-- Sugerencias comunes (spec-integracion-sitios §5): un clic agrega -->
+                            <div
+                                v-if="availableAmenitySuggestions.length"
+                                class="mt-2.5"
+                            >
+                                <div class="mb-1.5 text-[11px] text-slate-400">
+                                    Las más comunes, un clic las agrega:
+                                </div>
+                                <div
+                                    class="flex max-h-28 flex-wrap gap-1.5 overflow-y-auto pr-1"
+                                >
+                                    <button
+                                        v-for="suggestion in availableAmenitySuggestions"
+                                        :key="suggestion"
+                                        type="button"
+                                        class="h-7 rounded-full border border-dashed border-slate-300 px-2.5 text-[11px] text-slate-500 transition hover:border-primary hover:bg-primary/5 hover:text-primary dark:border-darkmode-400 dark:text-slate-300"
+                                        @click="
+                                            typeForm.amenities.push(suggestion)
+                                        "
+                                    >
+                                        {{ suggestion }}
+                                    </button>
+                                </div>
                             </div>
                             <FormHelp
                                 v-if="errors.amenities"
@@ -3195,15 +3539,15 @@ async function deleteSeason(season: SeasonRow) {
 
                         <!-- Publicación -->
                         <section
-                            class="border-t border-dashed border-slate-300/70 pt-5"
+                            class="border-t border-dashed border-slate-300/70 pt-4"
                         >
                             <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                             >
                                 <Lucide icon="Store" class="h-3.5 w-3.5" />
                                 Publicación
                             </div>
-                            <div class="grid grid-cols-12 gap-5">
+                            <div class="grid grid-cols-12 gap-4">
                                 <div class="col-span-12 sm:col-span-4">
                                     <FormLabel htmlFor="type-sort"
                                         >Orden</FormLabel
@@ -3213,6 +3557,7 @@ async function deleteSeason(season: SeasonRow) {
                                         v-model.number="typeForm.sort_order"
                                         type="number"
                                         min="0"
+                                        class="h-9 text-xs"
                                     />
                                     <FormHelp
                                         v-if="errors.sort_order"
@@ -3224,7 +3569,7 @@ async function deleteSeason(season: SeasonRow) {
                                     >
                                 </div>
                                 <label
-                                    class="col-span-12 flex cursor-pointer items-start gap-3.5 rounded-lg border border-slate-200/70 p-4 sm:col-span-8 dark:border-darkmode-400"
+                                    class="col-span-12 flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200/70 p-3 sm:col-span-8 dark:border-darkmode-400"
                                 >
                                     <FormSwitch class="mt-0.5">
                                         <FormSwitch.Input
@@ -3234,11 +3579,11 @@ async function deleteSeason(season: SeasonRow) {
                                         />
                                     </FormSwitch>
                                     <span class="min-w-0">
-                                        <span class="block text-sm font-medium"
+                                        <span class="block text-xs font-medium"
                                             >Activo (a la venta)</span
                                         >
                                         <span
-                                            class="mt-0.5 block text-xs text-slate-500"
+                                            class="mt-0.5 block text-[11px] text-slate-500"
                                             >El widget y los bots pueden
                                             ofrecerlo; al apagarlo deja de
                                             venderse sin tocar sus
@@ -3251,22 +3596,23 @@ async function deleteSeason(season: SeasonRow) {
                     </div>
 
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-7 py-4 dark:border-darkmode-400"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
                         <Button
                             type="button"
                             variant="outline-secondary"
+                            class="h-9 px-5 text-xs"
                             @click="showTypeForm = false"
                             >Cancelar</Button
                         >
                         <Button
                             type="submit"
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="h-9 px-5 text-xs shadow-md shadow-primary/20"
                             :disabled="saving"
                         >
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
-                            {{ saving ? 'Guardando…' : 'Guardar tipo' }}
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
+                            {{ saving ? 'Guardando...' : 'Guardar tipo' }}
                         </Button>
                     </div>
                 </form>
@@ -3275,32 +3621,37 @@ async function deleteSeason(season: SeasonRow) {
         <!-- Confirmación de borrado: zona, tipo o tarifa -->
         <Dialog :open="confirmDelete !== null" @close="confirmDelete = null">
             <Dialog.Panel>
-                <div class="p-6 text-center sm:p-7">
-                    <div
-                        class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
-                    >
-                        <Lucide icon="Trash2" class="h-6 w-6" />
+                <!-- Misma confirmación que en habitaciones e incidencias -->
+                <div class="p-5">
+                    <div class="mb-3 flex items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
+                        >
+                            <Lucide icon="Trash2" class="h-5 w-5 text-danger" />
+                        </div>
+                        <div class="min-w-0">
+                            <h2 class="text-base font-medium">
+                                {{ confirmDelete?.title }}
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                {{ confirmDelete?.detail }}
+                            </p>
+                        </div>
                     </div>
-                    <div class="mt-4 text-base font-medium">
-                        {{ confirmDelete?.title }}
-                    </div>
-                    <p class="mt-1.5 text-sm text-slate-500">
-                        {{ confirmDelete?.detail }}
-                    </p>
-                    <div class="mt-6 grid grid-cols-2 gap-2.5">
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11 justify-center rounded-[0.5rem] bg-white"
+                            class="h-9 px-5 text-xs"
                             @click="confirmDelete = null"
                         >
                             Cancelar
                         </Button>
                         <Button
                             variant="danger"
-                            class="min-h-11 justify-center rounded-[0.5rem]"
+                            class="h-9 px-5 text-xs"
                             @click="runConfirmedDelete"
                         >
-                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                             Eliminar
                         </Button>
                     </div>

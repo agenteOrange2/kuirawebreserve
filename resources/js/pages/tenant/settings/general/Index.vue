@@ -88,63 +88,66 @@ const cards = computed(() => [
     <RazeLayout title="Datos generales">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <img
                         v-if="logoUrl"
                         :src="logoUrl"
                         alt=""
-                        class="h-14 w-14 shrink-0 rounded-full object-cover"
+                        class="h-10 w-10 shrink-0 rounded-full object-cover"
                     />
                     <div
                         v-else
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Building2" class="h-7 w-7" />
+                        <Lucide icon="Building2" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">{{ property.name }}</h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">
+                            {{ property.name }}
+                        </h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Los datos del hotel, cada tema en su propia
                             pantalla. Esto es lo que ve el huésped y lo que usa
                             el asistente para responder.
                         </p>
                     </div>
                 </div>
-                <Button
-                    as="a"
-                    :href="route('tenant.hotel-settings')"
-                    variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white"
+                <div
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
                 >
-                    <Lucide
-                        icon="ArrowLeft"
-                        class="mr-2 h-4 w-4 stroke-[1.3]"
-                    />
-                    Volver a Ajustes
-                </Button>
+                    <!-- El volver vive con las acciones, no flotando
+                         encima de la tarjeta. -->
+                    <Link
+                        :href="route('tenant.hotel-settings')"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
+                    >
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                        Volver a Ajustes
+                    </Link>
+                </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 gap-6">
+            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
                 <Link
                     v-for="card in cards"
                     :key="card.route"
                     :href="route(card.route)"
-                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide :icon="card.icon" class="h-5 w-5" />
+                        <Lucide :icon="card.icon" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="font-medium">{{ card.title }}</div>
+                        <div class="text-sm font-medium">{{ card.title }}</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             {{ card.description }}
                         </p>
                         <p
-                            class="mt-1 text-xs"
+                            class="mt-1 text-[11px]"
                             :class="
                                 card.warn
                                     ? 'font-medium text-warning'
@@ -156,7 +159,7 @@ const cards = computed(() => [
                     </div>
                     <Lucide
                         icon="ArrowRight"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                 </Link>
             </div>

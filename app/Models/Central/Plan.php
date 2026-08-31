@@ -32,6 +32,7 @@ class Plan extends CentralModel
         'ai_enabled',
         'ai_monthly_replies',
         'active',
+        'public',
         'sort_order',
     ];
 
@@ -41,12 +42,23 @@ class Plan extends CentralModel
             'modules' => 'array',
             'ai_enabled' => 'boolean',
             'active' => 'boolean',
+            'public' => 'boolean',
         ];
     }
 
     public function scopeOrdered(Builder $query): Builder
     {
         return $query->orderBy('sort_order')->orderBy('key');
+    }
+
+    /**
+     * Planes que se anuncian solos: los que salen en la página de inicio y
+     * los únicos que el formulario de prospectos acepta. Un plan a la medida
+     * (public = false) se asigna a mano desde /admin y nadie más lo ve.
+     */
+    public function scopePublic(Builder $query): Builder
+    {
+        return $query->where('active', true)->where('public', true);
     }
 
     /** La forma que espera config('plans.{key}') en todo el código. */
@@ -73,6 +85,7 @@ class Plan extends CentralModel
                 'monthly_replies' => $this->ai_monthly_replies !== null ? (int) $this->ai_monthly_replies : null,
             ],
             'active' => $this->active,
+            'public' => $this->public,
         ];
     }
 }

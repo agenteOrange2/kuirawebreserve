@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -70,7 +71,11 @@ const faltanSugeridos = computed(() => {
  * settings.damage_catalog). Si el servidor rechaza, la lista vuelve a como
  * estaba para no mostrar un estado que no existe.
  */
-async function persist(previous: DamageRow[], okTitle: string, okDetail: string) {
+async function persist(
+    previous: DamageRow[],
+    okTitle: string,
+    okDetail: string,
+) {
     saving.value = true;
 
     try {
@@ -154,7 +159,9 @@ async function submitForm() {
 
     const ok = await persist(
         previous,
-        editingIndex.value !== null ? 'Concepto actualizado' : 'Concepto agregado',
+        editingIndex.value !== null
+            ? 'Concepto actualizado'
+            : 'Concepto agregado',
         'Aparece al registrar la salida de una habitación.',
     );
 
@@ -205,17 +212,17 @@ async function addSuggested() {
     <RazeLayout title="Daños">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Hammer" class="h-5 w-5 sm:h-7 sm:w-7" />
+                        <Lucide icon="Hammer" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">Daños</h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Daños</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             {{ rows.length }}
                             {{ rows.length === 1 ? 'concepto' : 'conceptos' }}
                             <span v-if="rows.length"
@@ -225,29 +232,30 @@ async function addSuggested() {
                         </p>
                     </div>
                 </div>
-                <Button
-                    as="a"
-                    :href="route('tenant.hotel-settings')"
-                    variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white"
+                <div
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
                 >
-                    <Lucide
-                        icon="ArrowLeft"
-                        class="mr-2 h-4 w-4 stroke-[1.3]"
-                    />
-                    Volver a Ajustes
-                </Button>
+                    <!-- El volver vive con las acciones, no flotando encima
+                         de la tarjeta. -->
+                    <Link
+                        :href="route('tenant.hotel-settings')"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
+                    >
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                        Volver a Ajustes
+                    </Link>
+                </div>
             </div>
 
             <!-- Dónde se usa esto, con la pinta que va a tener allá: una lista
                  de precios sin contexto no se entiende hasta que alguien la
                  topa a media salida. -->
-            <div class="box box--stacked mt-5 grid grid-cols-12 gap-5 p-5">
+            <div class="box box--stacked mt-4 grid grid-cols-12 gap-5 p-4">
                 <div class="col-span-12 xl:col-span-7">
-                    <h2 class="text-base font-medium">
+                    <h2 class="text-sm font-medium">
                         Dónde aparece esta lista
                     </h2>
-                    <p class="mt-1 text-sm text-slate-500">
+                    <p class="mt-1 text-xs text-slate-500">
                         Al registrar la salida de una habitación, en la
                         <strong>revisión de la habitación</strong>. Se toca el
                         concepto, se ajusta el importe si hace falta y se agrega
@@ -299,7 +307,7 @@ async function addSuggested() {
             <div class="box box--stacked mt-5 flex flex-col p-5">
                 <div class="flex flex-wrap items-center justify-between gap-3">
                     <div>
-                        <h2 class="text-base font-medium">
+                        <h2 class="text-sm font-medium">
                             Conceptos y precio sugerido
                         </h2>
                         <p class="mt-1 text-sm text-slate-500">
@@ -315,20 +323,23 @@ async function addSuggested() {
                             v-if="faltanSugeridos.length"
                             type="button"
                             variant="outline-secondary"
-                            class="rounded-[0.5rem] bg-white"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
                             :disabled="saving"
                             @click="addSuggested"
                         >
-                            <Lucide icon="Sparkles" class="mr-2 h-4 w-4" />
+                            <Lucide
+                                icon="Sparkles"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
                             Agregar los típicos
                         </Button>
                         <Button
                             type="button"
                             variant="primary"
-                            class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                             @click="openCreate"
                         >
-                            <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                             Agregar concepto
                         </Button>
                     </div>
@@ -359,20 +370,23 @@ async function addSuggested() {
                         <Button
                             type="button"
                             variant="primary"
-                            class="rounded-[0.5rem]"
+                            class="h-9 rounded-[0.5rem] text-xs"
                             :disabled="saving"
                             @click="addSuggested"
                         >
-                            <Lucide icon="Sparkles" class="mr-2 h-4 w-4" />
+                            <Lucide
+                                icon="Sparkles"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
                             Agregar los típicos
                         </Button>
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            class="rounded-[0.5rem] bg-white"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
                             @click="openCreate"
                         >
-                            <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                             Agregar uno
                         </Button>
                     </div>
@@ -456,7 +470,7 @@ async function addSuggested() {
                             />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 {{
                                     editingIndex !== null
                                         ? 'Editar concepto'
@@ -487,6 +501,7 @@ async function addSuggested() {
                                 type="text"
                                 maxlength="80"
                                 placeholder="Toalla, sábana, control de TV…"
+                                class="h-9 text-xs"
                             />
                         </div>
                         <div>
@@ -527,19 +542,20 @@ async function addSuggested() {
                         <Button
                             type="button"
                             variant="outline-secondary"
+                            class="h-9 px-5 text-xs"
                             @click="showForm = false"
                             >Cancelar</Button
                         >
                         <Button
                             type="submit"
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="h-9 px-5 text-xs shadow-md shadow-primary/20"
                             :disabled="saving || !form.concept.trim()"
                         >
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 saving
-                                    ? 'Guardando…'
+                                    ? 'Guardando...'
                                     : editingIndex !== null
                                       ? 'Guardar'
                                       : 'Agregar'
@@ -561,10 +577,8 @@ async function addSuggested() {
                             <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
-                                ¿Quitar "{{
-                                    rows[deletingIndex]?.concept
-                                }}"?
+                            <h2 class="text-sm font-medium">
+                                ¿Quitar "{{ rows[deletingIndex]?.concept }}"?
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">
                                 Deja de aparecer en la revisión al registrar la
@@ -583,7 +597,7 @@ async function addSuggested() {
                             :disabled="saving"
                             @click="confirmDelete"
                         >
-                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                             {{ saving ? 'Quitando…' : 'Sí, quitar' }}
                         </Button>
                     </div>

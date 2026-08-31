@@ -78,6 +78,7 @@ class PaymentGuestNotifier
         $body = "Recibimos tu pago de {$request->amountLabel()} ({$request->conceptLabel()}).";
         $body .= $reservation->status === ReservationStatus::Confirmed
             ? " Tu reserva {$reservation->displayCode()} está confirmada. Te esperamos — para tu registro, trae una identificación oficial."
+                .$this->guaranteeNotice($reservation)
             : " Quedó registrado en tu reserva {$reservation->displayCode()}.";
 
         $confirmed = $reservation->status === ReservationStatus::Confirmed;
@@ -113,6 +114,25 @@ class PaymentGuestNotifier
             : $this->transferInstructions();
 
         $this->push($request->reservation_id, $body, subject: 'Opciones de pago de tu reserva');
+    }
+
+    /**
+     * La fianza en los mensajes de confirmación, solo en hoteles que la
+     * cobran (/ajustes/metodos-pago): mismo criterio que guaranteePublic —
+     * que el depósito no sea sorpresa en el mostrador. El monto respeta los
+     * escalones por volumen de la reserva.
+     */
+    protected function guaranteeNotice(?Reservation $reservation): string
+    {
+        $amount = app(\App\Services\ReservationPolicy::class)
+            ->guaranteeAmountForReservation($reservation);
+
+        if ($amount <= 0) {
+            return '';
+        }
+
+        return ' Al llegar se cobra un depósito en garantía de $'.number_format($amount, 2)
+            .' por habitación, que se te devuelve al registrar tu salida.';
     }
 
     /**
@@ -208,7 +228,8 @@ class PaymentGuestNotifier
     {
         $arrival = $reservation->starts_at->locale('es')->isoFormat('dddd D [de] MMMM [a las] HH:mm');
 
-        $body = "Tu reserva {$reservation->displayCode()} está confirmada: {$reservation->roomType?->name}, llegada el {$arrival}. Te esperamos — para tu registro, trae una identificación oficial.";
+        $body = "Tu reserva {$reservation->displayCode()} está confirmada: {$reservation->roomType?->name}, llegada el {$arrival}. Te esperamos — para tu registro, trae una identificación oficial."
+            .$this->guaranteeNotice($reservation);
 
         // Invitación al pre-registro (consulta pública /reserva): con sus
         // datos completos desde antes, la llegada es entregar la llave.

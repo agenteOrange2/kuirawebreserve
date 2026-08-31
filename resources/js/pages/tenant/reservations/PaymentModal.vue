@@ -5,6 +5,7 @@ import Button from '@/components/Base/Button';
 import { FormInput, FormLabel, FormSelect } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import { useCounterMethods } from '@/composables/useCounterMethods';
 import { useToasts } from '@/composables/useToasts';
 import type { PaymentRow, ReservationRow } from './types';
 
@@ -16,6 +17,19 @@ import type { PaymentRow, ReservationRow } from './types';
  * alta, la edición, el folio y el check-out en un solo archivo de 5,000
  * líneas donde cada cambio arriesgaba lo demás.
  */
+const props = withDefaults(
+    defineProps<{
+        /**
+         * ¿El hotel tiene una pasarela que de verdad puede cobrar? (misma
+         * puerta que el backend: PaymentMethodGate). Sin ella el cobro que
+         * se genera es una transferencia, y el modal lo dice así en vez de
+         * prometer un link de pago que nunca va a existir.
+         */
+        gatewayAvailable?: boolean;
+    }>(),
+    { gatewayAvailable: false },
+);
+
 const emit = defineEmits<{
     (e: 'saved'): void;
 }>();
@@ -23,6 +37,12 @@ const emit = defineEmits<{
 const toast = useToasts();
 
 const payingReservation = ref<ReservationRow | null>(null);
+// Cobro presencial: efectivo o terminal, según lo que acepte la recepción
+// (/ajustes/metodos-pago → Políticas). La transferencia no se registra a mano
+// aquí — tiene su propio flujo con comprobante.
+const { subset } = useCounterMethods();
+const chargeMethods = subset(['cash', 'card']);
+
 const paymentForm = reactive({
     amount: '' as string | number,
     method: 'cash',
@@ -41,7 +61,7 @@ function openPayment(r: ReservationRow) {
             ? Math.min(deposit - r.paid_total, r.pending_balance)
             : r.pending_balance;
     paymentForm.amount = Number(suggested.toFixed(2));
-    paymentForm.method = 'cash';
+    paymentForm.method = chargeMethods.value[0]?.key ?? 'cash';
     paymentForm.reference = '';
     paymentForm.notes = '';
     paymentError.value = null;
@@ -210,7 +230,7 @@ defineExpose({ open: openPayment });
                     </div>
                     <div class="min-w-0 flex-1">
                         <h2 class="text-lg font-medium">Registrar pago</h2>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <p class="mt-0.5 text-xs text-slate-500">
                             {{ payingReservation.code }} ·
                             {{ payingReservation.guest_name ?? 'Anónimo' }}
                             · Hab. {{ payingReservation.room ?? '—' }}
@@ -233,7 +253,7 @@ defineExpose({ open: openPayment });
                             class="rounded-lg border border-slate-200/70 p-3 text-center dark:border-darkmode-400"
                         >
                             <div class="text-xs text-slate-500">Total</div>
-                            <div class="mt-1 font-medium">
+                            <div class="mt-1 text-sm font-medium">
                                 ${{ payingReservation.total_amount }}
                             </div>
                         </div>
@@ -309,10 +329,18 @@ defineExpose({ open: openPayment });
                             class="flex items-center gap-1.5 text-xs font-medium tracking-wide text-slate-400 uppercase"
                         >
                             <Lucide
-                                icon="Link"
+                                :icon="
+                                    props.gatewayAvailable
+                                        ? 'Link'
+                                        : 'Landmark'
+                                "
                                 class="h-3.5 w-3.5 text-primary"
                             />
-                            Cobrar en línea
+                            {{
+                                props.gatewayAvailable
+                                    ? 'Cobrar en línea'
+                                    : 'Cobrar por transferencia'
+                            }}
                         </div>
                         <template v-if="payingReservation.payment_request">
                             <p
@@ -379,18 +407,25 @@ defineExpose({ open: openPayment });
                                             .checkout_url
                                     "
                                     class="text-xs text-slate-400"
-                                    >Transferencia: comparte las cuentas del
-                                    hotel y verifica el comprobante en la
-                                    bandeja.</span
+                                    >El huésped ya recibió las cuentas del
+                                    hotel; cuando mande su comprobante,
+                                    confírmalo en Pagos.</span
                                 >
                             </div>
                         </template>
                         <template v-else>
-                            <p class="mt-2 text-xs text-slate-500">
-                                Genera un link de pago (si hay pasarela
-                                conectada) o una solicitud de transferencia; al
-                                generarlo se envía solo al huésped por WhatsApp
-                                o correo.
+                            <p
+                                v-if="props.gatewayAvailable"
+                                class="mt-2 text-xs text-slate-500"
+                            >
+                                Genera un link de pago; al generarlo se envía
+                                solo al huésped por WhatsApp o correo.
+                            </p>
+                            <p v-else class="mt-2 text-xs text-slate-500">
+                                Este hotel no cobra en línea: se le mandan al
+                                huésped las cuentas del hotel por WhatsApp o
+                                correo, y cuando conteste con su comprobante lo
+                                confirmas en Pagos.
                             </p>
                             <Button
                                 type="button"
@@ -401,13 +436,19 @@ defineExpose({ open: openPayment });
                                 @click="issuePaymentLink"
                             >
                                 <Lucide
-                                    icon="Link"
+                                    :icon="
+                                        props.gatewayAvailable
+                                            ? 'Link'
+                                            : 'Send'
+                                    "
                                     class="mr-1.5 h-3.5 w-3.5"
                                 />
                                 {{
                                     issuingLink
                                         ? 'Generando…'
-                                        : 'Generar cobro en línea'
+                                        : props.gatewayAvailable
+                                          ? 'Generar cobro en línea'
+                                          : 'Mandar datos de transferencia'
                                 }}
                             </Button>
                         </template>
@@ -458,9 +499,16 @@ defineExpose({ open: openPayment });
                                     v-model="paymentForm.method"
                                     class="pl-9"
                                 >
-                                    <option value="cash">Efectivo</option>
-                                    <option value="card">
-                                        Tarjeta (terminal)
+                                    <option
+                                        v-for="m in chargeMethods"
+                                        :key="m.key"
+                                        :value="m.key"
+                                    >
+                                        {{
+                                            m.key === 'card'
+                                                ? 'Tarjeta (terminal)'
+                                                : m.label
+                                        }}
                                     </option>
                                 </FormSelect>
                             </div>
@@ -472,11 +520,21 @@ defineExpose({ open: openPayment });
                                 icon="Info"
                                 class="mt-0.5 h-3.5 w-3.5 shrink-0"
                             />
-                            Aquí solo va dinero recibido en persona. Una
-                            transferencia no se registra directo: genera el
-                            cobro en línea de arriba y confírmala con su
-                            comprobante en la página Pagos; un link de pasarela
-                            se registra y confirma solo cuando el huésped paga.
+                            <span v-if="props.gatewayAvailable">
+                                Aquí solo va dinero recibido en persona. Una
+                                transferencia no se registra directo: genera el
+                                cobro de arriba y confírmala con su comprobante
+                                en la página Pagos; un link de pasarela se
+                                registra y confirma solo cuando el huésped
+                                paga.
+                            </span>
+                            <span v-else>
+                                Aquí solo va dinero recibido en persona,
+                                efectivo o terminal. Una transferencia no se
+                                registra directo: manda los datos con el botón
+                                de arriba y confírmala con su comprobante en la
+                                página Pagos.
+                            </span>
                         </p>
                         <div
                             v-if="paymentForm.method !== 'cash'"
@@ -716,7 +774,7 @@ defineExpose({ open: openPayment });
                         class="shadow-md shadow-primary/20"
                         :disabled="payingBusy"
                     >
-                        <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                         {{ payingBusy ? 'Registrando…' : 'Registrar pago' }}
                     </Button>
                 </div>

@@ -67,10 +67,21 @@ async function saveInstructions() {
 <template>
     <RazeLayout title="Contexto del bot">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Contexto del bot</h1>
-                    <p class="text-sm text-slate-500">{{ property.name }}</p>
+            <div
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="BookOpen" class="h-4 w-4" />
+                    </div>
+                    <div>
+                        <h1 class="text-base font-medium">Contexto del bot</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            {{ property.name }}
+                        </p>
+                    </div>
                 </div>
                 <Button
                     as="a"
@@ -207,7 +218,7 @@ async function saveInstructions() {
                             <h2 class="text-base font-medium">
                                 ¿Reemplazar con la plantilla base?
                             </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
+                            <p class="mt-0.5 text-xs text-slate-500">
                                 El texto actual del cuadro se perderá. No se
                                 guarda nada hasta que presiones Guardar.
                             </p>

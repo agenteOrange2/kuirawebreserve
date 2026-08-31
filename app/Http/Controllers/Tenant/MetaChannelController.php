@@ -76,6 +76,80 @@ class MetaChannelController extends Controller
         ], 201);
     }
 
+    /**
+     * Registro incrustado (Embedded Signup): el hotel conecta su número con
+     * el popup oficial de Facebook — incluida la coexistencia, que conserva
+     * la app WhatsApp Business del celular. El front manda el `code` de
+     * FB.login más los ids que el popup avisa por postMessage; aquí se
+     * canjea el code por el token del negocio, se suscribe la WABA a la app
+     * (la mitad que siempre se olvida) y se intenta registrar el número.
+     */
+    public function embeddedSignup(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => ['nullable', 'string', 'max:100'],
+            'code' => ['required', 'string'],
+            'phone_number_id' => ['required', 'string', 'max:100'],
+            'waba_id' => ['required', 'string', 'max:100'],
+        ]);
+
+        $max = tenant()->planLimit('max_channels');
+        if ($max !== null && $this->connectedChannels() >= $max) {
+            return response()->json([
+                'message' => "Límite del plan alcanzado: máximo {$max} canal(es) de mensajería. Actualiza el plan para conectar más.",
+            ], 422);
+        }
+
+        $taken = MetaChannelLink::query()
+            ->where('type', 'whatsapp')
+            ->where('external_id', $data['phone_number_id'])
+            ->exists();
+
+        if ($taken) {
+            return response()->json([
+                'message' => 'Ese número de WhatsApp ya está conectado a un hotel.',
+            ], 422);
+        }
+
+        $token = $this->api->exchangeEmbeddedSignupCode($data['code'], (string) tenant('id'));
+
+        if (! $token) {
+            return response()->json([
+                'message' => 'Meta rechazó el código del registro. Cierra el diálogo de Facebook y vuelve a intentarlo.',
+            ], 422);
+        }
+
+        $link = MetaChannelLink::create([
+            'name' => $data['name'] ?? null,
+            'type' => 'whatsapp',
+            'tenant_id' => tenant('id'),
+            'external_id' => $data['phone_number_id'],
+            'waba_id' => $data['waba_id'],
+            'access_token' => $token,
+            'active' => true,
+        ]);
+
+        $subscribed = $this->api->resubscribe($link);
+        // En coexistencia el número ya viene registrado por el QR y este
+        // intento falla sin consecuencias — informativo, no fatal.
+        $registered = $this->api->registerNumber($link);
+
+        Channel::firstOrCreate(
+            [
+                'property_id' => Property::firstOrFail()->id,
+                'type' => 'whatsapp',
+            ],
+            ['name' => $link->name ?: 'WhatsApp', 'mode' => 'auto', 'active' => true],
+        );
+
+        return response()->json([
+            ...$this->serialize($link),
+            'subscribed' => $subscribed,
+            'registered' => $registered,
+            'diagnose' => $this->api->diagnose($link),
+        ], 201);
+    }
+
     public function update(Request $request, int $linkId): JsonResponse
     {
         $link = $this->ownLink($linkId);

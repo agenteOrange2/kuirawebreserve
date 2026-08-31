@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormHelp, FormInput, FormSwitch } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
@@ -22,6 +22,7 @@ interface PlanRow {
     ai_enabled: boolean;
     ai_monthly_replies: number | null;
     active: boolean;
+    public: boolean;
     tenants: number;
 }
 
@@ -29,11 +30,19 @@ interface ModuleDef {
     label: string;
     description: string;
     available: boolean;
+    group?: string;
+}
+
+interface GroupDef {
+    label: string;
+    description: string;
+    icon: string;
 }
 
 const props = defineProps<{
     plans: PlanRow[];
     moduleCatalog: Record<string, ModuleDef>;
+    moduleGroups: Record<string, GroupDef>;
     addonModules: Record<string, string[]>;
 }>();
 
@@ -59,6 +68,43 @@ const planOwnModules = (plan: PlanRow) =>
 const planAddonModules = (plan: PlanRow) =>
     plan.modules.filter((k) => props.addonModules[k]);
 
+// Los módulos del plan van por familia (config/module_groups.php): 25
+// interruptores seguidos no se leen. Las familias vacías no se pintan y un
+// módulo sin familia cae en la última ('otros'), nunca se pierde.
+const groupedPlanModules = computed(() =>
+    Object.entries(props.moduleGroups)
+        .map(([key, group]) => ({
+            key,
+            ...group,
+            modules: planModuleList.filter((m) => (m.group ?? 'otros') === key),
+        }))
+        .filter((group) => group.modules.length > 0),
+);
+
+const groupedAddonModules = computed(() =>
+    Object.entries(props.moduleGroups)
+        .map(([key, group]) => ({
+            key,
+            ...group,
+            modules: addonModuleList.filter(
+                (m) => (m.group ?? 'otros') === key,
+            ),
+        }))
+        .filter((group) => group.modules.length > 0),
+);
+
+const groupActiveCount = (keys: string[]) =>
+    keys.filter((k) => form.modules.includes(k)).length;
+
+/** Prende o apaga de un golpe toda una familia. */
+function toggleGroup(keys: string[]) {
+    const allOn = keys.every((k) => form.modules.includes(k));
+
+    form.modules = allOn
+        ? form.modules.filter((k) => !keys.includes(k))
+        : [...new Set([...form.modules, ...keys])];
+}
+
 // Crear / editar comparten formulario; editing !== null distingue.
 const showForm = ref(false);
 const editing = ref<PlanRow | null>(null);
@@ -76,6 +122,7 @@ const form = useForm({
     modules: [] as string[],
     ai_monthly_replies: '' as number | string,
     active: true,
+    public: true,
 });
 
 function toggleModule(key: string) {
@@ -111,6 +158,7 @@ function openEdit(plan: PlanRow) {
             ? plan.ai_monthly_replies
             : '';
     form.active = plan.active;
+    form.public = plan.public;
     showForm.value = true;
 }
 
@@ -235,14 +283,27 @@ function submitDelete() {
                             />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <div class="flex items-center gap-2">
-                                <span class="truncate text-base font-medium">{{
-                                    plan.label
-                                }}</span>
+                            <!-- Nombre en su propio renglón: con la clave y
+                                 las etiquetas al lado se recortaba a dos
+                                 letras en planes de nombre largo. -->
+                            <div class="truncate text-base font-medium">
+                                {{ plan.label }}
+                            </div>
+                            <div
+                                class="mt-1 flex flex-wrap items-center gap-1.5"
+                            >
                                 <span
                                     class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 dark:bg-darkmode-400"
                                     >{{ plan.key }}</span
                                 >
+                                <span
+                                    v-if="!plan.public"
+                                    class="flex items-center gap-1 rounded-full bg-info/10 px-2 py-0.5 text-[10px] font-medium text-info"
+                                    title="No se anuncia en la página de inicio; solo lo asignas tú"
+                                >
+                                    <Lucide icon="EyeOff" class="h-3 w-3" />
+                                    A la medida
+                                </span>
                             </div>
                             <div class="mt-0.5 text-sm text-slate-500">
                                 <span
@@ -783,45 +844,125 @@ function submitDelete() {
                                 <Lucide icon="Blocks" class="h-3.5 w-3.5" />
                                 Módulos incluidos
                             </div>
-                            <div class="space-y-3">
+                            <div class="space-y-6">
                                 <div
-                                    v-for="mod in planModuleList"
-                                    :key="mod.key"
-                                    class="rounded-lg border border-slate-200/70 dark:border-darkmode-400"
+                                    v-for="group in groupedPlanModules"
+                                    :key="group.key"
                                 >
-                                    <label
-                                        class="flex cursor-pointer items-start gap-3.5 p-4"
+                                    <!-- Cabecera de familia: cuántos van
+                                         encendidos y el atajo para prender o
+                                         apagar la familia completa. -->
+                                    <div
+                                        class="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-1"
                                     >
-                                        <FormSwitch class="mt-0.5">
-                                            <FormSwitch.Input
-                                                type="checkbox"
-                                                :checked="
-                                                    form.modules.includes(
-                                                        mod.key,
+                                        <div
+                                            class="flex h-8 w-8 flex-none items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                                        >
+                                            <Lucide
+                                                :icon="group.icon as never"
+                                                class="h-4 w-4"
+                                            />
+                                        </div>
+                                        <div class="min-w-0">
+                                            <div class="text-sm font-medium">
+                                                {{ group.label }}
+                                            </div>
+                                            <div class="text-xs text-slate-500">
+                                                {{ group.description }}
+                                            </div>
+                                        </div>
+                                        <div
+                                            class="ml-auto flex items-center gap-3"
+                                        >
+                                            <span
+                                                class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                                            >
+                                                {{
+                                                    groupActiveCount(
+                                                        group.modules.map(
+                                                            (m) => m.key,
+                                                        ),
+                                                    )
+                                                }}
+                                                de {{ group.modules.length }}
+                                            </span>
+                                            <button
+                                                type="button"
+                                                class="text-xs font-medium text-primary hover:underline"
+                                                @click="
+                                                    toggleGroup(
+                                                        group.modules.map(
+                                                            (m) => m.key,
+                                                        ),
                                                     )
                                                 "
-                                                @change="toggleModule(mod.key)"
-                                            />
-                                        </FormSwitch>
-                                        <span class="min-w-0 flex-1">
-                                            <span
-                                                class="flex flex-wrap items-center gap-2 text-sm font-medium"
                                             >
-                                                {{ mod.label }}
-                                                <span
-                                                    v-if="!mod.available"
-                                                    class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending"
-                                                    title="Se puede incluir desde ya; su área aparecerá sola cuando esté lista"
-                                                >
-                                                    En desarrollo
+                                                {{
+                                                    groupActiveCount(
+                                                        group.modules.map(
+                                                            (m) => m.key,
+                                                        ),
+                                                    ) === group.modules.length
+                                                        ? 'Quitar todos'
+                                                        : 'Incluir todos'
+                                                }}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div class="space-y-2">
+                                        <div
+                                            v-for="mod in group.modules"
+                                            :key="mod.key"
+                                            class="rounded-lg border dark:border-darkmode-400"
+                                            :class="
+                                                form.modules.includes(mod.key)
+                                                    ? 'border-primary/30 bg-primary/[0.03]'
+                                                    : 'border-slate-200/70'
+                                            "
+                                        >
+                                            <label
+                                                class="flex cursor-pointer items-start gap-3.5 p-4"
+                                            >
+                                                <FormSwitch class="mt-0.5">
+                                                    <FormSwitch.Input
+                                                        type="checkbox"
+                                                        :checked="
+                                                            form.modules.includes(
+                                                                mod.key,
+                                                            )
+                                                        "
+                                                        @change="
+                                                            toggleModule(
+                                                                mod.key,
+                                                            )
+                                                        "
+                                                    />
+                                                </FormSwitch>
+                                                <span class="min-w-0 flex-1">
+                                                    <span
+                                                        class="flex flex-wrap items-center gap-2 text-sm font-medium"
+                                                    >
+                                                        {{ mod.label }}
+                                                        <span
+                                                            v-if="
+                                                                !mod.available
+                                                            "
+                                                            class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending"
+                                                            title="Se puede incluir desde ya; su área aparecerá sola cuando esté lista"
+                                                        >
+                                                            En desarrollo
+                                                        </span>
+                                                    </span>
+                                                    <span
+                                                        class="mt-0.5 block text-xs text-slate-500"
+                                                        >{{
+                                                            mod.description
+                                                        }}</span
+                                                    >
                                                 </span>
-                                            </span>
-                                            <span
-                                                class="mt-0.5 block text-xs text-slate-500"
-                                                >{{ mod.description }}</span
-                                            >
-                                        </span>
-                                    </label>
+                                            </label>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                             <FormHelp class="mt-2">
@@ -849,74 +990,131 @@ function submitDelete() {
                                 le cobra aparte). Enciéndelo aquí solo si este
                                 plan lo incluye de fábrica sin costo extra.
                             </p>
-                            <div class="space-y-3">
+                            <div class="space-y-6">
                                 <div
-                                    v-for="mod in addonModuleList"
-                                    :key="mod.key"
-                                    class="rounded-lg border border-slate-200/70 dark:border-darkmode-400"
+                                    v-for="group in groupedAddonModules"
+                                    :key="group.key"
                                 >
-                                    <label
-                                        class="flex cursor-pointer items-start gap-3.5 p-4"
-                                        :title="soldBy(mod.key)"
+                                    <div
+                                        class="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-1"
                                     >
-                                        <FormSwitch class="mt-0.5">
-                                            <FormSwitch.Input
-                                                type="checkbox"
-                                                :checked="
+                                        <div
+                                            class="flex h-8 w-8 flex-none items-center justify-center rounded-full border border-slate-200/80 bg-slate-100 text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-400/50"
+                                        >
+                                            <Lucide
+                                                :icon="group.icon as never"
+                                                class="h-4 w-4"
+                                            />
+                                        </div>
+                                        <div class="min-w-0">
+                                            <div class="text-sm font-medium">
+                                                {{ group.label }}
+                                            </div>
+                                        </div>
+                                        <span
+                                            class="ml-auto rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                                        >
+                                            {{
+                                                groupActiveCount(
+                                                    group.modules.map(
+                                                        (m) => m.key,
+                                                    ),
+                                                )
+                                            }}
+                                            de {{ group.modules.length }}
+                                        </span>
+                                    </div>
+                                    <div class="space-y-2">
+                                        <div
+                                            v-for="mod in group.modules"
+                                            :key="mod.key"
+                                            class="rounded-lg border dark:border-darkmode-400"
+                                            :class="
+                                                form.modules.includes(mod.key)
+                                                    ? 'border-primary/30 bg-primary/[0.03]'
+                                                    : 'border-slate-200/70'
+                                            "
+                                        >
+                                            <label
+                                                class="flex cursor-pointer items-start gap-3.5 p-4"
+                                                :title="soldBy(mod.key)"
+                                            >
+                                                <FormSwitch class="mt-0.5">
+                                                    <FormSwitch.Input
+                                                        type="checkbox"
+                                                        :checked="
+                                                            form.modules.includes(
+                                                                mod.key,
+                                                            )
+                                                        "
+                                                        @change="
+                                                            toggleModule(
+                                                                mod.key,
+                                                            )
+                                                        "
+                                                    />
+                                                </FormSwitch>
+                                                <span class="min-w-0 flex-1">
+                                                    <span
+                                                        class="flex flex-wrap items-center gap-2 text-sm font-medium"
+                                                    >
+                                                        {{ mod.label }}
+                                                        <span
+                                                            v-if="
+                                                                !mod.available
+                                                            "
+                                                            class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending"
+                                                            title="Se puede incluir desde ya; su área aparecerá sola cuando esté lista"
+                                                        >
+                                                            En desarrollo
+                                                        </span>
+                                                    </span>
+                                                    <span
+                                                        class="mt-0.5 block text-xs text-slate-500"
+                                                        >{{
+                                                            mod.description
+                                                        }}</span
+                                                    >
+                                                    <span
+                                                        v-if="soldBy(mod.key)"
+                                                        class="mt-1 block text-[11px] text-slate-400"
+                                                        >{{
+                                                            soldBy(mod.key)
+                                                        }}</span
+                                                    >
+                                                </span>
+                                            </label>
+                                            <div
+                                                v-if="
+                                                    mod.key === 'agente-ia' &&
                                                     form.modules.includes(
-                                                        mod.key,
+                                                        'agente-ia',
                                                     )
                                                 "
-                                                @change="toggleModule(mod.key)"
-                                            />
-                                        </FormSwitch>
-                                        <span class="min-w-0 flex-1">
-                                            <span
-                                                class="flex flex-wrap items-center gap-2 text-sm font-medium"
+                                                class="flex flex-wrap items-center gap-3 border-t border-dashed border-slate-300/70 px-4 py-3.5 dark:border-darkmode-400"
                                             >
-                                                {{ mod.label }}
                                                 <span
-                                                    v-if="!mod.available"
-                                                    class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending"
-                                                    title="Se puede incluir desde ya; su área aparecerá sola cuando esté lista"
+                                                    class="text-sm text-slate-500"
+                                                    >Cuota mensual de respuestas
+                                                    del bot</span
                                                 >
-                                                    En desarrollo
-                                                </span>
-                                            </span>
-                                            <span
-                                                class="mt-0.5 block text-xs text-slate-500"
-                                                >{{ mod.description }}</span
-                                            >
-                                            <span
-                                                v-if="soldBy(mod.key)"
-                                                class="mt-1 block text-[11px] text-slate-400"
-                                                >{{ soldBy(mod.key) }}</span
-                                            >
-                                        </span>
-                                    </label>
-                                    <div
-                                        v-if="
-                                            mod.key === 'agente-ia' &&
-                                            form.modules.includes('agente-ia')
-                                        "
-                                        class="flex flex-wrap items-center gap-3 border-t border-dashed border-slate-300/70 px-4 py-3.5 dark:border-darkmode-400"
-                                    >
-                                        <span class="text-sm text-slate-500"
-                                            >Cuota mensual de respuestas del
-                                            bot</span
-                                        >
-                                        <FormInput
-                                            v-model="form.ai_monthly_replies"
-                                            type="number"
-                                            min="1"
-                                            class="!w-32 !py-1.5 text-sm"
-                                            placeholder="Sin límite"
-                                        />
-                                        <span class="text-xs text-slate-400"
-                                            >Se reinicia cada mes; al agotarse,
-                                            las conversaciones pasan al
-                                            staff.</span
-                                        >
+                                                <FormInput
+                                                    v-model="
+                                                        form.ai_monthly_replies
+                                                    "
+                                                    type="number"
+                                                    min="1"
+                                                    class="!w-32 !py-1.5 text-sm"
+                                                    placeholder="Sin límite"
+                                                />
+                                                <span
+                                                    class="text-xs text-slate-400"
+                                                    >Se reinicia cada mes; al
+                                                    agotarse, las conversaciones
+                                                    pasan al staff.</span
+                                                >
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -942,28 +1140,65 @@ function submitDelete() {
                                 <Lucide icon="Store" class="h-3.5 w-3.5" />
                                 Disponibilidad
                             </div>
-                            <label
-                                class="flex cursor-pointer items-start gap-3.5 rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400"
-                            >
-                                <FormSwitch class="mt-0.5">
-                                    <FormSwitch.Input
-                                        v-model="form.active"
-                                        type="checkbox"
-                                        :checked="form.active"
-                                    />
-                                </FormSwitch>
-                                <span class="min-w-0">
-                                    <span class="block text-sm font-medium"
-                                        >Activo en el catálogo</span
-                                    >
-                                    <span
-                                        class="mt-0.5 block text-xs text-slate-500"
-                                        >Se ofrece al crear hoteles nuevos; al
-                                        desactivarlo, los hoteles existentes
-                                        conservan su plan.</span
-                                    >
-                                </span>
-                            </label>
+                            <div class="space-y-3">
+                                <label
+                                    class="flex cursor-pointer items-start gap-3.5 rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400"
+                                >
+                                    <FormSwitch class="mt-0.5">
+                                        <FormSwitch.Input
+                                            v-model="form.active"
+                                            type="checkbox"
+                                            :checked="form.active"
+                                        />
+                                    </FormSwitch>
+                                    <span class="min-w-0">
+                                        <span class="block text-sm font-medium"
+                                            >Activo en el catálogo</span
+                                        >
+                                        <span
+                                            class="mt-0.5 block text-xs text-slate-500"
+                                            >Se ofrece al crear hoteles nuevos;
+                                            al desactivarlo, los hoteles
+                                            existentes conservan su plan.</span
+                                        >
+                                    </span>
+                                </label>
+
+                                <!-- Plan a la medida: asignable, no anunciado -->
+                                <label
+                                    class="flex cursor-pointer items-start gap-3.5 rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400"
+                                >
+                                    <FormSwitch class="mt-0.5">
+                                        <FormSwitch.Input
+                                            v-model="form.public"
+                                            type="checkbox"
+                                            :checked="form.public"
+                                        />
+                                    </FormSwitch>
+                                    <span class="min-w-0">
+                                        <span
+                                            class="flex flex-wrap items-center gap-2 text-sm font-medium"
+                                        >
+                                            Anunciar en la página de inicio
+                                            <span
+                                                v-if="!form.public"
+                                                class="rounded-full bg-info/10 px-2 py-0.5 text-[10px] font-medium text-info"
+                                            >
+                                                Plan a la medida
+                                            </span>
+                                        </span>
+                                        <span
+                                            class="mt-0.5 block text-xs text-slate-500"
+                                        >
+                                            Apagado, el plan no sale en
+                                            kuirawebreserve.com ni se puede
+                                            pedir desde ahí: solo tú lo asignas
+                                            desde el panel. Sirve para planes
+                                            hechos para un hotel en particular.
+                                        </span>
+                                    </span>
+                                </label>
+                            </div>
                         </section>
                     </div>
 

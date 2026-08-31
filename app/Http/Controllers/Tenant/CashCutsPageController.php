@@ -84,35 +84,48 @@ class CashCutsPageController extends Controller
             $preview['pending'] = $service->pendingSnapshot($selectedUser, $from, $to, $shift, $scope);
         }
 
+        // Historial: paginado y filtrable. Antes eran "los últimos 20" sin
+        // salida — en un hotel con dos cajas y varios encargados, el corte
+        // de la semana pasada ya no se alcanzaba.
+        $historyScope = $request->string('h_scope')->toString();
+        $historyUser = $request->integer('h_user');
+        $historyState = $request->string('h_state')->toString();
+
         $cuts = CashCut::query()
             ->with(['user:id,name', 'createdBy:id,name'])
+            ->when(in_array($historyScope, [CashCut::SCOPE_ROOMS, CashCut::SCOPE_POS, CashCut::SCOPE_ALL], true),
+                fn ($q) => $q->where('scope', $historyScope))
+            ->when($historyUser > 0, fn ($q) => $q->where('user_id', $historyUser))
+            ->when($historyState === 'diff', fn ($q) => $q->whereNotNull('counted_cash')->where('difference', '!=', 0))
+            ->when($historyState === 'sin-arqueo', fn ($q) => $q->whereNull('counted_cash'))
             ->latest('closed_at')
-            ->take(20)
-            ->get()
-            ->map(fn (CashCut $c) => [
-                'id' => $c->id,
-                'user' => $c->user?->name,
-                'scope' => $c->scope,
-                'scope_label' => $c->scopeLabel(),
-                'shift_id' => $c->shift_id,
-                'opened_at' => $c->opened_at->format('d/m/Y H:i'),
-                'closed_at' => $c->closed_at->format('d/m/Y H:i'),
-                'orders_count' => $c->orders_count,
-                'payments_count' => $c->payments_count,
-                'grand_total' => (float) $c->grand_total,
-                'cash_total' => (float) $c->cash_total,
-                'card_total' => (float) $c->card_total,
-                'transfer_total' => (float) $c->transfer_total,
-                'expected_cash' => (float) $c->expected_cash,
-                'opening_cash' => (float) $c->opening_cash,
-                'counted_cash' => $c->counted_cash !== null ? (float) $c->counted_cash : null,
-                'difference' => (float) $c->difference,
-                'pending_count' => (int) $c->pending_count,
-                'pending_total' => (float) $c->pending_total,
-                'pending_items' => $c->pending_items ?? [],
-                'notes' => $c->notes,
-                'by' => $c->createdBy?->name,
-            ]);
+            ->paginate(15, ['*'], 'h_page')
+            ->withQueryString();
+
+        $cuts->through(fn (CashCut $c) => [
+            'id' => $c->id,
+            'user' => $c->user?->name,
+            'scope' => $c->scope,
+            'scope_label' => $c->scopeLabel(),
+            'shift_id' => $c->shift_id,
+            'opened_at' => $c->opened_at->format('d/m/Y H:i'),
+            'closed_at' => $c->closed_at->format('d/m/Y H:i'),
+            'orders_count' => $c->orders_count,
+            'payments_count' => $c->payments_count,
+            'grand_total' => (float) $c->grand_total,
+            'cash_total' => (float) $c->cash_total,
+            'card_total' => (float) $c->card_total,
+            'transfer_total' => (float) $c->transfer_total,
+            'expected_cash' => (float) $c->expected_cash,
+            'opening_cash' => (float) $c->opening_cash,
+            'counted_cash' => $c->counted_cash !== null ? (float) $c->counted_cash : null,
+            'difference' => (float) $c->difference,
+            'pending_count' => (int) $c->pending_count,
+            'pending_total' => (float) $c->pending_total,
+            'pending_items' => $c->pending_items ?? [],
+            'notes' => $c->notes,
+            'by' => $c->createdBy?->name,
+        ]);
 
         $scopeLabels = [
             CashCut::SCOPE_ROOMS => 'Recepción',
@@ -146,8 +159,40 @@ class CashCutsPageController extends Controller
             ],
             'preview' => $preview,
             'cuts' => $cuts,
+            'historyFilters' => [
+                'scope' => $historyScope,
+                'user' => $historyUser ?: null,
+                'state' => $historyState,
+            ],
+            // Cifras del historial FILTRADO, para que la cabecera diga algo
+            // más que "van 15 en esta página".
+            'historyStats' => $this->historyStats($historyScope, $historyUser, $historyState),
             'canManage' => $request->user()->can('orders.manage'),
         ]);
+    }
+
+    /**
+     * Resumen del historial con los mismos filtros de la lista: cuántos
+     * cortes, cuánto sumaron y cuántos no cuadraron.
+     *
+     * @return array<string, mixed>
+     */
+    protected function historyStats(string $scope, int $user, string $state): array
+    {
+        $base = fn () => CashCut::query()
+            ->when(in_array($scope, [CashCut::SCOPE_ROOMS, CashCut::SCOPE_POS, CashCut::SCOPE_ALL], true),
+                fn ($q) => $q->where('scope', $scope))
+            ->when($user > 0, fn ($q) => $q->where('user_id', $user))
+            ->when($state === 'diff', fn ($q) => $q->whereNotNull('counted_cash')->where('difference', '!=', 0))
+            ->when($state === 'sin-arqueo', fn ($q) => $q->whereNull('counted_cash'));
+
+        return [
+            'count' => $base()->count(),
+            'total' => round((float) $base()->sum('grand_total'), 2),
+            // Los que no cuadraron: el número que de verdad se revisa.
+            'off' => $base()->whereNotNull('counted_cash')->where('difference', '!=', 0)->count(),
+            'without_count' => $base()->whereNull('counted_cash')->count(),
+        ];
     }
 
     /**

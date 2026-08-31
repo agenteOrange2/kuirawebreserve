@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormInput, FormSelect } from '@/components/Base/Form';
+import { FormDate, FormInput, FormSelect } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
 import { FloorPlanKey } from '../../context';
@@ -323,13 +323,13 @@ async function removeBlock(blockId: number) {
              puesto viene a editar, no a leer 250 líneas de ficha. -->
         <section
             v-if="canEdit"
-            class="rounded-2xl border border-primary/20 bg-primary/5 p-4 dark:border-primary/30 dark:bg-primary/10"
+            class="rounded-xl border border-primary/20 bg-primary/5 p-4 dark:border-primary/30 dark:bg-primary/10"
         >
             <template v-if="mode === 'idle'">
                 <div class="flex flex-wrap gap-2">
                     <Button
                         variant="primary"
-                        class="min-h-11 rounded-[0.5rem]"
+                        class="min-h-11 rounded-[0.5rem] text-xs"
                         :disabled="busy || !roomTypes.length"
                         :title="
                             roomTypes.length
@@ -338,31 +338,31 @@ async function removeBlock(blockId: number) {
                         "
                         @click="startCreate"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                         Nueva habitación
                     </Button>
                     <Button
                         variant="outline-primary"
-                        class="min-h-11 rounded-[0.5rem] bg-white dark:bg-darkmode-600"
+                        class="min-h-11 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
                         :disabled="busy"
                         @click="startEdit"
                     >
-                        <Lucide icon="Pencil" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Pencil" class="mr-1.5 h-3.5 w-3.5" />
                         Editar esta
                     </Button>
                     <Button
                         variant="outline-primary"
-                        class="min-h-11 rounded-[0.5rem] bg-white dark:bg-darkmode-600"
+                        class="min-h-11 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
                         :disabled="busy"
                         title="Copia el tipo, la zona y el tamaño con el siguiente número libre"
                         @click="duplicateRoom"
                     >
-                        <Lucide icon="Copy" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Copy" class="mr-1.5 h-3.5 w-3.5" />
                         Duplicar
                     </Button>
                     <Button
                         variant="outline-danger"
-                        class="min-h-11 rounded-[0.5rem] bg-white dark:bg-darkmode-600"
+                        class="min-h-11 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
                         :disabled="busy || occupied"
                         :title="
                             occupied
@@ -371,7 +371,7 @@ async function removeBlock(blockId: number) {
                         "
                         @click="deleteRoom"
                     >
-                        <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                         Quitar del plano
                     </Button>
                 </div>
@@ -412,16 +412,16 @@ async function removeBlock(blockId: number) {
         </button>
 
         <section
-            class="rounded-2xl border border-slate-200/70 bg-slate-50/80 p-5 dark:border-darkmode-400 dark:bg-darkmode-700/50"
+            class="rounded-xl border border-slate-200/70 bg-slate-50/80 p-4 dark:border-darkmode-400 dark:bg-darkmode-700/50"
         >
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <h3
-                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
                     >
                         Información de la habitación
                     </h3>
-                    <p class="mt-1 text-sm text-slate-500">
+                    <p class="mt-1 text-xs text-slate-500">
                         Lo más importante para explicarle la habitación al
                         huésped.
                     </p>
@@ -436,7 +436,7 @@ async function removeBlock(blockId: number) {
                         Desde
                     </div>
                     <div
-                        class="mt-1 text-lg font-semibold text-slate-900 dark:text-slate-100"
+                        class="mt-1 text-base font-semibold text-slate-900 dark:text-slate-100"
                     >
                         {{ formatMoney(room.price_from) }}
                     </div>
@@ -485,11 +485,11 @@ async function removeBlock(blockId: number) {
             >
                 <div>
                     <h4
-                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
                     >
                         Lo que incluye
                     </h4>
-                    <p class="mt-1 text-sm text-slate-500">
+                    <p class="mt-1 text-xs text-slate-500">
                         Amenidades agrupadas para encontrarlas más rápido.
                     </p>
                 </div>
@@ -621,7 +621,7 @@ async function removeBlock(blockId: number) {
                     title="Pone el contador en cero y quita el candado de rotación"
                     @click="resetUsage"
                 >
-                    <Lucide icon="RotateCcw" class="mr-2 h-4 w-4" />
+                    <Lucide icon="RotateCcw" class="mr-1.5 h-3.5 w-3.5" />
                     Reiniciar contador
                 </Button>
             </div>
@@ -661,7 +661,7 @@ async function removeBlock(blockId: number) {
                         title="Aparta fechas para que no se vendan; el semáforo de hoy no cambia"
                         @click="blockOpen = !blockOpen"
                     >
-                        <Lucide icon="CalendarOff" class="mr-2 h-4 w-4" />
+                        <Lucide icon="CalendarOff" class="mr-1.5 h-3.5 w-3.5" />
                         {{ blockOpen ? 'Cancelar' : 'Programar fechas' }}
                     </Button>
                 </div>
@@ -675,10 +675,9 @@ async function removeBlock(blockId: number) {
                         <label class="text-xs text-slate-500" for="block-from"
                             >Desde</label
                         >
-                        <FormInput
+                        <FormDate
                             id="block-from"
                             v-model="block.starts_at"
-                            type="date"
                             class="mt-1"
                             required
                         />
@@ -687,10 +686,9 @@ async function removeBlock(blockId: number) {
                         <label class="text-xs text-slate-500" for="block-to"
                             >Hasta</label
                         >
-                        <FormInput
+                        <FormDate
                             id="block-to"
                             v-model="block.ends_at"
-                            type="date"
                             class="mt-1"
                             required
                         />
@@ -712,7 +710,7 @@ async function removeBlock(blockId: number) {
                         <Button
                             variant="primary"
                             type="submit"
-                            class="min-h-11 rounded-[0.5rem]"
+                            class="min-h-11 rounded-[0.5rem] text-xs"
                             :disabled="busy"
                         >
                             Programar
@@ -837,7 +835,10 @@ async function removeBlock(blockId: number) {
                         class="min-h-10 rounded-[0.5rem]"
                         @click="incidentOpen = !incidentOpen"
                     >
-                        <Lucide icon="TriangleAlert" class="mr-2 h-4 w-4" />
+                        <Lucide
+                            icon="TriangleAlert"
+                            class="mr-1.5 h-3.5 w-3.5"
+                        />
                         {{ incidentOpen ? 'Cancelar' : 'Levantar reporte' }}
                     </Button>
                 </div>
@@ -925,7 +926,7 @@ async function removeBlock(blockId: number) {
                             id="incident-photo"
                             type="file"
                             accept="image/*"
-                            class="mt-1 block w-full text-sm text-slate-500 file:mr-3 file:rounded-md file:border-0 file:bg-slate-200 file:px-3 file:py-2 file:text-sm dark:file:bg-darkmode-400"
+                            class="mt-1 block w-full text-xs text-slate-500 file:mr-3 file:rounded-md file:border-0 file:bg-slate-200 file:px-3 file:py-2 file:text-sm dark:file:bg-darkmode-400"
                             @change="onIncidentPhoto"
                         />
                     </div>
@@ -958,7 +959,7 @@ async function removeBlock(blockId: number) {
                         <Button
                             variant="primary"
                             type="submit"
-                            class="min-h-11 rounded-[0.5rem]"
+                            class="min-h-11 rounded-[0.5rem] text-xs"
                             :disabled="busy || !incident.title.trim()"
                         >
                             Reportar

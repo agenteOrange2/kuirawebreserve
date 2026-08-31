@@ -40,4 +40,23 @@ class ShiftType extends Model
     {
         return substr((string) $this->starts_at, 0, 5).' – '.substr((string) $this->ends_at, 0, 5);
     }
+
+    /**
+     * ¿La hora dada cae dentro de este turno? El nocturno cruza la
+     * medianoche (23:00 – 07:00), así que ahí la comparación se invierte.
+     */
+    public function covers(?\DateTimeInterface $moment = null): bool
+    {
+        $now = ($moment ? \Illuminate\Support\Carbon::instance($moment) : now())->format('H:i');
+        $start = substr((string) $this->starts_at, 0, 5);
+        $end = substr((string) $this->ends_at, 0, 5);
+
+        if ($start === $end) {
+            return true;
+        }
+
+        return $start < $end
+            ? $now >= $start && $now < $end
+            : $now >= $start || $now < $end;
+    }
 }

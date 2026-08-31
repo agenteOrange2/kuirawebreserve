@@ -33,7 +33,8 @@ class SocialPostPageController extends Controller
                 'message' => $post->message,
                 'excerpt' => $post->excerpt(),
                 'permalink' => $post->permalink,
-                'media_url' => $post->media_url,
+                // Copia local: la URL del CDN de Meta caduca a las semanas.
+                'media_url' => $post->media_url ? route('tenant.social.post.image', $post->id) : null,
                 'published_label' => $post->published_at?->locale('es')->isoFormat('D [de] MMMM [de] YYYY, HH:mm'),
                 'last_synced_at' => $post->last_synced_at?->diffForHumans(),
             ],

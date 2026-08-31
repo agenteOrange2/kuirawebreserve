@@ -406,16 +406,25 @@ async function discardSuggestion(row: SuggestionRow) {
 <template>
     <RazeLayout title="Integración">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">
-                        Integración con tu sitio web
-                    </h1>
-                    <p class="text-sm text-slate-500">
-                        Tu página (WordPress u otra) muestra los precios EN VIVO
-                        de este sistema: los cambias aquí una vez y se
-                        actualizan solos allá.
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Plug" class="h-4 w-4" />
+                    </div>
+                    <div>
+                        <h1 class="text-base font-medium">
+                            Integración con tu sitio web
+                        </h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Tu página (WordPress u otra) muestra los precios EN
+                            VIVO de este sistema: los cambias aquí una vez y se
+                            actualizan solos allá.
+                        </p>
+                    </div>
                 </div>
                 <Button
                     v-if="canManage"

@@ -17,6 +17,8 @@ const props = defineProps<{
         app_name: string;
         login_title: string;
         login_subtitle: string;
+        support_email: string;
+        support_whatsapp: string;
         logo_url: string | null;
         favicon_url: string | null;
         login_background_url: string | null;
@@ -29,6 +31,8 @@ const form = useForm({
     app_name: props.settings.app_name,
     login_title: props.settings.login_title,
     login_subtitle: props.settings.login_subtitle,
+    support_email: props.settings.support_email,
+    support_whatsapp: props.settings.support_whatsapp,
     logo: null as File | null,
     favicon: null as File | null,
     login_background: null as File | null,
@@ -360,6 +364,65 @@ function submit() {
                                     con los colores del theme para que el texto
                                     siga legible; sin imagen queda el degradado
                                     actual.</FormHelp
+                                >
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        class="border-t border-dashed border-slate-300/70 pt-5 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            <Lucide icon="Headset" class="h-3.5 w-3.5" />
+                            Contacto de soporte
+                        </div>
+
+                        <div class="grid grid-cols-12 gap-4">
+                            <div class="col-span-12 sm:col-span-6">
+                                <FormLabel htmlFor="brand-support-whatsapp"
+                                    >WhatsApp</FormLabel
+                                >
+                                <FormInput
+                                    id="brand-support-whatsapp"
+                                    v-model="form.support_whatsapp"
+                                    type="text"
+                                    maxlength="30"
+                                    placeholder="6141234567"
+                                />
+                                <FormHelp
+                                    v-if="form.errors.support_whatsapp"
+                                    class="text-danger"
+                                    >{{
+                                        form.errors.support_whatsapp
+                                    }}</FormHelp
+                                >
+                                <FormHelp v-else
+                                    >A 10 dígitos se le agrega la lada
+                                    52.</FormHelp
+                                >
+                            </div>
+                            <div class="col-span-12 sm:col-span-6">
+                                <FormLabel htmlFor="brand-support-email"
+                                    >Correo</FormLabel
+                                >
+                                <FormInput
+                                    id="brand-support-email"
+                                    v-model="form.support_email"
+                                    type="email"
+                                    maxlength="120"
+                                    placeholder="soporte@ejemplo.com"
+                                />
+                                <FormHelp
+                                    v-if="form.errors.support_email"
+                                    class="text-danger"
+                                    >{{ form.errors.support_email }}</FormHelp
+                                >
+                                <FormHelp v-else
+                                    >Se ofrece a los hoteles suspendidos para
+                                    pedir su reactivación; en blanco no se
+                                    muestra el botón.</FormHelp
                                 >
                             </div>
                         </div>

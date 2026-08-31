@@ -195,13 +195,24 @@ async function submitDelete() {
     <RazeLayout title="Avisos">
         <div class="mt-2">
             <!-- Encabezado -->
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Avisos</h1>
-                    <p class="text-sm text-slate-500">
-                        {{ notifications.total }} en total ·
-                        {{ unread > 0 ? `${unread} sin leer` : 'todo leído' }}
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Bell" class="h-4 w-4" />
+                    </div>
+                    <div>
+                        <h1 class="text-base font-medium">Avisos</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            {{ notifications.total }} en total ·
+                            {{
+                                unread > 0 ? `${unread} sin leer` : 'todo leído'
+                            }}
+                        </p>
+                    </div>
                 </div>
                 <div class="flex flex-wrap gap-2">
                     <Button
@@ -366,7 +377,7 @@ async function submitDelete() {
                     >
                         <Lucide icon="Bell" class="h-6 w-6" />
                     </span>
-                    <p class="text-sm text-slate-500">
+                    <p class="mt-0.5 text-xs text-slate-500">
                         {{
                             filters.q || filters.type || filters.unread
                                 ? 'Nada coincide con la búsqueda.'
@@ -418,7 +429,7 @@ async function submitDelete() {
                             <h2 class="text-base font-medium">
                                 ¿Eliminar {{ deleteRows.length }} aviso(s)?
                             </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
+                            <p class="mt-0.5 text-xs text-slate-500">
                                 Los avisos que son para todo el staff
                                 desaparecen para todos. Esta acción no se puede
                                 deshacer.

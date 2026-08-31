@@ -162,6 +162,7 @@ class MetaWebhookController extends Controller
                             name: null,
                             body: $normalized['body'],
                             externalId: $normalized['external_id'],
+                            media: $normalized['media'] ? $normalized['media'] + ['media_id' => ''] : null,
                         );
                     }
                 }
@@ -171,8 +172,9 @@ class MetaWebhookController extends Controller
             foreach ($entry['messaging'] ?? [] as $event) {
                 $text = $event['message']['text'] ?? null;
                 $sender = (string) ($event['sender']['id'] ?? '');
+                $media = self::firstDownloadableAttachment($event['message']['attachments'] ?? []);
 
-                if (! $text || ! empty($event['message']['is_echo']) || $sender === (string) ($entry['id'] ?? '')) {
+                if ((! $text && ! $media) || ! empty($event['message']['is_echo']) || $sender === (string) ($entry['id'] ?? '')) {
                     continue; // ecos de lo que nosotros enviamos, u otros eventos
                 }
 
@@ -183,8 +185,9 @@ class MetaWebhookController extends Controller
                         $link,
                         from: $sender,
                         name: null,
-                        body: $text,
+                        body: $text ?: ($media['kind'] === 'file' ? '[Documento]' : '[Imagen]'),
                         externalId: $event['message']['mid'] ?? null,
+                        media: $media ? $media + ['media_id' => ''] : null,
                     );
                 }
             }
@@ -195,11 +198,14 @@ class MetaWebhookController extends Controller
 
     /**
      * Normaliza un "change" de Instagram Login a mensaje entrante. Devuelve
-     * null para ecos (la cuenta hablando) y eventos que no son texto.
+     * null para ecos (la cuenta hablando) y eventos sin texto NI adjunto
+     * descargable (imagen o documento: el comprobante de transferencia
+     * llega así — antes se tiraba en silencio y el huésped se quedaba sin
+     * acuse, caso real cabañas 2026-08-28).
      *
      * @param  array<string, mixed>  $entry
      * @param  array<string, mixed>  $change
-     * @return array{from: string, body: string, external_id: ?string}|null
+     * @return array{from: string, body: string, external_id: ?string, media: array{url: string, kind: string}|null}|null
      */
     public static function instagramChangeToMessage(array $entry, array $change): ?array
     {
@@ -210,8 +216,9 @@ class MetaWebhookController extends Controller
         $value = $change['value'] ?? [];
         $sender = (string) ($value['sender']['id'] ?? '');
         $text = $value['message']['text'] ?? null;
+        $media = self::firstDownloadableAttachment($value['message']['attachments'] ?? []);
 
-        if ($sender === '' || ! $text) {
+        if ($sender === '' || (! $text && ! $media)) {
             return null;
         }
 
@@ -221,9 +228,34 @@ class MetaWebhookController extends Controller
 
         return [
             'from' => $sender,
-            'body' => (string) $text,
+            'body' => (string) ($text ?: ($media['kind'] === 'file' ? '[Documento]' : '[Imagen]')),
             'external_id' => $value['message']['mid'] ?? null,
+            'media' => $media,
         ];
+    }
+
+    /**
+     * Primer adjunto descargable de un mensaje de Messenger/Instagram:
+     * imagen o documento con URL directa del CDN de Meta. Audio, video y
+     * stickers siguen sin soporte (igual que en WhatsApp).
+     *
+     * @param  array<int, mixed>  $attachments
+     * @return array{url: string, kind: string}|null
+     */
+    public static function firstDownloadableAttachment(array $attachments): ?array
+    {
+        foreach ($attachments as $attachment) {
+            $type = (string) ($attachment['type'] ?? '');
+            $url = (string) ($attachment['payload']['url'] ?? '');
+
+            if ($url === '' || ! in_array($type, ['image', 'file'], true)) {
+                continue;
+            }
+
+            return ['url' => $url, 'kind' => $type];
+        }
+
+        return null;
     }
 
     /**
@@ -371,7 +403,7 @@ class MetaWebhookController extends Controller
             // que el servicio decida su destino (adjunto/comprobante).
             $mediaOutcome = null;
 
-            if ($media !== null && $media['media_id'] !== '' && $link->type === 'whatsapp') {
+            if ($media !== null && ($media['media_id'] ?? '') !== '' && $link->type === 'whatsapp') {
                 $binary = $this->api->downloadMedia($link, $media['media_id']);
 
                 if ($binary) {
@@ -381,6 +413,21 @@ class MetaWebhookController extends Controller
                         $binary['contents'],
                         $media['mime'] ?? $binary['mime'],
                         $media['filename'] ?? null,
+                    );
+                }
+            }
+
+            // Messenger/Instagram mandan el adjunto como URL directa del CDN
+            // de Meta: mismo destino (adjunto del mensaje o comprobante).
+            if ($media !== null && ($media['url'] ?? '') !== '' && in_array($link->type, ['messenger', 'instagram'], true)) {
+                $binary = $this->api->downloadMediaUrl($media['url']);
+
+                if ($binary) {
+                    $mediaOutcome = app(\App\Services\Channels\InboundMediaService::class)->handle(
+                        $conversation,
+                        $message,
+                        $binary['contents'],
+                        $binary['mime'],
                     );
                 }
             }
@@ -452,10 +499,18 @@ class MetaWebhookController extends Controller
      */
     protected function validSignature(Request $request): bool
     {
-        $secrets = array_filter([
+        // Apps por hotel: cada tenant con app propia firma con SU clave.
+        // El webhook es uno solo, así que se aceptan todas las registradas
+        // (más las de la plataforma como respaldo).
+        $tenantSecrets = \App\Models\Central\TenantMetaApp::query()->get()
+            ->flatMap(fn ($app) => [(string) $app->app_secret, (string) $app->ig_app_secret])
+            ->all();
+
+        $secrets = array_unique(array_filter([
             (string) config('meta.app_secret'),
             (string) config('meta.ig_app_secret'),
-        ]);
+            ...$tenantSecrets,
+        ]));
 
         if ($secrets === []) {
             return config('meta.mode') !== 'production';

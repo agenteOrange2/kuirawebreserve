@@ -53,6 +53,28 @@ it('calcula anticipo y fecha límite al crear la reserva', function () {
         ->and($reservation->isPaymentOverdue())->toBeFalse();
 });
 
+it('el anticipo de monto fijo se cobra tal cual y topa al total', function () {
+    // $1,500 fijos sin importar noches; percent nulo = manda el monto.
+    $this->plan->update(['deposit_percent' => null, 'deposit_amount' => 1500]);
+
+    $reservation = reservar(); // 2 noches → $1000, menos que el fijo
+
+    expect((float) $reservation->total_amount)->toBe(1000.0)
+        ->and((float) $reservation->deposit_amount)->toBe(1000.0); // topado
+
+    $larga = reservar([
+        'room_id' => Room::factory()->create([
+            'property_id' => $this->property->id,
+            'room_type_id' => $this->roomType->id,
+        ])->id,
+        'starts_at' => now()->addDays(40)->setTime(15, 0),
+        'ends_at' => now()->addDays(44)->setTime(12, 0), // 4 noches → $2000
+    ]);
+
+    expect((float) $larga->total_amount)->toBe(2000.0)
+        ->and((float) $larga->deposit_amount)->toBe(1500.0); // el fijo
+});
+
 it('los abonos mueven el estado: sin pago → anticipo → pagada', function () {
     $reservation = reservar();
     $action = app(RegisterReservationPayment::class);

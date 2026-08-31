@@ -111,35 +111,35 @@ watch(tabs, (list) => {
                  modal como una tira. -->
             <div class="flex max-h-[calc(100dvh-6rem)] min-h-[55vh] flex-col">
                 <div
-                    class="shrink-0 border-b border-slate-200/70 px-5 py-5 sm:px-7 dark:border-darkmode-400"
+                    class="shrink-0 border-b border-slate-200/70 px-4 py-4 sm:px-5 dark:border-darkmode-400"
                 >
                     <div class="flex items-start gap-3">
                         <div
-                            class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-primary/10 bg-primary/10 text-primary"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <Lucide icon="DoorClosed" class="h-6 w-6" />
+                            <Lucide icon="DoorClosed" class="h-5 w-5" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <div
-                                class="flex flex-wrap items-center gap-x-3 gap-y-1"
+                                class="flex flex-wrap items-center gap-x-2.5 gap-y-1"
                             >
                                 <h2
-                                    class="text-xl font-semibold text-slate-900 dark:text-slate-100"
+                                    class="text-base font-medium text-slate-900 dark:text-slate-100"
                                 >
                                     Habitación {{ room.number }}
                                 </h2>
                                 <span
-                                    class="inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold"
+                                    class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium"
                                     :class="statusStyles[room.color]?.soft"
                                 >
                                     <span
-                                        class="h-2.5 w-2.5 rounded-full"
+                                        class="h-2 w-2 rounded-full"
                                         :class="statusStyles[room.color]?.dot"
                                     />
                                     {{ room.label }}
                                 </span>
                             </div>
-                            <p class="mt-1 truncate text-sm text-slate-500">
+                            <p class="mt-0.5 truncate text-xs text-slate-500">
                                 <!-- El nombre suele venir igual que el tipo:
                                      repetirlo dejaba el encabezado diciendo dos
                                      veces lo mismo. -->
@@ -159,24 +159,24 @@ watch(tabs, (list) => {
                         </div>
                         <button
                             type="button"
-                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-darkmode-400 dark:hover:text-slate-100"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-darkmode-400 dark:hover:text-slate-100"
                             aria-label="Cerrar"
                             @click="ctx.close()"
                         >
-                            <Lucide icon="X" class="h-6 w-6" />
+                            <Lucide icon="X" class="h-5 w-5" />
                         </button>
                     </div>
 
                     <!-- Misma fila de pastillas que usan Inventario y Turnos:
                          una sola manera de cambiar de tab en todo el panel. -->
                     <div
-                        class="mt-5 flex gap-1 overflow-x-auto rounded-[0.6rem] bg-slate-100/80 p-1 dark:bg-darkmode-800/60"
+                        class="mt-3.5 flex gap-1 overflow-x-auto rounded-[0.6rem] bg-slate-100/80 p-1 dark:bg-darkmode-800/60"
                     >
                         <button
                             v-for="item in tabs"
                             :key="item.key"
                             type="button"
-                            class="flex min-h-10 shrink-0 items-center gap-2 rounded-[0.5rem] px-3 text-sm font-medium transition sm:px-4"
+                            class="flex min-h-9 shrink-0 items-center gap-1.5 rounded-[0.5rem] px-3 text-xs font-medium transition sm:px-3.5"
                             :class="
                                 tab === item.key
                                     ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
@@ -186,7 +186,7 @@ watch(tabs, (list) => {
                         >
                             <Lucide
                                 :icon="item.icon"
-                                class="hidden h-4 w-4 sm:block"
+                                class="hidden h-3.5 w-3.5 sm:block"
                             />
                             <span class="sm:hidden">{{ item.short }}</span>
                             <span class="hidden sm:inline">{{
@@ -196,7 +196,7 @@ watch(tabs, (list) => {
                     </div>
                 </div>
 
-                <div class="flex-1 overflow-y-auto px-5 py-6 sm:px-7">
+                <div class="flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
                     <SummaryTab v-show="tab === 'resumen'" />
                     <ChargesTab
                         v-if="ctx.canChargeHere.value"

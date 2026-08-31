@@ -24,8 +24,26 @@ class ReservationsPageController extends Controller
     /** Horizonte de la lista de próximas: más allá vive el calendario. */
     private const UPCOMING_DAYS = 90;
 
-    /** Tope duro por si un hotel llena esos 90 días. */
-    private const UPCOMING_LIMIT = 200;
+    /**
+     * Cuántas próximas se pintan aquí. Es una vista de operación del día,
+     * no un archivo: con 90 días de horizonte un hotel lleno mandaba
+     * cientos de filas (y su bitácora, y sus pagos) en cada carga. El
+     * resto vive en /reservas/proximas, con buscador y paginación.
+     */
+    private const UPCOMING_LIMIT = 30;
+
+    /** Vista previa del historial; el completo vive en /reservas/historial. */
+    private const HISTORY_PREVIEW = 10;
+
+    /** Vista previa de alojados; la lista completa vive en /reservas/alojados. */
+    private const STAYS_PREVIEW = 20;
+
+    /**
+     * Política del hotel resuelta UNA vez por petición: cada app() nueva
+     * relee los ajustes de la propiedad, y la fianza se calcula por fila —
+     * eran 30 consultas a `properties` para pintar una lista.
+     */
+    protected ?\App\Services\ReservationPolicy $policy = null;
 
     public function __invoke(Request $request): Response
     {
@@ -52,6 +70,9 @@ class ReservationsPageController extends Controller
 
         $reservationModels = $upcomingQuery
             ->with($relations)
+            // Suma de abonos en la misma consulta: sin esto cada fila
+            // preguntaba su pagado y su pendiente por separado.
+            ->withSum('payments', 'amount')
             // ¿Hay transferencia esperando verificación? El modal de
             // confirmar avisa: confirmar a mano NO registra ese dinero —
             // se aprueba en /pagos (incidente RES-2026-0032, 2026-07-24).
@@ -63,8 +84,8 @@ class ReservationsPageController extends Controller
             ->get();
 
         // Historial: lo que ya salió del flujo (en casa vive en "stays").
-        // Sin esto, un no-show/cancelación "desaparece" de la UI. Solo las
-        // últimas 20 — el resto vive en /reservas/historial con buscador.
+        // Sin esto, un no-show/cancelación "desaparece" de la UI. Solo un
+        // asomo — el resto vive en /reservas/historial con buscador.
         $historyStatuses = [
             ReservationStatus::Completed,
             ReservationStatus::Cancelled,
@@ -73,15 +94,17 @@ class ReservationsPageController extends Controller
         $historyTotal = Reservation::query()->whereIn('status', $historyStatuses)->count();
         $historyModels = Reservation::query()
             ->with($relations)
+            ->withSum('payments', 'amount')
             ->whereIn('status', $historyStatuses)
             ->latest('updated_at')
-            ->limit(20)
+            ->limit(self::HISTORY_PREVIEW)
             ->get();
 
         // En casa: reservas con check-in. No van en la lista de próximas ni
         // en historial, pero el calendario abre su detalle desde la barra.
         $inHouseModels = Reservation::query()
             ->with($relations)
+            ->withSum('payments', 'amount')
             ->where('status', ReservationStatus::CheckedIn)
             ->orderBy('starts_at')
             ->get();
@@ -98,26 +121,22 @@ class ReservationsPageController extends Controller
         $history = $historyModels->map($serialize);
         $inHouse = $inHouseModels->map($serialize);
 
+        // Alojados ahora: mismo criterio que las próximas — un asomo con
+        // tope. La lista completa (con buscador) vive en /reservas/alojados.
+        $focusStayId = $request->integer('stay') ?: null;
+        $staysTotal = Stay::query()->active()->count();
+
         $stays = Stay::query()
             ->active()
             ->with(['room:id,number', 'ratePlan:id,name'])
+            // La estancia que llega enfocada desde /reservas/alojados va
+            // primero: si no, podría caer fuera del tope y el botón de
+            // "Registrar salida" no abriría nada.
+            ->when($focusStayId, fn ($q) => $q->orderByRaw('id = ? desc', [$focusStayId]))
             ->orderBy('planned_end_at')
+            ->limit(self::STAYS_PREVIEW)
             ->get()
-            ->map(fn (Stay $stay) => [
-                'id' => $stay->id,
-                'room' => $stay->room?->number,
-                'guest_name' => $stay->guest_name,
-                'num_people' => $stay->num_people,
-                'vehicle_plate' => $stay->vehicle_plate,
-                'vehicle_desc' => $stay->vehicle_desc,
-                'rate_plan' => $stay->ratePlan?->name,
-                'check_in_at' => $stay->check_in_at->format('d/m/Y H:i'),
-                'planned_end_at' => $stay->planned_end_at->format('d/m/Y H:i'),
-                'planned_end_at_iso' => $stay->planned_end_at->toIso8601String(),
-                'overdue' => $stay->planned_end_at->isPast(),
-                'amount' => $stay->amount,
-                'channel' => $stay->channel,
-            ]);
+            ->map(fn (Stay $stay) => $this->serializeStay($stay));
 
         $prefillRoom = $request->integer('room')
             ? Room::query()
@@ -161,38 +180,57 @@ class ReservationsPageController extends Controller
             'historyTotal' => $historyTotal,
             'inHouse' => $inHouse,
             'stays' => $stays,
+            // Cuántas quedaron fuera del asomo, para decirlo en vez de
+            // ocultarlas en silencio.
+            'staysTotal' => $staysTotal,
+            'focusStayId' => $focusStayId,
             'ratePlans' => RatePlan::query()
                 ->where('active', true)
-                ->with('roomType:id,name')
+                ->with('roomType:id,name,property_id,check_in_time,check_out_time')
                 ->get()
-                ->map(fn (RatePlan $plan) => [
-                    'id' => $plan->id,
-                    'name' => $plan->name,
-                    'type' => $plan->type->value,
-                    'room_type' => $plan->roomType->name,
-                    'price' => $plan->price,
-                    'duration_minutes' => $plan->duration_minutes,
-                    'duration_unit' => $plan->duration_unit?->value,
-                    'duration_value' => $plan->duration_value,
-                    'duration_label' => $plan->durationLabel(),
-                    'deposit_percent' => $plan->deposit_percent,
-                    'min_advance_label' => $plan->minAdvanceLabel(),
-                ]),
+                ->map(function (RatePlan $plan) {
+                    // Horarios efectivos del tipo: anclan la llegada y la
+                    // salida propuestas en tarifas por noche (antes el modal
+                    // ponía 15:00/12:00 fijos aunque el hotel operara 14/11).
+                    [$in, $out] = $plan->roomType->effectiveScheduleTimes();
+
+                    return [
+                        'id' => $plan->id,
+                        'name' => $plan->name,
+                        'type' => $plan->type->value,
+                        'room_type' => $plan->roomType->name,
+                        'price' => $plan->price,
+                        'duration_minutes' => $plan->duration_minutes,
+                        'duration_unit' => $plan->duration_unit?->value,
+                        'duration_value' => $plan->duration_value,
+                        'duration_label' => $plan->durationLabel(),
+                        'deposit_percent' => $plan->deposit_percent,
+                        'deposit_amount' => $plan->deposit_amount,
+                        'min_advance_label' => $plan->minAdvanceLabel(),
+                        'check_in_time' => sprintf('%02d:%02d', $in[0], $in[1]),
+                        'check_out_time' => sprintf('%02d:%02d', $out[0], $out[1]),
+                    ];
+                }),
             'canManage' => $request->user()->can('reservations.manage'),
             // En modo de check-in "automático" puro (/ajustes/limpieza) la
             // llegada la registra el reloj: el botón manual se oculta.
             'manualCheckinAllowed' => app(\App\Services\HousekeepingPolicy::class)->manualCheckInAllowed(),
             // Walk-ins con cobro al llegar (/ajustes/metodos-pago): el modal
             // de llegada pide el método de pago y registra el cobro.
-            'walkinChargeOnCheckin' => app(\App\Services\ReservationPolicy::class)->walkinChargeOnCheckIn(),
+            'walkinChargeOnCheckin' => $this->policy()->walkinChargeOnCheckIn(),
             // Fianza (depósito en garantía): monto fijo que los modales de
             // llegada cobran y el de salida devuelve. 0 = ajuste apagado.
-            'guaranteeAmount' => app(\App\Services\ReservationPolicy::class)->guaranteeEnabled()
-                ? app(\App\Services\ReservationPolicy::class)->guaranteeAmount()
+            'guaranteeAmount' => $this->policy()->guaranteeEnabled()
+                ? $this->policy()->guaranteeAmount()
                 : 0,
+            // ¿Este hotel puede cobrar en línea? Con la pasarela apagada
+            // el modal de pago ofrece transferencia, que es lo que de
+            // verdad va a pasar cuando se genere el cobro.
+            'gatewayAvailable' => app(\App\Services\Payments\PaymentMethodGate::class)
+                ->activeGatewayLink((string) tenant('id')) !== null,
             // Duración REAL del apartado (hold_value/unit de Métodos de
             // pago): la UI nunca debe decir "30 minutos" fijo.
-            'holdMinutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
+            'holdMinutes' => $this->policy()->holdMinutes(),
             'prefill' => [
                 'intent' => $prefillIntent,
                 'room' => $prefillRoom ? [
@@ -214,6 +252,36 @@ class ReservationsPageController extends Controller
             ],
             'focusReservationId' => $focusReservationId,
         ]);
+    }
+
+    protected function policy(): \App\Services\ReservationPolicy
+    {
+        return $this->policy ??= app(\App\Services\ReservationPolicy::class);
+    }
+
+    /**
+     * Una estancia activa como la pinta el panel. Vive aquí porque la
+     * comparten /reservas y /reservas/alojados.
+     *
+     * @return array<string, mixed>
+     */
+    protected function serializeStay(Stay $stay): array
+    {
+        return [
+            'id' => $stay->id,
+            'room' => $stay->room?->number,
+            'guest_name' => $stay->guest_name,
+            'num_people' => $stay->num_people,
+            'vehicle_plate' => $stay->vehicle_plate,
+            'vehicle_desc' => $stay->vehicle_desc,
+            'rate_plan' => $stay->ratePlan?->name,
+            'check_in_at' => $stay->check_in_at->format('d/m/Y H:i'),
+            'planned_end_at' => $stay->planned_end_at->format('d/m/Y H:i'),
+            'planned_end_at_iso' => $stay->planned_end_at->toIso8601String(),
+            'overdue' => $stay->planned_end_at->isPast(),
+            'amount' => $stay->amount,
+            'channel' => $stay->channel,
+        ];
     }
 
     /**
@@ -300,6 +368,9 @@ class ReservationsPageController extends Controller
             'payment_overdue' => $r->isPaymentOverdue(),
             'paid_total' => $r->paidTotal(),
             'pending_balance' => $r->pendingBalance(),
+            // Fianza que le toca a ESTA reserva: con escalones por volumen,
+            // una del grupo GRP- no paga lo mismo que una suelta.
+            'guarantee_amount' => $this->policy()->guaranteeAmountForReservation($r),
             'updated_at' => $r->updated_at?->format('d/m/Y H:i'),
             'timeline' => $this->timelineFor($timeline),
         ];

@@ -50,6 +50,10 @@ class AgentPageController extends Controller
             ? Reservation::query()->where('created_by', $agent->id)
             : null;
 
+        // Credenciales de app de Meta del hotel: su app propia si el admin
+        // se la capturó (tenant_meta_apps), o la de la plataforma.
+        $metaCreds = app(\App\Services\Meta\MetaApi::class)->appCredsFor((string) tenant('id'));
+
         return Inertia::render('tenant/agent/Index', [
             'property' => $property->only(['id', 'name']),
             // Aprendizajes del bot: área aislada /asistente/aprendizajes,
@@ -135,13 +139,18 @@ class AgentPageController extends Controller
                     'last_event_at' => $link->last_event_at?->diffForHumans(),
                     'created_at' => $link->created_at?->format('d/m/Y'),
                 ]),
-            // La app de Meta es global de la plataforma: el hotel pega esta
-            // URL de webhook y el verify token en su app y suscribe "messages".
+            // El webhook y el verify token son globales de la plataforma;
+            // el app_id/config de registro son los del hotel (o el respaldo).
             'metaConfig' => [
                 'mode' => config('meta.mode'),
                 'webhook_url' => rtrim(config('app.url'), '/').'/webhooks/meta',
                 'verify_token' => config('meta.verify_token'),
-                'app_configured' => filled(config('meta.app_id')),
+                'app_configured' => $metaCreds['app_id'] !== '',
+                // Registro incrustado: con app_id + login_config_id el panel
+                // ofrece el popup oficial de Facebook además del alta manual.
+                'app_id' => $metaCreds['app_id'] ?: null,
+                'login_config_id' => $metaCreds['login_config_id'] ?: null,
+                'graph_version' => preg_match('~(v\d+\.\d+)$~', (string) config('meta.graph_url'), $m) ? $m[1] : 'v21.0',
             ],
             // Bot de Telegram conectado por el hotel (token de BotFather).
             'telegramChannels' => \App\Models\Central\TelegramChannelLink::query()
@@ -155,10 +164,41 @@ class AgentPageController extends Controller
                 ->orderBy('id')
                 ->get()
                 ->map(fn ($link) => app(TiktokChannelController::class)->serialize($link)),
+            // Canales que la plataforma habilitó para este hotel. Los que
+            // ya tienen algo conectado se muestran de todos modos: apagar el
+            // permiso no debe esconder un canal que está recibiendo mensajes.
+            'channelsAllowed' => $this->allowedChannels(),
             'channelLimit' => [
                 'max' => tenant()->planLimit('max_channels'),
                 'used' => \App\Services\Channels\ChannelPlanCounter::connected((string) tenant('id')),
             ],
         ]);
+    }
+
+    /**
+     * Canales visibles en el panel del hotel: los habilitados por la
+     * plataforma más los que ya tenga conectados (para no esconder un canal
+     * vivo si alguien apaga el permiso después).
+     *
+     * @return array<int, string>
+     */
+    protected function allowedChannels(): array
+    {
+        $tenantId = (string) tenant('id');
+        $setting = \App\Models\Central\TenantAgentSetting::for($tenantId);
+        $allowed = $setting->allowedChannels();
+
+        $connected = [
+            'evolution' => \App\Models\Central\EvolutionChannelLink::where('tenant_id', $tenantId)->exists(),
+            'meta' => \App\Models\Central\MetaChannelLink::where('tenant_id', $tenantId)
+                ->where('type', 'whatsapp')->exists(),
+            'telegram' => \App\Models\Central\TelegramChannelLink::where('tenant_id', $tenantId)->exists(),
+            'tiktok' => \App\Models\Central\TiktokChannelLink::where('tenant_id', $tenantId)->exists(),
+        ];
+
+        return array_values(array_unique(array_merge(
+            $allowed,
+            array_keys(array_filter($connected)),
+        )));
     }
 }

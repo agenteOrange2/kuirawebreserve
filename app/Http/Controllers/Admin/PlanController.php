@@ -38,11 +38,15 @@ class PlanController extends Controller
                 'ai_enabled' => $plan->ai_enabled,
                 'ai_monthly_replies' => $plan->ai_monthly_replies,
                 'active' => $plan->active,
+                'public' => $plan->public,
                 'tenants' => (int) ($byPlan[$plan->key] ?? 0),
             ]),
             // Catálogo de módulos (config/modules.php): key => label,
             // description, available (false = en desarrollo).
             'moduleCatalog' => config('modules', []),
+            // Familias del catálogo (config/module_groups.php): el modal los
+            // ordena por grupo en vez de soltar 25 interruptores seguidos.
+            'moduleGroups' => config('module_groups', []),
             // Módulo => nombres de servicios adicionales que lo venden. En el
             // modal esos módulos se agrupan aparte para no confundirlos con
             // los incluidos del plan.
@@ -122,6 +126,8 @@ class PlanController extends Controller
             'modules.*' => ['string', Rule::in(array_keys(config('modules', [])))],
             'ai_monthly_replies' => ['nullable', 'integer', 'min:1'],
             'active' => ['boolean'],
+            // Plan a la medida: asignable desde aquí, invisible en el landing.
+            'public' => ['boolean'],
         ]), [
             'key.regex' => 'Solo minúsculas, números y guiones.',
             'key.unique' => 'Ya existe un plan con esa clave.',

@@ -86,6 +86,28 @@ class IncidentController extends Controller
         return response()->json(IncidentsPageController::present($incident->fresh(['room', 'reporter', 'assignee', 'resolver', 'technician'])), 201);
     }
 
+    /**
+     * Nota de seguimiento en la bitácora del ticket. Vive en el mismo
+     * activity log que los cambios de estado, así que la línea de tiempo
+     * queda en un solo hilo ordenado: lo que pasó y lo que alguien contó
+     * que pasó, sin obligar a mover el ticket para poder escribir.
+     */
+    public function addNote(Request $request, Incident $incident): JsonResponse
+    {
+        $data = $request->validate([
+            'note' => ['required', 'string', 'max:1000'],
+        ]);
+
+        activity('incident')
+            ->performedOn($incident)
+            ->causedBy($request->user())
+            ->event('note')
+            ->withProperties(['note' => $data['note']])
+            ->log('Nota de seguimiento');
+
+        return response()->json(['ok' => true], 201);
+    }
+
     public function update(Request $request, Incident $incident, ChangeRoomStatus $changeStatus): JsonResponse
     {
         $validated = $request->validate([

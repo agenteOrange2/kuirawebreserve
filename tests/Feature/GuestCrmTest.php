@@ -140,3 +140,30 @@ it('busca huéspedes por nombre, teléfono o email', function () {
         ->and(Guest::search('carlos@')->count())->toBe(1)
         ->and(Guest::search('nadie')->count())->toBe(0);
 });
+
+it('cuenta como visita la reserva completada sin estancia (historial migrado)', function () {
+    $guest = Guest::create(['first_name' => 'Migrada', 'phone' => '+52644444']);
+
+    // Así llegó el historial del sitio anterior: reservas completadas sin
+    // estancia, porque nadie capturó horas de entrada y salida.
+    \App\Models\Reservation::create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'room_id' => $this->room->id,
+        'rate_plan_id' => $this->plan->id,
+        'guest_id' => $guest->id,
+        'guest_name' => 'Migrada',
+        'num_people' => 2,
+        'starts_at' => now()->subDays(10)->setTime(14, 0),
+        'ends_at' => now()->subDays(9)->setTime(11, 0),
+        'status' => \App\Enums\ReservationStatus::Completed,
+        'total_amount' => 3000,
+        'source_channel' => 'web',
+    ]);
+
+    $metrics = $guest->metrics();
+
+    expect($metrics['visits'])->toBe(1)
+        ->and($metrics['total_spent'])->toBe(3000.0)
+        ->and($metrics['last_visit'])->toBe(now()->subDays(10)->format('d/m/Y'));
+});

@@ -18,7 +18,7 @@ import {
 } from 'vue';
 import type { Ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormInput, FormSelect } from '@/components/Base/Form';
+import { FormDateTime, FormInput, FormSelect } from '@/components/Base/Form';
 import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
@@ -32,11 +32,13 @@ import { FloorPlanKey } from '@/pages/tenant/floorplan/context';
 import CleaningDialogs from '@/pages/tenant/floorplan/CleaningDialogs.vue';
 import ExpressCheckInModal from '@/pages/tenant/floorplan/ExpressCheckInModal.vue';
 import PlanDock from '@/pages/tenant/floorplan/PlanDock.vue';
+import CheckInGuaranteeDialog from '@/pages/tenant/floorplan/CheckInGuaranteeDialog.vue';
 import CheckoutDialog from '@/pages/tenant/floorplan/CheckoutDialog.vue';
 import CompleteArrivalDialog from '@/pages/tenant/floorplan/CompleteArrivalDialog.vue';
 import PlanFiltersDialog from '@/pages/tenant/floorplan/PlanFiltersDialog.vue';
 import CashDialog from '@/pages/tenant/floorplan/CashDialog.vue';
 import ReserveModal from '@/pages/tenant/floorplan/ReserveModal.vue';
+import WalkInModal from '@/pages/tenant/floorplan/WalkInModal.vue';
 import RoomActionSheet from '@/pages/tenant/floorplan/RoomActionSheet.vue';
 import NewRoomDialog from '@/pages/tenant/floorplan/room/NewRoomDialog.vue';
 import RoomDialog from '@/pages/tenant/floorplan/room/RoomDialog.vue';
@@ -86,8 +88,11 @@ const props = defineProps<{
     canManageReservations: boolean;
     canManageOrders: boolean;
     manualCheckinAllowed: boolean;
-    // Fianza configurada (0 = apagada): la pide el registro exprés.
+    // Fianza configurada (0 = apagada): la piden los registros de llegada.
     guaranteeAmount: number;
+    // walkin_charge=checkin (/ajustes/metodos-pago): el registro de llegada
+    // cobra el hospedaje en el momento en vez de dejarlo al check-out.
+    walkinChargeOnCheckin: boolean;
     // Fotos de identificación en la ficha (mismo permiso que el CRM).
     canViewDocuments: boolean;
     // Ver la cuenta de una estancia (folio) exige ver reservas.
@@ -528,6 +533,7 @@ function onPresentationKeydown(event: KeyboardEvent) {
     // completa de un solo golpe deja al mostrador fuera del plano sin querer.
     if (
         expressOpen.value ||
+        walkInOpen.value ||
         reserveOpen.value ||
         newRoomOpen.value ||
         cashOpen.value ||
@@ -747,18 +753,13 @@ function dispatchArrival(key: string, room: RoomData) {
 
     if (key === 'walkin') {
         // Siempre el flujo completo: es justo lo que lo distingue del exprés.
-        openReservations('walkin', room.id);
+        // Vive en el plano, no en /reservas: quien vende está parado aquí.
+        openOverRoom(() => (walkInOpen.value = true));
 
         return;
     }
 
-    if (hasMotel.value) {
-        openOverRoom(() => (reserveOpen.value = true));
-
-        return;
-    }
-
-    openReservations('reserve', room.id);
+    openOverRoom(() => (reserveOpen.value = true));
 }
 
 function sheetCheckIn() {
@@ -854,7 +855,22 @@ function onExpressRegistered() {
     router.reload({ only: ['rooms'] });
 }
 
-// Reserva para otra fecha sin salir del plano (modo motel).
+// Llegó sin reserva, registro completo y sin salir del plano. Antes esto
+// navegaba a /reservas?intent=walkin y le quitaba el plano de enfrente a
+// quien está vendiendo el cuarto.
+const walkInOpen = ref(false);
+
+function onWalkInRegistered() {
+    walkInOpen.value = false;
+    // Registrada la llegada el cuarto ya es otro: se suelta la selección en
+    // vez de volver al modal con datos viejos.
+    closeRoom();
+    router.reload({ only: ['rooms'] });
+    // Con cobro al llegar, el hospedaje entra al corte del turno.
+    void cash.load();
+}
+
+// Reserva para otra fecha sin salir del plano.
 const reserveOpen = ref(false);
 
 function onReserved() {
@@ -1648,16 +1664,39 @@ function onPanelSold(message: string) {
     void cash.load();
 }
 
+/* --- Llegada de una reserva ------------------------------------------
+ * Con fianza activa hace escala en un diálogo: este botón mandaba el
+ * check-in sin cuerpo y el servidor entiende "sin método de fianza" como
+ * "no se cobró". La misma llegada registrada desde /reservas sí la cobraba
+ * y desde aquí no — y el plano es donde de verdad se trabaja, así que el
+ * depósito se perdía casi siempre.
+ */
+const checkInRoom = ref<RoomData | null>(null);
+
 function checkInReservation(room: RoomData) {
     if (!room.upcoming_reservation) {
         return;
     }
 
+    if ((room.upcoming_reservation.guarantee_amount ?? 0) > 0) {
+        checkInRoom.value = room;
+
+        return;
+    }
+
+    return runCheckIn(room, {});
+}
+
+function runCheckIn(
+    room: RoomData,
+    body: Record<string, string | number | null>,
+) {
     return runRoomAction(
-        `reservation:${room.upcoming_reservation.id}`,
+        `reservation:${room.upcoming_reservation?.id}`,
         async () => {
             await axios.patch(
                 `/api/reservations/${room.upcoming_reservation?.id}/check-in`,
+                body,
             );
         },
         {
@@ -1666,6 +1705,32 @@ function checkInReservation(room: RoomData) {
             errorTitle: 'No se pudo registrar la llegada',
         },
     );
+}
+
+async function confirmCheckInWithGuarantee(payload: {
+    method: 'cash' | 'card';
+    amount: number | null;
+    reason: string | null;
+}) {
+    const room = checkInRoom.value;
+
+    if (!room) {
+        return;
+    }
+
+    checkInRoom.value = null;
+
+    await runCheckIn(room, {
+        guarantee_method: payload.method,
+        // Solo viajan cuando el mostrador ajustó el monto: el servidor exige
+        // motivo para cualquier cifra distinta a la de la política.
+        ...(payload.amount !== null
+            ? {
+                  guarantee_amount: payload.amount,
+                  guarantee_reason: payload.reason,
+              }
+            : {}),
+    });
 }
 
 /* --- Salida con cuenta ------------------------------------------------
@@ -1853,10 +1918,10 @@ async function resetUsage() {
     );
 }
 
-/* --- Revisión de la habitación al salir (motel) -------------------------
- * El daño sube la cuenta, queda como incidencia del huésped y —si lo deciden—
- * veta la placa y la ficha del huésped, que es lo que hace que la caseta lo
- * vea en la próxima visita.
+/* --- Revisión de la habitación al salir ---------------------------------
+ * Aplica a cualquier propiedad (hotel, cabañas o motel): antes de dejar salir
+ * al huésped se revisa el cuarto. El daño sube la cuenta, queda como
+ * incidencia y —si lo deciden— veta la placa y la ficha del huésped.
  */
 async function addDamage(payload: { concept: string; amount: number }) {
     const stayId = checkoutRoom.value?.active_stay?.id;
@@ -2021,10 +2086,6 @@ async function confirmCheckout(payload: {
     closeRoom();
     // Cobrar en la salida mueve el corte del turno.
     void cash.load();
-}
-
-function openReservations(intent: 'reserve' | 'walkin', roomId: number) {
-    router.visit(route('tenant.reservations', { intent, room: roomId }));
 }
 
 function openReservationDetail(reservationId: number) {
@@ -2281,19 +2342,17 @@ provide(FloorPlanKey, {
              botones peleando la misma fila. -->
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Map" class="h-5 w-5 sm:h-7 sm:w-7" />
+                        <Lucide icon="Map" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">
-                            Plano operativo
-                        </h1>
-                        <p class="mt-1 truncate text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Plano operativo</h1>
+                        <p class="mt-0.5 truncate text-xs text-slate-500">
                             {{ property.name }} · {{ rooms.length }}
                             {{
                                 rooms.length === 1
@@ -2313,11 +2372,11 @@ provide(FloorPlanKey, {
                     <Button
                         v-if="showCashChip"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] whitespace-nowrap"
+                        class="rounded-[0.5rem] text-xs whitespace-nowrap"
                         title="Ver el corte en curso y el turno abierto"
                         @click="cashOpen = true"
                     >
-                        <Lucide icon="Wallet" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Wallet" class="mr-1.5 h-3.5 w-3.5" />
                         Caja
                         <span class="ml-2 font-semibold">{{
                             formatMoney(cash.total.value)
@@ -2326,17 +2385,17 @@ provide(FloorPlanKey, {
                     <Button
                         v-if="canCreateRooms"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] whitespace-nowrap"
+                        class="rounded-[0.5rem] text-xs whitespace-nowrap"
                         title="Da de alta una habitación y nace en el centro del plano"
                         @click="newRoomOpen = true"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                         Nueva habitación
                     </Button>
                     <Button
                         v-if="canManage && hasModule('tablero-avanzado')"
                         :variant="editMode ? 'primary' : 'outline-secondary'"
-                        class="rounded-[0.5rem] whitespace-nowrap"
+                        class="rounded-[0.5rem] text-xs whitespace-nowrap"
                         :title="
                             editMode
                                 ? 'Al terminar, bloquea para que nadie mueva cuartos por accidente'
@@ -2346,18 +2405,18 @@ provide(FloorPlanKey, {
                     >
                         <Lucide
                             :icon="editMode ? 'LockOpen' : 'Lock'"
-                            class="mr-2 h-4 w-4"
+                            class="mr-1.5 h-3.5 w-3.5"
                         />
                         {{ editMode ? 'Terminar' : 'Editar plano' }}
                     </Button>
                     <!-- La acción principal, a lo ancho en el teléfono. -->
                     <Button
                         variant="primary"
-                        class="col-span-2 rounded-[0.5rem] whitespace-nowrap shadow-md shadow-primary/20 md:col-auto"
+                        class="col-span-2 rounded-[0.5rem] text-xs whitespace-nowrap shadow-md shadow-primary/20 md:col-auto"
                         title="Ve el plano completo sin el menú ni los filtros; sales con Esc"
                         @click="enterPresentation()"
                     >
-                        <Lucide icon="Maximize" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Maximize" class="mr-1.5 h-3.5 w-3.5" />
                         Pantalla completa
                     </Button>
                 </div>
@@ -2381,12 +2440,12 @@ provide(FloorPlanKey, {
                 </p>
                 <Button
                     variant="outline-secondary"
-                    class="shrink-0 rounded-[0.5rem] bg-white whitespace-nowrap dark:bg-darkmode-600"
+                    class="shrink-0 rounded-[0.5rem] bg-white text-xs whitespace-nowrap dark:bg-darkmode-600"
                     :disabled="aligning"
                     title="Endereza los cuartos a la cuadrícula sin cambiar su acomodo"
                     @click="alignToGrid"
                 >
-                    <Lucide icon="Grid3x3" class="mr-2 h-4 w-4" />
+                    <Lucide icon="Grid3x3" class="mr-1.5 h-3.5 w-3.5" />
                     {{ aligning ? 'Alineando…' : 'Alinear' }}
                 </Button>
             </div>
@@ -2410,14 +2469,14 @@ provide(FloorPlanKey, {
                     <FormInput
                         v-model="search"
                         type="text"
-                        class="pl-9"
+                        class="pl-9 text-xs"
                         placeholder="Buscar por habitación, huésped, tipo o código de reserva"
                     />
                 </div>
                 <div class="flex flex-col gap-3 sm:flex-row">
                     <FormSelect
                         v-model="statusFilter"
-                        class="sm:w-48"
+                        class="text-xs sm:w-48"
                         aria-label="Filtrar por estado"
                     >
                         <option value="">Todos los estados</option>
@@ -2432,7 +2491,7 @@ provide(FloorPlanKey, {
                     <FormSelect
                         v-if="zoneOptions.length > 1"
                         v-model="zoneFilter"
-                        class="sm:w-44"
+                        class="text-xs sm:w-44"
                         aria-label="Filtrar por zona"
                     >
                         <option value="">Todas las zonas</option>
@@ -2447,7 +2506,7 @@ provide(FloorPlanKey, {
                     <FormSelect
                         v-if="typeOptions.length > 1"
                         v-model="typeFilter"
-                        class="sm:w-44"
+                        class="text-xs sm:w-44"
                         aria-label="Filtrar por tipo de habitación"
                     >
                         <option value="">Todos los tipos</option>
@@ -2458,15 +2517,15 @@ provide(FloorPlanKey, {
                     <Button
                         v-if="filtersActive"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] whitespace-nowrap"
+                        class="rounded-[0.5rem] text-xs whitespace-nowrap"
                         @click="clearFilters"
                     >
-                        <Lucide icon="X" class="mr-2 h-4 w-4" />
+                        <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
                         Limpiar
                     </Button>
                 </div>
             </div>
-            <p v-if="filtersActive" class="mt-3 text-sm text-slate-500">
+            <p v-if="filtersActive" class="mt-3 text-xs text-slate-500">
                 {{ matchingRooms.length }} de {{ rooms.length }}
                 {{ rooms.length === 1 ? 'habitación' : 'habitaciones' }}.
                 <span class="hidden lg:inline"
@@ -2552,11 +2611,14 @@ provide(FloorPlanKey, {
                          última quedaba cortada contra el semáforo. -->
                     <Button
                         variant="outline-secondary"
-                        class="ml-3 shrink-0 rounded-[0.5rem] whitespace-nowrap"
+                        class="ml-3 shrink-0 rounded-[0.5rem] text-xs whitespace-nowrap"
                         title="Buscar, filtrar y saltar a una zona"
                         @click="filtersOpen = true"
                     >
-                        <Lucide icon="SlidersHorizontal" class="mr-2 h-4 w-4" />
+                        <Lucide
+                            icon="SlidersHorizontal"
+                            class="mr-1.5 h-3.5 w-3.5"
+                        />
                         <!-- Con la zona activa en la etiqueta, un nombre
                              largo volvería a estirar la barra: se recorta. -->
                         <span
@@ -2576,11 +2638,14 @@ provide(FloorPlanKey, {
                         <Button
                             v-if="showCashChip"
                             variant="outline-secondary"
-                            class="rounded-[0.5rem] whitespace-nowrap"
+                            class="rounded-[0.5rem] text-xs whitespace-nowrap"
                             title="Ver el corte en curso y el turno abierto"
                             @click="cashOpen = true"
                         >
-                            <Lucide icon="Wallet" class="h-4 w-4 sm:mr-2" />
+                            <Lucide
+                                icon="Wallet"
+                                class="h-3.5 w-3.5 sm:mr-1.5"
+                            />
                             <span class="hidden sm:inline">Caja</span>
                             <span class="ml-1 font-semibold sm:ml-2">{{
                                 formatMoney(cash.total.value)
@@ -2592,11 +2657,11 @@ provide(FloorPlanKey, {
                         <Button
                             v-if="canCreateRooms"
                             variant="outline-secondary"
-                            class="rounded-[0.5rem] whitespace-nowrap"
+                            class="rounded-[0.5rem] text-xs whitespace-nowrap"
                             title="Nueva habitación"
                             @click="newRoomOpen = true"
                         >
-                            <Lucide icon="Plus" class="h-4 w-4 sm:mr-2" />
+                            <Lucide icon="Plus" class="h-3.5 w-3.5 sm:mr-1.5" />
                             <span class="hidden sm:inline">Nueva</span>
                         </Button>
 
@@ -2606,10 +2671,10 @@ provide(FloorPlanKey, {
                              barra. -->
                         <Menu>
                             <Menu.Button
-                                class="flex h-10 w-10 items-center justify-center rounded-[0.5rem] border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                class="flex h-9 w-9 items-center justify-center rounded-[0.5rem] border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
                                 title="Más opciones"
                             >
-                                <Lucide icon="MoreVertical" class="h-5 w-5" />
+                                <Lucide icon="MoreVertical" class="h-4 w-4" />
                             </Menu.Button>
                             <Menu.Items class="w-64">
                                 <Menu.Item
@@ -2620,7 +2685,7 @@ provide(FloorPlanKey, {
                                 >
                                     <Lucide
                                         :icon="editMode ? 'LockOpen' : 'Lock'"
-                                        class="mr-2 h-5 w-5"
+                                        class="mr-2 h-4 w-4"
                                     />
                                     {{
                                         editMode
@@ -2637,7 +2702,7 @@ provide(FloorPlanKey, {
                                 >
                                     <Lucide
                                         icon="Grid3x3"
-                                        class="mr-2 h-5 w-5"
+                                        class="mr-2 h-4 w-4"
                                     />
                                     {{ aligning ? 'Alineando…' : 'Alinear' }}
                                 </Menu.Item>
@@ -2654,7 +2719,7 @@ provide(FloorPlanKey, {
                                                 meta, status
                                             ) in statusLabels"
                                             :key="status"
-                                            class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300"
+                                            class="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-300"
                                         >
                                             <span
                                                 class="h-2.5 w-2.5 shrink-0 rounded-full"
@@ -2670,11 +2735,14 @@ provide(FloorPlanKey, {
                         </Menu>
                         <Button
                             variant="outline-secondary"
-                            class="rounded-[0.5rem] whitespace-nowrap"
+                            class="rounded-[0.5rem] text-xs whitespace-nowrap"
                             title="Volver al panel (también con Esc)"
                             @click="exitPresentation"
                         >
-                            <Lucide icon="Minimize" class="mr-2 h-4 w-4" />
+                            <Lucide
+                                icon="Minimize"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
                             Salir
                         </Button>
                     </div>
@@ -3086,7 +3154,6 @@ provide(FloorPlanKey, {
             :folio="roomFolio"
             :busy="checkoutBusy"
             :damage-catalog="damageCatalog"
-            :can-review="hasMotel"
             :can-blacklist="
                 Boolean(
                     checkoutRoom?.active_stay?.vehicle_id ||
@@ -3138,20 +3205,22 @@ provide(FloorPlanKey, {
                 v-for="room in group.rooms"
                 :key="room.id"
                 type="button"
-                class="box box--stacked flex w-full items-center gap-3.5 p-4 text-left transition active:scale-[0.99]"
+                class="box box--stacked flex w-full items-center gap-3 p-3.5 text-left transition active:scale-[0.99]"
                 @click="selectedId = room.id"
             >
                 <span
-                    class="flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl text-white shadow-sm"
+                    class="flex h-10 w-10 shrink-0 flex-col items-center justify-center rounded-lg text-white shadow-sm"
                     :class="statusStyles[room.color]?.bg ?? 'bg-slate-400'"
                 >
-                    <span class="text-base leading-none font-bold">{{
+                    <span class="text-sm leading-none font-bold">{{
                         room.number
                     }}</span>
                 </span>
                 <span class="min-w-0 flex-1">
                     <span class="flex flex-wrap items-center gap-1.5">
-                        <span class="font-medium">{{ room.label }}</span>
+                        <span class="text-sm font-medium">{{
+                            room.label
+                        }}</span>
                         <span
                             v-if="room.blocks.length"
                             class="inline-flex items-center gap-1 rounded-full bg-slate-950 px-2 py-0.5 text-[10px] font-medium text-white"
@@ -3212,7 +3281,7 @@ provide(FloorPlanKey, {
                         >
                     </span>
                     <span
-                        class="mt-0.5 block truncate text-sm text-slate-500 dark:text-slate-400"
+                        class="mt-0.5 block truncate text-xs text-slate-500 dark:text-slate-400"
                     >
                         {{ room.room_type ?? 'Sin tipo' }} ·
                         {{ nodeHint(room) }}
@@ -3220,7 +3289,7 @@ provide(FloorPlanKey, {
                 </span>
                 <Lucide
                     icon="ChevronRight"
-                    class="h-5 w-5 shrink-0 text-slate-300"
+                    class="h-4 w-4 shrink-0 text-slate-300"
                 />
             </button>
         </div>
@@ -3254,6 +3323,16 @@ provide(FloorPlanKey, {
             "
         />
 
+        <!-- Llegada de reserva con fianza: el plano no puede registrarla a
+             ciegas o el depósito se pierde -->
+        <CheckInGuaranteeDialog
+            :open="checkInRoom !== null"
+            :room="checkInRoom"
+            :amount="checkInRoom?.upcoming_reservation?.guarantee_amount ?? 0"
+            @close="checkInRoom = null"
+            @confirm="confirmCheckInWithGuarantee"
+        />
+
         <ExpressCheckInModal
             :open="expressOpen"
             :room="selectedRoom"
@@ -3266,7 +3345,20 @@ provide(FloorPlanKey, {
             @registered="onExpressRegistered"
         />
 
-        <!-- Reserva para otra fecha (modo motel), también sin salir -->
+        <!-- Llegó sin reserva: registro completo sin salir del plano -->
+        <WalkInModal
+            :open="walkInOpen"
+            :room="selectedRoom"
+            :guarantee-amount="guaranteeAmount"
+            :charge-on-checkin="walkinChargeOnCheckin"
+            @close="
+                walkInOpen = false;
+                backToRoom();
+            "
+            @registered="onWalkInRegistered"
+        />
+
+        <!-- Reserva para otra fecha, también sin salir -->
         <ReserveModal
             :open="reserveOpen"
             :room="selectedRoom"
@@ -3283,7 +3375,7 @@ provide(FloorPlanKey, {
                 <div class="p-5">
                     <div class="text-center">
                         <div
-                            class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
                         >
                             <Lucide icon="CalendarPlus" class="h-6 w-6" />
                         </div>
@@ -3291,7 +3383,7 @@ provide(FloorPlanKey, {
                             Extender la estancia de la
                             {{ extending?.number }}
                         </h2>
-                        <p class="mt-2 text-sm text-slate-500">
+                        <p class="mt-2 text-xs text-slate-500">
                             Ahora sale el
                             {{ extending?.active_stay?.planned_end_at }}. Lo que
                             ya pagó no se toca: la diferencia se le cobra al
@@ -3302,19 +3394,15 @@ provide(FloorPlanKey, {
                     <div class="mt-4">
                         <label
                             for="extend-until"
-                            class="mb-1.5 block text-sm text-slate-500"
+                            class="mb-1.5 block text-xs text-slate-500"
                             >Nueva salida</label
                         >
-                        <FormInput
-                            id="extend-until"
-                            v-model="extendUntil"
-                            type="datetime-local"
-                        />
+                        <FormDateTime id="extend-until" v-model="extendUntil" />
                     </div>
 
                     <p
                         v-if="extendError"
-                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
                     >
                         {{ extendError }}
                     </p>
@@ -3322,13 +3410,13 @@ provide(FloorPlanKey, {
                     <div class="mt-5 flex justify-center gap-2">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11"
+                            class="h-10 text-xs"
                             @click="extending = null"
                             >Cancelar</Button
                         >
                         <Button
                             variant="primary"
-                            class="min-h-11"
+                            class="h-10 text-xs"
                             :disabled="extendBusy || !extendUntil"
                             @click="submitExtend"
                             >{{
@@ -3346,14 +3434,14 @@ provide(FloorPlanKey, {
                 <div class="p-5">
                     <div class="text-center">
                         <div
-                            class="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
                         >
                             <Lucide icon="ArrowRightLeft" class="h-6 w-6" />
                         </div>
                         <h2 class="text-base font-medium">
                             Mover al huésped de la {{ moving?.number }}
                         </h2>
-                        <p class="mt-2 text-sm text-slate-500">
+                        <p class="mt-2 text-xs text-slate-500">
                             Su cuenta y sus consumos se van con él. La
                             {{ moving?.number }} queda marcada por limpiar.
                         </p>
@@ -3362,7 +3450,7 @@ provide(FloorPlanKey, {
                     <div class="mt-4">
                         <label
                             for="move-target"
-                            class="mb-1.5 block text-sm text-slate-500"
+                            class="mb-1.5 block text-xs text-slate-500"
                             >Habitación destino</label
                         >
                         <FormSelect id="move-target" v-model="moveTargetId">
@@ -3377,7 +3465,7 @@ provide(FloorPlanKey, {
                         </FormSelect>
                         <p
                             v-if="!moveOptions.length"
-                            class="mt-2 text-sm text-warning"
+                            class="mt-2 text-xs text-warning"
                         >
                             No hay habitaciones libres del mismo tipo. Para
                             moverlo a otro tipo hay que registrar su salida y
@@ -3407,7 +3495,7 @@ provide(FloorPlanKey, {
 
                     <p
                         v-if="moveError"
-                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
                     >
                         {{ moveError }}
                     </p>
@@ -3415,13 +3503,13 @@ provide(FloorPlanKey, {
                     <div class="mt-5 flex justify-center gap-2">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11"
+                            class="h-10 text-xs"
                             @click="moving = null"
                             >Cancelar</Button
                         >
                         <Button
                             variant="primary"
-                            class="min-h-11"
+                            class="h-10 text-xs"
                             :disabled="moveBusy || !moveTargetId"
                             @click="submitMove"
                             >{{ moveBusy ? 'Moviendo…' : 'Mover' }}</Button

@@ -3,7 +3,12 @@ import { Head } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormInput, FormLabel, FormTextarea } from '@/components/Base/Form';
+import {
+    FormInput,
+    FormLabel,
+    FormTextarea,
+    FormTime,
+} from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import type { WizardAppearance } from '@/composables/useWizardAppearance';
@@ -49,6 +54,9 @@ interface LookupResult {
     can_cancel: boolean;
     cancellation_policy: string | null;
     cancellation_policy_text: string | null;
+    // Depósito en garantía que le van a cobrar al llegar (con el escalón de
+    // su grupo). Aparte del total: no es parte de la cuenta.
+    guarantee: { amount: number } | null;
     cancel_refund_estimate: number | null;
 }
 
@@ -434,6 +442,20 @@ const holdCountdown = computed(() => {
                                     )
                                 }}
                             </p>
+                            <!-- Aquí es donde el huésped repasa su reserva
+                                 antes de salir de casa: el mejor momento
+                                 para recordarle el depósito que le van a
+                                 pedir al llegar. Fuera de los totales a
+                                 propósito — no es parte de la cuenta. -->
+                            <p
+                                v-if="result.guarantee"
+                                class="border-t border-slate-100 pt-2 text-xs text-slate-400"
+                            >
+                                Aparte del total, al llegar se cobra un
+                                depósito en garantía de
+                                {{ money(result.guarantee.amount) }}, que se te
+                                devuelve al registrar tu salida.
+                            </p>
                         </div>
 
                         <p
@@ -597,10 +619,7 @@ const holdCountdown = computed(() => {
                                         <FormLabel
                                             >Hora estimada de llegada</FormLabel
                                         >
-                                        <FormInput
-                                            v-model="preForm.eta"
-                                            type="time"
-                                        />
+                                        <FormTime v-model="preForm.eta" />
                                     </div>
                                     <div class="sm:col-span-2">
                                         <FormLabel

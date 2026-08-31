@@ -241,13 +241,24 @@ async function submitDelete() {
     <RazeLayout title="Historial de reservas">
         <div class="mt-2">
             <!-- Encabezado -->
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <h1 class="text-lg font-medium">Historial de reservas</h1>
-                    <p class="text-sm text-slate-500">
-                        {{ property.name }} · {{ reservations.total }}
-                        completadas, canceladas o huéspedes que no llegaron
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="History" class="h-4 w-4" />
+                    </div>
+                    <div>
+                        <h1 class="text-base font-medium">
+                            Historial de reservas
+                        </h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            {{ property.name }} · {{ reservations.total }}
+                            completadas, canceladas o huéspedes que no llegaron
+                        </p>
+                    </div>
                 </div>
                 <div class="flex flex-wrap gap-2">
                     <Button
@@ -268,7 +279,7 @@ async function submitDelete() {
             <div class="box box--stacked mt-5">
                 <!-- Filtros -->
                 <div
-                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
                     <div class="relative w-full sm:w-72">
                         <Lucide
@@ -316,7 +327,7 @@ async function submitDelete() {
                     </template>
                 </div>
 
-                <div class="overflow-auto p-5 lg:overflow-visible">
+                <div class="overflow-auto p-4 lg:overflow-visible">
                     <Table v-if="reservations.data.length" striped>
                         <Table.Thead>
                             <Table.Tr>
@@ -355,7 +366,7 @@ async function submitDelete() {
                                     >
                                         {{ r.code }}
                                     </span>
-                                    <div class="mt-1 font-medium">
+                                    <div class="mt-1 text-sm font-medium">
                                         {{ r.guest_name ?? 'Anónimo' }}
                                     </div>
                                 </Table.Td>
@@ -480,7 +491,7 @@ async function submitDelete() {
                 <div class="flex max-h-[85vh] flex-col">
                     <div class="flex items-start gap-3.5 p-6 pb-4">
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
                             <Lucide icon="History" class="h-5 w-5" />
                         </div>
@@ -488,7 +499,7 @@ async function submitDelete() {
                             <h2 class="text-base font-medium">
                                 {{ detail.guest_name ?? 'Anónimo' }}
                             </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
+                            <p class="mt-0.5 text-xs text-slate-500">
                                 {{ detail.code }} · actualizada
                                 {{ detail.updated_at ?? '—' }}
                             </p>
@@ -659,7 +670,7 @@ async function submitDelete() {
                             class="rounded-[0.5rem]"
                             @click="askDelete([detail.id])"
                         >
-                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                             Eliminar
                         </Button>
                         <Button
@@ -689,7 +700,7 @@ async function submitDelete() {
                                 ¿Eliminar {{ deleteRows.length }} reserva(s) del
                                 historial?
                             </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
+                            <p class="mt-0.5 text-xs text-slate-500">
                                 Se borran definitivamente junto con sus pagos
                                 registrados y su línea de tiempo. Esta acción no
                                 se puede deshacer.
@@ -737,7 +748,7 @@ async function submitDelete() {
                             :disabled="deleteBusy"
                             @click="submitDelete"
                         >
-                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                             {{ deleteBusy ? 'Eliminando…' : 'Eliminar' }}
                         </Button>
                     </div>

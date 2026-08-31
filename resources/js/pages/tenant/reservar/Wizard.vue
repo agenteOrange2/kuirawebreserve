@@ -11,6 +11,7 @@ import {
 } from 'vue';
 import Button from '@/components/Base/Button';
 import {
+    FormDateTime,
     FormInput,
     FormLabel,
     FormSelect,
@@ -216,6 +217,15 @@ const props = defineProps<{
     holdMinutes: number;
     // Política de cancelación default del hotel: se enseña ANTES de apartar.
     cancellationPolicy: { label: string | null; text: string | null };
+    // Fianza (depósito en garantía) que se cobra AL LLEGAR, aparte del
+    // precio: el huésped tiene que saberlo antes de venir. null = el hotel
+    // no cobra fianza.
+    guarantee: {
+        amount: number;
+        label: string;
+        tiers: { from: number; amount: number }[];
+        tiers_label: string | null;
+    } | null;
     hasExperiences: boolean;
     hasGroups: boolean;
     // Lista de espera (módulo lista-espera): sin disponibilidad se ofrece
@@ -1232,11 +1242,7 @@ async function copyCode() {
                     </div>
                     <div v-else class="mt-4">
                         <FormLabel>Fecha y hora de llegada</FormLabel>
-                        <FormInput
-                            v-model="arriveAt"
-                            type="datetime-local"
-                            lang="es-MX"
-                        />
+                        <FormDateTime v-model="arriveAt" />
                     </div>
                     <div
                         v-if="mode === 'night'"
@@ -2307,10 +2313,34 @@ async function copyCode() {
                         {{ humanizeMinutes(holdMinutes) }} mientras terminas.
                         Sin tarjeta y sin compromiso.
                     </p>
-                    <!-- Política de cancelación del hotel, a la vista antes
-                         de comprometerse (la de la tarifa manda si existe). -->
+                    <!-- Depósito en garantía: se cobra AL LLEGAR y es aparte
+                         del total, así que va con su propia caja y no como
+                         una línea del desglose — meterlo al total sería
+                         cobrarle de más a quien lo lee rápido. -->
                     <div
-                        v-if="cancellationPolicy.label"
+                        v-if="guarantee"
+                        class="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500"
+                    >
+                        <div
+                            class="flex items-center gap-1.5 font-medium text-slate-600"
+                        >
+                            <Lucide icon="ShieldCheck" class="h-3.5 w-3.5" />
+                            Depósito en garantía
+                        </div>
+                        <p class="mt-1">{{ guarantee.label }}</p>
+                        <p v-if="guarantee.tiers_label" class="mt-1">
+                            Si apartas varias habitaciones:
+                            {{ guarantee.tiers_label }}.
+                        </p>
+                    </div>
+                    <!-- Política de cancelación del hotel, a la vista antes
+                         de comprometerse (la de la tarifa manda si existe).
+                         El texto libre se muestra AUNQUE no haya política
+                         automática: hay hoteles sin ventana sin costo cuyas
+                         condiciones viven solo en ese texto, y con el v-if
+                         atado a `label` nunca se veían. -->
+                    <div
+                        v-if="cancellationPolicy.label || cancellationPolicy.text"
                         class="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500"
                     >
                         <div
@@ -2319,7 +2349,9 @@ async function copyCode() {
                             <Lucide icon="Undo2" class="h-3.5 w-3.5" />
                             Política de cancelación
                         </div>
-                        <p class="mt-1">{{ cancellationPolicy.label }}</p>
+                        <p v-if="cancellationPolicy.label" class="mt-1">
+                            {{ cancellationPolicy.label }}
+                        </p>
                         <p v-if="cancellationPolicy.text" class="mt-1">
                             {{ cancellationPolicy.text }}
                         </p>
@@ -2914,6 +2946,25 @@ async function copyCode() {
                             >
                                 {{ secondaryMoney(hold.total) }}
                             </div>
+                            <!-- Fuera del total a propósito: el depósito no
+                                 es parte de la cuenta, se cobra al llegar y
+                                 regresa al salir. -->
+                            <div
+                                v-if="guarantee"
+                                class="mt-2 flex items-start gap-1.5 border-t border-slate-200 pt-2 text-[11px] leading-relaxed text-slate-500"
+                            >
+                                <Lucide
+                                    icon="ShieldCheck"
+                                    class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                                />
+                                <span>
+                                    Aparte del total, al llegar se cobra un
+                                    depósito en garantía de
+                                    {{ money(guarantee.amount) }} por
+                                    habitación, que se te devuelve al
+                                    registrar tu salida.
+                                </span>
+                            </div>
                         </div>
                         <p
                             v-if="holdCountdown && !payLater"
@@ -2925,7 +2976,10 @@ async function copyCode() {
                         <p
                             class="mx-auto mt-3 flex max-w-xs items-center justify-center gap-1.5 text-xs text-slate-500"
                         >
-                            <Lucide icon="IdCard" class="h-3.5 w-3.5 shrink-0" />
+                            <Lucide
+                                icon="IdCard"
+                                class="h-3.5 w-3.5 shrink-0"
+                            />
                             A tu llegada, presenta este código y una
                             identificación oficial.
                         </p>

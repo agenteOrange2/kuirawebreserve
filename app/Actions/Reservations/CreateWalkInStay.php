@@ -151,22 +151,19 @@ class CreateWalkInStay
                 ]);
             }
 
-            // Fianza (depósito en garantía, /ajustes/metodos-pago): monto
-            // fijo del ajuste — NUNCA del cliente — cobrado con método
-            // presencial. No es ingreso: kind 'guarantee' la deja fuera del
-            // folio y de los totales de venta; se devuelve al check-out.
-            $policy = app(\App\Services\ReservationPolicy::class);
-            if (! empty($data['guarantee_method']) && $policy->guaranteeEnabled()) {
-                $stay->payments()->create([
-                    'amount' => $policy->guaranteeAmount(),
-                    'method' => $data['guarantee_method'],
-                    'kind' => \App\Models\Payment::KIND_GUARANTEE,
-                    'notes' => 'Fianza (depósito en garantía) cobrada al registrar la llegada',
-                    'received_by' => $user?->id,
-                    'paid_at' => now(),
-                    'created_at' => now(),
-                ]);
-            }
+            // Fianza (depósito en garantía, /ajustes/metodos-pago): cobrada
+            // con método presencial. No es ingreso: kind 'guarantee' la deja
+            // fuera del folio y de los totales de venta; se devuelve al
+            // check-out. El walk-in es una habitación suelta, así que no hay
+            // escalón que aplicar — si el mostrador ve que vienen por varias,
+            // ajusta el monto a mano y deja el motivo.
+            app(\App\Actions\Payments\ChargeGuarantee::class)->handle(
+                $stay,
+                $data['guarantee_method'] ?? null,
+                $user,
+                isset($data['guarantee_amount']) ? (float) $data['guarantee_amount'] : null,
+                $data['guarantee_reason'] ?? null,
+            );
 
             $this->changeRoomStatus->handle($room, RoomStatus::Occupied->value, $user, [
                 'stay_id' => $stay->id,

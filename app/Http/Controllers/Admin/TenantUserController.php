@@ -28,6 +28,7 @@ class TenantUserController extends Controller
             $data = $request->validate([
                 'name' => ['required', 'string', 'max:255'],
                 'email' => ['required', 'email', 'max:255', 'unique:users,email'],
+                'phone' => ['nullable', 'string', 'max:30'],
                 'password' => ['required', 'string', 'min:8'],
                 'role' => ['required', Rule::in(HotelUserController::assignableRoles())],
             ]);
@@ -42,6 +43,7 @@ class TenantUserController extends Controller
             $user = User::create([
                 'name' => $data['name'],
                 'email' => $data['email'],
+                'phone' => $data['phone'] ?? null,
                 'password' => $data['password'],
             ]);
             $user->assignRole($data['role']);
@@ -58,6 +60,7 @@ class TenantUserController extends Controller
             $data = $request->validate([
                 'name' => ['sometimes', 'required', 'string', 'max:255'],
                 'email' => ['sometimes', 'required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
+                'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
                 'password' => ['nullable', 'string', 'min:8'],
                 'role' => ['sometimes', 'required', Rule::in(HotelUserController::assignableRoles())],
             ]);
@@ -69,7 +72,7 @@ class TenantUserController extends Controller
                 ], 422);
             }
 
-            $user->fill(collect($data)->only(['name', 'email'])->all());
+            $user->fill(collect($data)->only(['name', 'email', 'phone'])->all());
             if (! empty($data['password'])) {
                 $user->password = $data['password'];
             }
@@ -123,11 +126,21 @@ class TenantUserController extends Controller
      */
     protected function serialize(User $user): array
     {
+        $role = $user->getRoleNames()->first();
+        $orden = array_keys(\App\Http\Controllers\Tenant\UsersPageController::ROLE_META);
+
         return [
             'id' => $user->id,
             'name' => $user->name,
             'email' => $user->email,
-            'role' => $user->getRoleNames()->first(),
+            'phone' => $user->phone,
+            'role' => $role,
+            'role_label' => \App\Http\Controllers\Tenant\UsersPageController::ROLE_META[$role]['label'] ?? $role,
+            'rank' => $role ? (array_search($role, $orden, true) ?: 0) : count($orden),
+            'on_shift' => false,
+            'two_factor' => $user->two_factor_confirmed_at !== null,
+            'created_at' => $user->created_at?->format('d/m/Y'),
+            'can_delete' => ! ($role === 'owner' && User::role('owner')->count() <= 1),
         ];
     }
 }

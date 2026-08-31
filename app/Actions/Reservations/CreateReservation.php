@@ -162,6 +162,15 @@ class CreateReservation
                 'created_by' => $user?->id,
             ]);
 
+            // Ficha del vehículo (registro de placas): la reserva guarda placa
+            // y descripción, pero marca, modelo y color viven en `vehicles`.
+            // Se escribe ya y no hasta el check-in porque es cuando se tienen
+            // enfrente los datos; TransitionReservation vuelve a pasar por
+            // aquí con la placa y solo rellena huecos, nunca pisa.
+            if (! empty($data['vehicle_plate'])) {
+                app(\App\Services\VehicleRegistry::class)->resolve($data, $guest);
+            }
+
             // Bitácora: quién aplicó el cupón y cuánto descontó. El diff de
             // atributos de la reserva no lo cuenta con esta claridad.
             if ($coupon !== null) {

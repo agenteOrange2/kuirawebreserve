@@ -4,6 +4,7 @@ import axios from 'axios';
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
+    FormDateTime,
     FormInput,
     FormLabel,
     FormSelect,
@@ -1555,7 +1556,7 @@ function stayLabel(startIso: string, endIso: string): string {
                     </div>
                     <div v-else class="mt-4">
                         <FormLabel>Fecha y hora de llegada</FormLabel>
-                        <FormInput v-model="arriveAt" type="datetime-local" />
+                        <FormDateTime v-model="arriveAt" />
                     </div>
 
                     <Button

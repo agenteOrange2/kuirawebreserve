@@ -128,14 +128,12 @@ watch(
              quien está adentro sin pisar a nadie. -->
         <section
             v-if="upcoming.length"
-            class="rounded-2xl border border-info/20 bg-info/5 p-4 dark:border-info/30 dark:bg-info/10"
+            class="rounded-xl border border-info/20 bg-info/5 p-4 dark:border-info/30 dark:bg-info/10"
         >
-            <h3
-                class="text-base font-semibold text-slate-900 dark:text-slate-100"
-            >
+            <h3 class="text-sm font-medium text-slate-900 dark:text-slate-100">
                 Lo que viene
             </h3>
-            <p class="mt-1 text-sm text-slate-500">
+            <p class="mt-1 text-xs text-slate-500">
                 Reservas vivas para esta habitación.
             </p>
             <div class="mt-3 space-y-2">
@@ -172,16 +170,16 @@ watch(
         </section>
 
         <section
-            class="rounded-2xl border border-slate-200/70 p-4 dark:border-darkmode-400"
+            class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
         >
             <div class="flex items-center justify-between gap-3">
                 <div>
                     <h3
-                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
                     >
                         Quién ha estado aquí
                     </h3>
-                    <p class="mt-1 text-sm text-slate-500">
+                    <p class="mt-1 text-xs text-slate-500">
                         Toca una estancia para ver su cuenta y lo que consumió.
                     </p>
                 </div>
@@ -191,16 +189,16 @@ watch(
                     variant="outline-secondary"
                     class="min-h-10 shrink-0 rounded-[0.5rem]"
                 >
-                    <Lucide icon="History" class="mr-2 h-4 w-4" />
+                    <Lucide icon="History" class="mr-1.5 h-3.5 w-3.5" />
                     Historial completo
                 </Button>
             </div>
 
-            <p v-if="loading && !loaded" class="mt-4 text-sm text-slate-500">
+            <p v-if="loading && !loaded" class="mt-4 text-xs text-slate-500">
                 Leyendo el historial…
             </p>
 
-            <p v-else-if="!stays.length" class="mt-4 text-sm text-slate-500">
+            <p v-else-if="!stays.length" class="mt-4 text-xs text-slate-500">
                 Todavía no hay estancias registradas en esta habitación.
             </p>
 
@@ -291,7 +289,7 @@ watch(
                         v-if="openStayId === stay.id"
                         class="border-t border-slate-200/70 px-3 py-3 dark:border-darkmode-400"
                     >
-                        <p v-if="detailLoading" class="text-sm text-slate-500">
+                        <p v-if="detailLoading" class="text-xs text-slate-500">
                             Abriendo la cuenta…
                         </p>
 
@@ -424,7 +422,7 @@ watch(
                                     !detail.consumption.length &&
                                     !detail.payments.length
                                 "
-                                class="text-sm text-slate-500"
+                                class="text-xs text-slate-500"
                             >
                                 Esta visita no dejó consumos ni pagos
                                 registrados.
@@ -448,14 +446,12 @@ watch(
         </section>
 
         <section
-            class="rounded-2xl border border-slate-200/70 p-4 dark:border-darkmode-400"
+            class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
         >
-            <h3
-                class="text-base font-semibold text-slate-900 dark:text-slate-100"
-            >
+            <h3 class="text-sm font-medium text-slate-900 dark:text-slate-100">
                 Cambios de hoy
             </h3>
-            <p class="mt-1 text-sm text-slate-500">
+            <p class="mt-1 text-xs text-slate-500">
                 Movimientos de estado registrados para esta habitación.
             </p>
 
@@ -483,7 +479,7 @@ watch(
                     </div>
                 </div>
             </div>
-            <p v-else class="mt-4 text-sm text-slate-500">
+            <p v-else class="mt-4 text-xs text-slate-500">
                 Sin cambios registrados hoy.
             </p>
         </section>

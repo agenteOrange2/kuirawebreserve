@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -219,22 +220,20 @@ async function submit(): Promise<boolean> {
 <template>
     <RazeLayout title="Pago por transferencia">
         <div class="mt-2">
-            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
-                 círculo + título + acción a la derecha -->
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Landmark" class="h-7 w-7" />
+                        <Lucide icon="Landmark" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">
+                        <h1 class="text-base font-medium">
                             Pago por transferencia
                         </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Cuentas que se comparten al huésped para pagar por
                             transferencia (anticipos y saldos).
                             <span class="font-medium"
@@ -245,18 +244,15 @@ async function submit(): Promise<boolean> {
                         </p>
                     </div>
                 </div>
-                <Button
-                    as="a"
+                <!-- El volver vive con las acciones, no flotando encima
+                     de la tarjeta. -->
+                <Link
                     :href="route('tenant.payment-methods')"
-                    variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white"
+                    class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
                 >
-                    <Lucide
-                        icon="ArrowLeft"
-                        class="mr-2 h-4 w-4 stroke-[1.3]"
-                    />
-                    Volver a Métodos de pago
-                </Button>
+                    <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                    Métodos de pago
+                </Link>
             </div>
 
             <div class="box box--stacked mt-5 flex flex-col p-5">
@@ -319,8 +315,7 @@ async function submit(): Promise<boolean> {
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            size="sm"
-                            class="shrink-0 rounded-[0.5rem] bg-white"
+                            class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
                             @click="openAccount(index)"
                         >
                             <Lucide
@@ -352,10 +347,10 @@ async function submit(): Promise<boolean> {
                     <Button
                         type="button"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                         @click="openAccount(null)"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                         Agregar cuenta
                     </Button>
                 </div>
@@ -395,8 +390,7 @@ async function submit(): Promise<boolean> {
                             <Button
                                 type="button"
                                 variant="outline-secondary"
-                                size="sm"
-                                class="shrink-0 rounded-[0.5rem] bg-white"
+                                class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
                                 @click="openWhatsapp(index)"
                             >
                                 <Lucide
@@ -424,7 +418,6 @@ async function submit(): Promise<boolean> {
                         v-if="form.transfer_whatsapps.length < 5"
                         type="button"
                         variant="outline-secondary"
-                        size="sm"
                         class="mt-3 rounded-[0.5rem] bg-white"
                         @click="openWhatsapp(null)"
                     >
@@ -466,6 +459,7 @@ async function submit(): Promise<boolean> {
                                 v-model="draft.bank"
                                 type="text"
                                 placeholder="BBVA"
+                                class="h-9 text-xs"
                             />
                         </div>
                         <div>
@@ -474,6 +468,7 @@ async function submit(): Promise<boolean> {
                                 v-model="draft.holder"
                                 type="text"
                                 placeholder="Como aparece en el estado de cuenta"
+                                class="h-9 text-xs"
                             />
                         </div>
                         <div>
@@ -484,6 +479,7 @@ async function submit(): Promise<boolean> {
                                 v-model="draft.clabe"
                                 type="text"
                                 placeholder="18 dígitos"
+                                class="h-9 text-xs"
                             />
                             <FormHelp>
                                 Es lo que se le comparte al huésped para que
@@ -542,7 +538,10 @@ async function submit(): Promise<boolean> {
                     <div class="space-y-3">
                         <div>
                             <label class="mb-1 block text-sm">País</label>
-                            <FormSelect v-model="whatsappDraft.code">
+                            <FormSelect
+                                v-model="whatsappDraft.code"
+                                class="h-9 text-xs"
+                            >
                                 <option value="52">+52 México</option>
                                 <option value="1">+1 EE. UU. / Canadá</option>
                             </FormSelect>
@@ -553,6 +552,7 @@ async function submit(): Promise<boolean> {
                                 v-model="whatsappDraft.number"
                                 type="tel"
                                 placeholder="10 dígitos"
+                                class="h-9 text-xs"
                             />
                             <FormHelp>
                                 Aquí llegan los comprobantes de transferencia:

@@ -548,147 +548,133 @@ const tabs = computed(() => [
     <RazeLayout title="Inventario">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Package" class="h-5 w-5 sm:h-7 sm:w-7" />
+                        <Lucide icon="Package" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">
-                            Inventario
-                        </h1>
-                        <p class="mt-1 text-sm text-slate-500">
-                            {{ property.name }}
+                        <h1 class="text-base font-medium">Inventario</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            {{ property.name }} · lo que se vende en el punto de
+                            venta y los insumos que lo surten.
                         </p>
                     </div>
                 </div>
                 <div
-                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2"
                 >
                     <Button
-                        variant="outline-primary"
-                        class="rounded-[0.5rem] bg-white"
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                         @click="openIngredient(null)"
                     >
-                        <Lucide
-                            icon="Wheat"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
-                        />
-                        Insumo
+                        <Lucide icon="Wheat" class="mr-1.5 h-3.5 w-3.5" />
+                        Nuevo insumo
                     </Button>
                     <Button
                         variant="primary"
-                        class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                         @click="openProduct(null)"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4 stroke-[1.3]" />
-                        Producto
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                        Nuevo producto
                     </Button>
                 </div>
             </div>
 
             <!-- KPIs -->
-            <div class="mt-5 grid auto-rows-fr grid-cols-12 gap-4 sm:gap-5">
+            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
                 <div
-                    class="box box--stacked col-span-6 p-4 sm:col-span-6 sm:p-5 xl:col-span-3"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
                 >
-                    <div class="flex items-center justify-between">
-                        <div
-                            class="flex h-11 w-11 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
-                        >
-                            <Lucide
-                                icon="Wallet"
-                                class="h-5 w-5 text-primary"
-                            />
-                        </div>
-                        <div class="text-2xl font-medium">
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Wallet" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="truncate text-sm font-medium">
                             {{ money(summary.value_cost) }}
                         </div>
-                    </div>
-                    <div class="mt-4 text-sm font-medium">
-                        Valor del inventario
-                    </div>
-                    <div class="mt-1 text-xs text-slate-500">
-                        A costo · vende por {{ money(summary.value_price) }}
+                        <div class="truncate text-xs text-slate-500">
+                            Valor a costo
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Vende por {{ money(summary.value_price) }}
+                        </div>
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-6 p-4 sm:col-span-6 sm:p-5 xl:col-span-3"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
                 >
-                    <div class="flex items-center justify-between">
-                        <div
-                            class="flex h-11 w-11 items-center justify-center rounded-full border border-success/10 bg-success/10"
-                        >
-                            <Lucide
-                                icon="TrendingUp"
-                                class="h-5 w-5 text-success"
-                            />
-                        </div>
-                        <div class="text-2xl font-medium text-success">
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                    >
+                        <Lucide icon="TrendingUp" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="truncate text-sm font-medium text-success">
                             {{ money(summary.potential_margin) }}
                         </div>
-                    </div>
-                    <div class="mt-4 text-sm font-medium">Margen potencial</div>
-                    <div class="mt-1 text-xs text-slate-500">
-                        Si se vende todo el stock
+                        <div class="truncate text-xs text-slate-500">
+                            Margen potencial
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Si se vende todo el stock
+                        </div>
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-6 p-4 sm:col-span-6 sm:p-5 xl:col-span-3"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
                 >
-                    <div class="flex items-center justify-between">
-                        <div
-                            class="flex h-11 w-11 items-center justify-center rounded-full border border-info/10 bg-info/10"
-                        >
-                            <Lucide icon="Package" class="h-5 w-5 text-info" />
-                        </div>
-                        <div class="text-2xl font-medium">
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                    >
+                        <Lucide icon="Package" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
                             {{ summary.products_active }}
                         </div>
-                    </div>
-                    <div class="mt-4 text-sm font-medium">
-                        Productos activos
-                    </div>
-                    <div class="mt-1 text-xs text-slate-500">
-                        {{ summary.ingredients_total }} insumos registrados
+                        <div class="truncate text-xs text-slate-500">
+                            Productos activos
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            {{ summary.ingredients_total }} insumos registrados
+                        </div>
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-6 p-4 sm:col-span-6 sm:p-5 xl:col-span-3"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
                     :class="summary.low_stock ? 'ring-1 ring-danger/30' : ''"
                 >
-                    <div class="flex items-center justify-between">
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
+                        :class="
+                            summary.low_stock
+                                ? 'border-danger/10 bg-danger/10 text-danger'
+                                : 'border-slate-200 bg-slate-100 text-slate-400 dark:bg-darkmode-400'
+                        "
+                    >
+                        <Lucide icon="TriangleAlert" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
                         <div
-                            class="flex h-11 w-11 items-center justify-center rounded-full border"
-                            :class="
-                                summary.low_stock
-                                    ? 'border-danger/10 bg-danger/10'
-                                    : 'border-slate-200 bg-slate-100 dark:bg-darkmode-400'
-                            "
-                        >
-                            <Lucide
-                                icon="TriangleAlert"
-                                class="h-5 w-5"
-                                :class="
-                                    summary.low_stock
-                                        ? 'text-danger'
-                                        : 'text-slate-400'
-                                "
-                            />
-                        </div>
-                        <div
-                            class="text-2xl font-medium"
+                            class="text-sm font-medium"
                             :class="summary.low_stock ? 'text-danger' : ''"
                         >
                             {{ summary.low_stock }}
                         </div>
-                    </div>
-                    <div class="mt-4 text-sm font-medium">Stock bajo</div>
-                    <div class="mt-1 text-xs text-slate-500">
-                        Ítems en o bajo su punto de reorden
+                        <div class="truncate text-xs text-slate-500">
+                            Stock bajo
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            En o bajo su punto de reorden
+                        </div>
                     </div>
                 </div>
             </div>
@@ -696,18 +682,18 @@ const tabs = computed(() => [
             <!-- Alerta de stock bajo -->
             <div
                 v-if="lowStockItems.length"
-                class="box box--stacked mt-5 border-l-4 border-l-danger p-4"
+                class="box box--stacked mt-4 border-l-4 border-l-danger px-4 py-3"
             >
-                <div class="flex flex-wrap items-center gap-2 text-sm">
+                <div class="flex flex-wrap items-center gap-2 text-xs">
                     <Lucide
                         icon="TriangleAlert"
-                        class="h-5 w-5 shrink-0 text-danger"
+                        class="h-4 w-4 shrink-0 text-danger"
                     />
                     <span class="font-medium">Reabastecer pronto:</span>
                     <span
                         v-for="it in lowStockItems"
                         :key="`${it.kind}-${it.id}`"
-                        class="rounded-full bg-danger/10 px-2 py-0.5 text-xs text-danger"
+                        class="rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
                     >
                         {{ it.name }} · {{ it.detail }}
                     </span>
@@ -723,12 +709,12 @@ const tabs = computed(() => [
 
             <!-- Tabs -->
             <div
-                class="mt-6 inline-flex flex-wrap gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
+                class="mt-4 inline-flex flex-wrap gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
             >
                 <button
                     v-for="t in tabs"
                     :key="t.key"
-                    class="flex items-center gap-2 rounded-[0.5rem] px-4 py-2 text-sm font-medium transition"
+                    class="flex items-center gap-1.5 rounded-[0.5rem] px-3 py-1.5 text-xs font-medium transition"
                     :class="
                         tab === t.key
                             ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
@@ -736,9 +722,10 @@ const tabs = computed(() => [
                     "
                     @click="tab = t.key as typeof tab"
                 >
-                    <Lucide :icon="t.icon" class="h-4 w-4" /> {{ t.label }}
+                    <Lucide :icon="t.icon" class="h-3.5 w-3.5" />
+                    {{ t.label }}
                     <span
-                        class="rounded-full px-1.5 py-0.5 text-xs leading-none"
+                        class="rounded-full px-1.5 py-0.5 text-[11px] leading-none"
                         :class="
                             tab === t.key
                                 ? 'bg-primary/10 text-primary'
@@ -754,9 +741,9 @@ const tabs = computed(() => [
                 <!-- Buscador y categoría. Antes eran diez pastillas diminutas
                      en una sola fila: con un catálogo real no se podía ni
                      leer ni atinar en el teléfono. -->
-                <div class="box box--stacked p-4 sm:p-5">
+                <div class="box box--stacked p-4">
                     <div
-                        class="flex flex-col gap-4 lg:flex-row lg:items-center"
+                        class="flex flex-col gap-2.5 lg:flex-row lg:items-center"
                     >
                         <div class="relative min-w-0 flex-1">
                             <Lucide
@@ -766,17 +753,17 @@ const tabs = computed(() => [
                             <FormInput
                                 v-model="search"
                                 type="text"
-                                class="pl-9"
+                                class="h-9 pl-9 text-xs"
                                 placeholder="Buscar producto por nombre, categoría o código"
                             />
                         </div>
                         <div
-                            class="flex flex-col gap-3 sm:flex-row sm:items-center"
+                            class="flex flex-col gap-2.5 sm:flex-row sm:items-center"
                         >
                             <FormSelect
                                 v-if="categories.length"
                                 v-model="categoryFilter"
-                                class="sm:w-56"
+                                class="h-9 text-xs sm:w-56"
                                 aria-label="Filtrar por categoría"
                             >
                                 <option value="">Todas las categorías</option>
@@ -791,17 +778,17 @@ const tabs = computed(() => [
                             <Button
                                 v-if="productFiltersActive"
                                 variant="outline-secondary"
-                                class="rounded-[0.5rem] whitespace-nowrap"
+                                class="h-9 rounded-[0.5rem] bg-white text-xs whitespace-nowrap"
                                 @click="clearProductFilters"
                             >
-                                <Lucide icon="X" class="mr-2 h-4 w-4" />
+                                <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
                                 Limpiar
                             </Button>
                         </div>
                     </div>
                     <p
                         v-if="productFiltersActive"
-                        class="mt-3.5 text-sm text-slate-500"
+                        class="mt-2.5 text-xs text-slate-500"
                     >
                         {{ filteredProducts.length }} de {{ products.length }}
                         {{ products.length === 1 ? 'producto' : 'productos' }}
@@ -1185,7 +1172,7 @@ const tabs = computed(() => [
                     >
                         <Lucide icon="Package" class="h-6 w-6" />
                     </div>
-                    <p class="text-sm text-slate-500">
+                    <p class="text-xs text-slate-500">
                         {{
                             productFiltersActive
                                 ? 'Ningún producto coincide con la búsqueda.'
@@ -1195,19 +1182,17 @@ const tabs = computed(() => [
                     <Button
                         v-if="productFiltersActive"
                         variant="outline-secondary"
-                        size="sm"
-                        class="rounded-[0.5rem]"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                         @click="clearProductFilters"
-                        ><Lucide icon="X" class="mr-1.5 h-4 w-4" /> Limpiar
+                        ><Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" /> Limpiar
                         filtros</Button
                     >
                     <Button
                         v-else
                         variant="outline-primary"
-                        size="sm"
-                        class="rounded-[0.5rem]"
+                        class="h-9 rounded-[0.5rem] text-xs"
                         @click="openProduct(null)"
-                        ><Lucide icon="Plus" class="mr-1.5 h-4 w-4" /> Nuevo
+                        ><Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" /> Nuevo
                         producto</Button
                     >
                 </div>
@@ -1321,17 +1306,16 @@ const tabs = computed(() => [
                         >
                             <Lucide icon="Wheat" class="h-6 w-6" />
                         </div>
-                        <p class="text-sm text-slate-500">
+                        <p class="text-xs text-slate-500">
                             Sin insumos. Ej: pan, carne, mayonesa… (se
                             descuentan solos al vender productos con receta).
                         </p>
                         <Button
                             variant="outline-primary"
-                            size="sm"
-                            class="rounded-[0.5rem]"
+                            class="h-9 rounded-[0.5rem] text-xs"
                             @click="openIngredient(null)"
-                            ><Lucide icon="Plus" class="mr-1.5 h-4 w-4" /> Nuevo
-                            insumo</Button
+                            ><Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                            Nuevo insumo</Button
                         >
                     </div>
                 </div>
@@ -1439,14 +1423,14 @@ const tabs = computed(() => [
                     @submit.prevent="submitProduct"
                 >
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                         >
                             <Lucide
                                 :icon="editingProduct ? 'Pencil' : 'Package'"
-                                class="h-5 w-5"
+                                class="h-4 w-4"
                             />
                         </div>
                         <div class="min-w-0 flex-1">
@@ -1458,7 +1442,8 @@ const tabs = computed(() => [
                                 }}
                             </h2>
                             <p class="mt-0.5 text-xs text-slate-500">
-                                Se venden en el POS
+                                La ficha con la que se vende en el punto de
+                                venta.
                             </p>
                         </div>
                         <button
@@ -1466,238 +1451,262 @@ const tabs = computed(() => [
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                             @click="closeProductModal"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
-                    <div class="flex-1 space-y-4 overflow-y-auto px-6 py-5">
-                        <!-- Foto: lo primero, porque en el POS es lo que el
-                             mostrador busca de un vistazo. -->
+                    <div class="flex-1 space-y-5 overflow-y-auto px-5 py-4">
+                        <!-- Foto: renglón compacto arriba. Antes ocupaba un
+                             tercio del modal y empujaba los campos. -->
                         <div
-                            class="mb-5 flex flex-col gap-4 rounded-xl border border-slate-200/70 p-4 sm:flex-row sm:items-center dark:border-darkmode-400"
+                            class="flex items-center gap-3 rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
                         >
                             <img
                                 v-if="photoUrl"
                                 :src="photoUrl"
                                 alt="Foto del producto"
-                                class="h-24 w-24 shrink-0 self-center rounded-xl object-cover sm:self-auto"
+                                class="h-14 w-14 shrink-0 rounded-lg object-cover"
                             />
                             <span
                                 v-else
-                                class="flex h-24 w-24 shrink-0 items-center justify-center self-center rounded-xl bg-slate-100 text-slate-400 sm:self-auto dark:bg-darkmode-400"
+                                class="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 dark:bg-darkmode-400"
                             >
-                                <Lucide icon="Image" class="h-8 w-8" />
+                                <Lucide icon="Image" class="h-5 w-5" />
                             </span>
                             <div class="min-w-0 flex-1">
-                                <div class="text-sm font-medium">
+                                <div class="text-xs font-medium">
                                     Foto del producto
                                 </div>
-                                <p class="mt-1 text-xs text-slate-500">
-                                    Se muestra en el punto de venta para
-                                    encontrarlo más rápido. JPG, PNG o WebP,
-                                    hasta 6 MB.
+                                <p class="text-[11px] text-slate-500">
+                                    Se muestra en el punto de venta. JPG, PNG o
+                                    WebP, hasta 6 MB.
+                                    <span v-if="photoFile" class="text-primary">
+                                        Se sube al guardar.
+                                    </span>
                                 </p>
-                                <input
-                                    ref="photoInput"
-                                    type="file"
-                                    accept="image/jpeg,image/png,image/webp"
-                                    class="hidden"
-                                    @change="onPhotoPicked"
-                                />
-                                <div class="mt-3 flex flex-wrap gap-2">
-                                    <Button
-                                        type="button"
-                                        variant="outline-secondary"
-                                        class="min-h-11 rounded-[0.5rem] bg-white"
-                                        :disabled="photoBusy"
-                                        @click="photoInput?.click()"
-                                    >
-                                        <Lucide
-                                            icon="ImagePlus"
-                                            class="mr-2 h-4 w-4"
-                                        />
-                                        {{
-                                            photoUrl ? 'Cambiar' : 'Subir foto'
-                                        }}
-                                    </Button>
-                                    <Button
-                                        v-if="photoUrl"
-                                        type="button"
-                                        variant="outline-danger"
-                                        class="min-h-11 rounded-[0.5rem] bg-white"
-                                        :disabled="photoBusy"
-                                        @click="removePhoto"
-                                    >
-                                        <Lucide
-                                            icon="Trash2"
-                                            class="mr-2 h-4 w-4"
-                                        />
-                                        Quitar
-                                    </Button>
-                                </div>
-                                <p
-                                    v-if="photoFile"
-                                    class="mt-2 text-xs text-slate-500"
+                            </div>
+                            <input
+                                ref="photoInput"
+                                type="file"
+                                accept="image/jpeg,image/png,image/webp"
+                                class="hidden"
+                                @change="onPhotoPicked"
+                            />
+                            <div class="flex shrink-0 items-center gap-1.5">
+                                <Button
+                                    type="button"
+                                    variant="outline-secondary"
+                                    class="h-8 rounded-[0.5rem] bg-white text-xs"
+                                    :disabled="photoBusy"
+                                    @click="photoInput?.click()"
                                 >
-                                    La foto se sube al guardar el producto.
-                                </p>
+                                    <Lucide
+                                        icon="ImagePlus"
+                                        class="mr-1.5 h-3.5 w-3.5"
+                                    />
+                                    {{ photoUrl ? 'Cambiar' : 'Subir' }}
+                                </Button>
+                                <button
+                                    v-if="photoUrl"
+                                    type="button"
+                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                    title="Quitar foto"
+                                    :disabled="photoBusy"
+                                    @click="removePhoto"
+                                >
+                                    <Lucide icon="Trash2" class="h-4 w-4" />
+                                </button>
                             </div>
                         </div>
 
-                        <div
-                            class="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2"
-                        >
-                            <div>
-                                <FormLabel htmlFor="p-name">Nombre</FormLabel>
-                                <div class="relative">
-                                    <Lucide
-                                        icon="Package"
-                                        :class="iconInput"
-                                    /><FormInput
-                                        id="p-name"
-                                        v-model="productForm.name"
+                        <section>
+                            <div
+                                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                <Lucide icon="Package" class="h-3.5 w-3.5" />
+                                Qué es
+                            </div>
+                            <div
+                                class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-2"
+                            >
+                                <div>
+                                    <FormLabel htmlFor="p-name"
+                                        >Nombre</FormLabel
+                                    >
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="Package"
+                                            :class="iconInput"
+                                        /><FormInput
+                                            id="p-name"
+                                            v-model="productForm.name"
+                                            type="text"
+                                            class="h-9 pl-9 text-xs"
+                                            placeholder="Hamburguesa"
+                                        />
+                                    </div>
+                                    <FormHelp
+                                        v-if="errors.name"
+                                        class="text-danger"
+                                        >{{ errors.name }}</FormHelp
+                                    >
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="p-category"
+                                        >Categoría</FormLabel
+                                    >
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="Tag"
+                                            :class="iconInput"
+                                        /><FormInput
+                                            id="p-category"
+                                            v-model="productForm.category"
+                                            type="text"
+                                            list="cat-options"
+                                            class="h-9 pl-9 text-xs"
+                                            placeholder="Alimentos"
+                                        />
+                                    </div>
+                                    <datalist id="cat-options">
+                                        <option
+                                            v-for="c in categoryOptions"
+                                            :key="c"
+                                            :value="c"
+                                        />
+                                    </datalist>
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="p-type">Tipo</FormLabel>
+                                    <FormSelect
+                                        id="p-type"
+                                        v-model="productForm.type"
+                                        class="h-9 text-xs"
+                                        ><option value="simple">
+                                            Simple (stock propio)
+                                        </option>
+                                        <option value="composite">
+                                            Compuesto (receta de insumos)
+                                        </option></FormSelect
+                                    >
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="p-unit"
+                                        >Unidad</FormLabel
+                                    >
+                                    <FormInput
+                                        id="p-unit"
+                                        v-model="productForm.unit"
                                         type="text"
-                                        class="pl-9"
-                                        placeholder="Hamburguesa"
+                                        placeholder="pieza / lt / kg"
+                                        class="h-9 text-xs"
                                     />
                                 </div>
-                                <FormHelp
-                                    v-if="errors.name"
-                                    class="text-danger"
-                                    >{{ errors.name }}</FormHelp
-                                >
                             </div>
-                            <div>
-                                <FormLabel htmlFor="p-category"
-                                    >Categoría</FormLabel
-                                >
-                                <div class="relative">
-                                    <Lucide
-                                        icon="Tag"
-                                        :class="iconInput"
-                                    /><FormInput
-                                        id="p-category"
-                                        v-model="productForm.category"
-                                        type="text"
-                                        list="cat-options"
-                                        class="pl-9"
-                                        placeholder="Alimentos"
-                                    />
-                                </div>
-                                <datalist id="cat-options">
-                                    <option
-                                        v-for="c in categoryOptions"
-                                        :key="c"
-                                        :value="c"
-                                    />
-                                </datalist>
-                            </div>
-                            <div>
-                                <FormLabel htmlFor="p-type">Tipo</FormLabel>
-                                <FormSelect
-                                    id="p-type"
-                                    v-model="productForm.type"
-                                    ><option value="simple">
-                                        Simple (stock propio)
-                                    </option>
-                                    <option value="composite">
-                                        Compuesto (receta de insumos)
-                                    </option></FormSelect
-                                >
-                            </div>
-                            <div>
-                                <FormLabel htmlFor="p-unit">Unidad</FormLabel>
-                                <FormInput
-                                    id="p-unit"
-                                    v-model="productForm.unit"
-                                    type="text"
-                                    placeholder="pieza / lt / kg"
-                                />
-                            </div>
-                        </div>
-                        <div
-                            class="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-3"
+                        </section>
+
+                        <section
+                            class="border-t border-dashed border-slate-300/70 pt-4"
                         >
-                            <div>
-                                <FormLabel htmlFor="p-price"
-                                    >Precio de venta</FormLabel
-                                >
-                                <div class="relative">
-                                    <Lucide
-                                        icon="DollarSign"
-                                        :class="iconInput"
-                                    /><FormInput
-                                        id="p-price"
-                                        v-model="productForm.price"
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        class="pl-9"
-                                    />
-                                </div>
-                                <FormHelp
-                                    v-if="errors.price"
-                                    class="text-danger"
-                                    >{{ errors.price }}</FormHelp
-                                >
+                            <div
+                                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                <Lucide icon="Coins" class="h-3.5 w-3.5" />
+                                Precio y control de stock
                             </div>
-                            <div v-if="productForm.type === 'simple'">
-                                <FormLabel htmlFor="p-cost">Costo</FormLabel>
-                                <div class="relative">
-                                    <Lucide
-                                        icon="DollarSign"
-                                        :class="iconInput"
-                                    /><FormInput
-                                        id="p-cost"
-                                        v-model="productForm.cost"
-                                        type="number"
-                                        step="0.01"
-                                        min="0"
-                                        class="pl-9"
-                                    />
+                            <div
+                                class="grid grid-cols-1 gap-x-4 gap-y-3 sm:grid-cols-3"
+                            >
+                                <div>
+                                    <FormLabel htmlFor="p-price"
+                                        >Precio de venta</FormLabel
+                                    >
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="DollarSign"
+                                            :class="iconInput"
+                                        /><FormInput
+                                            id="p-price"
+                                            v-model="productForm.price"
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            class="h-9 pl-9 text-xs"
+                                        />
+                                    </div>
+                                    <FormHelp
+                                        v-if="errors.price"
+                                        class="text-danger"
+                                        >{{ errors.price }}</FormHelp
+                                    >
+                                </div>
+                                <div v-if="productForm.type === 'simple'">
+                                    <FormLabel htmlFor="p-cost"
+                                        >Costo</FormLabel
+                                    >
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="DollarSign"
+                                            :class="iconInput"
+                                        /><FormInput
+                                            id="p-cost"
+                                            v-model="productForm.cost"
+                                            type="number"
+                                            step="0.01"
+                                            min="0"
+                                            class="h-9 pl-9 text-xs"
+                                        />
+                                    </div>
+                                </div>
+                                <div v-if="productForm.type === 'simple'">
+                                    <FormLabel htmlFor="p-reorder"
+                                        >Punto de reorden</FormLabel
+                                    >
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="TriangleAlert"
+                                            :class="iconInput"
+                                        /><FormInput
+                                            id="p-reorder"
+                                            v-model="productForm.reorder_point"
+                                            type="number"
+                                            step="0.001"
+                                            min="0"
+                                            class="h-9 pl-9 text-xs"
+                                            placeholder="—"
+                                        />
+                                    </div>
                                 </div>
                             </div>
-                            <div v-if="productForm.type === 'simple'">
-                                <FormLabel htmlFor="p-reorder"
-                                    >Punto de reorden</FormLabel
-                                >
-                                <div class="relative">
-                                    <Lucide
-                                        icon="TriangleAlert"
-                                        :class="iconInput"
-                                    /><FormInput
-                                        id="p-reorder"
-                                        v-model="productForm.reorder_point"
-                                        type="number"
-                                        step="0.001"
-                                        min="0"
-                                        class="pl-9"
-                                        placeholder="—"
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                        <div
-                            v-if="productForm.type === 'simple'"
-                            class="rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
-                        >
-                            <FormCheck
-                                ><FormCheck.Input
+                            <label
+                                v-if="productForm.type === 'simple'"
+                                class="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
+                            >
+                                <FormCheck.Input
                                     id="p-track"
                                     v-model="productForm.track_stock"
                                     type="checkbox"
-                                /><FormCheck.Label htmlFor="p-track"
-                                    >Controlar existencias de este
-                                    producto</FormCheck.Label
-                                ></FormCheck
-                            >
-                        </div>
+                                    class="mt-0.5"
+                                />
+                                <span class="min-w-0">
+                                    <span class="block text-xs font-medium">
+                                        Controlar existencias de este producto
+                                    </span>
+                                    <span
+                                        class="block text-[11px] text-slate-500"
+                                    >
+                                        Cada venta descuenta del stock y avisa
+                                        al llegar al punto de reorden.
+                                    </span>
+                                </span>
+                            </label>
+                        </section>
 
                         <template v-if="productForm.type === 'composite'">
                             <div
-                                class="flex items-center justify-between border-t border-slate-200/60 pt-4 dark:border-darkmode-400"
+                                class="flex items-center justify-between border-t border-dashed border-slate-300/70 pt-4"
                             >
                                 <div
-                                    class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                    class="flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                                 >
                                     <Lucide
                                         icon="ChefHat"
@@ -1708,12 +1717,16 @@ const tabs = computed(() => [
                                 <Button
                                     type="button"
                                     variant="outline-primary"
-                                    size="sm"
-                                    class="rounded-[0.5rem]"
+                                    class="h-8 rounded-[0.5rem] text-xs"
                                     :disabled="!ingredients.length"
                                     @click="addRecipeRow"
-                                    ><Lucide icon="Plus" class="h-3.5 w-3.5"
-                                /></Button>
+                                >
+                                    <Lucide
+                                        icon="Plus"
+                                        class="mr-1.5 h-3.5 w-3.5"
+                                    />
+                                    Insumo
+                                </Button>
                             </div>
                             <p
                                 v-if="!ingredients.length"
@@ -1729,7 +1742,7 @@ const tabs = computed(() => [
                                 >
                                     <FormSelect
                                         v-model="row.ingredient_id"
-                                        class="flex-1"
+                                        class="h-9 flex-1 text-xs"
                                         ><option
                                             v-for="i in ingredients"
                                             :key="i.id"
@@ -1743,7 +1756,7 @@ const tabs = computed(() => [
                                         type="number"
                                         step="0.001"
                                         min="0.001"
-                                        class="w-24 text-center"
+                                        class="h-9 w-24 text-center text-xs"
                                     />
                                     <button
                                         type="button"
@@ -1766,22 +1779,24 @@ const tabs = computed(() => [
                         </p>
                     </div>
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
                         <Button
                             type="button"
                             variant="outline-secondary"
+                            class="h-9 px-5 text-xs"
                             @click="closeProductModal"
                             >Cancelar</Button
                         >
                         <Button
                             type="submit"
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="h-9 px-5 text-xs shadow-md shadow-primary/20"
                             :disabled="saving"
-                            ><Lucide icon="Check" class="mr-2 h-4 w-4" />
-                            {{ saving ? 'Guardando…' : 'Guardar' }}</Button
                         >
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
+                            {{ saving ? 'Guardando...' : 'Guardar' }}
+                        </Button>
                     </div>
                 </form>
             </Dialog.Panel>
@@ -1796,14 +1811,14 @@ const tabs = computed(() => [
             <Dialog.Panel>
                 <form class="flex flex-col" @submit.prevent="submitIngredient">
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning"
                         >
                             <Lucide
                                 :icon="editingIngredient ? 'Pencil' : 'Wheat'"
-                                class="h-5 w-5"
+                                class="h-4 w-4"
                             />
                         </div>
                         <div class="min-w-0 flex-1">
@@ -1823,10 +1838,10 @@ const tabs = computed(() => [
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                             @click="showIngredient = false"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
-                    <div class="space-y-4 px-6 py-5">
+                    <div class="space-y-4 px-5 py-4">
                         <div
                             class="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-2"
                         >
@@ -1840,7 +1855,7 @@ const tabs = computed(() => [
                                         id="i-name"
                                         v-model="ingredientForm.name"
                                         type="text"
-                                        class="pl-9"
+                                        class="h-9 pl-9 text-xs"
                                         placeholder="Pan"
                                     />
                                 </div>
@@ -1860,7 +1875,7 @@ const tabs = computed(() => [
                                         id="i-unit"
                                         v-model="ingredientForm.unit"
                                         type="text"
-                                        class="pl-9"
+                                        class="h-9 pl-9 text-xs"
                                         placeholder="pieza / kg / lt"
                                     />
                                 </div>
@@ -1879,7 +1894,7 @@ const tabs = computed(() => [
                                         type="number"
                                         step="0.01"
                                         min="0"
-                                        class="pl-9"
+                                        class="h-9 pl-9 text-xs"
                                     />
                                 </div>
                             </div>
@@ -1897,7 +1912,7 @@ const tabs = computed(() => [
                                         type="number"
                                         step="0.001"
                                         min="0"
-                                        class="pl-9"
+                                        class="h-9 pl-9 text-xs"
                                         placeholder="—"
                                     />
                                 </div>
@@ -1911,7 +1926,7 @@ const tabs = computed(() => [
                         </p>
                     </div>
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
                         <Button
                             type="button"
@@ -1945,12 +1960,12 @@ const tabs = computed(() => [
                     @submit.prevent="submitMovement"
                 >
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
                         >
-                            <Lucide icon="PackagePlus" class="h-5 w-5" />
+                            <Lucide icon="PackagePlus" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">
@@ -1967,15 +1982,18 @@ const tabs = computed(() => [
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                             @click="movementTarget = null"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
-                    <div class="space-y-4 px-6 py-5">
+                    <div class="space-y-4 px-5 py-4">
                         <div>
                             <FormLabel htmlFor="m-type"
                                 >Tipo de movimiento</FormLabel
                             >
-                            <FormSelect id="m-type" v-model="movementForm.type"
+                            <FormSelect
+                                id="m-type"
+                                v-model="movementForm.type"
+                                class="h-9 text-xs"
                                 ><option value="purchase">
                                     Compra (entrada)
                                 </option>
@@ -2004,6 +2022,7 @@ const tabs = computed(() => [
                                             ? 'usa − para restar'
                                             : ''
                                     "
+                                    class="h-9 text-xs"
                                 />
                                 <FormHelp
                                     v-if="errors.qty"
@@ -2025,7 +2044,7 @@ const tabs = computed(() => [
                                         type="number"
                                         step="0.01"
                                         min="0"
-                                        class="pl-9"
+                                        class="h-9 pl-9 text-xs"
                                     />
                                 </div>
                             </div>
@@ -2059,6 +2078,7 @@ const tabs = computed(() => [
                                 v-model="movementForm.notes"
                                 type="text"
                                 placeholder="Proveedor, factura, motivo…"
+                                class="h-9 text-xs"
                             />
                         </div>
                         <p
@@ -2069,7 +2089,7 @@ const tabs = computed(() => [
                         </p>
                     </div>
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
                         <Button
                             type="button"
@@ -2096,36 +2116,39 @@ const tabs = computed(() => [
             @close="deletingProduct = null"
         >
             <Dialog.Panel>
-                <div v-if="deletingProduct" class="p-6">
-                    <div class="flex items-start gap-3.5">
+                <div v-if="deletingProduct" class="p-5">
+                    <div class="mb-3 flex items-center gap-3">
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
                         >
-                            <Lucide icon="Trash2" class="h-5 w-5" />
+                            <Lucide icon="Trash2" class="h-5 w-5 text-danger" />
                         </div>
-                        <div>
+                        <div class="min-w-0">
                             <h2 class="text-base font-medium">
                                 ¿Eliminar {{ deletingProduct.name }}?
                             </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
+                            <p class="text-xs text-slate-500">
                                 Si tiene ventas o movimientos, solo se
-                                desactivará (se conserva el historial).
+                                desactivará y se conserva el historial.
                             </p>
                         </div>
                     </div>
-                    <div class="mt-6 flex justify-end gap-2">
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
                             variant="outline-secondary"
+                            class="h-9 px-5 text-xs"
                             @click="deletingProduct = null"
                             >Cancelar</Button
                         >
                         <Button
                             variant="danger"
+                            class="h-9 px-5 text-xs"
                             :disabled="saving"
                             @click="submitDeleteProduct"
-                            ><Lucide icon="Trash2" class="mr-2 h-4 w-4" /> Sí,
-                            eliminar</Button
                         >
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
+                            Sí, eliminar
+                        </Button>
                     </div>
                 </div>
             </Dialog.Panel>

@@ -190,21 +190,10 @@ class GroupReservationController extends Controller
         $preferred = $request->string('method')->toString();
         $preferred = in_array($preferred, ['gateway', 'transfer'], true) ? $preferred : 'gateway';
 
-        $gate = app(\App\Services\Payments\PaymentMethodGate::class);
-        $enabled = $gate->methodsFor((string) tenant('id'));
-
         $link = null;
         if ($preferred === 'gateway') {
-            $link = \App\Models\Central\PaymentGatewayLink::query()
-                ->where('tenant_id', (string) tenant('id'))
-                ->where('active', true)
-                ->whereIn('provider', array_keys(array_filter([
-                    'stripe' => $enabled['stripe'],
-                    'mercadopago' => $enabled['mercadopago'],
-                    'paypal' => $enabled['paypal'],
-                ])))
-                ->orderBy('id')
-                ->first();
+            $link = app(\App\Services\Payments\PaymentMethodGate::class)
+                ->activeGatewayLink((string) tenant('id'));
 
             if (! $link) {
                 return response()->json(['message' => 'No hay pasarela activa; emite el cobro por transferencia o conecta una en Métodos de pago.'], 422);

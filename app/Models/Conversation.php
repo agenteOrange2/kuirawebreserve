@@ -94,6 +94,19 @@ class Conversation extends Model
      * como 5216141234567 desde el webhook. Así el staff ve el código y el
      * estado de pago directo en la bandeja sin preguntar.
      */
+    /**
+     * ¿El identificador del contacto de este canal ES su teléfono? Solo en
+     * WhatsApp. En Messenger/IG/Telegram/TikTok/webchat, contact_phone
+     * guarda el id externo del hilo (PSID/IGSID/chat id): sobrescribirlo
+     * con el teléfono real PARTE la conversación en dos — el webhook ya no
+     * la encuentra y abre otra vacía, y el bot pierde todo el hilo (caso
+     * real cabañas 2026-08-28, RES-2026-0048).
+     */
+    public function phoneIsIdentity(): bool
+    {
+        return in_array($this->channel?->type, ['whatsapp', 'whatsapp_evo'], true);
+    }
+
     public function linkReservationByPhone(): void
     {
         if ($this->reservation_id !== null) {

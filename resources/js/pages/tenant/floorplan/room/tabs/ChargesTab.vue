@@ -3,6 +3,8 @@ import axios from 'axios';
 import { computed, inject, onMounted, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormInput, FormSelect } from '@/components/Base/Form';
+import type { CounterMethod } from '@/composables/useCounterMethods';
+import { useCounterMethods } from '@/composables/useCounterMethods';
 import Lucide from '@/components/Base/Lucide';
 import { FloorPlanKey } from '../../context';
 import { formatMoney } from '../../format';
@@ -79,7 +81,15 @@ const cart = ref<{ product_id: number; qty: number }[]>([]);
 const chargeToRoom = ref(
     roomCreditEnabled.value ? chargeToRoomByDefault.value : false,
 );
-const method = ref<'cash' | 'card' | 'transfer'>('cash');
+// Formas de cobro que acepta la recepción (/ajustes/metodos-pago →
+// Políticas): lo que el hotel no acepta ni se ofrece aquí.
+const {
+    methods: counterMethods,
+    first: firstMethod,
+    coerce: coerceMethod,
+} = useCounterMethods();
+
+const method = ref<CounterMethod>(firstMethod.value);
 const reference = ref('');
 const saving = ref(false);
 const historyOpen = ref(false);
@@ -174,7 +184,9 @@ async function submit() {
             property_id: propertyId,
             stay_id: stay.value.id,
             charge_to_room: chargeToRoom.value,
-            payment_method: chargeToRoom.value ? null : method.value,
+            payment_method: chargeToRoom.value
+                ? null
+                : coerceMethod(method.value),
             payment_reference:
                 !chargeToRoom.value && reference.value ? reference.value : null,
             lines: cart.value,
@@ -231,7 +243,7 @@ onMounted(() => {
 
 <template>
     <div class="h-full">
-        <p v-if="!stay" class="text-sm text-slate-500">
+        <p v-if="!stay" class="text-xs text-slate-500">
             La {{ room.number }} no tiene a nadie adentro: los consumos se
             cargan a una habitación en uso.
         </p>
@@ -258,7 +270,7 @@ onMounted(() => {
                     </FormSelect>
                 </div>
 
-                <p v-if="loading" class="mt-4 text-sm text-slate-500">
+                <p v-if="loading" class="mt-4 text-xs text-slate-500">
                     Cargando catálogo…
                 </p>
 
@@ -320,7 +332,7 @@ onMounted(() => {
 
                     <p
                         v-if="!filtered.length"
-                        class="col-span-full rounded-xl border border-dashed border-slate-300/70 px-4 py-6 text-center text-sm text-slate-500 dark:border-darkmode-400"
+                        class="col-span-full rounded-xl border border-dashed border-slate-300/70 px-4 py-6 text-center text-xs text-slate-500 dark:border-darkmode-400"
                     >
                         Sin productos que coincidan.
                     </p>
@@ -409,13 +421,13 @@ onMounted(() => {
                             }}</span>
                         </div>
                     </div>
-                    <p v-else class="py-6 text-center text-sm text-slate-500">
+                    <p v-else class="py-6 text-center text-xs text-slate-500">
                         Toca un producto de la lista para agregarlo.
                     </p>
                 </div>
 
                 <div
-                    class="mt-3 flex items-baseline justify-between text-lg font-semibold"
+                    class="mt-3 flex items-baseline justify-between text-base font-semibold"
                 >
                     <span>Total</span>
                     <span>{{ formatMoney(total) }}</span>
@@ -457,9 +469,13 @@ onMounted(() => {
 
                 <div v-if="!chargeToRoom" class="mt-3 space-y-2">
                     <FormSelect v-model="method">
-                        <option value="cash">Efectivo</option>
-                        <option value="card">Tarjeta / terminal</option>
-                        <option value="transfer">Transferencia</option>
+                        <option
+                            v-for="m in counterMethods"
+                            :key="m.key"
+                            :value="m.key"
+                        >
+                            {{ m.label }}
+                        </option>
                     </FormSelect>
                     <FormInput
                         v-if="method !== 'cash'"

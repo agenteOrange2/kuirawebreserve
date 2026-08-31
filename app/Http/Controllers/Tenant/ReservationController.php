@@ -50,6 +50,13 @@ class ReservationController extends Controller
             'children' => ['sometimes', 'integer', 'min:0', 'max:20'],
             'vehicle_plate' => ['nullable', 'string', 'max:20'],
             'vehicle_desc' => ['nullable', 'string', 'max:100'],
+            // Ficha del vehículo: la reserva solo guarda placa y descripción,
+            // pero lo estructurado vive en `vehicles` (App\Services\
+            // VehicleRegistry). Sin esto, marca, modelo y color capturados al
+            // reservar se perdían y el check-in creaba la ficha en blanco.
+            'vehicle_brand' => ['nullable', 'string', 'max:40'],
+            'vehicle_model' => ['nullable', 'string', 'max:40'],
+            'vehicle_color' => ['nullable', 'string', 'max:30'],
             'eta' => ['nullable', 'date_format:H:i'],
             'confirmed' => ['sometimes', 'boolean'],
             'source_channel' => ['sometimes', Rule::in(['front_desk', 'phone', 'web', 'whatsapp', 'walk_in'])],
@@ -113,14 +120,25 @@ class ReservationController extends Controller
     public function checkIn(Request $request, Reservation $reservation, TransitionReservation $action): JsonResponse
     {
         // Fianza (depósito en garantía): método presencial con el que el
-        // staff la cobró al registrar la llegada. El monto SIEMPRE sale del
-        // ajuste del hotel (ReservationPolicy), nunca del cliente.
+        // staff la cobró al registrar la llegada. El monto default sale del
+        // ajuste del hotel (ReservationPolicy, con el escalón de la
+        // partida); el mostrador puede ajustarlo, pero ChargeGuarantee le
+        // exige motivo — este endpoint es del panel, no público.
         $data = $request->validate([
             'guarantee_method' => ['nullable', Rule::in(['cash', 'card'])],
+            'guarantee_amount' => ['nullable', 'numeric', 'min:0', 'max:999999'],
+            'guarantee_reason' => ['nullable', 'string', 'max:255'],
         ]);
 
         return $this->transition(
-            fn () => $action->checkIn($reservation, $request->user(), [], $data['guarantee_method'] ?? null),
+            fn () => $action->checkIn(
+                $reservation,
+                $request->user(),
+                [],
+                $data['guarantee_method'] ?? null,
+                isset($data['guarantee_amount']) ? (float) $data['guarantee_amount'] : null,
+                $data['guarantee_reason'] ?? null,
+            ),
             $reservation,
         );
     }
@@ -163,17 +181,29 @@ class ReservationController extends Controller
      */
     public function registerPayment(Request $request, Reservation $reservation, RegisterReservationPayment $action): JsonResponse
     {
+        // Métodos presenciales aceptados por la recepción, dentro de los dos
+        // que este endpoint admite (la transferencia va por su propio flujo).
+        $counterMethods = array_values(array_intersect(
+            ['cash', 'card'],
+            app(\App\Services\ReservationPolicy::class)->counterMethods(),
+        ));
+
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'gt:0'],
             // Solo métodos presenciales verificables al momento: la
             // transferencia NO se registra directo — se genera la solicitud
             // (cobro en línea) y se confirma con su comprobante en /pagos.
             // El check-out (SettleStay) y la verificación usan otras rutas.
-            'method' => ['required', Rule::in(['cash', 'card'])],
+            // ...y de esos dos, los que la recepción acepta de verdad
+            // (/ajustes/metodos-pago → Políticas): un hotel sin terminal no
+            // debe poder registrar un cobro con tarjeta ni por descuido.
+            'method' => ['required', Rule::in($counterMethods)],
             'reference' => ['nullable', 'string', 'max:100'],
             'notes' => ['nullable', 'string', 'max:255'],
         ], [
-            'method.in' => 'La transferencia no se registra directo: genera el cobro en línea y confírmala con su comprobante en Pagos.',
+            'method.in' => in_array('cash', $counterMethods, true) || in_array('card', $counterMethods, true)
+                ? 'La transferencia no se registra directo: genera el cobro en línea y confírmala con su comprobante en Pagos.'
+                : 'La recepción no acepta cobros en efectivo ni con terminal; revísalo en Ajustes, Métodos de pago.',
         ]);
 
         try {
@@ -286,11 +316,15 @@ class ReservationController extends Controller
      */
     public function issuePayment(Request $request, Reservation $reservation, \App\Actions\Payments\IssuePaymentRequest $action): JsonResponse
     {
-        $link = \App\Models\Central\PaymentGatewayLink::query()
-            ->where('tenant_id', (string) tenant('id'))
-            ->where('active', true)
-            ->orderBy('id')
-            ->first();
+        // Puerta única de métodos (PaymentMethodGate): una pasarela
+        // conectada NO basta — plataforma o el propio hotel pueden tener
+        // ese método apagado en /ajustes/metodos-pago. Preguntando aquí
+        // por la fila cruda, el panel emitía links de Stripe a hoteles que
+        // solo cobran por transferencia y mostrador (bug 2026-08-28). Sin
+        // pasarela habilitada, $link queda en null y el cobro sale como
+        // transferencia, que es lo que ese hotel sí puede cobrar.
+        $link = app(\App\Services\Payments\PaymentMethodGate::class)
+            ->activeGatewayLink((string) tenant('id'));
 
         try {
             $paymentRequest = $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user(), $link);

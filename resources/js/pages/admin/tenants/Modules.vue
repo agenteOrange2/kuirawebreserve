@@ -13,6 +13,7 @@ interface ModuleRow {
     label: string;
     description: string;
     available: boolean;
+    group_label: string | null;
     in_plan: boolean;
     in_addon: boolean;
     override: boolean | null;
@@ -49,7 +50,8 @@ const visible = computed(() => {
 
         return (
             mod.label.toLowerCase().includes(term) ||
-            mod.description.toLowerCase().includes(term)
+            mod.description.toLowerCase().includes(term) ||
+            (mod.group_label ?? '').toLowerCase().includes(term)
         );
     });
 });
@@ -211,6 +213,12 @@ function dismissRequest(mod: ModuleRow) {
                                         title="Se puede dejar activo desde ya; su área aparecerá sola cuando esté lista"
                                     >
                                         En desarrollo
+                                    </span>
+                                    <span
+                                        v-if="mod.group_label"
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
+                                    >
+                                        {{ mod.group_label }}
                                     </span>
                                 </div>
                                 <div

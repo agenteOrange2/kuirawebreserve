@@ -82,6 +82,7 @@ class RatePlanController extends Controller
             ],
             'min_advance_value' => ['nullable', 'required_with:min_advance_unit', 'integer', 'min:1', 'max:365'],
             'deposit_percent' => ['nullable', 'numeric', 'min:0.01', 'max:100'],
+            'deposit_amount' => ['nullable', 'numeric', 'min:0.01', 'max:99999999'],
             'payment_due_unit' => [
                 'nullable',
                 'required_with:payment_due_value',
@@ -102,6 +103,13 @@ class RatePlanController extends Controller
             'duration_unit.required_if' => 'Las tarifas por periodo necesitan una unidad de duración.',
             'duration_value.required_if' => 'Las tarifas por periodo necesitan la duración.',
         ]);
+
+        // Anticipo: porcentaje O monto fijo, nunca ambos a la vez.
+        if (! empty($data['deposit_percent']) && ! empty($data['deposit_amount'])) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'deposit_amount' => ['El anticipo se define como porcentaje o como monto fijo, no ambos.'],
+            ]);
+        }
 
         $type = RatePlanType::tryFrom($data['type'] ?? '') ?? $ratePlan?->type;
 
@@ -155,6 +163,7 @@ class RatePlanController extends Controller
             'min_advance_value' => $plan->min_advance_value,
             'min_advance_label' => $plan->minAdvanceLabel(),
             'deposit_percent' => $plan->deposit_percent,
+            'deposit_amount' => $plan->deposit_amount,
             'payment_due_unit' => $plan->payment_due_unit?->value,
             'payment_due_value' => $plan->payment_due_value,
             'payment_due_label' => $plan->paymentDueLabel(),

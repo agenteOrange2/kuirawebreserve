@@ -5,6 +5,7 @@ import { computed, onMounted, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormCheck,
+    FormDate,
     FormHelp,
     FormInput,
     FormLabel,
@@ -102,6 +103,21 @@ const filters = reactive({
     zone: '' as string | number,
     type: '' as string | number,
     status: '',
+});
+
+/**
+ * Cifras del semáforo: se calculan de las habitaciones que ya viajan a la
+ * página, sin pedirle nada más al servidor.
+ */
+const statusCounts = computed(() => {
+    const count = (...statuses: string[]) =>
+        props.rooms.filter((r) => statuses.includes(r.status)).length;
+
+    return {
+        available: count('available'),
+        busy: count('occupied', 'reserved'),
+        pending: count('dirty', 'cleaning', 'maintenance'),
+    };
 });
 
 const statusOptions = computed(() => {
@@ -822,22 +838,17 @@ async function submitDelete() {
     <RazeLayout title="Habitaciones">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide
-                            icon="BedDouble"
-                            class="h-5 w-5 sm:h-7 sm:w-7"
-                        />
+                        <Lucide icon="BedDouble" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">
-                            Habitaciones
-                        </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Habitaciones</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             {{ rooms.length
                             }}<span v-if="maxRooms"> de {{ maxRooms }}</span>
                             habitaciones · {{ property.name }}
@@ -850,36 +861,117 @@ async function submitDelete() {
                 >
                     <Button
                         variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                         title="Crea el tipo, su tarifa y la habitación en un paso"
                         @click="openQuick"
                     >
-                        <Lucide icon="Zap" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Zap" class="mr-1.5 h-3.5 w-3.5" />
                         Alta rápida
                     </Button>
                     <Button
                         variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                         :disabled="!roomTypes.length"
                         title="Crea varias habitaciones de golpe por rango de números"
                         @click="openBulk"
                     >
-                        <Lucide icon="Layers" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Layers" class="mr-1.5 h-3.5 w-3.5" />
                         Alta masiva
                     </Button>
                     <Button
                         variant="primary"
-                        class="col-span-2 md:col-auto"
+                        class="col-span-2 h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20 md:col-auto"
                         :disabled="!roomTypes.length"
                         @click="openCreate"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                         Nueva habitación
                     </Button>
                 </div>
             </div>
 
+            <!-- Semáforo de un vistazo: cuántas se pueden vender ahora y
+                 cuántas están detenidas. -->
+            <div v-if="rooms.length" class="mt-4 grid grid-cols-12 gap-4">
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="BedDouble" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ rooms.length
+                            }}<span
+                                v-if="maxRooms"
+                                class="text-xs font-normal text-slate-400"
+                            >
+                                de {{ maxRooms }}</span
+                            >
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Habitaciones dadas de alta
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                    >
+                        <Lucide icon="CircleCheck" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ statusCounts.available }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Disponibles ahora
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                    >
+                        <Lucide icon="DoorOpen" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ statusCounts.busy }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Ocupadas o reservadas
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
+                    >
+                        <Lucide icon="Wrench" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ statusCounts.pending }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Por limpiar o en mantenimiento
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <div
                 v-if="!roomTypes.length"
-                class="box mt-5 border-l-4 border-l-warning p-5"
+                class="box mt-4 border-l-4 border-l-warning p-4"
             >
                 <p class="text-sm">
                     Antes de crear habitaciones define al menos un
@@ -898,14 +990,14 @@ async function submitDelete() {
                 {{ generalError }}
             </div>
 
-            <div class="box mt-5">
+            <div class="box box--stacked mt-4">
                 <!-- Límite del plan visible (X de Y) -->
                 <div
                     v-if="maxRooms"
-                    class="border-b border-slate-200/60 px-5 pt-4 pb-3.5 dark:border-darkmode-400"
+                    class="border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
                     <div
-                        class="flex flex-wrap items-center justify-between gap-2 text-sm"
+                        class="flex flex-wrap items-center justify-between gap-2 text-xs"
                     >
                         <span class="text-slate-500"
                             >Habitaciones del plan</span
@@ -948,21 +1040,24 @@ async function submitDelete() {
                 <!-- Filtros y búsqueda -->
                 <div
                     v-if="rooms.length"
-                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                 >
                     <div class="relative w-full sm:w-56">
                         <Lucide
                             icon="Search"
-                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
                         />
                         <FormInput
                             v-model="filters.search"
                             type="text"
-                            class="pl-9"
+                            class="h-9 pl-9 text-xs"
                             placeholder="Buscar por número o nombre"
                         />
                     </div>
-                    <FormSelect v-model="filters.zone" class="w-full sm:w-40">
+                    <FormSelect
+                        v-model="filters.zone"
+                        class="h-9 w-full text-xs sm:w-40"
+                    >
                         <option value="">Todas las zonas</option>
                         <option
                             v-for="zone in zones"
@@ -972,7 +1067,10 @@ async function submitDelete() {
                             {{ zone.name }}
                         </option>
                     </FormSelect>
-                    <FormSelect v-model="filters.type" class="w-full sm:w-44">
+                    <FormSelect
+                        v-model="filters.type"
+                        class="h-9 w-full text-xs sm:w-44"
+                    >
                         <option value="">Todos los tipos</option>
                         <option
                             v-for="type in roomTypes"
@@ -982,7 +1080,10 @@ async function submitDelete() {
                             {{ type.name }}
                         </option>
                     </FormSelect>
-                    <FormSelect v-model="filters.status" class="w-full sm:w-40">
+                    <FormSelect
+                        v-model="filters.status"
+                        class="h-9 w-full text-xs sm:w-40"
+                    >
                         <option value="">Todos los estados</option>
                         <option
                             v-for="opt in statusOptions"
@@ -1018,7 +1119,7 @@ async function submitDelete() {
                         </button>
                         <Button
                             variant="danger"
-                            class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                            class="h-8 rounded-[0.5rem] text-xs"
                             @click="bulkDeleteOpen = true"
                         >
                             <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
@@ -1027,7 +1128,7 @@ async function submitDelete() {
                     </template>
                 </div>
 
-                <div class="p-5">
+                <div class="p-4">
                     <!-- Móvil: tarjetas apiladas (la tabla no es responsiva
                          en pantallas chicas — patrón de catalog/Index.vue). -->
                     <div
@@ -3063,10 +3164,9 @@ async function submitDelete() {
                                 <FormLabel htmlFor="block-starts"
                                     >Desde</FormLabel
                                 >
-                                <FormInput
+                                <FormDate
                                     id="block-starts"
                                     v-model="blockForm.starts_at"
-                                    type="date"
                                 />
                                 <FormHelp
                                     v-if="errors.starts_at"
@@ -3078,10 +3178,9 @@ async function submitDelete() {
                                 <FormLabel htmlFor="block-ends"
                                     >Hasta</FormLabel
                                 >
-                                <FormInput
+                                <FormDate
                                     id="block-ends"
                                     v-model="blockForm.ends_at"
-                                    type="date"
                                 />
                                 <FormHelp
                                     v-if="blockRangeInvalid"

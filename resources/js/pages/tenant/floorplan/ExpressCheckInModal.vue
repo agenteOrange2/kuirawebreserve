@@ -10,7 +10,8 @@ import {
 } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
-import type { Icon } from '@/components/Base/Lucide';
+import type { CounterMethod } from '@/composables/useCounterMethods';
+import { useCounterMethods } from '@/composables/useCounterMethods';
 import { useToasts } from '@/composables/useToasts';
 
 /**
@@ -70,6 +71,17 @@ const emit = defineEmits<{
 const toast = useToasts();
 const saving = ref(false);
 
+// Formas de cobro que acepta la recepción (/ajustes/metodos-pago →
+// Políticas): sin terminal en la caseta, "Tarjeta" no se ofrece.
+const {
+    methods: paymentMethods,
+    first: firstMethod,
+    coerce: coerceMethod,
+    subset,
+} = useCounterMethods();
+// La fianza se recibe en la mano: efectivo o terminal, nunca transferencia.
+const guaranteeMethods = subset(['cash', 'card']);
+
 // Snapshot del cuarto: inmune a que el slideover se cierre por debajo.
 const modalRoom = ref<ExpressRoom | null>(null);
 
@@ -98,7 +110,7 @@ const docNumber = ref('');
 const stagedPhotos = ref<StagedPhoto[]>([]);
 const people = ref(1);
 const extraConcepts = ref<string[]>([]);
-const paymentMethod = ref<'cash' | 'card' | 'transfer'>('cash');
+const paymentMethod = ref<CounterMethod>('cash');
 // Quién tiene el dinero en la mano. Con 'encargado' la llegada nace SIN cobro
 // y sin sellar: el acceso se abre ya, y placa, marca, modelo y color se
 // capturan cuando el encargado regrese con el papel.
@@ -112,16 +124,6 @@ const documentTypes: Record<string, string> = {
     licencia: 'Licencia',
     otro: 'Otro documento',
 };
-
-const paymentMethods: {
-    key: 'cash' | 'card' | 'transfer';
-    label: string;
-    icon: Icon;
-}[] = [
-    { key: 'cash', label: 'Efectivo', icon: 'Banknote' },
-    { key: 'card', label: 'Tarjeta', icon: 'CreditCard' },
-    { key: 'transfer', label: 'Transferencia', icon: 'Landmark' },
-];
 
 function clearPhotos() {
     stagedPhotos.value.forEach((photo) => URL.revokeObjectURL(photo.url));
@@ -154,9 +156,11 @@ watch(
         clearPhotos();
         people.value = 1;
         extraConcepts.value = [];
-        paymentMethod.value = 'cash';
+        paymentMethod.value = firstMethod.value;
         paymentReference.value = '';
-        guaranteeMethod.value = 'cash';
+        guaranteeMethod.value = (guaranteeMethods.value[0]?.key ?? 'cash') as
+            | 'cash'
+            | 'card';
         collector.value = props.collectorDefault;
     },
 );
@@ -344,7 +348,7 @@ async function submit() {
             arrival_mode: arrival.value,
             payment_method: laterCapture.value
                 ? undefined
-                : paymentMethod.value,
+                : coerceMethod(paymentMethod.value),
             payment_reference:
                 !laterCapture.value &&
                 paymentMethod.value !== 'cash' &&
@@ -352,7 +356,9 @@ async function submit() {
                     ? paymentReference.value.trim()
                     : undefined,
             guarantee_method:
-                props.guaranteeAmount > 0 ? guaranteeMethod.value : undefined,
+                props.guaranteeAmount > 0 && guaranteeMethods.value.length
+                    ? guaranteeMethod.value
+                    : undefined,
         });
 
         let photosOk = true;
@@ -416,10 +422,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
             <div class="flex max-h-[85vh] flex-col">
                 <!-- Header -->
                 <div
-                    class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    class="flex items-center gap-3.5 border-b border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                     >
                         <Lucide icon="Zap" class="h-5 w-5" />
                     </div>
@@ -434,7 +440,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                     </div>
                     <button
                         type="button"
-                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                         aria-label="Cerrar"
                         @click="emit('close')"
                     >
@@ -443,7 +449,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                 </div>
 
                 <!-- Body -->
-                <div class="flex-1 space-y-6 overflow-y-auto px-5 py-5">
+                <div class="flex-1 space-y-5 overflow-y-auto px-4 py-4">
                     <!-- Tarifa -->
                     <div>
                         <div
@@ -482,7 +488,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                                     >{{ plan.duration_label }}</span
                                 >
                                 <span
-                                    class="mt-1.5 block text-lg leading-none font-semibold"
+                                    class="mt-1.5 block text-base leading-none font-semibold"
                                     >{{ money(plan.price) }}</span
                                 >
                             </button>
@@ -514,7 +520,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                         <div class="grid grid-cols-2 gap-2.5">
                             <button
                                 type="button"
-                                class="rounded-lg border px-3 py-3 text-left transition"
+                                class="rounded-lg border px-3 py-2.5 text-left transition"
                                 :class="
                                     collector === 'caseta'
                                         ? 'border-primary bg-primary/5'
@@ -532,7 +538,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                             </button>
                             <button
                                 type="button"
-                                class="rounded-lg border px-3 py-3 text-left transition"
+                                class="rounded-lg border px-3 py-2.5 text-left transition"
                                 :class="
                                     collector === 'encargado'
                                         ? 'border-primary bg-primary/5'
@@ -622,7 +628,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                                 <FormInput
                                     id="express-plate"
                                     v-model="plate"
-                                    class="h-12 text-center text-lg font-semibold tracking-[0.25em] uppercase"
+                                    class="h-12 text-center text-base font-semibold tracking-[0.25em] uppercase"
                                     placeholder="ABC-123-D"
                                     maxlength="20"
                                 />
@@ -842,7 +848,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                                     <Lucide icon="Minus" class="h-4 w-4" />
                                 </Button>
                                 <span
-                                    class="w-9 text-center text-lg font-semibold"
+                                    class="w-9 text-center text-base font-semibold"
                                     >{{ people }}</span
                                 >
                                 <Button
@@ -900,12 +906,19 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                             <Lucide icon="Banknote" class="h-3.5 w-3.5" />
                             Cobro
                         </div>
-                        <div class="grid grid-cols-3 gap-2.5">
+                        <div
+                            class="grid gap-2.5"
+                            :class="
+                                paymentMethods.length > 2
+                                    ? 'grid-cols-3'
+                                    : 'grid-cols-2'
+                            "
+                        >
                             <button
                                 v-for="method in paymentMethods"
                                 :key="method.key"
                                 type="button"
-                                class="flex flex-col items-center gap-1.5 rounded-lg border py-3 text-sm font-medium transition"
+                                class="flex flex-col items-center gap-1.5 rounded-lg border py-2.5 text-sm font-medium transition"
                                 :class="
                                     paymentMethod === method.key
                                         ? 'border-primary bg-primary/5 text-primary'
@@ -913,7 +926,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                                 "
                                 @click="paymentMethod = method.key"
                             >
-                                <Lucide :icon="method.icon" class="h-5 w-5" />
+                                <Lucide :icon="method.icon" class="h-4 w-4" />
                                 {{ method.label }}
                             </button>
                         </div>
@@ -925,7 +938,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                             maxlength="100"
                         />
                         <div
-                            v-if="guaranteeAmount > 0"
+                            v-if="
+                                guaranteeAmount > 0 && guaranteeMethods.length
+                            "
                             class="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-slate-300/70 px-3.5 py-2.5 text-sm dark:border-darkmode-400"
                         >
                             <span
@@ -941,28 +956,22 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                                 class="ml-auto inline-flex gap-1 rounded-[0.5rem] bg-slate-100/80 p-1 dark:bg-darkmode-700"
                             >
                                 <button
+                                    v-for="method in guaranteeMethods"
+                                    :key="method.key"
                                     type="button"
                                     class="rounded-[0.4rem] px-2.5 py-1 text-xs font-medium transition"
                                     :class="
-                                        guaranteeMethod === 'cash'
+                                        guaranteeMethod === method.key
                                             ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
                                             : 'text-slate-500'
                                     "
-                                    @click="guaranteeMethod = 'cash'"
-                                >
-                                    Efectivo
-                                </button>
-                                <button
-                                    type="button"
-                                    class="rounded-[0.4rem] px-2.5 py-1 text-xs font-medium transition"
-                                    :class="
-                                        guaranteeMethod === 'card'
-                                            ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
-                                            : 'text-slate-500'
+                                    @click="
+                                        guaranteeMethod = method.key as
+                                            | 'cash'
+                                            | 'card'
                                     "
-                                    @click="guaranteeMethod = 'card'"
                                 >
-                                    Tarjeta
+                                    {{ method.label }}
                                 </button>
                             </div>
                         </div>
@@ -974,7 +983,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                      verdad ahí y en una sola fila la leyenda quedaba en una
                      columna de tres palabras al lado del botón. -->
                 <div
-                    class="flex flex-col gap-3 border-t border-slate-200/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between dark:border-darkmode-400"
+                    class="flex flex-col gap-3 border-t border-slate-200/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-darkmode-400"
                 >
                     <div class="text-xs text-slate-500">
                         <span class="block">{{
@@ -990,13 +999,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                     <Button
                         v-if="ratePlanId"
                         variant="primary"
-                        class="min-h-11 shrink-0 rounded-[0.5rem] shadow-md shadow-primary/20"
+                        class="min-h-10 shrink-0 rounded-[0.5rem] shadow-md shadow-primary/20"
                         :disabled="!canSubmit"
                         @click="submit"
                     >
                         <Lucide
                             :icon="laterCapture ? 'DoorOpen' : 'Zap'"
-                            class="mr-2 h-4 w-4"
+                            class="mr-1.5 h-3.5 w-3.5"
                         />
                         {{
                             saving
@@ -1009,10 +1018,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                     <Button
                         v-else
                         variant="outline-secondary"
-                        class="min-h-11 shrink-0 rounded-[0.5rem]"
+                        class="min-h-10 shrink-0 rounded-[0.5rem] text-xs"
                         disabled
                     >
-                        <Lucide icon="TriangleAlert" class="mr-2 h-4 w-4" />
+                        <Lucide
+                            icon="TriangleAlert"
+                            class="mr-1.5 h-3.5 w-3.5"
+                        />
                         Sin tarifa activa
                     </Button>
                 </div>

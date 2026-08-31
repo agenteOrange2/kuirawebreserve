@@ -56,10 +56,10 @@ defineEmits<{
     <Dialog :open="open" size="lg" @close="$emit('close')">
         <Dialog.Panel>
             <div
-                class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                 >
                     <Lucide
                         icon="SlidersHorizontal"
@@ -84,7 +84,7 @@ defineEmits<{
                 </button>
             </div>
 
-            <div class="max-h-[70vh] space-y-5 overflow-y-auto px-6 py-5">
+            <div class="max-h-[70vh] space-y-5 overflow-y-auto px-5 py-4">
                 <div v-if="zones.length > 1">
                     <FormLabel>Ir a una zona</FormLabel>
                     <p class="mb-2.5 text-xs text-slate-500">
@@ -184,7 +184,7 @@ defineEmits<{
             </div>
 
             <div
-                class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
             >
                 <Button
                     v-if="filtersActive"
@@ -192,7 +192,7 @@ defineEmits<{
                     class="rounded-[0.5rem]"
                     @click="$emit('clear')"
                 >
-                    <Lucide icon="X" class="mr-2 h-4 w-4" />
+                    <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
                     Limpiar
                 </Button>
                 <Button

@@ -10,8 +10,11 @@ use App\Models\SocialComment;
  * `properties.settings['social']` — mismo patrón que agent_instructions, sin
  * tabla propia porque son una decena de banderas por hotel.
  *
- * La regla dura NO es configurable: las quejas jamás se responden solas
- * (spec §4.6). Aquí solo se decide qué tanto participa la IA en lo demás.
+ * La regla dura NO es configurable: en una queja el bot jamás inicia el
+ * mensaje privado ni deja que la IA redacte (spec §4.6). Lo único que el
+ * hotel puede activar es una respuesta pública de PLANTILLA fija (texto
+ * pre-aprobado, estilo "lamentamos tu experiencia, escríbenos por privado")
+ * — y aun así el comentario queda pendiente para que conteste una persona.
  */
 class SocialSettings
 {
@@ -28,10 +31,11 @@ class SocialSettings
             'plantilla' => 'Gracias por escribirnos, te respondemos por mensaje privado.',
         ],
         SocialComment::CLASS_COMPLAINT => [
-            // Nunca automático: la respuesta a una queja la escribe una persona.
+            // Apagado por default; al activarlo solo se publica la plantilla
+            // (la IA nunca redacta una queja) y el privado sigue vetado.
             'responder_publico' => false,
             'mandar_privado' => false,
-            'plantilla' => '',
+            'plantilla' => 'Hola [Nombre], lamentamos que tu experiencia no haya sido la esperada. Nos gustaría escucharte por mensaje privado para revisar lo sucedido y mejorar. Gracias por decírnoslo.',
         ],
         SocialComment::CLASS_PRAISE => [
             'responder_publico' => true,
@@ -71,9 +75,11 @@ class SocialSettings
             ];
         }
 
-        // La queja no se responde sola pase lo que pase (ni con ajustes
-        // viejos guardados antes de esta regla).
-        $classes[SocialComment::CLASS_COMPLAINT]['responder_publico'] = false;
+        // El privado en quejas no se abre solo pase lo que pase (ni con
+        // ajustes viejos): si el huésped está molesto, escribirle por
+        // privado sin que él lo pida empeora. La respuesta pública SÍ es
+        // configurable, pero solo con plantilla (SocialResponder no deja
+        // que la IA redacte en quejas).
         $classes[SocialComment::CLASS_COMPLAINT]['mandar_privado'] = false;
 
         return [
@@ -111,6 +117,20 @@ class SocialSettings
     public function template(string $classification): string
     {
         return (string) ($this->all()['clasificaciones'][$classification]['plantilla'] ?? '');
+    }
+
+    /**
+     * Sustituye el placeholder [Nombre] de una plantilla por el nombre de
+     * quien comenta. Sin nombre (Instagram a veces no lo da), el hueco se
+     * limpia para que no quede "Hola ," publicado.
+     */
+    public static function personalize(string $text, ?string $name): string
+    {
+        $out = str_ireplace('[nombre]', trim((string) $name), $text);
+        $out = preg_replace('/\s+([,;:.!?])/u', '$1', $out) ?? $out;
+        $out = preg_replace('/ {2,}/', ' ', $out) ?? $out;
+
+        return trim($out);
     }
 
     /**

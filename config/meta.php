@@ -35,5 +35,10 @@ return [
     // suscribir el webhook (verificación GET con hub.challenge).
     'verify_token' => env('META_VERIFY_TOKEN', 'kuira-meta-webhook'),
 
+    // Registro incrustado (Embedded Signup): id de la "Configuración" del
+    // producto "Inicio de sesión con Facebook para empresas" en la app.
+    // Sin él, el panel del hotel solo ofrece el alta manual por token.
+    'login_config_id' => env('META_LOGIN_CONFIG_ID'),
+
     'graph_url' => env('META_GRAPH_URL', 'https://graph.facebook.com/v21.0'),
 ];

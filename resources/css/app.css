@@ -145,6 +145,62 @@
 
 /*
  |--------------------------------------------------------------------------
+ | Calendario del panel (FormDate: Litepicker en popup). Va antes del bloque
+ | del wizard a propósito: aquel usa selectores más específicos
+ | (.booking-datepicker .litepicker) y sigue mandando en /reservar.
+ | El popup se cuelga de <body>, por eso no se puede alcanzar con una clase
+ | del componente.
+ |--------------------------------------------------------------------------
+ */
+.litepicker {
+    font-family: inherit;
+    --litepicker-is-start-color-bg: var(--color-primary);
+    --litepicker-is-end-color-bg: var(--color-primary);
+    --litepicker-is-today-color: var(--color-primary);
+    --litepicker-day-color-hover: var(--color-primary);
+    --litepicker-button-prev-month-color-hover: var(--color-primary);
+    --litepicker-button-next-month-color-hover: var(--color-primary);
+    --litepicker-container-months-box-shadow-color: rgb(226 232 240);
+}
+.litepicker .container__months {
+    border-radius: 0.6rem;
+}
+.litepicker .container__months .month-item-header select {
+    /* Los combos de mes y año traen encima el reset de Tailwind; sin esto se
+       ven como texto pelón. Se pintan como los FormSelect del theme. El
+       padding va con !important porque litepicker le pone padding:0 al año
+       desde su propia hoja. */
+    border-radius: 0.375rem;
+    border: 1px solid rgb(226 232 240);
+    padding: 0.125rem 1.75rem 0.125rem 0.5rem !important;
+    font-size: 0.875rem;
+    background-color: transparent;
+    background-image: var(--background-image-chevron-black);
+    background-repeat: no-repeat;
+    background-position: right 0.4rem center;
+    background-size: 1rem;
+}
+.dark .litepicker,
+.litepicker--dark {
+    --litepicker-container-months-color-bg: var(--color-darkmode-600);
+    --litepicker-container-months-box-shadow-color: var(--color-darkmode-400);
+    --litepicker-month-header-color: var(--color-slate-200);
+    --litepicker-month-weekday-color: var(--color-slate-500);
+    --litepicker-day-color: var(--color-slate-300);
+    --litepicker-is-locked-color: var(--color-darkmode-300);
+    --litepicker-button-prev-month-color: var(--color-slate-400);
+    --litepicker-button-next-month-color: var(--color-slate-400);
+}
+.dark .litepicker .container__months .month-item-header select,
+.litepicker--dark .container__months .month-item-header select {
+    background-color: var(--color-darkmode-800);
+    background-image: var(--background-image-chevron-white);
+    border-color: transparent;
+    color: var(--color-slate-200);
+}
+
+/*
+ |--------------------------------------------------------------------------
  | Calendario del wizard (Litepicker inline, paso 1 de /reservar).
  | Toma el acento del hotel gratis: --color-primary la pisa
  | useWizardAppearance en el div raíz. El bloque .booking-dark de abajo

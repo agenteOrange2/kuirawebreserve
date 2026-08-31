@@ -97,12 +97,33 @@ class ActivityLogPageController extends ReservationsPageController
         return [
             'id' => (string) $activity->id,
             'at' => $activity->created_at?->format('d/m/Y H:i'),
+            // La bitácora se lee por días: la fecha agrupa y la hora va en
+            // el renglón, en vez de repetir "24/08/2026 14:32" en cada uno.
+            'date' => $activity->created_at?->format('d/m/Y'),
+            'time' => $activity->created_at?->format('H:i'),
+            'day_label' => $this->dayLabel($activity),
             'by' => $activity->causer?->name ?? 'Sistema',
             'type' => $this->typeKeyFor($activity),
             'type_label' => $this->typeLabelFor($activity),
             'subject' => $this->subjectLabelFor($activity),
             'message' => $this->activityMessage($activity, $old, $attributes),
         ];
+    }
+
+    /** "Hoy", "Ayer" o "lunes 25 de agosto" para el encabezado del día. */
+    protected function dayLabel(Activity $activity): string
+    {
+        $at = $activity->created_at;
+
+        if ($at === null) {
+            return 'Sin fecha';
+        }
+
+        return match (true) {
+            $at->isToday() => 'Hoy',
+            $at->isYesterday() => 'Ayer',
+            default => ucfirst($at->translatedFormat('l j \d\e F')),
+        };
     }
 
     protected function typeKeyFor(Activity $activity): string

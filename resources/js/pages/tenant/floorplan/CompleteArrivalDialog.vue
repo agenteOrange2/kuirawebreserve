@@ -4,6 +4,8 @@ import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormInput, FormSelect } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
+import type { CounterMethod } from '@/composables/useCounterMethods';
+import { useCounterMethods } from '@/composables/useCounterMethods';
 import Lucide from '@/components/Base/Lucide';
 import { formatMoney } from './format';
 import type { RoomData } from './types';
@@ -46,9 +48,17 @@ const guestName = ref('');
 const docType = ref('ine');
 const docNumber = ref('');
 const collected = ref(true);
-const method = ref<'cash' | 'card' | 'transfer'>('cash');
+const method = ref<CounterMethod>('cash');
 const reference = ref('');
 const saving = ref(false);
+
+// Formas de cobro que acepta la recepción (/ajustes/metodos-pago →
+// Políticas): lo que el hotel no acepta ni se ofrece aquí.
+const {
+    methods: counterMethods,
+    first: firstMethod,
+    coerce: coerceMethod,
+} = useCounterMethods();
 
 const documentTypes: Record<string, string> = {
     ine: 'INE',
@@ -77,7 +87,7 @@ watch(
         docType.value = 'ine';
         docNumber.value = '';
         collected.value = props.pending > 0;
-        method.value = 'cash';
+        method.value = firstMethod.value;
         reference.value = '';
     },
 );
@@ -149,10 +159,10 @@ async function submit(sinDatos = false) {
     <Dialog :open="open" size="lg" @close="emit('close')">
         <Dialog.Panel v-if="room">
             <div
-                class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                 >
                     <Lucide icon="ClipboardPen" class="h-5 w-5 text-primary" />
                 </div>
@@ -166,7 +176,7 @@ async function submit(sinDatos = false) {
                 </div>
             </div>
 
-            <div class="space-y-5 px-6 py-5">
+            <div class="space-y-5 px-5 py-4">
                 <!-- Lo que ya eligió la caseta, como dato, no como pregunta. -->
                 <div
                     v-if="!askArrival"
@@ -234,7 +244,7 @@ async function submit(sinDatos = false) {
                             v-model="plate"
                             type="text"
                             maxlength="20"
-                            class="mt-1 text-center text-lg font-semibold tracking-[0.2em] uppercase"
+                            class="mt-1 text-center text-base font-semibold tracking-[0.2em] uppercase"
                             placeholder="ABC-123-D"
                         />
                     </div>
@@ -357,9 +367,13 @@ async function submit(sinDatos = false) {
 
                     <div v-if="collected" class="mt-3 space-y-2">
                         <FormSelect v-model="method">
-                            <option value="cash">Efectivo</option>
-                            <option value="card">Tarjeta / terminal</option>
-                            <option value="transfer">Transferencia</option>
+                            <option
+                                v-for="m in counterMethods"
+                                :key="m.key"
+                                :value="m.key"
+                            >
+                                {{ m.label }}
+                            </option>
                         </FormSelect>
                         <FormInput
                             v-if="method !== 'cash'"
@@ -377,11 +391,11 @@ async function submit(sinDatos = false) {
             </div>
 
             <div
-                class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
             >
                 <Button
                     variant="outline-secondary"
-                    class="min-h-11 rounded-[0.5rem]"
+                    class="min-h-11 rounded-[0.5rem] text-xs"
                     :disabled="saving"
                     title="Sella el registro dejando constancia de que no hubo datos"
                     @click="submit(true)"
@@ -390,7 +404,7 @@ async function submit(sinDatos = false) {
                 </Button>
                 <Button
                     variant="primary"
-                    class="min-h-11 rounded-[0.5rem]"
+                    class="min-h-11 rounded-[0.5rem] text-xs"
                     :disabled="saving"
                     @click="submit(false)"
                 >

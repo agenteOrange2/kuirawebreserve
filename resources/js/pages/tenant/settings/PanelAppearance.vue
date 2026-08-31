@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -169,22 +170,20 @@ function resetTheme() {
 <template>
     <RazeLayout title="Apariencia del panel">
         <div class="mt-2">
-            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
-                 círculo + título + acción a la derecha -->
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Palette" class="h-7 w-7" />
+                        <Lucide icon="Palette" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">
+                        <h1 class="text-base font-medium">
                             Apariencia del panel
                         </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Los colores de este panel para
                             {{ property.name }}: el menú lateral y el color de
                             botones y acentos. Aplica a todo tu equipo; el
@@ -192,26 +191,27 @@ function resetTheme() {
                         </p>
                     </div>
                 </div>
-                <Button
-                    as="a"
-                    :href="route('tenant.general-settings')"
-                    variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white"
+                <div
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
                 >
-                    <Lucide
-                        icon="ArrowLeft"
-                        class="mr-2 h-4 w-4 stroke-[1.3]"
-                    />
-                    Volver a Datos generales
-                </Button>
+                    <!-- El volver vive con las acciones, no flotando
+                         encima de la tarjeta. -->
+                    <Link
+                        :href="route('tenant.general-settings')"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
+                    >
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                        Datos generales
+                    </Link>
+                </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 gap-6">
+            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
                 <!-- Temas listos + colores personalizados -->
                 <div class="col-span-12 xl:col-span-7">
                     <div class="box box--stacked p-5">
                         <div
-                            class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                         >
                             <Lucide icon="SwatchBook" class="h-3.5 w-3.5" />
                             Temas listos
@@ -259,7 +259,7 @@ function resetTheme() {
                             class="mt-5 border-t border-dashed border-slate-300/70 pt-4 dark:border-darkmode-400"
                         >
                             <div
-                                class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                             >
                                 <Lucide icon="Pipette" class="h-3.5 w-3.5" />
                                 Colores personalizados
@@ -270,7 +270,7 @@ function resetTheme() {
                             </p>
                             <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
                                 <div>
-                                    <label class="mb-1 block text-sm"
+                                    <label class="mb-1 block text-xs"
                                         >Botones y acentos</label
                                     >
                                     <div class="flex items-center gap-2">
@@ -286,7 +286,7 @@ function resetTheme() {
                                     </div>
                                 </div>
                                 <div>
-                                    <label class="mb-1 block text-sm"
+                                    <label class="mb-1 block text-xs"
                                         >Menú lateral (arriba)</label
                                     >
                                     <div class="flex items-center gap-2">
@@ -302,7 +302,7 @@ function resetTheme() {
                                     </div>
                                 </div>
                                 <div>
-                                    <label class="mb-1 block text-sm"
+                                    <label class="mb-1 block text-xs"
                                         >Menú lateral (abajo)</label
                                     >
                                     <div class="flex items-center gap-2">
@@ -329,7 +329,7 @@ function resetTheme() {
                             <Button
                                 type="button"
                                 variant="outline-secondary"
-                                class="rounded-[0.5rem] bg-white"
+                                class="h-9 rounded-[0.5rem] bg-white text-xs"
                                 :disabled="saving || isDefaultTheme"
                                 title="Borra los colores del hotel y regresa al tema Kuira"
                                 @click="resetTheme"
@@ -340,12 +340,17 @@ function resetTheme() {
                             <Button
                                 type="button"
                                 variant="primary"
-                                class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                                class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                                 :disabled="saving"
                                 @click="submit"
                             >
-                                <Lucide icon="Check" class="mr-2 h-4 w-4" />
-                                {{ saving ? 'Guardando…' : 'Guardar apariencia' }}
+                                <Lucide
+                                    icon="Check"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                {{
+                                    saving ? 'Guardando…' : 'Guardar apariencia'
+                                }}
                             </Button>
                         </div>
                     </div>
@@ -355,7 +360,7 @@ function resetTheme() {
                 <div class="col-span-12 flex flex-col xl:col-span-5">
                     <div class="box box--stacked flex flex-1 flex-col p-5">
                         <div
-                            class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                         >
                             <Lucide icon="Eye" class="h-3.5 w-3.5" /> Vista
                             previa

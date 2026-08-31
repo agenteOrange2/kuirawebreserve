@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -121,50 +122,49 @@ async function deleteFaq() {
     <RazeLayout title="Preguntas frecuentes">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="MessageCircleQuestion" class="h-7 w-7" />
+                        <Lucide icon="MessageCircleQuestion" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">
+                        <h1 class="text-base font-medium">
                             Preguntas frecuentes
                         </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Respuestas puntuales que el asistente usará tal cual
                             cuando el huésped pregunte algo parecido.
                         </p>
                     </div>
                 </div>
-                <div class="flex flex-wrap items-center gap-2">
-                    <Button
-                        as="a"
+                <div
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
+                >
+                    <!-- El volver vive con las acciones, no flotando encima
+                         de la tarjeta. -->
+                    <Link
                         :href="route('tenant.general-settings')"
-                        variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
                     >
-                        <Lucide
-                            icon="ArrowLeft"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
-                        />
-                        Volver
-                    </Button>
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                        Datos generales
+                    </Link>
                     <Button
                         variant="primary"
-                        class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                         @click="openFaqModal()"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                         Agregar pregunta
                     </Button>
                 </div>
             </div>
 
-            <div class="box box--stacked mt-5">
-                <div class="p-5">
+            <div class="box box--stacked mt-4">
+                <div class="p-4">
                     <div
                         v-if="faqs.length"
                         class="flex flex-col divide-y divide-dashed divide-slate-300/70"
@@ -172,7 +172,7 @@ async function deleteFaq() {
                         <div
                             v-for="faq in faqs"
                             :key="faq.id"
-                            class="flex items-start gap-4 py-3.5 first:pt-0 last:pb-0"
+                            class="flex items-start gap-3 py-3 first:pt-0 last:pb-0"
                         >
                             <div
                                 class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
@@ -255,7 +255,7 @@ async function deleteFaq() {
         <!-- Modal: agregar / editar FAQ -->
         <Dialog :open="faqModal" @close="faqModal = false">
             <Dialog.Panel>
-                <div class="p-5">
+                <div class="p-4">
                     <div class="mb-4 flex items-center gap-3">
                         <div
                             class="flex h-10 w-10 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
@@ -266,7 +266,7 @@ async function deleteFaq() {
                             />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 {{
                                     faqEditing
                                         ? 'Editar pregunta'
@@ -281,11 +281,12 @@ async function deleteFaq() {
                     </div>
                     <form class="space-y-4" @submit.prevent="submitFaq">
                         <div>
-                            <label class="mb-1 block text-sm">Pregunta</label>
+                            <label class="mb-1 block text-xs">Pregunta</label>
                             <FormInput
                                 v-model="faqForm.question"
                                 type="text"
                                 placeholder="¿El hotel tiene alberca?"
+                                class="h-9 text-xs"
                             />
                             <FormHelp
                                 v-if="faqErrors.question"
@@ -294,7 +295,7 @@ async function deleteFaq() {
                             >
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm">Respuesta</label>
+                            <label class="mb-1 block text-xs">Respuesta</label>
                             <FormTextarea
                                 v-model="faqForm.answer"
                                 rows="4"
@@ -340,7 +341,7 @@ async function deleteFaq() {
                         icon="AlertTriangle"
                         class="mx-auto mb-3 h-12 w-12 text-danger"
                     />
-                    <h2 class="text-base font-medium">
+                    <h2 class="text-sm font-medium">
                         ¿Eliminar esta pregunta?
                     </h2>
                     <p class="mt-2 text-sm text-slate-500">

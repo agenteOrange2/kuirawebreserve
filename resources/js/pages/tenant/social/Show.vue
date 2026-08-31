@@ -3,7 +3,7 @@ import { router } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormSelect, FormTextarea } from '@/components/Base/Form';
-import { Dialog } from '@/components/Base/Headless';
+import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
@@ -79,6 +79,73 @@ const statusTone: Record<string, string> = {
 
 const toneClass = (tone: string) => tones[tone] ?? tones.dark;
 
+const initial = (name: string | null) =>
+    (name ?? 'U').trim().charAt(0).toUpperCase() || 'U';
+
+// La imagen no se pudo recuperar (video sin miniatura, publicación borrada):
+// se quita la columna en vez de dejar el icono roto del navegador.
+const imageBroken = ref(false);
+
+const escapeHtml = (value: string) =>
+    value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+
+// El texto viene tal cual de la red social: se escapa TODO y solo después se
+// insertan las ligas y los hashtags, para poder usar v-html sin abrir la
+// puerta a HTML ajeno.
+const formattedMessage = computed(() => {
+    let text = escapeHtml((props.post.message || props.post.excerpt).trim());
+
+    text = text.replace(
+        /(https?:\/\/[^\s<]+)/g,
+        '<a href="$1" target="_blank" rel="noopener" class="break-all text-primary underline decoration-primary/40 underline-offset-2">$1</a>',
+    );
+
+    return text.replace(
+        /(^|\s)(#[\p{L}\p{N}_]+)/gu,
+        '$1<span class="font-medium text-primary">$2</span>',
+    );
+});
+
+const cards = computed(() => [
+    {
+        label: 'Comentarios',
+        value: props.stats.total,
+        icon: 'MessageSquareText' as const,
+        tone: 'primary',
+    },
+    {
+        label: 'Por atender',
+        value: props.stats.pendientes,
+        icon: 'TriangleAlert' as const,
+        tone: 'warning',
+    },
+    {
+        label: 'Con interés de compra',
+        value: props.stats.compras,
+        icon: 'Sparkles' as const,
+        tone: 'success',
+    },
+    {
+        label: 'Conversaciones abiertas',
+        value: props.stats.conversaciones,
+        icon: 'MessagesSquare' as const,
+        tone: 'info',
+    },
+]);
+
+// Bordes de la tira de resumen: 2x2 en móvil, 1x4 desde lg.
+const cellBorders = [
+    '',
+    'border-l',
+    'border-t lg:border-l lg:border-t-0',
+    'border-l border-t lg:border-t-0',
+];
+
 // ── Filtro de la lista ──
 const filter = ref<string>('todos');
 
@@ -121,7 +188,10 @@ function sendReply() {
 }
 
 function sendPrivate() {
-    submit('tenant.social.comments.private', () => (privateDialog.value = false));
+    submit(
+        'tenant.social.comments.private',
+        () => (privateDialog.value = false),
+    );
 }
 
 function submit(routeName: string, close: () => void) {
@@ -141,6 +211,7 @@ function submit(routeName: string, close: () => void) {
 }
 
 function toggleHidden(comment: Comment) {
+    if (busy.value) return;
     busy.value = true;
     router.patch(
         route('tenant.social.comments.hide', comment.id),
@@ -150,6 +221,7 @@ function toggleHidden(comment: Comment) {
 }
 
 function rerun(comment: Comment) {
+    if (busy.value) return;
     busy.value = true;
     router.post(
         route('tenant.social.comments.rerun', comment.id),
@@ -162,56 +234,40 @@ function rerun(comment: Comment) {
 <template>
     <RazeLayout title="Publicación">
         <div class="mt-2 grid grid-cols-12 gap-5">
-            <!-- Encabezado -->
+            <!-- Encabezado: la publicación completa, imagen a un costado -->
             <div class="col-span-12">
-                <div
-                    class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-start md:justify-between"
-                >
-                    <div class="flex min-w-0 gap-4">
-                        <img
-                            v-if="post.media_url"
-                            :src="post.media_url"
-                            alt=""
-                            class="h-16 w-16 shrink-0 rounded-[0.5rem] object-cover sm:h-20 sm:w-20"
-                        />
-                        <div
-                            v-else
-                            class="flex h-16 w-16 shrink-0 items-center justify-center rounded-[0.5rem] bg-slate-100 text-slate-400 dark:bg-darkmode-400 sm:h-20 sm:w-20"
-                        >
-                            <Lucide icon="Image" class="h-6 w-6" />
-                        </div>
-                        <div class="min-w-0">
+                <div class="box box--stacked p-4 sm:p-5">
+                    <div
+                        class="flex flex-wrap items-center justify-between gap-3"
+                    >
+                        <div class="flex min-w-0 items-center gap-3">
+                            <a
+                                :href="route('tenant.social')"
+                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200/80 bg-white text-slate-500 shadow-sm transition hover:bg-slate-100 dark:border-darkmode-400 dark:bg-transparent dark:hover:bg-darkmode-400"
+                                title="Volver a redes sociales"
+                            >
+                                <Lucide icon="ArrowLeft" class="h-4 w-4" />
+                            </a>
                             <div
-                                class="flex flex-wrap items-center gap-2 text-xs text-slate-500"
+                                class="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-slate-500"
                             >
                                 <span
-                                    class="rounded-full border border-slate-200/70 px-2 py-0.5 dark:border-darkmode-400"
+                                    class="font-medium text-slate-600 dark:text-slate-300"
                                 >
                                     {{ post.network_label }}
                                 </span>
                                 <span v-if="post.published_label">
                                     {{ post.published_label }}
                                 </span>
+                                <span
+                                    v-if="post.last_synced_at"
+                                    class="text-slate-400"
+                                    title="Última sincronización de comentarios"
+                                >
+                                    Actualizado {{ post.last_synced_at }}
+                                </span>
                             </div>
-                            <h1
-                                class="mt-2 text-base leading-relaxed sm:text-lg"
-                            >
-                                {{ post.message || post.excerpt }}
-                            </h1>
                         </div>
-                    </div>
-                    <div
-                        class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:shrink-0 md:flex-wrap md:items-center"
-                    >
-                        <Button
-                            as="a"
-                            :href="route('tenant.social')"
-                            variant="outline-secondary"
-                            class="min-h-11 rounded-[0.5rem] bg-white"
-                        >
-                            <Lucide icon="ArrowLeft" class="mr-2 h-4 w-4" />
-                            Volver
-                        </Button>
                         <Button
                             v-if="post.permalink"
                             as="a"
@@ -219,59 +275,78 @@ function rerun(comment: Comment) {
                             target="_blank"
                             rel="noopener"
                             variant="outline-primary"
-                            class="min-h-11 rounded-[0.5rem] bg-white"
+                            class="shrink-0 rounded-[0.5rem] bg-white text-xs"
                         >
-                            <Lucide icon="ExternalLink" class="mr-2 h-4 w-4" />
+                            <Lucide
+                                icon="ExternalLink"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
                             Ver en la red
                         </Button>
+                    </div>
+
+                    <h1 class="sr-only">
+                        Publicación de {{ post.network_label }}
+                    </h1>
+
+                    <div
+                        class="mt-4 flex flex-col gap-4 md:flex-row md:items-start"
+                    >
+                        <component
+                            :is="post.permalink ? 'a' : 'div'"
+                            v-if="post.media_url && !imageBroken"
+                            :href="post.permalink ?? undefined"
+                            :target="post.permalink ? '_blank' : undefined"
+                            :rel="post.permalink ? 'noopener' : undefined"
+                            class="block w-full shrink-0 md:w-72"
+                            :title="
+                                post.permalink
+                                    ? 'Abrir en la red social'
+                                    : undefined
+                            "
+                        >
+                            <img
+                                :src="post.media_url"
+                                alt=""
+                                decoding="async"
+                                class="aspect-[4/3] w-full rounded-[0.5rem] object-cover md:aspect-square"
+                                @error="imageBroken = true"
+                            />
+                        </component>
+                        <div
+                            class="min-w-0 flex-1 md:max-h-72 md:overflow-y-auto md:pr-1"
+                        >
+                            <p
+                                class="text-sm leading-relaxed whitespace-pre-line text-slate-700 dark:text-slate-200"
+                                v-html="formattedMessage"
+                            ></p>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Resumen de la publicación -->
-            <div
-                v-for="card in [
-                    {
-                        label: 'Comentarios',
-                        value: stats.total,
-                        icon: 'MessageSquareText' as const,
-                        tone: 'primary',
-                    },
-                    {
-                        label: 'Por atender',
-                        value: stats.pendientes,
-                        icon: 'TriangleAlert' as const,
-                        tone: 'warning',
-                    },
-                    {
-                        label: 'Con interés de compra',
-                        value: stats.compras,
-                        icon: 'Sparkles' as const,
-                        tone: 'success',
-                    },
-                    {
-                        label: 'Conversaciones abiertas',
-                        value: stats.conversaciones,
-                        icon: 'MessagesSquare' as const,
-                        tone: 'info',
-                    },
-                ]"
-                :key="card.label"
-                class="col-span-6 xl:col-span-3"
-            >
-                <div
-                    class="box box--stacked flex h-full items-center gap-3 p-4"
-                >
+            <!-- Resumen de la publicación: una sola tira con divisores -->
+            <div class="col-span-12">
+                <div class="box box--stacked grid grid-cols-2 lg:grid-cols-4">
                     <div
-                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border"
-                        :class="toneClass(card.tone)"
+                        v-for="(card, index) in cards"
+                        :key="card.label"
+                        class="flex items-center gap-3 border-slate-200/60 p-4 dark:border-darkmode-400"
+                        :class="cellBorders[index]"
                     >
-                        <Lucide :icon="card.icon" class="h-4 w-4" />
-                    </div>
-                    <div>
-                        <div class="text-lg font-medium">{{ card.value }}</div>
-                        <div class="text-xs text-slate-500">
-                            {{ card.label }}
+                        <div
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
+                            :class="toneClass(card.tone)"
+                        >
+                            <Lucide :icon="card.icon" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-base leading-tight font-medium">
+                                {{ card.value }}
+                            </div>
+                            <div class="truncate text-xs text-slate-500">
+                                {{ card.label }}
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -279,14 +354,21 @@ function rerun(comment: Comment) {
 
             <!-- Comentarios -->
             <div class="col-span-12">
-                <div class="box box--stacked p-5">
+                <div class="box box--stacked">
                     <div
-                        class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                        class="flex flex-col gap-3 border-b border-slate-200/60 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5 sm:pb-4 dark:border-darkmode-400"
                     >
-                        <h2 class="text-base font-medium">Comentarios</h2>
+                        <div class="flex items-center gap-2">
+                            <h2 class="text-sm font-medium">Comentarios</h2>
+                            <span
+                                class="rounded-full border border-slate-200/70 px-2 py-0.5 text-xs text-slate-500 dark:border-darkmode-400"
+                            >
+                                {{ filteredComments.length }}
+                            </span>
+                        </div>
                         <FormSelect
                             v-model="filter"
-                            class="w-full sm:w-56"
+                            class="w-full text-xs sm:w-48"
                             aria-label="Filtrar comentarios"
                         >
                             <option value="todos">Todos</option>
@@ -301,185 +383,231 @@ function rerun(comment: Comment) {
 
                     <div
                         v-if="filteredComments.length === 0"
-                        class="mt-5 rounded-[0.5rem] border border-dashed border-slate-300/70 p-8 text-center text-sm text-slate-500 dark:border-darkmode-400"
+                        class="p-10 text-center text-sm text-slate-500"
                     >
                         No hay comentarios que mostrar con este filtro.
                     </div>
 
-                    <div v-else class="mt-4 flex flex-col gap-4">
+                    <template v-else>
                         <div
                             v-for="comment in filteredComments"
                             :key="comment.id"
-                            class="rounded-[0.5rem] border border-slate-200/70 p-4 dark:border-darkmode-400"
-                            :class="comment.hidden ? 'opacity-60' : ''"
+                            class="border-b border-slate-200/60 px-4 py-4 last:border-b-0 sm:px-5 dark:border-darkmode-400"
                         >
                             <div
-                                class="flex flex-wrap items-start justify-between gap-2"
+                                class="flex items-start gap-3"
+                                :class="comment.hidden ? 'opacity-60' : ''"
                             >
-                                <div class="min-w-0">
-                                    <div class="text-sm font-medium">
-                                        {{ comment.author_name ?? 'Usuario' }}
-                                    </div>
-                                    <div
-                                        v-if="comment.commented_label"
-                                        class="text-xs text-slate-500"
-                                    >
-                                        {{ comment.commented_label }}
-                                    </div>
-                                </div>
                                 <div
-                                    class="flex flex-wrap items-center gap-1.5 text-xs"
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-xs font-medium text-slate-500 dark:bg-darkmode-400 dark:text-slate-300"
                                 >
-                                    <span
-                                        v-if="comment.classification_label"
-                                        class="rounded-full border px-2 py-0.5"
-                                        :class="
-                                            toneClass(
-                                                classificationTone[
-                                                    comment.classification ??
-                                                        'pregunta'
-                                                ] ?? 'dark',
-                                            )
-                                        "
-                                    >
-                                        {{ comment.classification_label }}
-                                    </span>
-                                    <span
-                                        class="rounded-full border px-2 py-0.5"
-                                        :class="
-                                            toneClass(
-                                                statusTone[comment.status] ??
-                                                    'dark',
-                                            )
-                                        "
-                                    >
-                                        {{ comment.status_label }}
-                                    </span>
+                                    {{ initial(comment.author_name) }}
                                 </div>
-                            </div>
+                                <div class="min-w-0 flex-1">
+                                    <div
+                                        class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1"
+                                    >
+                                        <div
+                                            class="flex min-w-0 flex-wrap items-baseline gap-x-2"
+                                        >
+                                            <span class="text-xs font-medium">
+                                                {{
+                                                    comment.author_name ??
+                                                    'Usuario'
+                                                }}
+                                            </span>
+                                            <span
+                                                v-if="comment.commented_label"
+                                                class="text-xs text-slate-400"
+                                            >
+                                                {{ comment.commented_label }}
+                                            </span>
+                                        </div>
+                                        <div
+                                            class="flex flex-wrap items-center gap-1.5 text-xs"
+                                        >
+                                            <span
+                                                v-if="
+                                                    comment.classification_label
+                                                "
+                                                class="rounded-full border px-2 py-0.5"
+                                                :class="
+                                                    toneClass(
+                                                        classificationTone[
+                                                            comment.classification ??
+                                                                'pregunta'
+                                                        ] ?? 'dark',
+                                                    )
+                                                "
+                                            >
+                                                {{
+                                                    comment.classification_label
+                                                }}
+                                            </span>
+                                            <span
+                                                class="rounded-full border px-2 py-0.5"
+                                                :class="
+                                                    toneClass(
+                                                        statusTone[
+                                                            comment.status
+                                                        ] ?? 'dark',
+                                                    )
+                                                "
+                                            >
+                                                {{ comment.status_label }}
+                                            </span>
+                                        </div>
+                                    </div>
 
-                            <p
-                                class="mt-3 text-sm leading-relaxed text-slate-600 dark:text-slate-300"
-                            >
-                                {{ comment.body }}
-                            </p>
+                                    <p
+                                        class="mt-1 text-sm leading-relaxed text-slate-600 dark:text-slate-300"
+                                    >
+                                        {{ comment.body }}
+                                    </p>
 
-                            <div
-                                v-if="comment.public_reply_text"
-                                class="mt-3 rounded-[0.4rem] bg-slate-100/70 p-3 text-xs text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
-                            >
-                                <span class="font-medium">
-                                    Respuesta publicada
-                                </span>
-                                <span v-if="comment.public_replied_at">
-                                    ({{ comment.public_replied_at }})
-                                </span>
-                                : {{ comment.public_reply_text }}
-                            </div>
+                                    <div
+                                        v-if="comment.public_reply_text"
+                                        class="mt-2 border-l-2 border-success/50 pl-3 text-xs text-slate-500"
+                                    >
+                                        <span
+                                            class="font-medium text-slate-600 dark:text-slate-300"
+                                        >
+                                            Respuesta publicada
+                                        </span>
+                                        <span v-if="comment.public_replied_at">
+                                            · {{ comment.public_replied_at }}
+                                        </span>
+                                        <p class="mt-0.5 leading-relaxed">
+                                            {{ comment.public_reply_text }}
+                                        </p>
+                                    </div>
 
-                            <div
-                                v-if="comment.private_reply_sent_at"
-                                class="mt-2 flex items-center gap-1.5 text-xs text-success"
-                            >
-                                <Lucide icon="Send" class="h-3.5 w-3.5" />
-                                Mensaje privado enviado
-                                {{ comment.private_reply_sent_at }}
-                            </div>
+                                    <div
+                                        v-if="comment.private_reply_sent_at"
+                                        class="mt-1.5 flex items-center gap-1.5 text-xs text-success"
+                                    >
+                                        <Lucide icon="Send" class="h-3 w-3" />
+                                        Mensaje privado enviado
+                                        {{ comment.private_reply_sent_at }}
+                                    </div>
 
-                            <div
-                                v-if="comment.private_reply_error"
-                                class="mt-2 flex items-center gap-1.5 text-xs text-danger"
-                            >
-                                <Lucide
-                                    icon="TriangleAlert"
-                                    class="h-3.5 w-3.5"
-                                />
-                                {{ comment.private_reply_error }}
-                            </div>
+                                    <div
+                                        v-if="comment.private_reply_error"
+                                        class="mt-1.5 flex items-center gap-1.5 text-xs text-danger"
+                                    >
+                                        <Lucide
+                                            icon="TriangleAlert"
+                                            class="h-3 w-3"
+                                        />
+                                        {{ comment.private_reply_error }}
+                                    </div>
 
-                            <div
-                                v-if="comment.hidden_reason"
-                                class="mt-2 text-xs text-slate-500"
-                            >
-                                Oculto: {{ comment.hidden_reason }}
-                            </div>
+                                    <div
+                                        v-if="comment.hidden_reason"
+                                        class="mt-1.5 text-xs text-slate-500"
+                                    >
+                                        Oculto: {{ comment.hidden_reason }}
+                                    </div>
 
-                            <div
-                                v-if="comment.deleted_from_network"
-                                class="mt-2 text-xs text-slate-500"
-                            >
-                                El autor borró este comentario en la red
-                                social.
-                            </div>
+                                    <div
+                                        v-if="comment.deleted_from_network"
+                                        class="mt-1.5 text-xs text-slate-500"
+                                    >
+                                        El autor borró este comentario en la red
+                                        social.
+                                    </div>
 
-                            <div class="mt-4 flex flex-wrap items-center gap-2">
-                                <Button
-                                    variant="outline-secondary"
-                                    class="min-h-10 rounded-[0.5rem] bg-white text-xs"
-                                    :disabled="busy"
-                                    @click="openReply(comment)"
-                                >
-                                    <Lucide
-                                        icon="MessageSquareText"
-                                        class="mr-1.5 h-3.5 w-3.5"
-                                    />
-                                    Responder
-                                </Button>
-                                <Button
-                                    v-if="comment.can_private_reply"
-                                    variant="outline-secondary"
-                                    class="min-h-10 rounded-[0.5rem] bg-white text-xs"
-                                    :disabled="busy"
-                                    @click="openPrivate(comment)"
-                                >
-                                    <Lucide
-                                        icon="Send"
-                                        class="mr-1.5 h-3.5 w-3.5"
-                                    />
-                                    Mensaje privado
-                                </Button>
-                                <Button
-                                    variant="outline-secondary"
-                                    class="min-h-10 rounded-[0.5rem] bg-white text-xs"
-                                    :disabled="busy"
-                                    @click="toggleHidden(comment)"
-                                >
-                                    <Lucide
-                                        :icon="
-                                            comment.hidden ? 'Eye' : 'EyeOff'
-                                        "
-                                        class="mr-1.5 h-3.5 w-3.5"
-                                    />
-                                    {{ comment.hidden ? 'Mostrar' : 'Ocultar' }}
-                                </Button>
-                                <Button
-                                    variant="outline-secondary"
-                                    class="min-h-10 rounded-[0.5rem] bg-white text-xs"
-                                    :disabled="busy"
-                                    @click="rerun(comment)"
-                                >
-                                    <Lucide
-                                        icon="Sparkles"
-                                        class="mr-1.5 h-3.5 w-3.5"
-                                    />
-                                    Revisar con IA
-                                </Button>
-                                <Button
-                                    v-if="comment.conversation_uuid"
-                                    as="a"
-                                    :href="route('tenant.inbox')"
-                                    variant="outline-primary"
-                                    class="min-h-10 rounded-[0.5rem] bg-white text-xs"
-                                >
-                                    <Lucide
-                                        icon="MessagesSquare"
-                                        class="mr-1.5 h-3.5 w-3.5"
-                                    />
-                                    Ver conversación
-                                </Button>
+                                    <div
+                                        class="mt-2.5 flex flex-wrap items-center gap-1.5"
+                                    >
+                                        <Button
+                                            variant="outline-secondary"
+                                            class="h-8 rounded-[0.5rem] bg-white px-2.5 text-xs"
+                                            :disabled="busy"
+                                            @click="openReply(comment)"
+                                        >
+                                            <Lucide
+                                                icon="MessageSquareText"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            Responder
+                                        </Button>
+                                        <Button
+                                            v-if="comment.can_private_reply"
+                                            variant="outline-secondary"
+                                            class="h-8 rounded-[0.5rem] bg-white px-2.5 text-xs"
+                                            :disabled="busy"
+                                            @click="openPrivate(comment)"
+                                        >
+                                            <Lucide
+                                                icon="Send"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            Mensaje privado
+                                        </Button>
+                                        <Button
+                                            v-if="comment.conversation_uuid"
+                                            as="a"
+                                            :href="route('tenant.inbox')"
+                                            variant="outline-primary"
+                                            class="h-8 rounded-[0.5rem] bg-white px-2.5 text-xs"
+                                        >
+                                            <Lucide
+                                                icon="MessagesSquare"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            Ver conversación
+                                        </Button>
+                                        <Menu>
+                                            <Menu.Button
+                                                class="flex h-8 w-8 items-center justify-center rounded-[0.5rem] border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:bg-slate-100 dark:border-darkmode-400 dark:bg-transparent dark:hover:bg-darkmode-400"
+                                                title="Más acciones"
+                                            >
+                                                <Lucide
+                                                    icon="Ellipsis"
+                                                    class="h-4 w-4"
+                                                />
+                                            </Menu.Button>
+                                            <Menu.Items class="w-48">
+                                                <Menu.Item
+                                                    as="button"
+                                                    type="button"
+                                                    @click="
+                                                        toggleHidden(comment)
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        :icon="
+                                                            comment.hidden
+                                                                ? 'Eye'
+                                                                : 'EyeOff'
+                                                        "
+                                                        class="mr-2 h-4 w-4"
+                                                    />
+                                                    {{
+                                                        comment.hidden
+                                                            ? 'Mostrar'
+                                                            : 'Ocultar'
+                                                    }}
+                                                </Menu.Item>
+                                                <Menu.Item
+                                                    as="button"
+                                                    type="button"
+                                                    @click="rerun(comment)"
+                                                >
+                                                    <Lucide
+                                                        icon="Sparkles"
+                                                        class="mr-2 h-4 w-4"
+                                                    />
+                                                    Revisar con IA
+                                                </Menu.Item>
+                                            </Menu.Items>
+                                        </Menu>
+                                    </div>
+                                </div>
                             </div>
                         </div>
-                    </div>
+                    </template>
                 </div>
             </div>
         </div>

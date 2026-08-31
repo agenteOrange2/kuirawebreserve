@@ -10,8 +10,8 @@ use App\Models\RoomCleaning;
 use App\Models\RoomStatusLog;
 use App\Services\HousekeepingChecklist;
 use Barryvdh\DomPDF\Facade\Pdf;
-use Illuminate\Http\Request;
 use Carbon\CarbonImmutable;
+use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -24,6 +24,9 @@ use Inertia\Response;
  */
 class HousekeepingReportsController extends Controller
 {
+    /** Renglones del detalle por página. */
+    private const DETAIL_PER_PAGE = 20;
+
     public function index(Request $request): Response
     {
         return Inertia::render('tenant/housekeeping/Reports', $this->reportData($request));
@@ -31,7 +34,8 @@ class HousekeepingReportsController extends Controller
 
     public function pdf(Request $request)
     {
-        $data = $this->reportData($request);
+        // El PDF es el resumen: el detalle paginado no cabe ni se usa ahí.
+        $data = $this->reportData($request, withDetail: false);
         $data['property'] = Property::query()->firstOrFail()->only(['id', 'name']);
         $data['generatedAt'] = now()->format('d/m/Y H:i');
 
@@ -45,13 +49,15 @@ class HousekeepingReportsController extends Controller
     /**
      * @return array<string, mixed>
      */
-    protected function reportData(Request $request): array
+    protected function reportData(Request $request, bool $withDetail = true): array
     {
         $request->validate([
             'period' => ['nullable', 'in:day,week,month,year,custom'],
             'from' => ['nullable', 'date', 'required_if:period,custom'],
             'to' => ['nullable', 'date', 'after_or_equal:from', 'required_if:period,custom'],
             'housekeeper' => ['nullable', 'integer'],
+            'kind' => ['nullable', 'in:'.implode(',', array_keys(RoomCleaning::KINDS))],
+            'orden' => ['nullable', 'in:reciente,duracion,habitacion'],
         ]);
 
         $period = $request->query('period', 'month');
@@ -70,11 +76,17 @@ class HousekeepingReportsController extends Controller
         };
 
         $housekeeperId = $request->integer('housekeeper') ?: null;
+        $kind = $request->string('kind')->toString();
+        $kind = array_key_exists($kind, RoomCleaning::KINDS) ? $kind : '';
 
+        // Los agregados necesitan TODO el periodo en memoria (la ropa vive en
+        // una columna JSON y no se suma en SQL), pero no necesitan la
+        // habitación: esa solo la pinta el detalle, que va paginado.
         $cleanings = RoomCleaning::query()
-            ->with(['housekeeper:id,name', 'room:id,number'])
+            ->with('housekeeper:id,name')
             ->between($from, $to)
             ->when($housekeeperId, fn ($q) => $q->where('housekeeper_id', $housekeeperId))
+            ->when($kind !== '', fn ($q) => $q->where('kind', $kind))
             ->get();
 
         $closed = $cleanings->whereNotNull('ended_at');
@@ -85,6 +97,8 @@ class HousekeepingReportsController extends Controller
                 'from' => $from->format('Y-m-d'),
                 'to' => $to->format('Y-m-d'),
                 'housekeeper' => $housekeeperId,
+                'kind' => $kind,
+                'orden' => $this->detailOrder($request),
             ],
             'periodLabel' => $label,
             'kpis' => [
@@ -97,9 +111,71 @@ class HousekeepingReportsController extends Controller
             'byHousekeeper' => $this->byHousekeeper($closed),
             'linens' => $this->linenTotals($closed),
             'byKind' => $this->byKind($closed),
+            'detail' => $withDetail
+                ? $this->detail($request, $from, $to, $housekeeperId, $kind)
+                : null,
+            'kinds' => RoomCleaning::KINDS,
             'housekeepers' => Housekeeper::query()->ordered()->get(['id', 'name'])
                 ->map(fn (Housekeeper $h) => ['id' => $h->id, 'name' => $h->name]),
         ];
+    }
+
+    /**
+     * Detalle renglón por renglón del periodo, paginado: el reporte resume,
+     * pero cuando una cifra no cuadra hay que poder ver de dónde sale.
+     *
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator<int, array<string, mixed>>
+     */
+    protected function detail(
+        Request $request,
+        CarbonImmutable $from,
+        CarbonImmutable $to,
+        ?int $housekeeperId,
+        string $kind,
+    ): \Illuminate\Contracts\Pagination\LengthAwarePaginator {
+        $orden = $this->detailOrder($request);
+
+        return RoomCleaning::query()
+            ->with(['housekeeper:id,name', 'room:id,number'])
+            ->between($from, $to)
+            ->when($housekeeperId, fn ($q) => $q->where('housekeeper_id', $housekeeperId))
+            ->when($kind !== '', fn ($q) => $q->where('kind', $kind))
+            ->when(
+                $orden === 'duracion',
+                fn ($q) => $q->orderByDesc('minutes')->orderByDesc('started_at'),
+            )
+            ->when(
+                $orden === 'habitacion',
+                fn ($q) => $q->orderBy(
+                    \App\Models\Room::select('number')->whereColumn('rooms.id', 'room_cleanings.room_id'),
+                )->orderByDesc('started_at'),
+            )
+            ->when(
+                $orden === 'reciente',
+                fn ($q) => $q->orderByDesc('started_at'),
+            )
+            ->paginate(self::DETAIL_PER_PAGE, ['*'], 'detalle')
+            ->withQueryString()
+            ->through(fn (RoomCleaning $cleaning) => [
+                'id' => $cleaning->id,
+                'room' => $cleaning->room?->number,
+                'housekeeper' => $cleaning->housekeeper?->name,
+                'kind_label' => $cleaning->kindLabel(),
+                'started_day' => $cleaning->started_at?->format('d/m/Y'),
+                'started_label' => $cleaning->started_at?->format('H:i'),
+                'ended_label' => $cleaning->ended_at?->format('H:i'),
+                'minutes' => $cleaning->elapsedMinutes(),
+                'open' => $cleaning->isOpen(),
+                'source' => $cleaning->source,
+                'linens' => $this->linenTotals(collect([$cleaning])),
+            ]);
+    }
+
+    protected function detailOrder(Request $request): string
+    {
+        $orden = $request->string('orden')->toString();
+
+        return in_array($orden, ['duracion', 'habitacion'], true) ? $orden : 'reciente';
     }
 
     /**

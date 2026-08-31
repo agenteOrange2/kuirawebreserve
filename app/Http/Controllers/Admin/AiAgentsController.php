@@ -229,6 +229,10 @@ TXT;
             'platform_instructions' => ['sometimes', 'nullable', 'string', 'max:6000'],
             'context_editable' => ['sometimes', 'boolean'],
             'guidelines_editable' => ['sometimes', 'boolean'],
+            // Canales que el hotel puede conectar desde su panel; null (o
+            // ausente) deja los cuatro, que es como venía.
+            'channels_allowed' => ['sometimes', 'nullable', 'array'],
+            'channels_allowed.*' => [Rule::in(array_keys(TenantAgentSetting::CHANNELS))],
         ]);
 
         TenantAgentSetting::for($tenant->id)->update($data);

@@ -43,6 +43,7 @@ class ReservationHistoryPageController extends ReservationsPageController
                 'ratePlan:id,name,type',
                 'guest:id,first_name,last_name,phone,email',
             ])
+            ->withSum('payments', 'amount')
             ->whereIn('status', $status ? [$status] : self::HISTORY_STATUSES)
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($q) use ($search) {

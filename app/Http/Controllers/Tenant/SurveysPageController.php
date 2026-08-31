@@ -7,7 +7,9 @@ use App\Models\Property;
 use App\Models\StaySurvey;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -26,13 +28,56 @@ class SurveysPageController extends Controller
     {
         return Inertia::render('tenant/surveys/Index', $this->reportData($request) + [
             'canManage' => $request->user()->can('properties.manage'),
+            // Para levantar la incidencia que destapó una queja sin salir
+            // de aquí (el catálogo es el mismo del módulo incidencias).
+            'incidentCategories' => collect(\App\Models\Incident::CATEGORIES)
+                ->map(fn (string $label, string $key) => ['value' => $key, 'label' => $label])
+                ->values(),
         ]);
+    }
+
+    /**
+     * Filtros de la LISTA (no de los promedios: los indicadores siguen
+     * siendo del periodo completo, si no la comparación se vuelve trampa).
+     *
+     * @param  Collection<int, StaySurvey>  $answered
+     * @return Collection<int, StaySurvey>
+     */
+    protected function filterRows(Collection $answered, Request $request): Collection
+    {
+        $show = $request->query('show', 'all');
+        $search = trim((string) $request->query('q', ''));
+
+        return $answered
+            ->filter(fn (StaySurvey $s) => match ($show) {
+                // Lo que hay que atender: pide seguimiento y nadie lo cerró.
+                'pending' => $s->handled_at === null
+                    && (($s->rating !== null && $s->rating <= 3) || filled($s->comment)),
+                'low' => $s->rating !== null && $s->rating <= 3,
+                'commented' => filled($s->comment),
+                'handled' => $s->handled_at !== null,
+                default => true,
+            })
+            ->filter(function (StaySurvey $s) use ($search) {
+                if ($search === '') {
+                    return true;
+                }
+
+                $haystack = mb_strtolower(implode(' ', array_filter([
+                    $s->stay?->guest_name,
+                    $s->stay?->room?->number,
+                    $s->comment,
+                ])));
+
+                return str_contains($haystack, mb_strtolower($search));
+            })
+            ->values();
     }
 
     /** PDF del reporte de satisfacción del periodo elegido. */
     public function pdf(Request $request)
     {
-        $data = $this->reportData($request) + [
+        $data = $this->reportData($request, forPdf: true) + [
             'property' => Property::query()->firstOrFail()->only(['id', 'name']),
             'generatedAt' => now()->format('d/m/Y H:i'),
         ];
@@ -45,14 +90,37 @@ class SurveysPageController extends Controller
     }
 
     /**
+     * Página de la lista sobre la colección ya cargada (los promedios
+     * necesitan todas las respuestas del periodo de todos modos; partirlo
+     * en dos consultas no ahorraría nada y sí desincronizaría el reporte).
+     *
+     * @param  Collection<int, array<string, mixed>>  $rows
+     */
+    protected function paginateRows(Collection $rows, Request $request): LengthAwarePaginator
+    {
+        $perPage = 25;
+        $page = max(1, (int) $request->query('page', 1));
+
+        return new LengthAwarePaginator(
+            $rows->forPage($page, $perPage)->values(),
+            $rows->count(),
+            $perPage,
+            $page,
+            ['path' => $request->url(), 'query' => $request->query()],
+        );
+    }
+
+    /**
      * @return array<string, mixed>
      */
-    protected function reportData(Request $request): array
+    protected function reportData(Request $request, bool $forPdf = false): array
     {
         $request->validate([
             'period' => ['nullable', 'in:day,week,month,year,all,custom'],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date'],
+            'show' => ['nullable', 'in:all,pending,low,commented,handled'],
+            'q' => ['nullable', 'string', 'max:120'],
         ]);
 
         $period = $request->query('period', 'all');
@@ -91,7 +159,12 @@ class SurveysPageController extends Controller
         // calculan en PHP sobre las respondidas (el JSON de respuestas no
         // se agrega bien en SQL portable entre MySQL y SQLite).
         $answered = $inPeriod(StaySurvey::query()->submitted(), 'submitted_at')
-            ->with(['stay.room:id,number,name'])
+            ->with([
+                'stay.room:id,number,name',
+                'stay.guest:id,first_name,last_name,phone,email',
+                'guest:id,first_name,last_name,phone,email',
+                'handler:id,name',
+            ])
             ->latest('submitted_at')
             ->get();
 
@@ -109,16 +182,26 @@ class SurveysPageController extends Controller
 
         $distribution = $answered->countBy('rating');
 
-        $responses = $answered->take(50)->map(function (StaySurvey $survey) use ($labels) {
+        $rows = $forPdf ? $answered->take(50) : $this->filterRows($answered, $request);
+
+        $responses = $rows->map(function (StaySurvey $survey) use ($labels) {
             // Todas las llaves con respuesta: JSON + columnas legacy.
             $keys = collect(array_keys($survey->answers ?? []))
                 ->concat(collect(StaySurvey::LEGACY_COLUMNS)->filter(fn (string $column) => $survey->getAttribute($column) !== null)->keys())
                 ->unique();
 
+            $guest = $survey->guest ?? $survey->stay?->guest;
+
             return [
                 'id' => $survey->id,
                 'guest' => $survey->stay?->guest_name,
                 'room' => $survey->stay?->room?->number,
+                'room_id' => $survey->stay?->room_id,
+                'stay_id' => $survey->stay_id,
+                // Contacto para responderle: la queja se contesta, no se
+                // archiva.
+                'guest_phone' => $guest?->phone,
+                'guest_email' => $guest?->email,
                 'rating' => $survey->rating,
                 'answers' => $keys->map(fn (string $key) => [
                     'label' => $labels[$key] ?? ucfirst($key),
@@ -126,6 +209,13 @@ class SurveysPageController extends Controller
                 ])->filter(fn (array $answer) => $answer['value'] !== null)->values(),
                 'comment' => $survey->comment,
                 'submitted_at' => $survey->submitted_at->format('d/m/Y H:i'),
+                // Seguimiento: quién la cerró, cuándo y con qué nota.
+                'handled_at' => $survey->handled_at?->format('d/m/Y H:i'),
+                'handled_by' => $survey->handler?->name,
+                'handled_notes' => $survey->handled_notes,
+                'incident_id' => $survey->incident_id,
+                'needs_follow_up' => $survey->handled_at === null
+                    && (($survey->rating !== null && $survey->rating <= 3) || filled($survey->comment)),
             ];
         })->values();
 
@@ -137,6 +227,8 @@ class SurveysPageController extends Controller
                 'period' => $period,
                 'from' => ($from ?? now()->startOfMonth())->format('Y-m-d'),
                 'to' => ($to ?? now())->format('Y-m-d'),
+                'show' => $request->query('show', 'all'),
+                'q' => trim((string) $request->query('q', '')),
             ],
             'period' => [
                 'label' => $label,
@@ -151,13 +243,20 @@ class SurveysPageController extends Controller
                 // Evaluaciones bajas del periodo (general en 1-2): las que
                 // disparan alerta a la campana.
                 'low' => $answered->filter(fn (StaySurvey $s) => $s->rating !== null && $s->rating <= 2)->count(),
+                // El número que manda la operación: quejas y comentarios
+                // que nadie ha cerrado todavía.
+                'pending' => $answered->filter(fn (StaySurvey $s) => $s->handled_at === null
+                    && (($s->rating !== null && $s->rating <= 3) || filled($s->comment)))->count(),
             ],
             'aspectAverages' => $aspectAverages,
             'distribution' => collect([5, 4, 3, 2, 1])->map(fn (int $stars) => [
                 'stars' => $stars,
                 'count' => (int) ($distribution[$stars] ?? 0),
             ])->values(),
-            'responses' => $responses,
+            'responses' => $forPdf
+                ? $responses
+                : $this->paginateRows($responses, $request),
+            'matching' => $responses->count(),
         ];
     }
 }

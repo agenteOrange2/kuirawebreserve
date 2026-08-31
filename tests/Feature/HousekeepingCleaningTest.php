@@ -244,10 +244,12 @@ it('el panel carga con habitaciones que ya tienen historial de semáforo', funct
         'to_status' => \App\Enums\RoomStatus::Dirty->value,
     ]);
 
-    $response = app(\App\Http\Controllers\Tenant\HousekeepingPageController::class)->index();
+    $response = app(\App\Http\Controllers\Tenant\HousekeepingPageController::class)
+        ->index(Request::create('/limpieza', 'GET'));
     $props = (new ReflectionObject($response))->getProperty('props');
     $props->setAccessible(true);
-    $rooms = $props->getValue($response)['rooms'];
+    // El tablero viaja paginado: lo que se revisa es la página.
+    $rooms = $props->getValue($response)['rooms']->getCollection();
 
     expect($rooms)->toHaveCount(2)
         // Y el dato que se pedía con esas columnas sigue llegando.

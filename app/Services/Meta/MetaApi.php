@@ -16,6 +16,35 @@ use Throwable;
 class MetaApi
 {
     /**
+     * Descarga un adjunto de Messenger/Instagram por su URL directa del
+     * CDN de Meta (los webhooks de esas redes ya traen el link listo,
+     * sin token de por medio).
+     *
+     * @return array{contents: string, mime: string}|null
+     */
+    public function downloadMediaUrl(string $url): ?array
+    {
+        try {
+            $response = Http::timeout(20)->get($url);
+
+            if (! $response->successful() || $response->body() === '') {
+                return null;
+            }
+
+            $mime = strtolower(trim(explode(';', (string) $response->header('Content-Type'))[0]));
+
+            return [
+                'contents' => $response->body(),
+                'mime' => $mime !== '' ? $mime : 'application/octet-stream',
+            ];
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
      * Descarga un medio entrante de WhatsApp Cloud API en dos pasos:
      * GET /{media_id} da la URL firmada (vive ~5 min) y esa URL se baja
      * con el mismo token en el header — sin token, el CDN regresa 404.
@@ -702,8 +731,7 @@ class MetaApi
             'pages_manage_engagement' => 'responder y ocultar comentarios',
         ];
 
-        $appId = (string) config('meta.app_id');
-        $appSecret = (string) config('meta.app_secret');
+        ['app_id' => $appId, 'app_secret' => $appSecret] = $this->appCredsFor($link->tenant_id);
 
         if ($appId === '' || $appSecret === '') {
             return [];
@@ -730,6 +758,73 @@ class MetaApi
     }
 
     /**
+     * Credenciales de app para un tenant: su app propia (tenant_meta_apps)
+     * si la tiene, o la de la plataforma (config/meta.php) como respaldo.
+     * Es el punto único de la separación "una app por hotel".
+     *
+     * @return array{app_id: string, app_secret: string, ig_app_secret: string, login_config_id: string}
+     */
+    public function appCredsFor(?string $tenantId): array
+    {
+        $own = \App\Models\Central\TenantMetaApp::forTenant($tenantId);
+
+        return [
+            'app_id' => (string) ($own?->app_id ?: config('meta.app_id')),
+            'app_secret' => (string) (($own ? $own->app_secret : null) ?: config('meta.app_secret')),
+            'ig_app_secret' => (string) (($own ? $own->ig_app_secret : null) ?: config('meta.ig_app_secret')),
+            'login_config_id' => (string) ($own?->login_config_id ?: config('meta.login_config_id')),
+        ];
+    }
+
+    /**
+     * Registro incrustado (Embedded Signup): canjea el `code` que devuelve
+     * FB.login por el token del negocio recién conectado. Devuelve null si
+     * Meta lo rechaza (code caducado, usado dos veces o config incorrecta).
+     */
+    public function exchangeEmbeddedSignupCode(string $code, ?string $tenantId = null): ?string
+    {
+        $graph = rtrim(config('meta.graph_url'), '/');
+        $creds = $this->appCredsFor($tenantId);
+
+        try {
+            $response = Http::timeout(15)->get("{$graph}/oauth/access_token", [
+                'client_id' => $creds['app_id'],
+                'client_secret' => $creds['app_secret'],
+                'code' => $code,
+            ]);
+
+            return $response->successful() ? ($response->json('access_token') ?: null) : null;
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * Da de alta el número en la Cloud API (POST /register) para poder
+     * ENVIAR. Los números en coexistencia (app del celular + API) ya llegan
+     * registrados por el flujo del QR: ahí este intento falla y no pasa
+     * nada — por eso el resultado es informativo, no fatal.
+     */
+    public function registerNumber(MetaChannelLink $link): bool
+    {
+        $graph = rtrim(config('meta.graph_url'), '/');
+
+        try {
+            return Http::withToken($link->access_token)->timeout(15)
+                ->post("{$graph}/{$link->external_id}/register", [
+                    'messaging_product' => 'whatsapp',
+                    'pin' => '000000',
+                ])->successful();
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
+    }
+
+    /**
      * Convierte un token de USUARIO en el token de PÁGINA correspondiente,
      * de larga duración.
      *
@@ -747,11 +842,10 @@ class MetaApi
      * Devuelve null si ya era token de página o si no se pudo canjear: quien
      * llama se queda con lo que pegó.
      */
-    public function pageTokenFrom(string $token, string $pageId): ?string
+    public function pageTokenFrom(string $token, string $pageId, ?string $tenantId = null): ?string
     {
         $graph = rtrim(config('meta.graph_url'), '/');
-        $appId = (string) config('meta.app_id');
-        $appSecret = (string) config('meta.app_secret');
+        ['app_id' => $appId, 'app_secret' => $appSecret] = $this->appCredsFor($tenantId);
 
         if ($appId === '' || $appSecret === '' || $pageId === '') {
             return null;
@@ -768,18 +862,23 @@ class MetaApi
                 'access_token' => "{$appId}|{$appSecret}",
             ])->json('data.type');
 
-            if ($type !== 'USER') {
+            // USER: token de persona (Explorador) — se alarga y se canjea.
+            // SYSTEM_USER: token de usuario de sistema del Business Manager —
+            // ya es permanente e inmune a la cuenta personal; solo se deriva
+            // el token de página. Cualquier otro tipo (o desconocido): no tocar.
+            if (! in_array($type, ['USER', 'SYSTEM_USER'], true)) {
                 return null; // ya es de página (o no se pudo saber): no tocar
             }
 
             // Larga duración: sin esto el token de página hereda las ~2 horas
-            // del token corto del Explorador y la conexión muere sola.
-            $long = Http::timeout(10)->get("{$graph}/oauth/access_token", [
+            // del token corto del Explorador y la conexión muere sola. Los de
+            // usuario de sistema no caducan y el canje no aplica.
+            $long = $type === 'SYSTEM_USER' ? $token : (Http::timeout(10)->get("{$graph}/oauth/access_token", [
                 'grant_type' => 'fb_exchange_token',
                 'client_id' => $appId,
                 'client_secret' => $appSecret,
                 'fb_exchange_token' => $token,
-            ])->json('access_token') ?? $token;
+            ])->json('access_token') ?? $token);
 
             $accounts = Http::withToken($long)->timeout(10)
                 ->get("{$graph}/me/accounts", ['fields' => 'id,name,access_token', 'limit' => 100]);
@@ -788,6 +887,17 @@ class MetaApi
                 if ((string) ($page['id'] ?? '') === $pageId) {
                     return $page['access_token'] ?? null;
                 }
+            }
+
+            // Con permisos granulares por página (o New Pages Experience),
+            // /me/accounts puede venir VACÍO aunque el permiso sí esté
+            // concedido (caso real cabañas 2026-08-28): la página misma sí
+            // entrega su token si el usuario la administra.
+            $direct = Http::withToken($long)->timeout(10)
+                ->get("{$graph}/{$pageId}", ['fields' => 'access_token']);
+
+            if ($direct->successful() && filled($direct->json('access_token'))) {
+                return (string) $direct->json('access_token');
             }
 
             Log::warning('Meta: el token de usuario no administra esa página', [
@@ -837,7 +947,7 @@ class MetaApi
         // Campo del webhook que trae los comentarios en cada red.
         $field = $isInstagram ? 'comments' : 'feed';
 
-        if ($this->appWebhookMissing($isInstagram ? 'instagram' : 'page', $field)) {
+        if ($this->appWebhookMissing($isInstagram ? 'instagram' : 'page', $field, $link->tenant_id)) {
             $issues[] = [
                 'tipo' => 'Webhook de la app',
                 'detalle' => $field,
@@ -863,10 +973,9 @@ class MetaApi
      * ¿La app de Meta tiene sin suscribir este campo de webhook?
      * Devuelve false ante la duda: nunca inventar una alarma.
      */
-    protected function appWebhookMissing(string $object, string $field): bool
+    protected function appWebhookMissing(string $object, string $field, ?string $tenantId = null): bool
     {
-        $appId = (string) config('meta.app_id');
-        $appSecret = (string) config('meta.app_secret');
+        ['app_id' => $appId, 'app_secret' => $appSecret] = $this->appCredsFor($tenantId);
 
         if ($appId === '' || $appSecret === '') {
             return false;
@@ -1047,7 +1156,9 @@ class MetaApi
             'external_id' => (string) ($post['id'] ?? ''),
             'message' => $post['caption'] ?? $post['message'] ?? null,
             'permalink' => $post['permalink'] ?? $post['permalink_url'] ?? null,
-            'media_url' => $post['media_url'] ?? $post['thumbnail_url'] ?? $post['full_picture'] ?? null,
+            // thumbnail_url primero: Instagram solo lo manda en videos, donde
+            // media_url es el MP4 (inservible como imagen del panel).
+            'media_url' => $post['thumbnail_url'] ?? $post['media_url'] ?? $post['full_picture'] ?? null,
             'published_at' => $date ? (string) $date : null,
             // Instagram lo da plano; Facebook dentro del summary del edge.
             'comments_count' => (int) ($post['comments_count']

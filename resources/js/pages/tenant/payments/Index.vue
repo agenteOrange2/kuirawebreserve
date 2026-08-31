@@ -351,44 +351,119 @@ watch(paymentsMethod, () => fetchPayments(1));
     <RazeLayout title="Pagos">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Wallet" class="h-5 w-5 sm:h-7 sm:w-7" />
+                        <Lucide icon="Wallet" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">Pagos</h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Pagos</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Todo el dinero en un lugar: transferencias por
-                            verificar, saldos vencidos, links de pago vivos y
-                            los últimos pagos.
+                            verificar, saldos vencidos, links vivos y los
+                            últimos pagos.
                         </p>
                     </div>
                 </div>
                 <Button
                     as="a"
                     :href="route('tenant.online-payments')"
-                    variant="outline-primary"
-                    class="w-full rounded-[0.5rem] bg-white md:w-auto"
+                    variant="outline-secondary"
+                    class="h-9 w-full rounded-[0.5rem] bg-white text-xs md:w-auto"
                 >
-                    <Lucide
-                        icon="ChartColumn"
-                        class="mr-2 h-4 w-4 stroke-[1.3]"
-                    />
+                    <Lucide icon="ChartColumn" class="mr-1.5 h-3.5 w-3.5" />
                     Reporte de conciliación
                 </Button>
             </div>
 
-            <!-- Pagos por verificar (transferencias reportadas) -->
-            <div v-if="canManage" class="box box--stacked mt-5">
+            <!-- Cuántas cosas piden atención hoy, antes de la lista larga -->
+            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
                 <div
-                    class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-3.5 dark:border-darkmode-400"
+                    v-if="canManage"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                    :class="queue.length ? 'ring-1 ring-pending/30' : ''"
                 >
                     <div
-                        class="flex h-8 w-8 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
+                    >
+                        <Lucide icon="Landmark" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ queue.length }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Por verificar
+                        </div>
+                    </div>
+                </div>
+                <div
+                    v-if="canManage"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                    :class="
+                        overdueBalances.length ? 'ring-1 ring-warning/30' : ''
+                    "
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10 text-warning"
+                    >
+                        <Lucide icon="TriangleAlert" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ overdueBalances.length }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Saldos vencidos
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Link" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ pendingLinks.length }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Links de pago vivos
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                    >
+                        <Lucide icon="CircleCheck" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ recentPayments.total }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Pagos registrados
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Pagos por verificar (transferencias reportadas) -->
+            <div v-if="canManage" class="box box--stacked mt-4">
+                <div
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
                     >
                         <Lucide icon="Landmark" class="h-4 w-4 text-pending" />
                     </div>
@@ -409,12 +484,12 @@ watch(paymentsMethod, () => fetchPayments(1));
                 </div>
                 <div
                     v-if="queue.length"
-                    class="divide-y divide-dashed divide-slate-300/70"
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
                 >
                     <div
                         v-for="item in queue"
                         :key="item.id"
-                        class="flex flex-wrap items-center gap-3 px-5 py-3"
+                        class="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5"
                     >
                         <div class="min-w-0 flex-1">
                             <div class="flex flex-wrap items-center gap-2">
@@ -422,11 +497,11 @@ watch(paymentsMethod, () => fetchPayments(1));
                                     item.guest_name
                                 }}</span>
                                 <span
-                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
+                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
                                     >{{ item.reservation_code }}</span
                                 >
                                 <span
-                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
                                     >{{ item.concept }} ·
                                     {{ item.amount_label }}</span
                                 >
@@ -445,8 +520,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                                 as="a"
                                 :href="route('tenant.inbox')"
                                 variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
                                 title="El comprobante llegó por conversación: revísalo en la Bandeja"
                             >
                                 <Lucide
@@ -456,8 +530,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                             </Button>
                             <Button
                                 variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
                                 title="Ver todos los detalles de la solicitud"
                                 @click="openQueueDetail(item)"
                             >
@@ -466,8 +539,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                             </Button>
                             <Button
                                 variant="primary"
-                                size="sm"
-                                class="rounded-[0.5rem]"
+                                class="h-8 rounded-[0.5rem] text-xs"
                                 @click="verifying = item"
                             >
                                 <Lucide
@@ -478,8 +550,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                             </Button>
                             <Button
                                 variant="outline-danger"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
                                 @click="rejecting = item"
                             >
                                 <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
@@ -490,7 +561,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                 </div>
                 <div
                     v-else
-                    class="px-5 py-6 text-center text-xs text-slate-500"
+                    class="px-4 py-6 text-center text-xs text-slate-500"
                 >
                     Sin transferencias pendientes de verificar.
                 </div>
@@ -499,18 +570,20 @@ watch(paymentsMethod, () => fetchPayments(1));
                      huésped corrige — antes desaparecían sin regreso. -->
                 <div
                     v-if="closedRequests.length"
-                    class="border-t border-dashed border-slate-300/70 dark:border-darkmode-400"
+                    class="border-t border-slate-200/60 dark:border-darkmode-400"
                 >
                     <div
-                        class="px-5 pt-3 pb-1 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        class="px-4 pt-3 pb-1 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                     >
                         Rechazadas y vencidas recientes
                     </div>
-                    <div class="divide-y divide-dashed divide-slate-300/70">
+                    <div
+                        class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                    >
                         <div
                             v-for="item in closedRequests"
                             :key="item.id"
-                            class="flex flex-wrap items-center gap-3 px-5 py-3"
+                            class="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5"
                         >
                             <div class="min-w-0 flex-1">
                                 <div class="flex flex-wrap items-center gap-2">
@@ -519,16 +592,16 @@ watch(paymentsMethod, () => fetchPayments(1));
                                         >{{ item.guest_name }}</span
                                     >
                                     <span
-                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
                                         >{{ item.reservation_code }}</span
                                     >
                                     <span
-                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
                                         >{{ item.concept }} ·
                                         {{ item.amount_label }}</span
                                     >
                                     <span
-                                        class="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                        class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="
                                             item.status === 'rejected'
                                                 ? 'bg-danger/10 text-danger'
@@ -546,8 +619,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                             </div>
                             <Button
                                 variant="outline-primary"
-                                size="sm"
-                                class="shrink-0 rounded-[0.5rem] bg-white"
+                                class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
                                 :disabled="reissuingId === item.id"
                                 title="Emite un cobro nuevo; si el comprobante corregido ya llegó por el chat, se adjunta solo"
                                 @click="reissueRequest(item)"
@@ -570,13 +642,13 @@ watch(paymentsMethod, () => fetchPayments(1));
             <!-- Saldos vencidos -->
             <div
                 v-if="canManage && overdueBalances.length"
-                class="box box--stacked mt-5"
+                class="box box--stacked mt-4"
             >
                 <div
-                    class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-3.5 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
                     <div
-                        class="flex h-8 w-8 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
                     >
                         <Lucide
                             icon="TriangleAlert"
@@ -595,11 +667,13 @@ watch(paymentsMethod, () => fetchPayments(1));
                         >{{ overdueBalances.length }}</span
                     >
                 </div>
-                <div class="divide-y divide-dashed divide-slate-300/70">
+                <div
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                >
                     <div
                         v-for="item in overdueBalances"
                         :key="item.id"
-                        class="flex flex-wrap items-center gap-3 px-5 py-3"
+                        class="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5"
                     >
                         <div class="min-w-0 flex-1">
                             <div class="flex flex-wrap items-center gap-2">
@@ -607,11 +681,11 @@ watch(paymentsMethod, () => fetchPayments(1));
                                     item.guest_name
                                 }}</span>
                                 <span
-                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
+                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
                                     >{{ item.code }}</span
                                 >
                                 <span
-                                    class="rounded-full bg-warning/10 px-2 py-0.5 text-[10px] font-medium text-warning"
+                                    class="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
                                     >Debe {{ item.pending_label }}</span
                                 >
                             </div>
@@ -626,8 +700,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                                 as="a"
                                 :href="route('tenant.inbox')"
                                 variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
                                 title="Abrir la Bandeja para dar seguimiento"
                             >
                                 <Lucide
@@ -640,8 +713,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                                 as="a"
                                 :href="route('tenant.reservations')"
                                 variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
                                 title="Gestionar la reserva en el módulo de reservas"
                             >
                                 <Lucide
@@ -656,12 +728,12 @@ watch(paymentsMethod, () => fetchPayments(1));
             </div>
 
             <!-- Links de pago vivos -->
-            <div class="box box--stacked mt-5">
+            <div class="box box--stacked mt-4">
                 <div
-                    class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-3.5 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
                     <div
-                        class="flex h-8 w-8 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                     >
                         <Lucide icon="Link" class="h-4 w-4 text-primary" />
                     </div>
@@ -683,12 +755,12 @@ watch(paymentsMethod, () => fetchPayments(1));
                 </div>
                 <div
                     v-if="pendingLinks.length"
-                    class="divide-y divide-dashed divide-slate-300/70"
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
                 >
                     <div
                         v-for="link in pendingLinks"
                         :key="link.id"
-                        class="flex flex-wrap items-center gap-3 px-5 py-3"
+                        class="flex flex-wrap items-center gap-3 px-4 py-3 sm:px-5"
                     >
                         <div class="min-w-0 flex-1">
                             <div class="flex flex-wrap items-center gap-2">
@@ -696,13 +768,13 @@ watch(paymentsMethod, () => fetchPayments(1));
                                     link.subject
                                 }}</span>
                                 <span
-                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
                                     >{{ link.concept }} ·
                                     {{ link.amount_label }}</span
                                 >
                                 <span
                                     v-if="link.provider"
-                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] text-slate-500 capitalize dark:bg-darkmode-400"
+                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 capitalize dark:bg-darkmode-400"
                                     >{{ link.provider }}</span
                                 >
                             </div>
@@ -720,8 +792,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                             <Button
                                 v-if="link.checkout_url"
                                 variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
                                 @click="copyLink(link)"
                             >
                                 <Lucide
@@ -743,19 +814,19 @@ watch(paymentsMethod, () => fetchPayments(1));
                 </div>
                 <div
                     v-else
-                    class="px-5 py-6 text-center text-xs text-slate-500"
+                    class="px-4 py-6 text-center text-xs text-slate-500"
                 >
                     Sin links de pago vivos.
                 </div>
             </div>
 
             <!-- Últimos pagos -->
-            <div class="box box--stacked mt-5">
+            <div class="box box--stacked mt-4">
                 <div
-                    class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-3.5 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
                     <div
-                        class="flex h-8 w-8 items-center justify-center rounded-full border border-success/10 bg-success/10"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10"
                     >
                         <Lucide
                             icon="CircleCheck"
@@ -774,7 +845,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                 </div>
                 <!-- Filtros: folio/referencia/huésped + método -->
                 <div
-                    class="flex flex-wrap items-center gap-3 border-b border-dashed border-slate-300/70 px-5 py-3 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                 >
                     <div class="relative w-full sm:w-64">
                         <Lucide
@@ -784,11 +855,14 @@ watch(paymentsMethod, () => fetchPayments(1));
                         <FormInput
                             v-model="paymentsQ"
                             type="text"
-                            class="pl-9"
-                            placeholder="Folio, referencia o huésped…"
+                            class="h-9 pl-9 text-xs"
+                            placeholder="Folio, referencia o huésped"
                         />
                     </div>
-                    <FormSelect v-model="paymentsMethod" class="w-full sm:w-44">
+                    <FormSelect
+                        v-model="paymentsMethod"
+                        class="h-9 w-full text-xs sm:w-44"
+                    >
                         <option value="">Todos los métodos</option>
                         <option value="transfer">Transferencia</option>
                         <option value="online">En línea</option>
@@ -884,7 +958,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                     </Table>
                     <div
                         v-else
-                        class="px-5 py-6 text-center text-xs text-slate-500"
+                        class="px-4 py-6 text-center text-xs text-slate-500"
                     >
                         {{
                             paymentsQ || paymentsMethod
@@ -907,8 +981,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                     <div class="flex items-center gap-1.5">
                         <Button
                             variant="outline-secondary"
-                            size="sm"
-                            class="rounded-[0.5rem] bg-white"
+                            class="h-8 rounded-[0.5rem] bg-white text-xs"
                             :disabled="recentPayments.current_page <= 1"
                             @click="
                                 fetchPayments(recentPayments.current_page - 1)
@@ -923,8 +996,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                         </span>
                         <Button
                             variant="outline-secondary"
-                            size="sm"
-                            class="rounded-[0.5rem] bg-white"
+                            class="h-8 rounded-[0.5rem] bg-white text-xs"
                             :disabled="
                                 recentPayments.current_page >=
                                 recentPayments.last_page

@@ -256,7 +256,7 @@ function toggleAddon(service: AddonServiceRow) {
                         </span>
                         <Link
                             :href="route('admin.services')"
-                            class="ml-auto flex items-center text-xs text-primary"
+                            class="flex w-full items-center text-xs text-primary sm:ml-auto sm:w-auto"
                         >
                             Catálogo y precios
                             <Lucide icon="ArrowRight" class="ml-1 h-3 w-3" />

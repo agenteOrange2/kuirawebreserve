@@ -38,6 +38,23 @@ class StayController extends Controller
     }
 
     /**
+     * Formas de cobro que acepta la recepción, opcionalmente acotadas al
+     * menú de un flujo (la fianza solo admite efectivo o terminal). Nunca
+     * queda vacía para el caso general: ReservationPolicy deja el efectivo.
+     *
+     * @param  array<int, string>|null  $allowed
+     * @return array<int, string>
+     */
+    private function counterMethods(?array $allowed = null): array
+    {
+        $methods = app(\App\Services\ReservationPolicy::class)->counterMethods();
+
+        return $allowed === null
+            ? $methods
+            : array_values(array_intersect($allowed, $methods));
+    }
+
+    /**
      * Walk-in: ocupación inmediata (flujo motel / mostrador).
      */
     public function store(Request $request, CreateWalkInStay $action): JsonResponse
@@ -68,17 +85,23 @@ class StayController extends Controller
             'extra_charges.*' => ['string', 'max:100'],
             'notes' => ['nullable', 'string'],
             // Cobro al llegar (walkin_charge=checkin): método presencial del
-            // mostrador; el monto SIEMPRE es el de la estancia, nunca del cliente.
-            'payment_method' => ['nullable', \Illuminate\Validation\Rule::in(\App\Models\Payment::METHODS)],
+            // mostrador; el monto SIEMPRE es el de la estancia, nunca del
+            // cliente. La lista sale de lo que la recepción acepta de verdad
+            // (/ajustes/metodos-pago → Políticas), no de las tres de siempre.
+            'payment_method' => ['nullable', \Illuminate\Validation\Rule::in($this->counterMethods())],
             'payment_reference' => ['nullable', 'string', 'max:100'],
             // Caseta de motel: la llegada nace sin sellar y sin cobro, para
             // completarla cuando el encargado regrese con el papel.
             'arrival_pending' => ['sometimes', 'boolean'],
             // En carro o a pie: lo elige la caseta y ya no se vuelve a pedir.
             'arrival_mode' => ['nullable', Rule::in(['vehicle', 'foot'])],
-            // Fianza (depósito en garantía): método presencial; el monto lo
-            // decide el ajuste del hotel, nunca el cliente.
-            'guarantee_method' => ['nullable', \Illuminate\Validation\Rule::in(['cash', 'card'])],
+            // Fianza (depósito en garantía): método presencial. Se recibe en
+            // la mano, así que solo efectivo o terminal — y solo si la
+            // recepción los acepta. El monto default lo pone el ajuste del
+            // hotel; ajustarlo exige motivo (ver ChargeGuarantee).
+            'guarantee_method' => ['nullable', \Illuminate\Validation\Rule::in($this->counterMethods(['cash', 'card']))],
+            'guarantee_amount' => ['nullable', 'numeric', 'min:0', 'max:999999'],
+            'guarantee_reason' => ['nullable', 'string', 'max:255'],
         ]);
 
         try {
@@ -155,7 +178,7 @@ class StayController extends Controller
     public function checkOut(Request $request, Stay $stay, TransitionReservation $action, SettleStay $settle): JsonResponse
     {
         $data = $request->validate([
-            'payment_method' => ['nullable', Rule::in(Payment::METHODS)],
+            'payment_method' => ['nullable', Rule::in($this->counterMethods())],
             'reference' => ['nullable', 'string', 'max:100'],
             'force' => ['sometimes', 'boolean'],
             // Fianza cobrada a la llegada: por default se devuelve al
@@ -363,7 +386,7 @@ class StayController extends Controller
             'arrival_mode' => ['nullable', Rule::in(['vehicle', 'foot'])],
             // Cobro que hizo el encargado en la habitación. El monto SIEMPRE
             // es lo que falta de hospedaje, nunca lo que mande el cliente.
-            'payment_method' => ['nullable', Rule::in(Payment::METHODS)],
+            'payment_method' => ['nullable', Rule::in($this->counterMethods())],
             'payment_reference' => ['nullable', 'string', 'max:100'],
             'notes' => ['nullable', 'string', 'max:255'],
         ]);

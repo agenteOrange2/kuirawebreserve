@@ -33,7 +33,11 @@ class StorePlanProspectRequest extends FormRequest
             'plan_key' => [
                 'required',
                 'string',
-                Rule::exists(Plan::class, 'key')->where('active', true),
+                // Un plan a la medida no se puede pedir desde el landing:
+                // no se anuncia, así que tampoco se acepta aquí.
+                Rule::exists(Plan::class, 'key')
+                    ->where('active', true)
+                    ->where('public', true),
             ],
             'message' => ['nullable', 'string', 'max:1000'],
             'source' => ['nullable', 'string', 'max:80'],

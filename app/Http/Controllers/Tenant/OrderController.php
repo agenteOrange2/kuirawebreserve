@@ -57,7 +57,12 @@ class OrderController extends Controller
             // payment_method que el POS ya manda junto al stay_id cambiaría
             // sin avisar el flujo de los hoteles que hoy cargan a habitación.
             'charge_to_room' => ['nullable', 'boolean'],
-            'payment_method' => ['nullable', Rule::in(Order::METHODS)],
+            // Lo que el POS puede recibir en la mano lo decide la recepción
+            // (/ajustes/metodos-pago → Políticas), no el catálogo completo.
+            'payment_method' => ['nullable', Rule::in(array_values(array_intersect(
+                Order::METHODS,
+                app(\App\Services\ReservationPolicy::class)->counterMethods(),
+            )))],
             'payment_reference' => ['nullable', 'string', 'max:100'],
             'discount' => ['nullable', 'numeric', 'min:0'],
             'discount_reason' => ['nullable', 'string', 'max:100'],

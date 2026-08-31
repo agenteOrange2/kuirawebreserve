@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -121,54 +122,50 @@ const providerGuides = [
 <template>
     <RazeLayout title="Correo saliente">
         <div class="mt-2">
-            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
-                 círculo + título + acción a la derecha -->
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Mail" class="h-7 w-7" />
+                        <Lucide icon="Mail" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">Correo saliente</h1>
-                        <p class="mt-1 text-sm text-slate-500">
-                            Área aislada: el SMTP propio del hotel. Con él, las
-                            confirmaciones y avisos al huésped salen por correo
-                            a nombre de tu hotel; sin configurar, los avisos
-                            solo salen por WhatsApp.
+                        <h1 class="text-base font-medium">Correo saliente</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            El SMTP propio del hotel: con él las confirmaciones
+                            y avisos salen por correo a nombre de tu hotel; sin
+                            configurar, solo salen por WhatsApp.
                         </p>
                     </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
-                    <Button
-                        as="a"
+                <div
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
+                >
+                    <!-- El volver vive con las acciones, no flotando encima
+                         de la tarjeta. -->
+                    <Link
                         :href="route('tenant.hotel-settings')"
-                        variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
                     >
-                        <Lucide
-                            icon="ArrowLeft"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
-                        />
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
                         Volver a Ajustes
-                    </Button>
+                    </Link>
                 </div>
             </div>
 
             <!-- Estado: si el hotel ya puede mandar correos y con qué remitente -->
-            <div class="box box--stacked mt-5 p-5">
+            <div class="box box--stacked mt-4 p-4">
                 <div
-                    class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                    class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                 >
                     <Lucide icon="Mail" class="h-3.5 w-3.5" /> Estado de tu
                     correo
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                     <span
-                        class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
+                        class="flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
                         :class="
                             configured
                                 ? 'bg-success/10 text-success'
@@ -186,7 +183,7 @@ const providerGuides = [
                         }}
                     </span>
                     <span
-                        class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
+                        class="flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
                         :class="
                             savedFrom
                                 ? 'bg-success/10 text-success'
@@ -204,34 +201,35 @@ const providerGuides = [
                         }}
                     </span>
                 </div>
-                <p v-if="!configured" class="mt-3 text-xs text-slate-500">
+                <p v-if="!configured" class="mt-2.5 text-[11px] text-slate-500">
                     Mientras no haya SMTP, los huéspedes no reciben
                     confirmaciones por correo: solo por WhatsApp.
                 </p>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 gap-6">
+            <div class="mt-4 grid grid-cols-12 items-stretch gap-5">
                 <!-- Servidor SMTP -->
                 <div class="col-span-12 xl:col-span-7">
                     <form
-                        class="box box--stacked flex h-full flex-col p-5"
+                        class="box box--stacked flex h-full flex-col p-4"
                         @submit.prevent="submit"
                     >
                         <div
-                            class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="mb-4 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                         >
                             <Lucide icon="Server" class="h-3.5 w-3.5" />
                             Servidor SMTP
                         </div>
                         <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
                             <div class="sm:col-span-2">
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Servidor SMTP</label
                                 >
                                 <FormInput
                                     v-model="form.smtp_host"
                                     type="text"
                                     placeholder="smtp.zoho.com"
+                                    class="h-9 text-xs"
                                 />
                                 <FormHelp
                                     v-if="errors.smtp_host"
@@ -240,13 +238,14 @@ const providerGuides = [
                                 >
                             </div>
                             <div>
-                                <label class="mb-1 block text-sm">Puerto</label>
+                                <label class="mb-1 block text-xs">Puerto</label>
                                 <FormInput
                                     v-model.number="form.smtp_port"
                                     type="number"
                                     min="1"
                                     max="65535"
                                     placeholder="587"
+                                    class="h-9 text-xs"
                                 />
                                 <FormHelp
                                     v-if="errors.smtp_port"
@@ -257,7 +256,7 @@ const providerGuides = [
                         </div>
                         <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Usuario</label
                                 >
                                 <FormInput
@@ -265,10 +264,11 @@ const providerGuides = [
                                     type="text"
                                     placeholder="avisos@tuhotel.com"
                                     autocomplete="off"
+                                    class="h-9 text-xs"
                                 />
                             </div>
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Contraseña</label
                                 >
                                 <FormInput
@@ -280,18 +280,20 @@ const providerGuides = [
                                             ? 'Guardada — escribe para reemplazar'
                                             : 'Contraseña o app password'
                                     "
+                                    class="h-9 text-xs"
                                 />
                             </div>
                         </div>
                         <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Remitente (correo)</label
                                 >
                                 <FormInput
                                     v-model="form.smtp_from_address"
                                     type="email"
                                     placeholder="avisos@tuhotel.com"
+                                    class="h-9 text-xs"
                                 />
                                 <FormHelp
                                     v-if="errors.smtp_from_address"
@@ -300,13 +302,14 @@ const providerGuides = [
                                 >
                             </div>
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Remitente (nombre)</label
                                 >
                                 <FormInput
                                     v-model="form.smtp_from_name"
                                     type="text"
                                     :placeholder="property.name"
+                                    class="h-9 text-xs"
                                 />
                             </div>
                         </div>
@@ -314,10 +317,13 @@ const providerGuides = [
                             <Button
                                 type="submit"
                                 variant="primary"
-                                class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                                class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                                 :disabled="saving"
                             >
-                                <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                                <Lucide
+                                    icon="Check"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
                                 {{ saving ? 'Guardando…' : 'Guardar correo' }}
                             </Button>
                         </div>
@@ -326,9 +332,9 @@ const providerGuides = [
 
                 <div class="col-span-12 flex flex-col gap-6 xl:col-span-5">
                     <!-- Prueba de envío -->
-                    <div class="box box--stacked p-5">
+                    <div class="box box--stacked p-4">
                         <div
-                            class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                         >
                             <Lucide icon="Send" class="h-3.5 w-3.5" /> Enviar
                             prueba
@@ -339,19 +345,20 @@ const providerGuides = [
                         </p>
                         <div class="flex flex-wrap items-end gap-2">
                             <div class="min-w-0 flex-1">
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Enviar prueba a</label
                                 >
                                 <FormInput
                                     v-model="smtpTestTo"
                                     type="email"
                                     placeholder="tu@correo.com"
+                                    class="h-9 text-xs"
                                 />
                             </div>
                             <Button
                                 type="button"
                                 variant="outline-secondary"
-                                class="rounded-[0.5rem] bg-white"
+                                class="h-9 rounded-[0.5rem] bg-white text-xs"
                                 :disabled="smtpTesting"
                                 @click="testSmtp"
                             >
@@ -365,9 +372,9 @@ const providerGuides = [
                     </div>
 
                     <!-- Guías rápidas por proveedor -->
-                    <div class="box box--stacked flex-1 p-5">
+                    <div class="box box--stacked flex-1 p-4">
                         <div
-                            class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                         >
                             <Lucide icon="Lightbulb" class="h-3.5 w-3.5" />
                             Guías rápidas

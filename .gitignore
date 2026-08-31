@@ -34,3 +34,7 @@ yarn-error.log
 /storage/tenant*/app/[0-9]*
 /storage/tenant*
 /graphify-out
+
+# Respaldos de la web anterior: 109 MB de volcado y datos personales de
+# huespedes reales (correos, telefonos, notas de pago). No van al repo.
+/estructura/db_respaldo

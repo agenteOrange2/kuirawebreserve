@@ -99,6 +99,8 @@ const props = defineProps<{
     group: GroupDetail;
     roomTypes: RoomTypeOption[];
     hasExperiencesModule: boolean;
+    /** Hay pasarela conectada y activa: sin ella el link de pago no se ofrece. */
+    hasGateway: boolean;
     canManage: boolean;
 }>();
 
@@ -139,6 +141,23 @@ const totalGuests = computed(() =>
         0,
     ),
 );
+
+// Nota del grupo: las migradas del sitio anterior son párrafos largos, así que
+// el header solo muestra dos renglones y deja abrirla.
+const notesExpanded = ref(false);
+const notesAreLong = computed(() => (props.group.notes ?? '').length > 120);
+
+// Noches del grupo: sirve para leer la estancia de un vistazo en el header.
+const stayNights = computed(() => {
+    if (!props.group.starts_at || !props.group.ends_at) {
+        return 0;
+    }
+
+    const start = new Date(props.group.starts_at).getTime();
+    const end = new Date(props.group.ends_at).getTime();
+
+    return Math.max(0, Math.round((end - start) / 86400000));
+});
 
 const paymentProgress = computed(() => {
     if (props.group.total <= 0) {
@@ -526,133 +545,260 @@ const requestStatusClass: Record<string, string> = {
 <template>
     <RazeLayout :title="`Grupo ${group.code}`">
         <div class="mt-2">
+            <!-- Volver: pastilla con forma de control, no un enlace suelto
+                 flotando sobre la tarjeta. -->
             <Link
                 :href="route('tenant.groups')"
-                class="inline-flex min-h-10 items-center gap-2 text-sm font-medium text-slate-500 transition hover:text-primary"
+                class="mb-2.5 inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
             >
-                <Lucide icon="ArrowLeft" class="h-5 w-5" />
+                <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
                 Volver a grupos
             </Link>
-            <div
-                class="box box--stacked mt-1 flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
-            >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+
+            <!-- Encabezado en tres franjas separadas para que nada se amontone:
+                 identidad y contacto, la nota del grupo, y los datos duros de
+                 la operación. -->
+            <div class="box box--stacked overflow-hidden">
+                <div
+                    class="flex flex-col gap-4 p-5 md:flex-row md:items-start md:justify-between"
+                >
+                    <div class="flex min-w-0 gap-3.5">
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="UsersRound" class="h-5 w-5" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <h1 class="text-base font-medium">
+                                    Grupo {{ group.code }}
+                                </h1>
+                                <span
+                                    class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium"
+                                    :class="groupStatus.class"
+                                >
+                                    <Lucide
+                                        :icon="groupStatus.icon"
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    {{ groupStatus.label }}
+                                </span>
+                            </div>
+                            <!-- Contacto en pastillas: cada dato se lee solo y
+                                 el teléfono y el correo se pueden tocar. -->
+                            <div
+                                class="mt-2 flex flex-wrap items-center gap-1.5"
+                            >
+                                <span
+                                    class="inline-flex max-w-full items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                    title="Responsable del grupo"
+                                >
+                                    <Lucide
+                                        icon="UserRound"
+                                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                                    />
+                                    <span class="truncate">
+                                        {{ group.guest_name ?? 'Sin nombre' }}
+                                    </span>
+                                </span>
+                                <a
+                                    v-if="group.guest_phone"
+                                    :href="`tel:${group.guest_phone}`"
+                                    class="inline-flex max-w-full items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600 transition hover:bg-primary/10 hover:text-primary dark:bg-darkmode-400 dark:text-slate-300"
+                                    title="Llamar al responsable"
+                                >
+                                    <Lucide
+                                        icon="Phone"
+                                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                                    />
+                                    <span class="truncate">
+                                        {{ group.guest_phone }}
+                                    </span>
+                                </a>
+                                <a
+                                    v-if="group.guest_email"
+                                    :href="`mailto:${group.guest_email}`"
+                                    class="inline-flex max-w-full items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600 transition hover:bg-primary/10 hover:text-primary dark:bg-darkmode-400 dark:text-slate-300"
+                                    title="Escribir al responsable"
+                                >
+                                    <Lucide
+                                        icon="Mail"
+                                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                                    />
+                                    <span class="truncate">
+                                        {{ group.guest_email }}
+                                    </span>
+                                </a>
+                                <span
+                                    v-if="
+                                        !group.guest_phone && !group.guest_email
+                                    "
+                                    class="text-xs text-slate-400"
+                                >
+                                    Sin teléfono ni correo registrados
+                                </span>
+                            </div>
+                        </div>
+                    </div>
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        v-if="canManage"
+                        class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:shrink-0 md:flex-wrap md:items-center md:gap-2"
+                    >
+                        <Button
+                            variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
+                            @click="openInfo"
+                        >
+                            <Lucide icon="UserPen" class="mr-1.5 h-3.5 w-3.5" />
+                            Editar responsable
+                        </Button>
+                        <Button
+                            v-if="hasGateway"
+                            variant="primary"
+                            class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                            :disabled="chargeBusy || group.pending_balance <= 0"
+                            @click="issueCharge('gateway')"
+                        >
+                            <Lucide icon="Link" class="mr-1.5 h-3.5 w-3.5" />
+                            Generar link de pago
+                        </Button>
+                    </div>
+                </div>
+
+                <!-- La nota del grupo tiene su propio renglón: recortada a dos
+                     líneas para que una nota migrada no invada el encabezado. -->
+                <div
+                    v-if="group.notes"
+                    class="border-t border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                >
+                    <div
+                        class="flex gap-2.5 rounded-lg bg-slate-50 px-3.5 py-3 dark:bg-darkmode-700"
+                    >
+                        <Lucide
+                            icon="StickyNote"
+                            class="mt-0.5 h-4 w-4 shrink-0 text-slate-400"
+                        />
+                        <div class="min-w-0 flex-1">
+                            <div class="text-[11px] font-medium text-slate-400">
+                                NOTAS DEL GRUPO
+                            </div>
+                            <p
+                                class="mt-1 text-xs leading-relaxed text-slate-600 dark:text-slate-300"
+                                :class="
+                                    notesExpanded
+                                        ? 'whitespace-pre-line'
+                                        : 'line-clamp-2'
+                                "
+                            >
+                                {{ group.notes }}
+                            </p>
+                            <button
+                                v-if="notesAreLong"
+                                type="button"
+                                class="mt-1.5 text-xs font-medium text-primary hover:underline"
+                                @click="notesExpanded = !notesExpanded"
+                            >
+                                {{
+                                    notesExpanded
+                                        ? 'Ver menos'
+                                        : 'Ver nota completa'
+                                }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Datos duros de la operación, con separadores para que no se
+                     lean como un renglón corrido. -->
+                <div
+                    class="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-slate-200/60 bg-slate-50/70 px-5 py-3 text-xs dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                >
+                    <span
+                        class="inline-flex items-center gap-1.5 text-slate-500"
+                        title="Llegada y salida del grupo"
+                    >
+                        <Lucide
+                            icon="CalendarDays"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <template v-if="group.starts_at">
+                            <span
+                                class="font-medium text-slate-700 dark:text-slate-300"
+                            >
+                                {{ formatDateTime(group.starts_at) }}
+                            </span>
+                            <template v-if="group.ends_at">
+                                <span class="text-slate-400">→</span>
+                                <span
+                                    class="font-medium text-slate-700 dark:text-slate-300"
+                                >
+                                    {{ formatDateTime(group.ends_at) }}
+                                </span>
+                            </template>
+                            <span v-if="stayNights">
+                                ({{ stayNights }}
+                                {{ stayNights === 1 ? 'noche' : 'noches' }})
+                            </span>
+                        </template>
+                        <template v-else>Sin fecha registrada</template>
+                    </span>
+                    <span
+                        class="hidden h-3.5 w-px bg-slate-300/70 sm:block dark:bg-darkmode-400"
+                    />
+                    <span
+                        class="inline-flex items-center gap-1.5 text-slate-500"
+                    >
+                        <Lucide
+                            icon="BedDouble"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span
+                            class="font-medium text-slate-700 dark:text-slate-300"
+                        >
+                            {{ activeRoomsCount }}
+                        </span>
+                        {{
+                            activeRoomsCount === 1
+                                ? 'habitación activa'
+                                : 'habitaciones activas'
+                        }}
+                    </span>
+                    <span
+                        class="hidden h-3.5 w-px bg-slate-300/70 sm:block dark:bg-darkmode-400"
+                    />
+                    <span
+                        class="inline-flex items-center gap-1.5 text-slate-500"
                     >
                         <Lucide
                             icon="UsersRound"
-                            class="h-5 w-5 sm:h-7 sm:w-7"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
                         />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="flex flex-wrap items-center gap-2.5">
-                            <h1 class="text-lg font-medium sm:text-xl">
-                                Grupo {{ group.code }}
-                            </h1>
-                            <span
-                                class="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
-                                :class="groupStatus.class"
-                            >
-                                <Lucide
-                                    :icon="groupStatus.icon"
-                                    class="h-4 w-4"
-                                />
-                                {{ groupStatus.label }}
-                            </span>
-                        </div>
-                        <p class="mt-1 text-sm text-slate-500">
-                            Responsable:
-                            <span class="font-medium text-slate-700">
-                                {{ group.guest_name ?? 'Sin nombre' }}
-                            </span>
-                            <template v-if="group.starts_at">
-                                · Llega {{ formatDateTime(group.starts_at) }}
-                            </template>
-                        </p>
-                    </div>
-                </div>
-                <div
-                    v-if="canManage"
-                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
-                >
-                    <Button
-                        variant="outline-secondary"
-                        class="min-h-11 rounded-[0.5rem] bg-white"
-                        @click="openInfo"
-                    >
-                        <Lucide icon="UserPen" class="mr-2 h-5 w-5" />
-                        Editar responsable
-                    </Button>
-                    <Button
-                        variant="primary"
-                        class="min-h-11 rounded-[0.5rem] shadow-md shadow-primary/20"
-                        :disabled="chargeBusy || group.pending_balance <= 0"
-                        @click="issueCharge('gateway')"
-                    >
-                        <Lucide icon="Link" class="mr-2 h-5 w-5" />
-                        Generar link de pago
-                    </Button>
-                </div>
-            </div>
-
-            <div class="mt-5 grid grid-cols-12 gap-5">
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
-                >
-                    <div
-                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
-                    >
-                        <Lucide icon="BedDouble" class="h-6 w-6" />
-                    </div>
-                    <div>
-                        <div class="text-xl font-medium">
-                            {{ activeRoomsCount }}
-                        </div>
-                        <div class="text-xs text-slate-500">
-                            Habitaciones activas
-                        </div>
-                    </div>
-                </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
-                >
-                    <div
-                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
-                    >
-                        <Lucide icon="UsersRound" class="h-6 w-6" />
-                    </div>
-                    <div>
-                        <div class="text-xl font-medium">
+                        <span
+                            class="font-medium text-slate-700 dark:text-slate-300"
+                        >
                             {{ totalGuests }}
-                        </div>
-                        <div class="text-xs text-slate-500">
-                            Personas registradas
-                        </div>
-                    </div>
-                </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
-                >
-                    <div
-                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                        </span>
+                        {{ totalGuests === 1 ? 'persona' : 'personas' }}
+                    </span>
+                    <span
+                        class="hidden h-3.5 w-px bg-slate-300/70 sm:block dark:bg-darkmode-400"
+                    />
+                    <span
+                        class="inline-flex items-center gap-1.5 text-slate-500"
                     >
-                        <Lucide icon="Wallet" class="h-6 w-6" />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="truncate text-xl font-medium">
+                        <Lucide
+                            icon="Wallet"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span
+                            class="font-medium text-slate-700 dark:text-slate-300"
+                        >
                             {{ money(group.total) }}
-                        </div>
-                        <div class="text-xs text-slate-500">
-                            Total del grupo
-                        </div>
-                    </div>
-                </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
-                >
-                    <div
-                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full"
+                        </span>
+                        de total
+                    </span>
+                    <span
+                        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium md:ml-auto"
                         :class="
                             group.pending_balance > 0
                                 ? 'bg-pending/10 text-pending'
@@ -665,32 +811,29 @@ const requestStatusClass: Record<string, string> = {
                                     ? 'ReceiptText'
                                     : 'CircleCheck'
                             "
-                            class="h-6 w-6"
+                            class="h-3.5 w-3.5"
                         />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="truncate text-xl font-medium">
-                            {{ money(group.pending_balance) }}
-                        </div>
-                        <div class="text-xs text-slate-500">
-                            Saldo pendiente
-                        </div>
-                    </div>
+                        {{
+                            group.pending_balance > 0
+                                ? `Saldo pendiente ${money(group.pending_balance)}`
+                                : 'Grupo liquidado'
+                        }}
+                    </span>
                 </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 gap-5">
+            <div class="mt-4 grid grid-cols-12 gap-5">
                 <!-- Habitaciones y recorridos -->
                 <div class="col-span-12 xl:col-span-8">
                     <div class="box box--stacked">
                         <div
-                            class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                            class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
                         >
                             <div class="flex items-center gap-3">
                                 <div
-                                    class="flex h-11 w-11 items-center justify-center rounded-full bg-info/10 text-info"
+                                    class="flex h-9 w-9 items-center justify-center rounded-full bg-info/10 text-info"
                                 >
-                                    <Lucide icon="BedDouble" class="h-6 w-6" />
+                                    <Lucide icon="BedDouble" class="h-4 w-4" />
                                 </div>
                                 <div>
                                     <div class="font-medium">
@@ -705,33 +848,38 @@ const requestStatusClass: Record<string, string> = {
                             <Button
                                 v-if="canManage"
                                 variant="outline-secondary"
-                                class="min-h-10 rounded-[0.5rem] bg-white"
+                                class="h-9 rounded-[0.5rem] bg-white text-xs"
                                 @click="openAddRooms"
                             >
-                                <Lucide icon="Plus" class="mr-2 h-5 w-5" />
+                                <Lucide
+                                    icon="Plus"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
                                 Agregar habitación
                             </Button>
                         </div>
-                        <div class="space-y-3 p-5">
+                        <div
+                            class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                        >
                             <article
                                 v-for="row in group.reservations_detail"
                                 :key="row.id"
-                                class="grid gap-4 rounded-xl border border-slate-200/80 p-4 md:grid-cols-[minmax(14rem,1.25fr)_minmax(10rem,0.8fr)_minmax(10rem,0.8fr)_auto] md:items-center dark:border-darkmode-400"
+                                class="grid gap-3 px-4 py-3 sm:px-5 md:grid-cols-[minmax(13rem,1.3fr)_minmax(9rem,0.8fr)_minmax(9rem,0.8fr)_auto] md:items-center"
                             >
-                                <div class="flex min-w-0 items-center gap-3">
+                                <div class="flex min-w-0 items-center gap-2.5">
                                     <div
-                                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
+                                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
                                     >
                                         <Lucide
                                             icon="BedDouble"
-                                            class="h-6 w-6"
+                                            class="h-4 w-4"
                                         />
                                     </div>
                                     <div class="min-w-0">
                                         <div
-                                            class="flex flex-wrap items-center gap-2"
+                                            class="flex flex-wrap items-center gap-1.5"
                                         >
-                                            <span class="font-medium">
+                                            <span class="text-sm font-medium">
                                                 {{
                                                     row.room
                                                         ? `Habitación ${row.room}`
@@ -739,7 +887,7 @@ const requestStatusClass: Record<string, string> = {
                                                 }}
                                             </span>
                                             <span
-                                                class="rounded-full px-2.5 py-1 text-xs font-medium"
+                                                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                                 :class="
                                                     statusClass[row.status] ??
                                                     'bg-slate-100 text-slate-500'
@@ -749,7 +897,7 @@ const requestStatusClass: Record<string, string> = {
                                             </span>
                                         </div>
                                         <div
-                                            class="mt-0.5 truncate text-xs text-slate-500"
+                                            class="truncate text-xs text-slate-500"
                                         >
                                             {{ row.room_type }} · {{ row.code }}
                                         </div>
@@ -758,15 +906,15 @@ const requestStatusClass: Record<string, string> = {
 
                                 <div>
                                     <div
-                                        class="flex items-center gap-2 text-xs font-medium text-slate-400"
+                                        class="flex items-center gap-1.5 text-[11px] font-medium text-slate-400"
                                     >
                                         <Lucide
                                             icon="UsersRound"
-                                            class="h-4 w-4"
+                                            class="h-3.5 w-3.5"
                                         />
                                         OCUPACIÓN
                                     </div>
-                                    <div class="mt-1 text-sm font-medium">
+                                    <div class="mt-0.5 text-xs font-medium">
                                         {{ row.adults }}
                                         {{
                                             row.adults === 1
@@ -786,18 +934,18 @@ const requestStatusClass: Record<string, string> = {
 
                                 <div>
                                     <div
-                                        class="flex items-center gap-2 text-xs font-medium text-slate-400"
+                                        class="flex items-center gap-1.5 text-[11px] font-medium text-slate-400"
                                     >
                                         <Lucide
                                             icon="CalendarDays"
-                                            class="h-4 w-4"
+                                            class="h-3.5 w-3.5"
                                         />
                                         ESTANCIA
                                     </div>
-                                    <div class="mt-1 text-sm font-medium">
+                                    <div class="mt-0.5 text-xs font-medium">
                                         {{ formatDateTime(row.starts_at) }}
                                     </div>
-                                    <div class="mt-0.5 text-xs text-slate-500">
+                                    <div class="text-xs text-slate-500">
                                         {{ money(row.total) }}
                                     </div>
                                 </div>
@@ -807,27 +955,27 @@ const requestStatusClass: Record<string, string> = {
                                         canManage &&
                                         editableStatuses.includes(row.status)
                                     "
-                                    class="flex items-center gap-2 md:justify-end"
+                                    class="flex items-center gap-1.5 md:justify-end"
                                 >
                                     <Button
                                         variant="outline-primary"
-                                        class="min-h-10 flex-1 whitespace-nowrap md:flex-none"
+                                        class="h-9 flex-1 rounded-[0.5rem] text-xs whitespace-nowrap md:flex-none"
                                         @click="openPeople(row)"
                                     >
                                         <Lucide
                                             icon="UsersRound"
-                                            class="mr-2 h-5 w-5"
+                                            class="mr-1.5 h-3.5 w-3.5"
                                         />
                                         Editar ocupación
                                     </Button>
                                     <Menu>
                                         <Menu.Button
-                                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
                                             title="Más acciones"
                                         >
                                             <Lucide
                                                 icon="EllipsisVertical"
-                                                class="h-5 w-5"
+                                                class="h-4 w-4"
                                             />
                                         </Menu.Button>
                                         <Menu.Items class="w-56">
@@ -839,7 +987,7 @@ const requestStatusClass: Record<string, string> = {
                                             >
                                                 <Lucide
                                                     icon="Ban"
-                                                    class="mr-2 h-4 w-4"
+                                                    class="mr-1.5 h-3.5 w-3.5"
                                                 />
                                                 Cancelar esta habitación
                                             </Menu.Item>
@@ -848,7 +996,7 @@ const requestStatusClass: Record<string, string> = {
                                 </div>
                                 <div
                                     v-else
-                                    class="text-sm text-slate-400 md:text-right"
+                                    class="text-xs text-slate-400 md:text-right"
                                 >
                                     Sin acciones pendientes
                                 </div>
@@ -861,13 +1009,13 @@ const requestStatusClass: Record<string, string> = {
                         class="box box--stacked mt-5"
                     >
                         <div
-                            class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                            class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
                         >
                             <div class="flex items-center gap-3">
                                 <div
-                                    class="flex h-11 w-11 items-center justify-center rounded-full bg-success/10 text-success"
+                                    class="flex h-9 w-9 items-center justify-center rounded-full bg-success/10 text-success"
                                 >
-                                    <Lucide icon="Compass" class="h-6 w-6" />
+                                    <Lucide icon="Compass" class="h-4 w-4" />
                                 </div>
                                 <div>
                                     <div class="font-medium">
@@ -882,36 +1030,39 @@ const requestStatusClass: Record<string, string> = {
                             <Button
                                 v-if="canManage"
                                 variant="outline-secondary"
-                                class="min-h-10 rounded-[0.5rem] bg-white"
+                                class="h-9 rounded-[0.5rem] bg-white text-xs"
                                 @click="openAddExperience"
                             >
-                                <Lucide icon="Plus" class="mr-2 h-5 w-5" />
+                                <Lucide
+                                    icon="Plus"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
                                 Agregar experiencia
                             </Button>
                         </div>
                         <div
                             v-if="group.experiences.length"
-                            class="space-y-3 p-5"
+                            class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
                         >
                             <article
                                 v-for="exp in group.experiences"
                                 :key="exp.id"
-                                class="flex flex-col gap-4 rounded-xl border border-slate-200/80 p-4 sm:flex-row sm:items-center dark:border-darkmode-400"
+                                class="flex flex-col gap-2.5 px-4 py-3 sm:flex-row sm:items-center sm:px-5"
                             >
                                 <div
-                                    class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
                                 >
-                                    <Lucide icon="Compass" class="h-6 w-6" />
+                                    <Lucide icon="Compass" class="h-4 w-4" />
                                 </div>
                                 <div class="min-w-0 flex-1">
                                     <div
-                                        class="flex flex-wrap items-center gap-2"
+                                        class="flex flex-wrap items-center gap-1.5"
                                     >
-                                        <span class="font-medium">
+                                        <span class="text-sm font-medium">
                                             {{ exp.name ?? exp.code }}
                                         </span>
                                         <span
-                                            class="rounded-full px-2.5 py-1 text-xs font-medium"
+                                            class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                             :class="
                                                 statusClass[exp.status] ??
                                                 'bg-slate-100 text-slate-500'
@@ -920,7 +1071,7 @@ const requestStatusClass: Record<string, string> = {
                                             {{ exp.status_label }}
                                         </span>
                                     </div>
-                                    <p class="mt-1 text-xs text-slate-500">
+                                    <p class="truncate text-xs text-slate-500">
                                         {{ exp.code }} · {{ exp.people }}
                                         {{
                                             exp.people === 1
@@ -934,9 +1085,9 @@ const requestStatusClass: Record<string, string> = {
                                     </p>
                                 </div>
                                 <div
-                                    class="flex items-center justify-between gap-3 sm:justify-end"
+                                    class="flex items-center justify-between gap-2.5 sm:justify-end"
                                 >
-                                    <span class="font-medium">{{
+                                    <span class="text-sm font-medium">{{
                                         money(exp.total)
                                     }}</span>
                                     <Button
@@ -948,12 +1099,12 @@ const requestStatusClass: Record<string, string> = {
                                         "
                                         type="button"
                                         variant="outline-danger"
-                                        class="min-h-10 whitespace-nowrap"
+                                        class="h-9 rounded-[0.5rem] text-xs whitespace-nowrap"
                                         @click="cancellingExperience = exp"
                                     >
                                         <Lucide
                                             icon="Ban"
-                                            class="mr-2 h-5 w-5"
+                                            class="mr-1.5 h-3.5 w-3.5"
                                         />
                                         Cancelar
                                     </Button>
@@ -982,12 +1133,12 @@ const requestStatusClass: Record<string, string> = {
                 <div class="col-span-12 xl:col-span-4">
                     <div class="box box--stacked overflow-hidden">
                         <div
-                            class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                            class="flex items-center gap-3 border-b border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
                         >
                             <div
-                                class="flex h-11 w-11 items-center justify-center rounded-full bg-success/10 text-success"
+                                class="flex h-9 w-9 items-center justify-center rounded-full bg-success/10 text-success"
                             >
-                                <Lucide icon="Wallet" class="h-6 w-6" />
+                                <Lucide icon="Wallet" class="h-4 w-4" />
                             </div>
                             <div>
                                 <div class="font-medium">Cobro del grupo</div>
@@ -996,15 +1147,15 @@ const requestStatusClass: Record<string, string> = {
                                 </div>
                             </div>
                         </div>
-                        <div class="p-5">
+                        <div class="p-4">
                             <div
-                                class="rounded-xl bg-slate-50 p-4 dark:bg-darkmode-700"
+                                class="rounded-xl bg-slate-50 p-3.5 dark:bg-darkmode-700"
                             >
                                 <div class="text-xs text-slate-500">
                                     Saldo pendiente
                                 </div>
                                 <div
-                                    class="mt-1 text-2xl font-semibold"
+                                    class="mt-1 text-xl font-semibold"
                                     :class="
                                         group.pending_balance > 0
                                             ? 'text-pending'
@@ -1067,27 +1218,39 @@ const requestStatusClass: Record<string, string> = {
                                 class="mt-4 flex flex-col gap-2"
                             >
                                 <Button
+                                    v-if="hasGateway"
                                     variant="primary"
-                                    class="min-h-11 rounded-[0.5rem]"
+                                    class="h-9 rounded-[0.5rem] text-xs"
                                     :disabled="chargeBusy"
                                     @click="issueCharge('gateway')"
                                 >
-                                    <Lucide icon="Link" class="mr-2 h-5 w-5" />
+                                    <Lucide
+                                        icon="Link"
+                                        class="mr-1.5 h-3.5 w-3.5"
+                                    />
                                     {{
                                         chargeBusy
                                             ? 'Generando...'
                                             : 'Generar link de pago'
                                     }}
                                 </Button>
+                                <!-- Sin pasarela, la transferencia es LA forma
+                                     de cobrar: toma el lugar del botón
+                                     principal en vez de quedar de segundona. -->
                                 <Button
-                                    variant="outline-secondary"
-                                    class="min-h-11 rounded-[0.5rem] bg-white"
+                                    :variant="
+                                        hasGateway
+                                            ? 'outline-secondary'
+                                            : 'primary'
+                                    "
+                                    class="h-9 rounded-[0.5rem] text-xs"
+                                    :class="hasGateway ? 'bg-white' : ''"
                                     :disabled="chargeBusy"
                                     @click="issueCharge('transfer')"
                                 >
                                     <Lucide
                                         icon="Landmark"
-                                        class="mr-2 h-5 w-5"
+                                        class="mr-1.5 h-3.5 w-3.5"
                                     />
                                     Cobro por transferencia
                                 </Button>
@@ -1158,82 +1321,12 @@ const requestStatusClass: Record<string, string> = {
                                         >
                                             <Lucide
                                                 icon="Copy"
-                                                class="mr-2 h-4 w-4"
+                                                class="mr-1.5 h-3.5 w-3.5"
                                             />
                                             Copiar link de pago
                                         </Button>
                                     </div>
                                 </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="box box--stacked mt-5 overflow-hidden">
-                        <div
-                            class="flex items-center justify-between gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
-                        >
-                            <div class="flex items-center gap-3">
-                                <div
-                                    class="flex h-11 w-11 items-center justify-center rounded-full bg-primary/10 text-primary"
-                                >
-                                    <Lucide icon="UserRound" class="h-6 w-6" />
-                                </div>
-                                <div>
-                                    <div class="font-medium">Responsable</div>
-                                    <div class="text-xs text-slate-500">
-                                        Contacto y notas del grupo.
-                                    </div>
-                                </div>
-                            </div>
-                            <Button
-                                v-if="canManage"
-                                type="button"
-                                variant="outline-secondary"
-                                class="!h-10 !w-10 rounded-full !p-0"
-                                title="Editar responsable"
-                                @click="openInfo"
-                            >
-                                <Lucide icon="Pencil" class="h-5 w-5" />
-                            </Button>
-                        </div>
-                        <div class="space-y-3 p-5 text-sm">
-                            <div class="text-base font-medium">
-                                {{ group.guest_name ?? 'Sin nombre' }}
-                            </div>
-                            <div
-                                v-if="group.guest_phone"
-                                class="flex items-center gap-2 text-slate-500"
-                            >
-                                <Lucide icon="Phone" class="h-5 w-5" />
-                                {{ group.guest_phone }}
-                            </div>
-                            <div
-                                v-if="group.guest_email"
-                                class="flex items-center gap-2 text-slate-500"
-                            >
-                                <Lucide icon="Mail" class="h-5 w-5" />
-                                {{ group.guest_email }}
-                            </div>
-                            <p
-                                v-if="group.notes"
-                                class="rounded-lg bg-slate-50 px-3.5 py-3 text-sm text-slate-500 dark:bg-darkmode-700"
-                            >
-                                <span
-                                    class="mb-1 block text-xs font-medium text-slate-400"
-                                >
-                                    NOTAS PARA EL PERSONAL
-                                </span>
-                                {{ group.notes }}
-                            </p>
-                            <div
-                                v-if="
-                                    !group.guest_phone &&
-                                    !group.guest_email &&
-                                    !group.notes
-                                "
-                                class="rounded-lg border border-dashed border-slate-300/70 px-3.5 py-3 text-xs text-slate-500 dark:border-darkmode-400"
-                            >
-                                No hay teléfono, correo ni notas registradas.
                             </div>
                         </div>
                     </div>
@@ -1245,14 +1338,14 @@ const requestStatusClass: Record<string, string> = {
         <Dialog :open="editingInfo" size="lg" @close="editingInfo = false">
             <Dialog.Panel>
                 <form @submit.prevent="submitInfo">
-                    <div class="flex items-start gap-4 px-6 py-5">
+                    <div class="flex items-start gap-4 px-5 py-4">
                         <div
-                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                         >
                             <Lucide icon="UserPen" class="h-7 w-7" />
                         </div>
                         <div>
-                            <h2 class="text-lg font-medium">
+                            <h2 class="text-base font-medium">
                                 Editar responsable
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">
@@ -1262,7 +1355,7 @@ const requestStatusClass: Record<string, string> = {
                         </div>
                     </div>
                     <div
-                        class="space-y-5 border-y border-slate-200/70 px-6 py-5 dark:border-darkmode-400"
+                        class="space-y-5 border-y border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
                     >
                         <div>
                             <FormLabel htmlFor="show-group-guest">
@@ -1272,7 +1365,7 @@ const requestStatusClass: Record<string, string> = {
                                 id="show-group-guest"
                                 v-model="infoForm.guest_name"
                                 type="text"
-                                class="h-11"
+                                class="h-9 text-xs"
                                 placeholder="Nombre completo"
                             />
                         </div>
@@ -1288,11 +1381,11 @@ const requestStatusClass: Record<string, string> = {
                             />
                         </div>
                     </div>
-                    <div class="flex justify-end gap-3 px-6 py-4">
+                    <div class="flex justify-end gap-3 px-5 py-3.5">
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="editingInfo = false"
                         >
                             Cancelar
@@ -1300,10 +1393,10 @@ const requestStatusClass: Record<string, string> = {
                         <Button
                             type="submit"
                             variant="primary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="infoBusy || !infoForm.guest_name.trim()"
                         >
-                            <Lucide icon="Check" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                             {{ infoBusy ? 'Guardando...' : 'Guardar cambios' }}
                         </Button>
                     </div>
@@ -1315,14 +1408,14 @@ const requestStatusClass: Record<string, string> = {
         <Dialog :open="addingRooms" size="lg" @close="addingRooms = false">
             <Dialog.Panel>
                 <form @submit.prevent="submitRooms">
-                    <div class="flex items-start gap-4 px-6 py-5">
+                    <div class="flex items-start gap-4 px-5 py-4">
                         <div
-                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
                         >
                             <Lucide icon="BedDouble" class="h-7 w-7" />
                         </div>
                         <div>
-                            <h2 class="text-lg font-medium">
+                            <h2 class="text-base font-medium">
                                 Agregar habitaciones al grupo
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">
@@ -1332,7 +1425,7 @@ const requestStatusClass: Record<string, string> = {
                         </div>
                     </div>
                     <div
-                        class="space-y-5 border-y border-slate-200/70 px-6 py-5 dark:border-darkmode-400"
+                        class="space-y-5 border-y border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
                     >
                         <div>
                             <FormLabel htmlFor="add-group-room-type">
@@ -1341,7 +1434,7 @@ const requestStatusClass: Record<string, string> = {
                             <FormSelect
                                 id="add-group-room-type"
                                 v-model="roomsForm.room_type_id"
-                                class="h-11"
+                                class="h-9 text-xs"
                             >
                                 <option value="" disabled>Elige un tipo</option>
                                 <option
@@ -1364,7 +1457,7 @@ const requestStatusClass: Record<string, string> = {
                                     id="add-group-room-count"
                                     v-model.number="roomsForm.rooms"
                                     type="number"
-                                    class="h-11"
+                                    class="h-9 text-xs"
                                     min="1"
                                     max="10"
                                 />
@@ -1377,7 +1470,7 @@ const requestStatusClass: Record<string, string> = {
                                     id="add-group-adults"
                                     v-model.number="roomsForm.adults"
                                     type="number"
-                                    class="h-11"
+                                    class="h-9 text-xs"
                                     min="1"
                                     max="20"
                                 />
@@ -1390,7 +1483,7 @@ const requestStatusClass: Record<string, string> = {
                                     id="add-group-children"
                                     v-model.number="roomsForm.children"
                                     type="number"
-                                    class="h-11"
+                                    class="h-9 text-xs"
                                     min="0"
                                     max="20"
                                 />
@@ -1411,11 +1504,11 @@ const requestStatusClass: Record<string, string> = {
                             </FormHelp>
                         </div>
                     </div>
-                    <div class="flex justify-end gap-3 px-6 py-4">
+                    <div class="flex justify-end gap-3 px-5 py-3.5">
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="addingRooms = false"
                         >
                             Cancelar
@@ -1423,12 +1516,12 @@ const requestStatusClass: Record<string, string> = {
                         <Button
                             type="submit"
                             variant="primary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="
                                 roomsBusy || roomsForm.room_type_id === ''
                             "
                         >
-                            <Lucide icon="Plus" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 roomsBusy
                                     ? 'Agregando...'
@@ -1448,14 +1541,14 @@ const requestStatusClass: Record<string, string> = {
         >
             <Dialog.Panel>
                 <form @submit.prevent="submitPeople">
-                    <div class="flex items-start gap-4 px-6 py-5">
+                    <div class="flex items-start gap-4 px-5 py-4">
                         <div
-                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                         >
                             <Lucide icon="UsersRound" class="h-7 w-7" />
                         </div>
                         <div>
-                            <h2 class="text-lg font-medium">
+                            <h2 class="text-base font-medium">
                                 Editar ocupación
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">
@@ -1468,7 +1561,7 @@ const requestStatusClass: Record<string, string> = {
                         </div>
                     </div>
                     <div
-                        class="grid grid-cols-1 gap-4 border-y border-slate-200/70 px-6 py-5 sm:grid-cols-2 dark:border-darkmode-400"
+                        class="grid grid-cols-1 gap-4 border-y border-slate-200/70 px-5 py-4 sm:grid-cols-2 dark:border-darkmode-400"
                     >
                         <div>
                             <FormLabel htmlFor="edit-room-adults">
@@ -1478,7 +1571,7 @@ const requestStatusClass: Record<string, string> = {
                                 id="edit-room-adults"
                                 v-model.number="peopleForm.adults"
                                 type="number"
-                                class="h-11"
+                                class="h-9 text-xs"
                                 min="1"
                                 max="20"
                             />
@@ -1491,7 +1584,7 @@ const requestStatusClass: Record<string, string> = {
                                 id="edit-room-children"
                                 v-model.number="peopleForm.children"
                                 type="number"
-                                class="h-11"
+                                class="h-9 text-xs"
                                 min="0"
                                 max="20"
                             />
@@ -1501,11 +1594,11 @@ const requestStatusClass: Record<string, string> = {
                             adicionales.
                         </FormHelp>
                     </div>
-                    <div class="flex justify-end gap-3 px-6 py-4">
+                    <div class="flex justify-end gap-3 px-5 py-3.5">
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="editingPeople = null"
                         >
                             Cancelar
@@ -1513,10 +1606,10 @@ const requestStatusClass: Record<string, string> = {
                         <Button
                             type="submit"
                             variant="primary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="peopleBusy"
                         >
-                            <Lucide icon="Check" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 peopleBusy
                                     ? 'Guardando...'
@@ -1535,13 +1628,13 @@ const requestStatusClass: Record<string, string> = {
             @close="cancellingRoom = null"
         >
             <Dialog.Panel>
-                <div class="px-6 py-6 text-center">
+                <div class="px-5 py-5 text-center">
                     <div
                         class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-danger/10 text-danger"
                     >
                         <Lucide icon="TriangleAlert" class="h-8 w-8" />
                     </div>
-                    <h2 class="mt-4 text-lg font-medium">
+                    <h2 class="mt-4 text-base font-medium">
                         ¿Cancelar esta habitación?
                     </h2>
                     <p class="mx-auto mt-2 max-w-lg text-sm text-slate-500">
@@ -1559,18 +1652,18 @@ const requestStatusClass: Record<string, string> = {
                     <div class="mt-6 flex justify-center gap-3">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="cancellingRoom = null"
                         >
                             Conservar habitación
                         </Button>
                         <Button
                             variant="danger"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="cancelRoomBusy"
                             @click="cancelRoom"
                         >
-                            <Lucide icon="Ban" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Ban" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 cancelRoomBusy
                                     ? 'Cancelando...'
@@ -1588,13 +1681,13 @@ const requestStatusClass: Record<string, string> = {
             @close="cancellingExperience = null"
         >
             <Dialog.Panel>
-                <div class="px-6 py-6 text-center">
+                <div class="px-5 py-5 text-center">
                     <div
                         class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-danger/10 text-danger"
                     >
                         <Lucide icon="TriangleAlert" class="h-8 w-8" />
                     </div>
-                    <h2 class="mt-4 text-lg font-medium">
+                    <h2 class="mt-4 text-base font-medium">
                         ¿Cancelar esta experiencia?
                     </h2>
                     <p class="mx-auto mt-2 max-w-lg text-sm text-slate-500">
@@ -1615,18 +1708,18 @@ const requestStatusClass: Record<string, string> = {
                     <div class="mt-6 flex justify-center gap-3">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="cancellingExperience = null"
                         >
                             Conservar experiencia
                         </Button>
                         <Button
                             variant="danger"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="cancelExperienceBusy"
                             @click="cancelExperience"
                         >
-                            <Lucide icon="Ban" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Ban" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 cancelExperienceBusy
                                     ? 'Cancelando...'
@@ -1646,14 +1739,14 @@ const requestStatusClass: Record<string, string> = {
         >
             <Dialog.Panel>
                 <form @submit.prevent="submitExperience">
-                    <div class="flex items-start gap-4 px-6 py-5">
+                    <div class="flex items-start gap-4 px-5 py-4">
                         <div
-                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
                         >
                             <Lucide icon="Compass" class="h-7 w-7" />
                         </div>
                         <div>
-                            <h2 class="text-lg font-medium">
+                            <h2 class="text-base font-medium">
                                 Agregar experiencia
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">
@@ -1663,7 +1756,7 @@ const requestStatusClass: Record<string, string> = {
                         </div>
                     </div>
                     <div
-                        class="border-y border-slate-200/70 px-6 py-5 dark:border-darkmode-400"
+                        class="border-y border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
                     >
                         <div v-if="expLoading" class="py-8 text-center">
                             <Lucide
@@ -1698,7 +1791,7 @@ const requestStatusClass: Record<string, string> = {
                                 <FormSelect
                                     id="group-experience"
                                     v-model="expForm.experience_id"
-                                    class="h-11"
+                                    class="h-9 text-xs"
                                     @change="expForm.session_id = ''"
                                 >
                                     <option value="" disabled>
@@ -1720,7 +1813,7 @@ const requestStatusClass: Record<string, string> = {
                                 <FormSelect
                                     id="group-experience-session"
                                     v-model="expForm.session_id"
-                                    class="h-11"
+                                    class="h-9 text-xs"
                                     :disabled="expForm.experience_id === ''"
                                 >
                                     <option value="" disabled>
@@ -1750,18 +1843,18 @@ const requestStatusClass: Record<string, string> = {
                                     id="group-experience-people"
                                     v-model.number="expForm.people"
                                     type="number"
-                                    class="h-11"
+                                    class="h-9 text-xs"
                                     min="1"
                                     max="100"
                                 />
                             </div>
                         </div>
                     </div>
-                    <div class="flex justify-end gap-3 px-6 py-4">
+                    <div class="flex justify-end gap-3 px-5 py-3.5">
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="addingExperience = false"
                         >
                             Cancelar
@@ -1769,10 +1862,10 @@ const requestStatusClass: Record<string, string> = {
                         <Button
                             type="submit"
                             variant="primary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="expBusy || expForm.session_id === ''"
                         >
-                            <Lucide icon="Plus" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 expBusy ? 'Agregando...' : 'Agregar experiencia'
                             }}

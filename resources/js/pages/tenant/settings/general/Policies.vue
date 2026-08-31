@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -50,17 +51,19 @@ async function submit() {
     <RazeLayout title="Políticas del hotel">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="ScrollText" class="h-7 w-7" />
+                        <Lucide icon="ScrollText" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">Políticas del hotel</h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">
+                            Políticas del hotel
+                        </h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Escríbelas en lenguaje natural: mascotas,
                             estacionamiento, visitas, cancelaciones, niños... El
                             asistente responderá usando exactamente lo que
@@ -68,21 +71,22 @@ async function submit() {
                         </p>
                     </div>
                 </div>
-                <Button
-                    as="a"
-                    :href="route('tenant.general-settings')"
-                    variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white"
+                <div
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
                 >
-                    <Lucide
-                        icon="ArrowLeft"
-                        class="mr-2 h-4 w-4 stroke-[1.3]"
-                    />
-                    Volver a Datos generales
-                </Button>
+                    <!-- El volver vive con las acciones, no flotando
+                         encima de la tarjeta. -->
+                    <Link
+                        :href="route('tenant.general-settings')"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
+                    >
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                        Datos generales
+                    </Link>
+                </div>
             </div>
 
-            <div class="box box--stacked mt-5 p-5">
+            <div class="box box--stacked mt-4 p-4">
                 <FormTextarea
                     v-model="policies"
                     rows="14"
@@ -113,11 +117,11 @@ async function submit() {
                 <div class="mt-5 flex justify-end">
                     <Button
                         variant="primary"
-                        class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                         :disabled="saving"
                         @click="submit"
                     >
-                        <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                         {{ saving ? 'Guardando…' : 'Guardar' }}
                     </Button>
                 </div>

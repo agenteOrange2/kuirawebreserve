@@ -36,49 +36,69 @@ class SocialPageController extends Controller
             fn ($q) => $q->whereNull('published_at')->orWhere('published_at', '>=', $since),
         );
 
+        $network = (string) $request->input('red', 'todas');
+
+        if (! in_array($network, SocialPost::NETWORKS, true)) {
+            $network = 'todas';
+        }
+
         $posts = SocialPost::query()
             ->tap($inPeriod)
+            ->when($network !== 'todas', fn ($query) => $query->network($network))
             ->withCount([
                 'comments',
                 'comments as pending_count' => fn ($query) => $query->needsAttention(),
                 'comments as purchase_count' => fn ($query) => $query->where('classification', SocialComment::CLASS_PURCHASE),
-                'comments as answered_count' => fn ($query) => $query->where('status', SocialComment::STATUS_ANSWERED),
             ])
             ->orderByDesc('published_at')
             ->orderByDesc('id')
-            ->get()
-            ->map(fn (SocialPost $post) => [
+            ->paginate(12)
+            ->withQueryString()
+            ->through(fn (SocialPost $post) => [
                 'id' => $post->id,
                 'network' => $post->network,
                 'network_label' => $post->networkLabel(),
                 'excerpt' => $post->excerpt(),
                 'permalink' => $post->permalink,
-                'media_url' => $post->media_url,
+                // Copia local: la URL del CDN de Meta caduca a las semanas.
+                'media_url' => $post->media_url ? route('tenant.social.post.image', $post->id) : null,
                 'published_at' => $post->published_at?->toDateTimeString(),
                 'published_label' => $post->published_at?->locale('es')->isoFormat('D [de] MMMM, YYYY'),
                 'comments_count' => $post->comments_count,
                 'pending_count' => $post->pending_count,
                 'purchase_count' => $post->purchase_count,
-                'answered_count' => $post->answered_count,
                 'url' => route('tenant.social.post', $post->id),
             ]);
 
-        $comments = SocialComment::query()
-            ->whereHas('post', $inPeriod);
+        // Un solo viaje a la base para los cuatro números del resumen, en
+        // vez de un COUNT por tarjeta.
+        $stats = SocialComment::query()
+            ->whereHas('post', $inPeriod)
+            ->selectRaw(
+                'coalesce(sum(status = ?), 0) as nuevos, '
+                .'coalesce(sum(status = ?), 0) as respondidos, '
+                .'coalesce(sum(status = ?), 0) as pendientes, '
+                .'count(distinct conversation_id) as conversaciones',
+                [
+                    SocialComment::STATUS_NEW,
+                    SocialComment::STATUS_ANSWERED,
+                    SocialComment::STATUS_PENDING_STAFF,
+                ],
+            )
+            ->first();
 
         return Inertia::render('tenant/social/Index', [
             'posts' => $posts,
-            'filters' => ['meses' => $months],
+            'filters' => ['meses' => $months, 'red' => $network],
             'periods' => array_map(fn (int $m) => [
                 'value' => $m,
                 'label' => $m === 1 ? 'Último mes' : ($m === 12 ? 'Último año' : "Últimos {$m} meses"),
             ], SocialSyncController::PERIODS),
             'stats' => [
-                'nuevos' => (clone $comments)->where('status', SocialComment::STATUS_NEW)->count(),
-                'respondidos' => (clone $comments)->where('status', SocialComment::STATUS_ANSWERED)->count(),
-                'pendientes' => (clone $comments)->where('status', SocialComment::STATUS_PENDING_STAFF)->count(),
-                'conversaciones' => (clone $comments)->whereNotNull('conversation_id')
-                    ->distinct('conversation_id')->count('conversation_id'),
+                'nuevos' => (int) $stats->nuevos,
+                'respondidos' => (int) $stats->respondidos,
+                'pendientes' => (int) $stats->pendientes,
+                'conversaciones' => (int) $stats->conversaciones,
             ],
             'networks' => $this->networks(),
             'lastSyncedAt' => SocialPost::max('last_synced_at'),

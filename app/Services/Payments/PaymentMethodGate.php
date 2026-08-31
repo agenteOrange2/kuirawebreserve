@@ -2,6 +2,7 @@
 
 namespace App\Services\Payments;
 
+use App\Models\Central\PaymentGatewayLink;
 use App\Models\Central\PaymentMethodSetting;
 
 /**
@@ -23,12 +24,37 @@ class PaymentMethodGate
         'cash' => 'Pago en el hotel (efectivo)',
     ];
 
+    /**
+     * Interruptores ya leídos por esta instancia, por ámbito. Preguntar
+     * método por método costaba dos consultas por método (diez para armar
+     * el mapa completo) y esto se consulta en cada página que ofrece
+     * cobros; son pocas filas, se traen de una.
+     *
+     * @var array<string, array<string, bool>>
+     */
+    protected array $switchCache = [];
+
+    /**
+     * @return array<string, bool>
+     */
+    protected function switches(?string $tenantId): array
+    {
+        $scope = $tenantId ?? '__plataforma__';
+
+        return $this->switchCache[$scope] ??= PaymentMethodSetting::query()
+            ->when(
+                $tenantId === null,
+                fn ($query) => $query->whereNull('tenant_id'),
+                fn ($query) => $query->where('tenant_id', $tenantId),
+            )
+            ->pluck('enabled', 'method')
+            ->map(fn ($enabled) => (bool) $enabled)
+            ->all();
+    }
+
     public function platformEnabled(string $method): bool
     {
-        return PaymentMethodSetting::query()
-            ->whereNull('tenant_id')
-            ->where('method', $method)
-            ->value('enabled') ?? true;
+        return $this->switches(null)[$method] ?? true;
     }
 
     public function enabledFor(string $tenantId, string $method): bool
@@ -37,10 +63,7 @@ class PaymentMethodGate
             return false;
         }
 
-        return PaymentMethodSetting::query()
-            ->where('tenant_id', $tenantId)
-            ->where('method', $method)
-            ->value('enabled') ?? true;
+        return $this->switches($tenantId)[$method] ?? true;
     }
 
     /**
@@ -55,6 +78,36 @@ class PaymentMethodGate
             ->all();
     }
 
+    /**
+     * Pasarela con la que este hotel PUEDE cobrar ahora mismo: conectada,
+     * activa y con su método permitido por plataforma y por el hotel.
+     *
+     * Es la misma pregunta que responde el botón "Generar link de pago" antes
+     * de mostrarse y el endpoint antes de emitir: si vive en dos lugares, la
+     * UI ofrece cobros que el backend rechaza.
+     */
+    public function activeGatewayLink(string $tenantId): ?PaymentGatewayLink
+    {
+        $enabled = $this->methodsFor($tenantId);
+
+        $providers = array_keys(array_filter([
+            'stripe' => $enabled['stripe'],
+            'mercadopago' => $enabled['mercadopago'],
+            'paypal' => $enabled['paypal'],
+        ]));
+
+        if ($providers === []) {
+            return null;
+        }
+
+        return PaymentGatewayLink::query()
+            ->where('tenant_id', $tenantId)
+            ->where('active', true)
+            ->whereIn('provider', $providers)
+            ->orderBy('id')
+            ->first();
+    }
+
     /** Fija el interruptor global (tenant_id null) o el de un hotel. */
     public function set(?string $tenantId, string $method, bool $enabled): void
     {
@@ -62,5 +115,8 @@ class PaymentMethodGate
             ['tenant_id' => $tenantId, 'method' => $method],
             ['enabled' => $enabled],
         );
+
+        // Lo memorizado quedó viejo en cuanto alguien mueve un interruptor.
+        $this->switchCache = [];
     }
 }

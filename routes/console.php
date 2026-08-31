@@ -88,3 +88,9 @@ Schedule::command('tenants:run conversations:prune-archived')
 Schedule::command('tenants:run experiences:generate-sessions')
     ->dailyAt('04:30')
     ->withoutOverlapping();
+
+// Lista de espera: entradas cuyas fechas ya pasaron dejan de ser
+// prospectos (módulo lista-espera). Una vez al día basta.
+Schedule::command('tenants:run waitlist:expire')
+    ->dailyAt('03:20')
+    ->withoutOverlapping();

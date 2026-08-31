@@ -3,7 +3,7 @@ import { Link, router } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import Chart from '@/components/Base/Chart';
-import { FormInput, FormSelect } from '@/components/Base/Form';
+import { FormDate, FormSelect } from '@/components/Base/Form';
 import { Tab } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
@@ -34,6 +34,7 @@ interface ActivityRow {
     to_color: string;
     by: string;
     at: string;
+    at_full: string;
 }
 interface ArrivalRow {
     id: number;
@@ -130,6 +131,18 @@ const range = ref(props.filters.range);
 const customFrom = ref(props.filters.from ?? '');
 const customTo = ref(props.filters.to ?? '');
 
+// El backend recorta el rango personalizado a este máximo; el input lo
+// impide antes para que nadie pida 6 meses y reciba 3 sin enterarse.
+const MAX_CUSTOM_DAYS = 92;
+
+const maxCustomTo = computed(() => {
+    if (!customFrom.value) return undefined;
+    const limit = new Date(`${customFrom.value}T00:00`);
+    limit.setDate(limit.getDate() + MAX_CUSTOM_DAYS);
+
+    return limit.toISOString().slice(0, 10);
+});
+
 function applyPeriod() {
     // El personalizado espera a tener ambas fechas antes de recargar.
     if (range.value === 'custom' && (!customFrom.value || !customTo.value)) {
@@ -205,6 +218,8 @@ const revenueLine = computed(() => ({
 }));
 
 // Donut de tipos con la paleta del theme.
+// 10 tonos para que un hotel con muchos tipos no repita color (antes eran
+// 7 y la 8ª cabaña salía igual que la 1ª).
 const donutPalette = [
     '#03045e',
     '#0891b2',
@@ -213,6 +228,9 @@ const donutPalette = [
     '#c2410c',
     '#b91c1c',
     '#1e293b',
+    '#0c4a6e',
+    '#64748b',
+    '#94a3b8',
 ];
 const donutData = computed(() => ({
     labels: props.roomTypeDistribution.map((t) => t.label),
@@ -234,6 +252,15 @@ const donutOptions = {
     plugins: { legend: { display: false }, tooltip: { enabled: true } },
 };
 
+// Un periodo sin movimiento dibujaba una raya plana al fondo del canvas:
+// se ve como gráfica rota. Con esto la tarjeta dice que no hubo nada.
+const hasOccupancyData = computed(() =>
+    props.series.occupancy.some((p) => p.value > 0),
+);
+const hasRevenueData = computed(() =>
+    props.series.revenue.some((p) => p.value > 0),
+);
+
 const barSegments = computed(() =>
     props.statuses
         .filter((s) => s.count > 0)
@@ -245,6 +272,43 @@ const barSegments = computed(() =>
                     : 0,
         })),
 );
+
+// Movimiento del día para la tarjeta de huéspedes: antes solo decía
+// cuántos hay en casa y el resto de la tarjeta era hueco.
+const guestTiles = computed(() => [
+    {
+        key: 'arrivals',
+        label: 'Llegadas hoy',
+        value: props.arrivals.length,
+        icon: 'LogIn' as Icon,
+        tint: 'border-success/10 bg-success/10 text-success',
+        title: `${props.arrivals.filter((a) => !a.checked_in).length} sin registrar`,
+    },
+    {
+        key: 'departures',
+        label: 'Salidas hoy',
+        value: props.departures.length,
+        icon: 'LogOut' as Icon,
+        tint: 'border-pending/10 bg-pending/10 text-pending',
+        title: 'Estancias que terminan hoy',
+    },
+    {
+        key: 'pending',
+        label: 'Por confirmar',
+        value: props.guestStatus.pending,
+        icon: 'CalendarClock' as Icon,
+        tint: 'border-warning/10 bg-warning/10 text-warning',
+        title: 'Reservas pendientes de confirmar',
+    },
+    {
+        key: 'balance',
+        label: 'Con saldo',
+        value: props.departures.filter((d) => d.balance > 0).length,
+        icon: 'Wallet' as Icon,
+        tint: 'border-danger/10 bg-danger/10 text-danger',
+        title: 'Salidas de hoy que aún deben dinero',
+    },
+]);
 
 const activityIcon = (color: string): Icon => {
     const status = props.statuses.find((s) => s.color === color);
@@ -290,13 +354,13 @@ const cellClass =
 
 <template>
     <RazeLayout title="Dashboard">
-        <div class="grid grid-cols-12 gap-x-6 gap-y-10">
+        <div class="grid grid-cols-12 gap-x-5 gap-y-6">
             <!-- Holds por vencer: apartados que expiran en < 30 min -->
             <div v-if="expiringHolds.length" class="col-span-12 -mb-5">
                 <div class="box box--stacked border-l-4 border-l-warning p-4">
                     <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
                         <div
-                            class="flex items-center gap-2 text-sm font-medium"
+                            class="flex items-center gap-2 text-xs font-medium"
                         >
                             <Lucide
                                 icon="AlarmClock"
@@ -343,7 +407,7 @@ const cellClass =
                 >
                     <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
                         <div
-                            class="flex items-center gap-2 text-sm font-medium"
+                            class="flex items-center gap-2 text-xs font-medium"
                         >
                             <Lucide
                                 icon="Wrench"
@@ -392,14 +456,14 @@ const cellClass =
 
             <!-- Onboarding -->
             <div v-if="!hasRooms" class="col-span-12">
-                <div class="box box--stacked border-l-4 border-l-primary p-5">
+                <div class="box box--stacked border-l-4 border-l-primary p-4">
                     <div class="flex flex-wrap items-center gap-4">
-                        <Lucide icon="Sparkles" class="h-8 w-8 text-primary" />
+                        <Lucide icon="Sparkles" class="h-6 w-6 text-primary" />
                         <div class="flex-1">
                             <div class="font-medium">
                                 ¡Bienvenido! Configura tu hotel en 2 pasos
                             </div>
-                            <p class="mt-1 text-sm text-slate-500">
+                            <p class="mt-1 text-xs text-slate-500">
                                 1) Define tus
                                 <Link
                                     :href="route('tenant.catalog')"
@@ -429,9 +493,9 @@ const cellClass =
                 <!-- Móvil: título arriba y botones en par a lo ancho; en una
                      sola fila aplastaban el título contra el borde. -->
                 <div
-                    class="flex flex-col gap-3 sm:flex-row sm:items-center md:h-10"
+                    class="flex flex-col gap-3 sm:flex-row sm:items-center md:h-9"
                 >
-                    <div class="text-base font-medium">Resumen operativo</div>
+                    <div class="text-sm font-medium">Resumen operativo</div>
                     <div
                         class="grid grid-cols-2 gap-2 sm:ml-auto sm:flex sm:gap-2"
                     >
@@ -439,11 +503,11 @@ const cellClass =
                             as="a"
                             :href="route('tenant.plano')"
                             variant="outline-secondary"
-                            class="rounded-[0.5rem] bg-white"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
                         >
                             <Lucide
                                 icon="Map"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-1.5 h-3.5 w-3.5 stroke-[1.3]"
                             />
                             Plano
                         </Button>
@@ -451,42 +515,40 @@ const cellClass =
                             as="a"
                             :href="route('tenant.reservations')"
                             variant="primary"
-                            class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                         >
                             <Lucide
                                 icon="CalendarPlus"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-1.5 h-3.5 w-3.5 stroke-[1.3]"
                             />
                             Nueva reserva
                         </Button>
                     </div>
                 </div>
-                <div class="mt-3.5 flex flex-1">
+                <div class="mt-3 flex flex-1">
                     <div
                         class="box box--stacked flex w-full flex-col gap-3 p-3 xl:flex-row"
                     >
                         <!-- Hero de ingresos -->
                         <div
-                            class="relative flex flex-col items-center gap-8 overflow-hidden rounded-[0.6rem] bg-gradient-to-b from-theme-2/90 to-theme-1/[0.85] px-8 py-9 xl:w-[300px] xl:flex-none xl:items-start"
+                            class="relative flex flex-col items-center gap-5 overflow-hidden rounded-[0.6rem] bg-gradient-to-b from-theme-2/90 to-theme-1/[0.85] px-5 py-6 xl:w-[300px] xl:flex-none xl:items-start"
                         >
                             <div
-                                class="flex h-12 w-12 items-center justify-center rounded-full border border-white/10 bg-white/10"
+                                class="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/10"
                             >
                                 <Lucide
                                     icon="CreditCard"
-                                    class="h-6 w-6 fill-white/10 text-white"
+                                    class="h-5 w-5 fill-white/10 text-white"
                                 />
                             </div>
                             <div class="text-center xl:text-left">
-                                <div class="text-base text-white/90">
+                                <div class="text-xs text-white/90">
                                     Ingresos de {{ hero.period }}
                                 </div>
                                 <div
                                     class="mt-2 flex items-center justify-center xl:justify-start"
                                 >
-                                    <div
-                                        class="text-2xl font-medium text-white"
-                                    >
+                                    <div class="text-xl font-medium text-white">
                                         {{ hero.revenue }}
                                     </div>
                                     <div
@@ -504,7 +566,9 @@ const cellClass =
                                         />
                                     </div>
                                 </div>
-                                <div class="mt-3 leading-normal text-white/70">
+                                <div
+                                    class="mt-2 text-xs leading-normal text-white/70"
+                                >
                                     Pagos de reservas y ventas de POS en el
                                     periodo elegido.
                                 </div>
@@ -514,11 +578,11 @@ const cellClass =
                                     as="a"
                                     :href="route('tenant.reservations')"
                                     rounded
-                                    class="relative w-full justify-start border-white/20 bg-white/10 px-4 py-2.5 text-white hover:bg-white/[0.15]"
+                                    class="relative w-full justify-start border-white/20 bg-white/10 px-4 py-2 text-xs text-white hover:bg-white/[0.15]"
                                 >
                                     Ver reservas
                                     <div
-                                        class="absolute right-0 mr-0.5 flex h-9 w-9 items-center justify-center rounded-full border border-white/10 bg-white/10"
+                                        class="absolute right-0 mr-0.5 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/10"
                                     >
                                         <Lucide
                                             icon="ArrowRight"
@@ -531,7 +595,7 @@ const cellClass =
 
                         <!-- Rejilla de métricas -->
                         <div
-                            class="flex w-full flex-col rounded-[0.6rem] border border-dashed border-slate-300/80 p-5 sm:px-8 sm:py-7"
+                            class="flex w-full flex-col rounded-[0.6rem] border border-dashed border-slate-300/80 p-4 sm:px-5 sm:py-5"
                         >
                             <div
                                 class="flex flex-col gap-x-3 gap-y-2 sm:flex-row sm:items-center"
@@ -556,37 +620,65 @@ const cellClass =
                                         </option>
                                     </FormSelect>
                                 </div>
-                                <div
-                                    v-if="range === 'custom'"
-                                    class="flex flex-wrap items-center gap-2"
-                                >
-                                    <span class="text-xs text-slate-500"
-                                        >Del</span
-                                    >
-                                    <FormInput
-                                        v-model="customFrom"
-                                        type="date"
-                                        class="w-36"
-                                        aria-label="Desde"
-                                        @change="applyPeriod"
-                                    />
-                                    <span class="text-xs text-slate-500"
-                                        >al</span
-                                    >
-                                    <FormInput
-                                        v-model="customTo"
-                                        type="date"
-                                        class="w-36"
-                                        aria-label="Hasta"
-                                        @change="applyPeriod"
-                                    />
-                                </div>
                                 <div class="text-xs text-slate-500 sm:ml-auto">
                                     Comparado con el periodo anterior
                                 </div>
                             </div>
+
+                            <!-- Las dos fechas van en su propio renglón: en
+                                 la misma fila del selector se partían a media
+                                 frase ("Del [fecha] al" y el segundo campo
+                                 abajo). -->
                             <div
-                                class="mt-6 grid flex-1 grid-cols-2 gap-x-6 gap-y-6 sm:grid-cols-3 xl:grid-cols-4"
+                                v-if="range === 'custom'"
+                                class="mt-4 flex flex-col gap-3 rounded-[0.6rem] border border-dashed border-slate-300/80 p-3 sm:flex-row sm:items-center dark:border-darkmode-400"
+                            >
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <label
+                                        for="range-from"
+                                        class="text-xs text-slate-500"
+                                        >Del</label
+                                    >
+                                    <FormDate
+                                        id="range-from"
+                                        v-model="customFrom"
+                                        class="w-full sm:w-44"
+                                        :max="customTo || null"
+                                        @change="applyPeriod"
+                                    />
+                                    <label
+                                        for="range-to"
+                                        class="text-xs text-slate-500"
+                                        >al</label
+                                    >
+                                    <FormDate
+                                        id="range-to"
+                                        v-model="customTo"
+                                        class="w-full sm:w-44"
+                                        :min="customFrom || null"
+                                        :max="maxCustomTo"
+                                        @change="applyPeriod"
+                                    />
+                                </div>
+                                <p
+                                    class="flex items-center gap-1.5 text-xs text-slate-500 sm:ml-auto"
+                                >
+                                    <Lucide
+                                        icon="Info"
+                                        class="h-3.5 w-3.5 flex-none stroke-[1.3] text-slate-400"
+                                    />
+                                    <template v-if="!customFrom || !customTo">
+                                        Elige las dos fechas para ver el
+                                        periodo.
+                                    </template>
+                                    <template v-else>
+                                        Hasta {{ MAX_CUSTOM_DAYS }} días por
+                                        consulta.
+                                    </template>
+                                </p>
+                            </div>
+                            <div
+                                class="mt-4 grid flex-1 grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3 xl:grid-cols-4"
                             >
                                 <div
                                     v-for="metric in metrics"
@@ -618,11 +710,9 @@ const cellClass =
                                         </div>
                                     </div>
                                     <div
-                                        class="flex items-center text-slate-500"
+                                        class="flex items-start text-xs leading-tight text-slate-500"
                                     >
-                                        <span class="truncate">{{
-                                            metric.title
-                                        }}</span>
+                                        <span>{{ metric.title }}</span>
                                         <span
                                             :title="metric.desc"
                                             class="inline-flex cursor-help"
@@ -642,22 +732,22 @@ const cellClass =
 
             <!-- ===================== Ocupación vs Ingresos ===================== -->
             <div class="col-span-12 flex flex-col 2xl:col-span-3">
-                <div class="flex items-center md:h-10">
-                    <div class="text-base font-medium">
+                <div class="flex items-center md:h-9">
+                    <div class="text-sm font-medium">
                         Ocupación vs. ingresos
                     </div>
                 </div>
                 <!-- Móvil: apiladas (lado a lado se aplastan y el canvas de
                      la gráfica desborda la página). -->
                 <div
-                    class="mt-3.5 grid flex-1 grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 2xl:auto-rows-fr 2xl:grid-cols-1"
+                    class="mt-3 grid flex-1 grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 2xl:auto-rows-fr 2xl:grid-cols-1"
                 >
-                    <div class="box box--stacked flex min-w-0 flex-col p-5">
-                        <div class="text-base text-slate-500">
+                    <div class="box box--stacked flex min-w-0 flex-col p-4">
+                        <div class="text-xs text-slate-500">
                             Ocupación · {{ series.label }}
                         </div>
                         <div class="mt-1 flex items-center">
-                            <div class="text-xl font-medium">
+                            <div class="text-lg font-medium">
                                 {{ series.occupancy_avg }}%
                             </div>
                             <div
@@ -684,19 +774,32 @@ const cellClass =
                             class="mt-4 flex min-h-[87px] w-full min-w-0 flex-1 items-end"
                         >
                             <Chart
+                                v-if="hasOccupancyData"
                                 type="line"
                                 :data="occupancyLine"
                                 :options="lineOptions"
                                 class="!h-[87px] w-full"
                             />
+                            <div
+                                v-else
+                                class="flex h-[87px] w-full flex-col items-center justify-center gap-1.5 rounded-[0.6rem] border border-dashed border-slate-300/70 text-center dark:border-darkmode-400"
+                            >
+                                <Lucide
+                                    icon="BedDouble"
+                                    class="h-4 w-4 text-slate-300"
+                                />
+                                <span class="text-xs text-slate-400">
+                                    Sin noches ocupadas en el periodo
+                                </span>
+                            </div>
                         </div>
                     </div>
-                    <div class="box box--stacked flex min-w-0 flex-col p-5">
-                        <div class="text-base text-slate-500">
+                    <div class="box box--stacked flex min-w-0 flex-col p-4">
+                        <div class="text-xs text-slate-500">
                             Ingresos · {{ series.label }}
                         </div>
                         <div class="mt-1 flex items-center">
-                            <div class="text-xl font-medium">
+                            <div class="text-lg font-medium">
                                 {{ money(series.revenue_total) }}
                             </div>
                             <div
@@ -723,11 +826,24 @@ const cellClass =
                             class="mt-4 flex min-h-[87px] w-full min-w-0 flex-1 items-end"
                         >
                             <Chart
+                                v-if="hasRevenueData"
                                 type="line"
                                 :data="revenueLine"
                                 :options="lineOptions"
                                 class="!h-[87px] w-full"
                             />
+                            <div
+                                v-else
+                                class="flex h-[87px] w-full flex-col items-center justify-center gap-1.5 rounded-[0.6rem] border border-dashed border-slate-300/70 text-center dark:border-darkmode-400"
+                            >
+                                <Lucide
+                                    icon="Receipt"
+                                    class="h-4 w-4 text-slate-300"
+                                />
+                                <span class="text-xs text-slate-400">
+                                    Sin cobros en el periodo
+                                </span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -735,8 +851,8 @@ const cellClass =
 
             <!-- ===================== Actividad reciente ===================== -->
             <div class="col-span-12 flex flex-col md:col-span-6 xl:col-span-4">
-                <div class="flex items-center md:h-10">
-                    <div class="text-base font-medium">Actividad reciente</div>
+                <div class="flex items-center md:h-9">
+                    <div class="text-sm font-medium">Actividad reciente</div>
                     <span
                         v-if="guestStatus.pending"
                         class="ml-auto rounded-full bg-pending/10 px-2.5 py-0.5 text-xs font-medium text-pending"
@@ -744,16 +860,21 @@ const cellClass =
                         {{ guestStatus.pending }} por confirmar
                     </span>
                 </div>
-                <div class="box box--stacked mt-3.5 flex flex-1 flex-col p-5">
+                <div class="box box--stacked mt-3 flex flex-1 flex-col p-4">
                     <div
-                        class="mb-5 border-b border-dashed border-slate-300/70 pb-5"
+                        class="mb-4 border-b border-dashed border-slate-300/70 pb-4"
                     >
                         <div class="flex items-center">
-                            <div class="text-xl font-medium">
+                            <div class="text-lg font-medium">
                                 {{ occupancy.occupied }}/{{ occupancy.total }}
                             </div>
                             <div class="ml-2 text-xs text-slate-500">
                                 habitaciones ocupadas
+                            </div>
+                            <div
+                                class="ml-auto text-xs font-medium text-slate-500"
+                            >
+                                {{ occupancy.percent }}%
                             </div>
                         </div>
                         <div
@@ -768,10 +889,32 @@ const cellClass =
                                 :title="`${seg.label}: ${seg.count}`"
                             />
                         </div>
+                        <!-- La barra es el semáforo completo, no ocupación:
+                             sin leyenda, 8 habitaciones limpias se leían como
+                             "lleno". -->
+                        <div
+                            v-if="barSegments.length"
+                            class="mt-2.5 flex flex-wrap gap-x-4 gap-y-1"
+                        >
+                            <span
+                                v-for="seg in barSegments"
+                                :key="seg.value"
+                                class="flex items-center text-xs text-slate-500"
+                            >
+                                <span
+                                    class="mr-1.5 h-1.5 w-1.5 rounded-full"
+                                    :class="dotColor[seg.color]"
+                                />
+                                {{ seg.label }}
+                                <span class="ml-1 font-medium text-slate-600">{{
+                                    seg.count
+                                }}</span>
+                            </span>
+                        </div>
                     </div>
                     <div
                         v-if="recentActivity.length"
-                        class="flex flex-col gap-5"
+                        class="flex flex-col gap-3.5"
                     >
                         <div
                             v-for="log in recentActivity"
@@ -779,31 +922,33 @@ const cellClass =
                             class="flex items-center"
                         >
                             <div
-                                class="flex h-10 w-10 flex-none items-center justify-center rounded-full border"
+                                class="flex h-9 w-9 flex-none items-center justify-center rounded-full border"
                                 :class="tint[log.to_color]"
                             >
                                 <Lucide
                                     :icon="activityIcon(log.to_color)"
-                                    class="h-[1.15rem] w-[1.15rem]"
+                                    class="h-4 w-4"
                                 />
                             </div>
                             <div
-                                class="ml-3.5 flex w-full flex-col gap-y-1 sm:flex-row sm:items-center"
+                                class="ml-3 flex min-w-0 flex-1 items-center gap-3"
                             >
-                                <div>
-                                    <div class="font-medium whitespace-nowrap">
+                                <div class="min-w-0 flex-1">
+                                    <div class="truncate text-sm font-medium">
                                         Hab. {{ log.room ?? '—' }}
                                     </div>
                                     <div
-                                        class="mt-0.5 text-xs whitespace-nowrap text-slate-500"
+                                        class="mt-0.5 line-clamp-2 text-xs leading-tight text-slate-500"
+                                        :title="`${log.from ?? '—'} → ${log.to} · ${log.by}`"
                                     >
                                         {{ log.from ?? '—' }} → {{ log.to }} ·
                                         {{ log.by }}
                                     </div>
                                 </div>
                                 <span
-                                    class="mr-auto flex items-center rounded-lg border px-2.5 py-1 text-xs font-medium sm:mr-0 sm:ml-auto"
+                                    class="flex flex-none items-center rounded-lg border px-2.5 py-1 text-xs font-medium whitespace-nowrap"
                                     :class="tint[log.to_color]"
+                                    :title="log.at_full"
                                 >
                                     <span
                                         class="mr-1.5 h-1 w-1 rounded-full"
@@ -814,7 +959,7 @@ const cellClass =
                             </div>
                         </div>
                     </div>
-                    <div v-else class="py-6 text-center text-sm text-slate-500">
+                    <div v-else class="py-6 text-center text-xs text-slate-500">
                         Sin movimientos todavía.
                     </div>
                 </div>
@@ -822,15 +967,17 @@ const cellClass =
 
             <!-- ===================== Estado de huéspedes ===================== -->
             <div class="col-span-12 flex flex-col md:col-span-6 xl:col-span-4">
-                <div class="flex items-center md:h-10">
-                    <div class="text-base font-medium">Estado de huéspedes</div>
+                <div class="flex items-center md:h-9">
+                    <div class="text-sm font-medium">Estado de huéspedes</div>
                 </div>
-                <div class="box box--stacked mt-3.5 flex flex-1 flex-col">
+                <div class="box box--stacked mt-3 flex flex-1 flex-col">
+                    <!-- Banner del theme, más bajo: con el original la
+                         tarjeta quedaba medio vacía cuando no hay nadie. -->
                     <div
-                        class="box relative m-2.5 flex flex-col rounded-[0.6rem] border border-dashed bg-gradient-to-b from-transparent to-theme-1/[0.03] pt-[70px] shadow-sm before:absolute before:inset-0 before:bg-texture-black before:bg-cover before:bg-[center_1rem] before:bg-no-repeat before:opacity-90 before:content-['']"
+                        class="box relative m-2.5 flex flex-col rounded-[0.6rem] border border-dashed bg-gradient-to-b from-transparent to-theme-1/[0.03] pt-[40px] shadow-sm before:absolute before:inset-0 before:bg-texture-black before:bg-cover before:bg-[center_1rem] before:bg-no-repeat before:opacity-90 before:content-['']"
                     >
                         <div
-                            class="z-10 mx-auto mt-auto -mb-6 h-14 w-14 rounded-full border border-theme-1/20 bg-white/80 p-1"
+                            class="z-10 mx-auto mt-auto -mb-5 h-12 w-12 rounded-full border border-theme-1/20 bg-white/80 p-1"
                         >
                             <div
                                 class="relative z-10 flex h-full w-full items-center justify-center rounded-full border border-primary/[0.15] bg-gradient-to-b from-theme-2/90 to-theme-1/[0.85] shadow-sm"
@@ -843,56 +990,62 @@ const cellClass =
                         </div>
                     </div>
                     <div class="flex flex-1 flex-col p-5">
-                        <div class="mt-9 mb-10 text-center">
+                        <div class="mt-6 text-center">
                             <div class="flex items-center justify-center">
-                                <div class="text-xl font-medium">
+                                <div class="text-lg font-medium">
                                     {{ guestStatus.in_house }}
                                 </div>
                                 <div class="ml-2 text-xs text-slate-500">
                                     en casa
                                 </div>
                             </div>
-                            <div class="mt-1.5 text-slate-500">
-                                Huéspedes actualmente hospedados
-                            </div>
-                            <div class="mt-4 flex justify-center gap-3">
-                                <span
-                                    title="Huéspedes en casa"
-                                    class="flex items-center rounded-md border border-success/10 bg-success/10 px-2 py-0.5 text-xs text-success"
-                                >
-                                    <span
-                                        class="mr-1.5 h-1.5 w-1.5 rounded-full bg-success"
-                                    />
-                                    {{ guestStatus.in_house }} En casa
-                                </span>
-                                <span
-                                    title="Check-outs de hoy"
-                                    class="flex items-center rounded-md border border-pending/10 bg-pending/10 px-2 py-0.5 text-xs text-pending"
-                                >
-                                    <span
-                                        class="mr-1.5 h-1.5 w-1.5 rounded-full bg-pending"
-                                    />
-                                    {{ guestStatus.checked_out }} Salidas
-                                </span>
-                                <span
-                                    title="Reservas por confirmar"
-                                    class="flex items-center rounded-md border border-warning/10 bg-warning/10 px-2 py-0.5 text-xs text-warning"
-                                >
-                                    <span
-                                        class="mr-1.5 h-1.5 w-1.5 rounded-full bg-warning"
-                                    />
-                                    {{ guestStatus.pending }} Pend.
-                                </span>
+                            <div class="mt-1.5 text-xs text-slate-500">
+                                Huéspedes hospedados en este momento
                             </div>
                         </div>
+
+                        <!-- Movimiento del día: lo que hay que atender hoy -->
+                        <!-- auto-rows-fr: si la tarjeta se estira para
+                             emparejar a sus vecinas, crecen las casillas en
+                             vez de dejar un hueco. -->
+                        <div
+                            class="mt-4 grid flex-1 auto-rows-fr grid-cols-2 gap-2.5"
+                        >
+                            <div
+                                v-for="tile in guestTiles"
+                                :key="tile.key"
+                                :title="tile.title"
+                                class="flex items-center gap-2.5 rounded-[0.6rem] border border-slate-200/70 bg-slate-50/60 p-2.5 dark:border-darkmode-400 dark:bg-darkmode-700"
+                            >
+                                <div
+                                    class="flex h-9 w-9 flex-none items-center justify-center rounded-full border"
+                                    :class="tile.tint"
+                                >
+                                    <Lucide :icon="tile.icon" class="h-4 w-4" />
+                                </div>
+                                <div class="min-w-0">
+                                    <div
+                                        class="text-sm leading-none font-medium"
+                                    >
+                                        {{ tile.value }}
+                                    </div>
+                                    <div
+                                        class="mt-1 text-xs leading-tight text-slate-500"
+                                    >
+                                        {{ tile.label }}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <Button
                             as="a"
                             :href="route('tenant.reservations')"
-                            class="mt-auto w-full border-dashed border-slate-300 hover:bg-slate-50"
+                            class="mt-4 h-10 w-full border-dashed border-slate-300 text-xs hover:bg-slate-50"
                         >
                             <Lucide
                                 icon="ExternalLink"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-1.5 h-3.5 w-3.5 stroke-[1.3]"
                             />
                             Registrar check-in
                         </Button>
@@ -902,12 +1055,12 @@ const cellClass =
 
             <!-- ===================== Distribución por tipo ===================== -->
             <div class="col-span-12 flex flex-col md:col-span-6 xl:col-span-4">
-                <div class="flex items-center md:h-10">
-                    <div class="text-base font-medium">
+                <div class="flex items-center md:h-9">
+                    <div class="text-sm font-medium">
                         Distribución de habitaciones
                     </div>
                 </div>
-                <div class="box box--stacked mt-3.5 flex flex-1 flex-col p-5">
+                <div class="box box--stacked mt-3 flex flex-1 flex-col p-4">
                     <Tab.Group class="mt-1 flex flex-1 flex-col">
                         <Tab.List
                             variant="boxed-tabs"
@@ -917,7 +1070,7 @@ const cellClass =
                                 class="bg-slate-50 first:rounded-l-[0.6rem] last:rounded-r-[0.6rem] [&[aria-selected='true']_button]:text-current"
                             >
                                 <Tab.Button
-                                    class="w-full rounded-[0.6rem] whitespace-nowrap text-slate-500"
+                                    class="w-full rounded-[0.6rem] text-xs whitespace-nowrap text-slate-500"
                                     as="button"
                                     >Por tipo</Tab.Button
                                 >
@@ -926,13 +1079,15 @@ const cellClass =
                                 class="bg-slate-50 first:rounded-l-[0.6rem] last:rounded-r-[0.6rem] [&[aria-selected='true']_button]:text-current"
                             >
                                 <Tab.Button
-                                    class="w-full rounded-[0.6rem] whitespace-nowrap text-slate-500"
+                                    class="w-full rounded-[0.6rem] text-xs whitespace-nowrap text-slate-500"
                                     as="button"
                                     >Semáforo</Tab.Button
                                 >
                             </Tab>
                         </Tab.List>
-                        <Tab.Panels class="mt-8 flex-1">
+                        <Tab.Panels
+                            class="mt-4 flex flex-1 flex-col justify-center"
+                        >
                             <!-- Por tipo -->
                             <Tab.Panel>
                                 <div
@@ -956,7 +1111,9 @@ const cellClass =
                                             >
                                                 {{ totals.rooms }}
                                             </div>
-                                            <div class="mt-1 text-slate-500">
+                                            <div
+                                                class="mt-1 text-xs text-slate-500"
+                                            >
                                                 Habitaciones
                                             </div>
                                         </div>
@@ -964,20 +1121,25 @@ const cellClass =
                                 </div>
                                 <div
                                     v-else
-                                    class="py-10 text-center text-sm text-slate-500"
+                                    class="py-8 text-center text-xs text-slate-500"
                                 >
                                     Sin tipos de habitación aún.
                                 </div>
+                                <!-- Rejilla en vez de fila centrada: con
+                                     muchos tipos la leyenda quedaba en
+                                     renglones sueltos y desalineados. -->
                                 <div
-                                    class="mt-5 flex flex-wrap justify-center gap-x-5 gap-y-2"
+                                    v-if="roomTypeDistribution.length"
+                                    class="mt-5 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2"
                                 >
                                     <div
                                         v-for="(t, i) in roomTypeDistribution"
                                         :key="t.label"
-                                        class="flex items-center text-slate-500"
+                                        class="flex min-w-0 items-center text-xs text-slate-500"
+                                        :title="`${t.label}: ${t.count}`"
                                     >
                                         <div
-                                            class="mr-2 h-2 w-2 rounded-full"
+                                            class="mr-2 h-2 w-2 flex-none rounded-full"
                                             :style="{
                                                 backgroundColor:
                                                     donutPalette[
@@ -985,13 +1147,19 @@ const cellClass =
                                                     ],
                                             }"
                                         />
-                                        {{ t.label }} ({{ t.count }})
+                                        <span class="truncate">{{
+                                            t.label
+                                        }}</span>
+                                        <span
+                                            class="ml-auto pl-2 font-medium text-slate-600 dark:text-slate-300"
+                                            >{{ t.count }}</span
+                                        >
                                     </div>
                                 </div>
                             </Tab.Panel>
                             <!-- Semáforo -->
                             <Tab.Panel>
-                                <div class="grid grid-cols-2 gap-4">
+                                <div class="grid grid-cols-2 gap-3">
                                     <div
                                         v-for="status in statuses"
                                         :key="status.value"
@@ -1008,7 +1176,7 @@ const cellClass =
                                         </div>
                                         <div class="ml-2.5">
                                             <div
-                                                class="text-base leading-none font-medium"
+                                                class="text-sm leading-none font-medium"
                                             >
                                                 {{ status.count }}
                                             </div>
@@ -1026,11 +1194,11 @@ const cellClass =
                     <Button
                         as="a"
                         :href="route('tenant.plano')"
-                        class="mt-6 w-full border-dashed border-slate-300 hover:bg-slate-50"
+                        class="mt-4 h-10 w-full border-dashed border-slate-300 text-xs hover:bg-slate-50"
                     >
                         <Lucide
                             icon="ExternalLink"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.3]"
                         />
                         Ver plano
                     </Button>
@@ -1039,18 +1207,18 @@ const cellClass =
 
             <!-- ===================== Accesos rápidos ===================== -->
             <div class="col-span-12">
-                <div class="grid grid-cols-2 gap-6 sm:grid-cols-4">
+                <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
                     <Link
                         v-for="action in quickActions"
                         :key="action.label"
                         :href="route(action.route)"
-                        class="box box--stacked flex items-center gap-3 p-4 transition hover:-translate-y-0.5"
+                        class="box box--stacked flex items-center gap-2.5 p-3.5 transition hover:-translate-y-0.5"
                     >
                         <div
-                            class="flex h-11 w-11 flex-none items-center justify-center rounded-full border"
+                            class="flex h-9 w-9 flex-none items-center justify-center rounded-full border"
                             :class="action.color"
                         >
-                            <Lucide :icon="action.icon" class="h-5 w-5" />
+                            <Lucide :icon="action.icon" class="h-4 w-4" />
                         </div>
                         <div>
                             <div class="text-sm font-medium">
@@ -1072,14 +1240,14 @@ const cellClass =
 
             <!-- ===================== Llegadas / Salidas ===================== -->
             <div class="col-span-12 xl:col-span-6">
-                <div class="flex items-center md:h-10">
-                    <div class="flex items-center text-base font-medium">
+                <div class="flex items-center md:h-9">
+                    <div class="flex items-center text-sm font-medium">
                         <div
-                            class="mr-2 flex h-7 w-7 items-center justify-center rounded-full border border-success/10 bg-success/10"
+                            class="mr-2 flex h-6 w-6 items-center justify-center rounded-full border border-success/10 bg-success/10"
                         >
                             <Lucide
                                 icon="LogIn"
-                                class="h-4 w-4 stroke-[1.5] text-success"
+                                class="h-3.5 w-3.5 stroke-[1.5] text-success"
                             />
                         </div>
                         Llegadas de hoy
@@ -1103,7 +1271,9 @@ const cellClass =
                         <Table.Tbody>
                             <Table.Tr v-for="a in arrivals" :key="a.id">
                                 <Table.Td :class="cellClass">
-                                    <div class="font-medium whitespace-nowrap">
+                                    <div
+                                        class="text-sm font-medium whitespace-nowrap"
+                                    >
                                         {{ a.guest_name }}
                                     </div>
                                     <div
@@ -1114,7 +1284,7 @@ const cellClass =
                                 </Table.Td>
                                 <Table.Td
                                     :class="cellClass"
-                                    class="text-sm text-slate-500"
+                                    class="text-xs text-slate-500"
                                 >
                                     <span
                                         v-if="a.room"
@@ -1133,7 +1303,7 @@ const cellClass =
                                 </Table.Td>
                                 <Table.Td
                                     :class="cellClass"
-                                    class="text-sm whitespace-nowrap text-slate-500"
+                                    class="text-xs whitespace-nowrap text-slate-500"
                                     ><Lucide
                                         icon="Clock"
                                         class="mr-1 inline h-3.5 w-3.5"
@@ -1156,17 +1326,17 @@ const cellClass =
                     </Table>
                     <div
                         v-else
-                        class="box box--stacked flex flex-col items-center justify-center gap-3 py-10 text-center"
+                        class="box box--stacked flex flex-col items-center justify-center gap-3 py-8 text-center"
                     >
                         <div
-                            class="flex h-12 w-12 items-center justify-center rounded-full border border-success/10 bg-success/10"
+                            class="flex h-10 w-10 items-center justify-center rounded-full border border-success/10 bg-success/10"
                         >
                             <Lucide
                                 icon="CalendarCheck"
-                                class="h-6 w-6 text-success"
+                                class="h-5 w-5 text-success"
                             />
                         </div>
-                        <p class="text-sm text-slate-500">
+                        <p class="text-xs text-slate-500">
                             Sin llegadas programadas para hoy.
                         </p>
                     </div>
@@ -1174,14 +1344,14 @@ const cellClass =
             </div>
 
             <div class="col-span-12 xl:col-span-6">
-                <div class="flex items-center md:h-10">
-                    <div class="flex items-center text-base font-medium">
+                <div class="flex items-center md:h-9">
+                    <div class="flex items-center text-sm font-medium">
                         <div
-                            class="mr-2 flex h-7 w-7 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
+                            class="mr-2 flex h-6 w-6 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
                         >
                             <Lucide
                                 icon="LogOut"
-                                class="h-4 w-4 stroke-[1.5] text-pending"
+                                class="h-3.5 w-3.5 stroke-[1.5] text-pending"
                             />
                         </div>
                         Salidas de hoy
@@ -1205,7 +1375,9 @@ const cellClass =
                         <Table.Tbody>
                             <Table.Tr v-for="d in departures" :key="d.id">
                                 <Table.Td :class="cellClass">
-                                    <div class="font-medium whitespace-nowrap">
+                                    <div
+                                        class="text-sm font-medium whitespace-nowrap"
+                                    >
                                         {{ d.guest_name }}
                                     </div>
                                     <div
@@ -1216,7 +1388,7 @@ const cellClass =
                                 </Table.Td>
                                 <Table.Td
                                     :class="cellClass"
-                                    class="text-sm text-slate-500"
+                                    class="text-xs text-slate-500"
                                 >
                                     <span
                                         v-if="d.room"
@@ -1231,7 +1403,7 @@ const cellClass =
                                 </Table.Td>
                                 <Table.Td
                                     :class="cellClass"
-                                    class="text-sm whitespace-nowrap text-slate-500"
+                                    class="text-xs whitespace-nowrap text-slate-500"
                                     ><Lucide
                                         icon="Clock"
                                         class="mr-1 inline h-3.5 w-3.5"
@@ -1254,17 +1426,17 @@ const cellClass =
                     </Table>
                     <div
                         v-else
-                        class="box box--stacked flex flex-col items-center justify-center gap-3 py-10 text-center"
+                        class="box box--stacked flex flex-col items-center justify-center gap-3 py-8 text-center"
                     >
                         <div
-                            class="flex h-12 w-12 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
+                            class="flex h-10 w-10 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
                         >
                             <Lucide
                                 icon="DoorOpen"
-                                class="h-6 w-6 text-pending"
+                                class="h-5 w-5 text-pending"
                             />
                         </div>
-                        <p class="text-sm text-slate-500">
+                        <p class="text-xs text-slate-500">
                             Sin salidas programadas para hoy.
                         </p>
                     </div>

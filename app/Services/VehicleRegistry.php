@@ -28,6 +28,12 @@ class VehicleRegistry
      */
     public function resolve(array $data, ?Guest $guest = null): ?Vehicle
     {
+        // La ficha CRM del huésped se enriquece ANTES de validar la placa:
+        // una placa corta no crea ficha de vehículo, pero la marca, el
+        // modelo y el color capturados no se tiran — antes se perdían y el
+        // editor del huésped abría con esos campos vacíos.
+        $this->enrichGuestVehicle($guest, $data);
+
         $plate = (string) ($data['vehicle_plate'] ?? '');
         $normalized = Vehicle::normalizePlate($plate);
 
@@ -62,6 +68,43 @@ class VehicleRegistry
         }
 
         return $vehicle;
+    }
+
+    /**
+     * El vehículo del huésped en su ficha CRM (meta.vehicle, la que edita
+     * "Editar huésped"): misma regla de solo llenar huecos. Es la segunda
+     * representación que ya existía — aquí solo se alimenta de paso, para
+     * que lo tecleado en el mostrador aparezca en sus campos (marca, modelo,
+     * color) y no perdido en una línea de texto.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    protected function enrichGuestVehicle(?Guest $guest, array $data): void
+    {
+        if (! $guest) {
+            return;
+        }
+
+        $incoming = array_filter([
+            'plate' => filled($data['vehicle_plate'] ?? null)
+                ? mb_strtoupper(trim((string) $data['vehicle_plate']))
+                : null,
+            'brand' => $data['vehicle_brand'] ?? null,
+            'model' => $data['vehicle_model'] ?? null,
+            'color' => $data['vehicle_color'] ?? null,
+            'year' => $data['vehicle_year'] ?? null,
+        ], fn ($value) => $value !== null && $value !== '');
+
+        $vehicle = $guest->vehicle();
+        foreach ($incoming as $key => $value) {
+            if (empty($vehicle[$key])) {
+                $vehicle[$key] = $value;
+            }
+        }
+
+        if ($vehicle !== $guest->vehicle()) {
+            $guest->fill(['meta' => array_merge($guest->meta ?? [], ['vehicle' => $vehicle])])->save();
+        }
     }
 
     /**

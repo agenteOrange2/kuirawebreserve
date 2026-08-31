@@ -140,7 +140,7 @@ async function finish() {
             <Dialog.Description>
                 <div class="space-y-3">
                     <div>
-                        <label class="mb-1 block text-sm">Camarista</label>
+                        <label class="mb-1 block text-xs">Camarista</label>
                         <FormSelect v-model="startForm.housekeeper_id">
                             <option value="">Elige quién limpia</option>
                             <option
@@ -157,7 +157,7 @@ async function finish() {
                         </FormHelp>
                     </div>
                     <div>
-                        <label class="mb-1 block text-sm">
+                        <label class="mb-1 block text-xs">
                             Tipo de limpieza
                         </label>
                         <FormSelect v-model="startForm.kind">
@@ -215,7 +215,7 @@ async function finish() {
             <Dialog.Description>
                 <div class="space-y-4">
                     <div>
-                        <div class="mb-2 text-sm font-medium">
+                        <div class="mb-2 text-xs font-medium">
                             ¿Qué se hizo?
                         </div>
                         <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
@@ -250,7 +250,7 @@ async function finish() {
                     </div>
 
                     <div v-if="linens.length">
-                        <div class="mb-2 text-sm font-medium">Ropa usada</div>
+                        <div class="mb-2 text-xs font-medium">Ropa usada</div>
                         <div class="grid grid-cols-2 gap-3">
                             <div v-for="item in linens" :key="item.key">
                                 <label
@@ -271,7 +271,7 @@ async function finish() {
                     </div>
 
                     <div>
-                        <label class="mb-1 block text-sm">
+                        <label class="mb-1 block text-xs">
                             ¿Encontró algo roto o faltante?
                         </label>
                         <FormInput
@@ -286,7 +286,7 @@ async function finish() {
                     </div>
 
                     <div>
-                        <label class="mb-1 block text-sm">Notas</label>
+                        <label class="mb-1 block text-xs">Notas</label>
                         <FormTextarea
                             v-model="closeForm.notes"
                             rows="2"

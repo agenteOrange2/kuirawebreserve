@@ -248,20 +248,18 @@ async function copyWebhookUrl(link: GatewayLink) {
 <template>
     <RazeLayout title="Pasarelas de pago">
         <div class="mt-2">
-            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
-                 círculo + título + acción a la derecha -->
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="CreditCard" class="h-7 w-7" />
+                        <Lucide icon="CreditCard" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">Pasarelas de pago</h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Pasarelas de pago</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Conecta tus cuentas para cobrar con link de pago: el
                             dinero llega directo a tu cuenta del proveedor.
                             <span class="font-medium"
@@ -276,18 +274,15 @@ async function copyWebhookUrl(link: GatewayLink) {
                         </p>
                     </div>
                 </div>
-                <Button
-                    as="a"
+                <!-- El volver vive con las acciones, no flotando encima
+                     de la tarjeta. -->
+                <Link
                     :href="route('tenant.payment-methods')"
-                    variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white"
+                    class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
                 >
-                    <Lucide
-                        icon="ArrowLeft"
-                        class="mr-2 h-4 w-4 stroke-[1.3]"
-                    />
-                    Volver a Métodos de pago
-                </Button>
+                    <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                    Métodos de pago
+                </Link>
             </div>
 
             <!-- Lo primero que debe saberse: una pasarela "Activa" en modo
@@ -303,7 +298,7 @@ async function copyWebhookUrl(link: GatewayLink) {
                     <Lucide icon="TriangleAlert" class="h-5 w-5" />
                 </div>
                 <div class="min-w-0 text-sm">
-                    <div class="font-medium">
+                    <div class="text-sm font-medium">
                         {{ activeTestGateways.join(' y ') }}
                         {{ activeTestGateways.length > 1 ? 'están' : 'está' }}
                         en modo prueba
@@ -320,7 +315,7 @@ async function copyWebhookUrl(link: GatewayLink) {
                 </div>
             </div>
 
-            <div class="box box--stacked mt-5 p-5">
+            <div class="box box--stacked mt-4 p-4">
                 <div
                     v-if="!hasCobrosModule"
                     class="flex items-start gap-3 rounded-lg border border-dashed border-slate-300/70 p-5 dark:border-darkmode-400"
@@ -439,8 +434,7 @@ async function copyWebhookUrl(link: GatewayLink) {
                                         ? 'outline-secondary'
                                         : 'outline-primary'
                                 "
-                                size="sm"
-                                class="shrink-0 rounded-[0.5rem] bg-white"
+                                class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
                                 @click="openGateway(provider)"
                             >
                                 <Lucide
@@ -525,6 +519,7 @@ async function copyWebhookUrl(link: GatewayLink) {
                                 v-model="gwForms[modalProvider].public_key"
                                 type="text"
                                 placeholder="Llave pública"
+                                class="h-9 text-xs"
                             />
                         </div>
                         <div>
@@ -539,6 +534,7 @@ async function copyWebhookUrl(link: GatewayLink) {
                                         ? `Guardada (${gatewayFor(modalProvider)?.masked_secret}) — escribe para reemplazar`
                                         : 'Llave secreta'
                                 "
+                                class="h-9 text-xs"
                             />
                         </div>
                         <div>
@@ -554,6 +550,7 @@ async function copyWebhookUrl(link: GatewayLink) {
                                         ? 'Guardado — escribe para reemplazar'
                                         : gwFieldHints[modalProvider]?.webhook
                                 "
+                                class="h-9 text-xs"
                             />
                             <FormHelp>{{
                                 gwFieldHints[modalProvider]?.webhook
@@ -602,8 +599,7 @@ async function copyWebhookUrl(link: GatewayLink) {
                         <div class="flex items-center gap-2 pt-1">
                             <Button
                                 variant="primary"
-                                size="sm"
-                                class="rounded-[0.5rem]"
+                                class="h-8 rounded-[0.5rem] text-xs"
                                 :disabled="gwBusy === modalProvider"
                                 @click="saveGateway(modalProvider)"
                             >
@@ -622,8 +618,7 @@ async function copyWebhookUrl(link: GatewayLink) {
                             <Button
                                 v-if="gatewayFor(modalProvider)"
                                 variant="outline-secondary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
                                 title="Prueba las llaves GUARDADAS — si acabas de escribirlas, primero usa Guardar cambios"
                                 :disabled="gwBusy === modalProvider"
                                 @click="testGateway(gatewayFor(modalProvider)!)"

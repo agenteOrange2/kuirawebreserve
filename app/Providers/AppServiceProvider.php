@@ -74,6 +74,13 @@ class AppServiceProvider extends ServiceProvider
     {
         Date::use(CarbonImmutable::class);
 
+        // Fechas en palabras en español ("hace 3 días", "26 de agosto").
+        // APP_LOCALE sigue en 'en' (mensajes de validación de Laravel), así
+        // que el idioma de Carbon se fija aquí: sin esto diffForHumans() y
+        // translatedFormat() salen en inglés en todo el panel.
+        \Carbon\Carbon::setLocale('es');
+        CarbonImmutable::setLocale('es');
+
         DB::prohibitDestructiveCommands(
             app()->isProduction(),
         );

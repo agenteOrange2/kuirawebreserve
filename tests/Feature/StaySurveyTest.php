@@ -255,3 +255,128 @@ it('una evaluación baja avisa a la campana del staff; una buena no', function (
 
     expect(\App\Models\StaffNotification::where('type', \App\Models\StaffNotification::TYPE_SURVEY)->count())->toBe(1);
 });
+
+/**
+ * Seguimiento desde /encuestas: una queja de dos estrellas tiene que
+ * poder cerrarse, contestarse y convertirse en trabajo — antes la
+ * pantalla era solo lectura.
+ */
+function makeAnsweredSurvey(int $rating, ?string $comment = null): StaySurvey
+{
+    $stay = makeSurveyStay();
+
+    return StaySurvey::create([
+        'stay_id' => $stay->id,
+        'guest_id' => $stay->guest_id,
+        'token' => \Illuminate\Support\Str::random(40),
+        'rating' => $rating,
+        'answers' => ['service' => $rating],
+        'comment' => $comment,
+        'submitted_at' => now(),
+    ]);
+}
+
+it('cerrar el caso deja constancia de quién y cuándo, y reabrirlo lo limpia', function () {
+    $user = User::factory()->create(['name' => 'Karla Recepción']);
+    $survey = makeAnsweredSurvey(2, 'El aire no enfriaba.');
+
+    $request = Request::create("/api/stay-surveys/{$survey->id}/handle", 'PATCH', [
+        'handled' => true,
+        'notes' => 'Se le llamó y se le dio una noche de cortesía.',
+    ]);
+    $request->setUserResolver(fn () => $user);
+
+    app(\App\Http\Controllers\Tenant\StaySurveyController::class)->handle($request, $survey);
+
+    $survey->refresh();
+
+    expect($survey->handled_at)->not->toBeNull()
+        ->and($survey->handled_by)->toBe($user->id)
+        ->and($survey->handled_notes)->toContain('cortesía')
+        ->and($survey->isHandled())->toBeTrue();
+
+    $reopen = Request::create("/api/stay-surveys/{$survey->id}/handle", 'PATCH', ['handled' => false]);
+    $reopen->setUserResolver(fn () => $user);
+
+    app(\App\Http\Controllers\Tenant\StaySurveyController::class)->handle($reopen, $survey);
+
+    expect($survey->refresh()->handled_at)->toBeNull()
+        ->and($survey->handled_by)->toBeNull();
+});
+
+it('la queja se convierte en incidencia ligada, y no se duplica', function () {
+    $user = User::factory()->create();
+    $survey = makeAnsweredSurvey(1, 'La regadera tira agua fría.');
+
+    $request = Request::create("/api/stay-surveys/{$survey->id}/incident", 'POST', [
+        'title' => 'Regadera sin agua caliente',
+        'category' => 'plomeria',
+        'priority' => 'high',
+    ]);
+    $request->setUserResolver(fn () => $user);
+
+    $response = app(\App\Http\Controllers\Tenant\StaySurveyController::class)->raiseIncident($request, $survey);
+
+    expect($response->getStatusCode())->toBe(201);
+
+    $incident = \App\Models\Incident::firstOrFail();
+
+    expect($survey->refresh()->incident_id)->toBe($incident->id)
+        ->and($incident->room_id)->toBe($this->room->id)
+        ->and($incident->stay_id)->toBe($survey->stay_id)
+        // La levantó el huésped en su encuesta, no el staff.
+        ->and($incident->source)->toBe(\App\Models\Incident::SOURCE_GUEST)
+        ->and($incident->description)->toContain('La regadera tira agua fría');
+
+    // Segundo intento: no se levanta otra sobre la misma queja.
+    $again = Request::create("/api/stay-surveys/{$survey->id}/incident", 'POST', [
+        'title' => 'Otra vez',
+        'priority' => 'medium',
+    ]);
+    $again->setUserResolver(fn () => $user);
+
+    expect(app(\App\Http\Controllers\Tenant\StaySurveyController::class)->raiseIncident($again, $survey)->getStatusCode())
+        ->toBe(422)
+        ->and(\App\Models\Incident::query()->count())->toBe(1);
+});
+
+it('la lista filtra por pendientes y el indicador cuenta lo que nadie ha cerrado', function () {
+    $user = User::factory()->create();
+
+    // Pide seguimiento: calificó bajo.
+    makeAnsweredSurvey(2, 'Ruido toda la noche.');
+    // Pide seguimiento: dejó comentario aunque calificó bien.
+    makeAnsweredSurvey(5, 'Todo excelente, solo faltó café.');
+    // No pide nada: cinco estrellas sin comentario.
+    makeAnsweredSurvey(5);
+    // Ya atendida: no cuenta como pendiente.
+    $handled = makeAnsweredSurvey(1, 'Pésimo servicio.');
+    $handled->update(['handled_at' => now(), 'handled_by' => $user->id]);
+
+    $request = Request::create('/encuestas', 'GET', ['show' => 'pending']);
+    $request->setUserResolver(fn () => $user);
+
+    $props = app(\App\Http\Controllers\Tenant\SurveysPageController::class)($request)
+        ->toResponse($request)->getOriginalContent()->getData()['page']['props'];
+
+    expect($props['kpis']['answered'])->toBe(4)
+        ->and($props['kpis']['pending'])->toBe(2)
+        ->and($props['matching'])->toBe(2);
+
+    // El buscador mira huésped, habitación y comentario.
+    $search = Request::create('/encuestas', 'GET', ['q' => 'café']);
+    $search->setUserResolver(fn () => $user);
+
+    $found = app(\App\Http\Controllers\Tenant\SurveysPageController::class)($search)
+        ->toResponse($search)->getOriginalContent()->getData()['page']['props'];
+
+    expect($found['matching'])->toBe(1);
+});
+
+it('una respuesta de prueba se puede borrar y deja de contar', function () {
+    $survey = makeAnsweredSurvey(1, 'prueba');
+
+    app(\App\Http\Controllers\Tenant\StaySurveyController::class)->destroy($survey);
+
+    expect(StaySurvey::query()->count())->toBe(0);
+});

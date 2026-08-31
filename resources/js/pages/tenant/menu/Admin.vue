@@ -4,11 +4,17 @@ import axios from 'axios';
 import QRCode from 'qrcode';
 import { computed, onMounted, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormHelp, FormInput, FormSwitch } from '@/components/Base/Form';
+import {
+    FormHelp,
+    FormInput,
+    FormSwitch,
+    FormTime,
+} from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import { durationLabel } from '@/lib/utils';
 
 interface MenuProduct {
     id: number;
@@ -64,6 +70,11 @@ const props = defineProps<{
 }>();
 
 const toast = useToasts();
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const cardHeader =
+    'flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400';
+
 const money = (n: number) =>
     `$${n.toLocaleString('es-MX', { minimumFractionDigits: 2 })}`;
 
@@ -340,52 +351,45 @@ async function printQrCodes() {
         <!-- Header hero -->
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide
-                            icon="UtensilsCrossed"
-                            class="h-5 w-5 sm:h-7 sm:w-7"
-                        />
+                        <Lucide icon="UtensilsCrossed" class="h-3.5 w-3.5" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">
-                            Menú digital
-                        </h1>
-                        <p class="mt-1 text-sm text-slate-500">
-                            La carta pública y los pedidos de tus huéspedes
+                        <h1 class="text-base font-medium">Menú digital</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            La carta pública y los pedidos que llegan desde la
+                            habitación.
                         </p>
                     </div>
                 </div>
                 <div
-                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:gap-2.5"
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:shrink-0 md:items-center md:gap-2"
                 >
                     <Button
                         :as="Link"
                         :href="route('tenant.menu-kitchen')"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
-                        <Lucide
-                            icon="ChefHat"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
-                        />
-                        Cocina
+                        <Lucide icon="ChefHat" class="mr-1.5 h-3.5 w-3.5" />
+                        Vista de cocina
                     </Button>
                     <Button
                         as="a"
                         :href="menuUrl"
                         target="_blank"
                         rel="noopener"
-                        variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        variant="primary"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                     >
                         <Lucide
                             icon="ExternalLink"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                            class="mr-1.5 h-3.5 w-3.5"
                         />
                         Ver la carta
                     </Button>
@@ -394,20 +398,17 @@ async function printQrCodes() {
         </div>
 
         <!-- KPIs -->
-        <div class="mt-5 grid auto-rows-fr grid-cols-12 gap-5">
+        <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
             <div
-                class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                 >
-                    <Lucide
-                        icon="ClipboardList"
-                        class="h-5 w-5 text-primary"
-                    />
+                    <Lucide icon="ClipboardList" class="h-4 w-4 text-primary" />
                 </div>
                 <div class="min-w-0">
-                    <div class="text-xl font-medium">
+                    <div class="truncate text-sm font-medium">
                         {{ stats.today_count }}
                     </div>
                     <div class="truncate text-xs text-slate-500">
@@ -416,18 +417,18 @@ async function printQrCodes() {
                 </div>
             </div>
             <div
-                class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10"
                 >
                     <Lucide
                         icon="BadgeDollarSign"
-                        class="h-5 w-5 text-success"
+                        class="h-4 w-4 text-success"
                     />
                 </div>
                 <div class="min-w-0">
-                    <div class="text-xl font-medium">
+                    <div class="truncate text-sm font-medium">
                         {{ money(stats.today_total) }}
                     </div>
                     <div class="truncate text-xs text-slate-500">
@@ -436,15 +437,15 @@ async function printQrCodes() {
                 </div>
             </div>
             <div
-                class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
                 >
-                    <Lucide icon="BellRing" class="h-5 w-5 text-warning" />
+                    <Lucide icon="BellRing" class="h-4 w-4 text-warning" />
                 </div>
                 <div class="min-w-0">
-                    <div class="text-xl font-medium">
+                    <div class="truncate text-sm font-medium">
                         {{ stats.waiting_now }}
                     </div>
                     <div class="truncate text-xs text-slate-500">
@@ -453,20 +454,16 @@ async function printQrCodes() {
                 </div>
             </div>
             <div
-                class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10"
                 >
-                    <Lucide icon="Timer" class="h-5 w-5 text-info" />
+                    <Lucide icon="Timer" class="h-4 w-4 text-info" />
                 </div>
                 <div class="min-w-0">
-                    <div class="text-xl font-medium">
-                        {{
-                            stats.avg_dispatch_minutes === null
-                                ? 'Sin datos'
-                                : `${stats.avg_dispatch_minutes} min`
-                        }}
+                    <div class="truncate text-sm font-medium">
+                        {{ durationLabel(stats.avg_dispatch_minutes) }}
                     </div>
                     <div class="truncate text-xs text-slate-500">
                         Tiempo promedio de despacho (7 días)
@@ -477,11 +474,11 @@ async function printQrCodes() {
 
         <!-- Pestañas -->
         <div
-            class="mt-5 flex w-full gap-1 rounded-[0.6rem] bg-slate-100 p-1 sm:w-fit dark:bg-darkmode-400"
+            class="mt-4 flex w-full gap-1 rounded-[0.6rem] bg-slate-100 p-1 sm:w-fit dark:bg-darkmode-400"
         >
             <button
                 type="button"
-                class="flex flex-1 items-center justify-center gap-2 rounded-[0.5rem] px-4 py-2 text-sm transition sm:flex-none"
+                class="flex flex-1 items-center justify-center gap-1.5 rounded-[0.5rem] px-3 py-1.5 text-xs transition sm:flex-none"
                 :class="
                     tab === 'solicitudes'
                         ? 'bg-white font-medium text-primary shadow-sm dark:bg-darkmode-600'
@@ -489,7 +486,7 @@ async function printQrCodes() {
                 "
                 @click="tab = 'solicitudes'"
             >
-                <Lucide icon="ClipboardList" class="h-4 w-4" />
+                <Lucide icon="ClipboardList" class="h-3.5 w-3.5" />
                 Solicitudes
                 <span
                     v-if="waitingCount"
@@ -499,7 +496,7 @@ async function printQrCodes() {
             </button>
             <button
                 type="button"
-                class="flex flex-1 items-center justify-center gap-2 rounded-[0.5rem] px-4 py-2 text-sm transition sm:flex-none"
+                class="flex flex-1 items-center justify-center gap-1.5 rounded-[0.5rem] px-3 py-1.5 text-xs transition sm:flex-none"
                 :class="
                     tab === 'carta'
                         ? 'bg-white font-medium text-primary shadow-sm dark:bg-darkmode-600'
@@ -507,7 +504,7 @@ async function printQrCodes() {
                 "
                 @click="tab = 'carta'"
             >
-                <Lucide icon="UtensilsCrossed" class="h-4 w-4" />
+                <Lucide icon="UtensilsCrossed" class="h-3.5 w-3.5" />
                 La carta
                 <span
                     class="rounded-full bg-slate-200/70 px-1.5 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-300"
@@ -516,7 +513,7 @@ async function printQrCodes() {
             </button>
             <button
                 type="button"
-                class="flex flex-1 items-center justify-center gap-2 rounded-[0.5rem] px-4 py-2 text-sm transition sm:flex-none"
+                class="flex flex-1 items-center justify-center gap-1.5 rounded-[0.5rem] px-3 py-1.5 text-xs transition sm:flex-none"
                 :class="
                     tab === 'ajustes'
                         ? 'bg-white font-medium text-primary shadow-sm dark:bg-darkmode-600'
@@ -524,18 +521,18 @@ async function printQrCodes() {
                 "
                 @click="tab = 'ajustes'"
             >
-                <Lucide icon="Share2" class="h-4 w-4" />
+                <Lucide icon="Share2" class="h-3.5 w-3.5" />
                 Compartir y ajustes
             </button>
         </div>
 
         <!-- ═══ Pestaña: Solicitudes ═══ -->
         <template v-if="tab === 'solicitudes'">
-            <div class="box box--stacked mt-5">
+            <div class="box box--stacked mt-4">
                 <div
-                    class="flex flex-col gap-3 border-b border-slate-200/60 p-5 sm:flex-row sm:items-center dark:border-darkmode-400"
+                    class="flex flex-col gap-2.5 border-b border-slate-200/60 px-4 py-3 sm:flex-row sm:items-center dark:border-darkmode-400"
                 >
-                    <div class="flex items-center gap-2 font-medium">
+                    <div class="flex items-center gap-2 text-sm font-medium">
                         <Lucide
                             icon="ClipboardList"
                             class="h-4 w-4 text-slate-400"
@@ -549,7 +546,7 @@ async function printQrCodes() {
                             v-for="f in statusFilters"
                             :key="f.key"
                             type="button"
-                            class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap transition"
+                            class="flex h-8 shrink-0 items-center rounded-full px-3 text-xs font-medium whitespace-nowrap transition"
                             :class="
                                 statusFilter === f.key
                                     ? 'bg-primary text-white shadow-md shadow-primary/20'
@@ -563,28 +560,30 @@ async function printQrCodes() {
                 </div>
 
                 <!-- Móvil: cards -->
-                <div class="space-y-2.5 p-5 xl:hidden">
+                <div class="space-y-2 p-4 xl:hidden">
                     <div
                         v-for="request in filteredRequests"
                         :key="request.id"
-                        class="rounded-lg border border-slate-200/70 bg-white p-3.5 dark:border-darkmode-400 dark:bg-darkmode-600"
+                        class="rounded-lg border border-slate-200/70 bg-white p-3 dark:border-darkmode-400 dark:bg-darkmode-600"
                     >
-                        <div class="flex flex-wrap items-center gap-2">
+                        <div class="flex flex-wrap items-center gap-1.5">
                             <span class="text-sm font-medium">{{
                                 request.guest_name
                             }}</span>
                             <span
                                 v-if="request.room_label"
-                                class="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary"
+                                class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
                                 >Hab. {{ request.room_label }}</span
                             >
                             <span
-                                class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                 :class="statusMeta[request.status].tone"
                                 >{{ statusMeta[request.status].label }}</span
                             >
                         </div>
-                        <div class="mt-1.5 text-sm text-slate-600 dark:text-slate-300">
+                        <div
+                            class="mt-1 text-xs text-slate-600 dark:text-slate-300"
+                        >
                             {{ itemsSummary(request) }}
                         </div>
                         <div
@@ -606,12 +605,13 @@ async function printQrCodes() {
                                 "
                                 >{{ request.payment_label }}</span
                             >
-                            <span class="ml-auto font-medium text-slate-700 dark:text-slate-200">{{
-                                money(request.total)
-                            }}</span>
+                            <span
+                                class="ml-auto font-medium text-slate-700 dark:text-slate-200"
+                                >{{ money(request.total) }}</span
+                            >
                         </div>
                         <div
-                            class="mt-3 flex flex-wrap items-center gap-1.5 border-t border-dashed border-slate-300/70 pt-3"
+                            class="mt-2.5 flex flex-wrap items-center gap-1.5 border-t border-dashed border-slate-300/70 pt-2.5"
                         >
                             <template
                                 v-if="
@@ -621,8 +621,7 @@ async function printQrCodes() {
                             >
                                 <Button
                                     variant="primary"
-                                    size="sm"
-                                    class="shadow-md shadow-primary/20"
+                                    class="h-8 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                                     :disabled="busyId === request.id"
                                     @click="
                                         setStatus(
@@ -644,7 +643,7 @@ async function printQrCodes() {
                                 </Button>
                                 <Button
                                     variant="outline-secondary"
-                                    size="sm"
+                                    class="h-8 rounded-[0.5rem] bg-white text-xs"
                                     :disabled="busyId === request.id"
                                     @click="setStatus(request, 'cancelled')"
                                 >
@@ -671,7 +670,7 @@ async function printQrCodes() {
                                 <Button
                                     v-else
                                     variant="outline-secondary"
-                                    size="sm"
+                                    class="h-8 rounded-[0.5rem] bg-white text-xs"
                                     :disabled="busyId === request.id"
                                     @click="setStatus(request, 'pending')"
                                 >
@@ -683,9 +682,7 @@ async function printQrCodes() {
                                 </Button>
                             </template>
                             <a
-                                :href="
-                                    route('tenant.menu-comanda', request.id)
-                                "
+                                :href="route('tenant.menu-comanda', request.id)"
                                 target="_blank"
                                 rel="noopener"
                                 title="Imprimir comanda de cocina"
@@ -697,14 +694,16 @@ async function printQrCodes() {
                     </div>
                     <div
                         v-if="!filteredRequests.length"
-                        class="py-8 text-center text-sm text-slate-400"
+                        class="py-8 text-center text-xs text-slate-400"
                     >
                         No hay pedidos con este filtro.
                     </div>
                 </div>
 
                 <!-- Escritorio: tabla -->
-                <div class="hidden overflow-auto p-5 xl:block lg:overflow-visible">
+                <div
+                    class="hidden overflow-auto p-4 lg:overflow-visible xl:block"
+                >
                     <Table v-if="filteredRequests.length" striped>
                         <Table.Thead>
                             <Table.Tr>
@@ -723,14 +722,13 @@ async function printQrCodes() {
                             >
                                 <Table.Td>
                                     <div class="flex items-center gap-2">
-                                        <span class="font-medium">{{
+                                        <span class="text-sm font-medium">{{
                                             request.guest_name
                                         }}</span>
                                         <span
                                             v-if="request.room_label"
-                                            class="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary"
-                                            >Hab.
-                                            {{ request.room_label }}</span
+                                            class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                                            >Hab. {{ request.room_label }}</span
                                         >
                                     </div>
                                     <div class="mt-0.5 text-xs text-slate-500">
@@ -739,7 +737,7 @@ async function printQrCodes() {
                                 </Table.Td>
                                 <Table.Td>
                                     <div
-                                        class="max-w-xs truncate text-sm"
+                                        class="max-w-xs truncate text-xs"
                                         :title="itemsSummary(request)"
                                     >
                                         {{ itemsSummary(request) }}
@@ -754,7 +752,7 @@ async function printQrCodes() {
                                 </Table.Td>
                                 <Table.Td>
                                     <span
-                                        class="rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap"
+                                        class="rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
                                         :class="
                                             request.payment_mode ===
                                             'room_charge'
@@ -769,7 +767,7 @@ async function printQrCodes() {
                                 </Table.Td>
                                 <Table.Td>
                                     <span
-                                        class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                        class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="statusMeta[request.status].tone"
                                         >{{
                                             statusMeta[request.status].label
@@ -807,8 +805,7 @@ async function printQrCodes() {
                                         >
                                             <Button
                                                 variant="primary"
-                                                size="sm"
-                                                class="whitespace-nowrap shadow-md shadow-primary/20"
+                                                class="h-8 rounded-[0.5rem] text-xs whitespace-nowrap shadow-md shadow-primary/20"
                                                 :disabled="
                                                     busyId === request.id
                                                 "
@@ -883,22 +880,19 @@ async function printQrCodes() {
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
-                    <div
-                        v-else
-                        class="py-8 text-center text-sm text-slate-400"
-                    >
+                    <div v-else class="py-8 text-center text-xs text-slate-400">
                         No hay pedidos con este filtro.
                     </div>
                 </div>
 
                 <div
-                    class="border-t border-dashed border-slate-300/70 px-5 py-3.5"
+                    class="border-t border-dashed border-slate-300/70 px-4 py-3"
                 >
                     <FormHelp>
-                        Despachar genera la venta en el punto de venta: el
-                        cargo a habitación entra al folio y se cobra en el
-                        check-out; efectivo y tarjeta quedan como venta del
-                        turno. El inventario se descuenta solo.
+                        Despachar genera la venta en el punto de venta: el cargo
+                        a habitación entra al folio y se cobra en el check-out;
+                        efectivo y tarjeta quedan como venta del turno. El
+                        inventario se descuenta solo.
                     </FormHelp>
                 </div>
             </div>
@@ -906,13 +900,15 @@ async function printQrCodes() {
 
         <!-- ═══ Pestaña: La carta ═══ -->
         <template v-if="tab === 'carta'">
-            <div class="mt-5 grid grid-cols-12 gap-5">
-                <div class="col-span-12 xl:col-span-8">
-                    <div class="box box--stacked">
+            <div class="mt-4 grid grid-cols-12 items-stretch gap-5">
+                <div class="col-span-12 flex flex-col xl:col-span-8">
+                    <div class="box box--stacked flex flex-1 flex-col">
                         <div
-                            class="flex flex-col gap-3 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                            class="flex flex-col gap-2.5 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                         >
-                            <div class="flex items-center gap-2 font-medium">
+                            <div
+                                class="flex items-center gap-2 text-sm font-medium"
+                            >
                                 <Lucide
                                     icon="UtensilsCrossed"
                                     class="h-4 w-4 text-slate-400"
@@ -932,8 +928,8 @@ async function printQrCodes() {
                                 <FormInput
                                     v-model="search"
                                     type="text"
-                                    class="pl-9"
-                                    placeholder="Buscar producto…"
+                                    class="h-9 pl-9 text-xs"
+                                    placeholder="Buscar producto"
                                 />
                             </div>
                             <div
@@ -942,7 +938,7 @@ async function printQrCodes() {
                             >
                                 <button
                                     type="button"
-                                    class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap transition"
+                                    class="flex h-8 shrink-0 items-center rounded-full px-3 text-xs font-medium whitespace-nowrap transition"
                                     :class="
                                         categoryFilter === null
                                             ? 'bg-primary text-white shadow-md shadow-primary/20'
@@ -956,7 +952,7 @@ async function printQrCodes() {
                                     v-for="category in categories"
                                     :key="category"
                                     type="button"
-                                    class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap transition"
+                                    class="flex h-8 shrink-0 items-center rounded-full px-3 text-xs font-medium whitespace-nowrap transition"
                                     :class="
                                         categoryFilter === category
                                             ? 'bg-primary text-white shadow-md shadow-primary/20'
@@ -968,47 +964,45 @@ async function printQrCodes() {
                                 </button>
                             </div>
                         </div>
-                        <div class="grid grid-cols-12 gap-4 p-5">
+                        <div class="grid grid-cols-12 gap-2.5 p-4">
                             <div
                                 v-for="product in filteredProducts"
                                 :key="product.id"
                                 class="col-span-12 md:col-span-6"
                             >
                                 <label
-                                    class="flex h-full cursor-pointer items-center gap-3.5 rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
+                                    class="flex h-full cursor-pointer items-center gap-3 rounded-lg border border-slate-200/70 p-2.5 transition hover:border-primary/30 dark:border-darkmode-400"
                                 >
                                     <img
                                         v-if="product.photo_url"
                                         :src="product.photo_url"
                                         :alt="product.name"
-                                        class="h-12 w-12 shrink-0 rounded-lg object-cover"
+                                        class="h-10 w-10 shrink-0 rounded-lg object-cover"
                                         loading="lazy"
                                     />
                                     <div
                                         v-else
-                                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-300 dark:bg-darkmode-400"
+                                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-300 dark:bg-darkmode-400"
                                     >
                                         <Lucide
                                             icon="UtensilsCrossed"
-                                            class="h-5 w-5"
+                                            class="h-4 w-4"
                                         />
                                     </div>
                                     <span class="min-w-0 flex-1">
                                         <span
-                                            class="block truncate text-sm font-medium"
+                                            class="block truncate text-xs font-medium"
                                             >{{ product.name }}</span
                                         >
                                         <span
-                                            class="block text-xs text-slate-500"
+                                            class="block text-[11px] text-slate-500"
                                             >{{ product.category }} ·
                                             {{ money(product.price) }}</span
                                         >
                                     </span>
                                     <FormSwitch class="shrink-0">
                                         <FormSwitch.Input
-                                            :checked="
-                                                product.available_in_menu
-                                            "
+                                            :checked="product.available_in_menu"
                                             type="checkbox"
                                             @change="toggleProduct(product)"
                                         />
@@ -1017,7 +1011,7 @@ async function printQrCodes() {
                             </div>
                             <p
                                 v-if="!filteredProducts.length"
-                                class="col-span-12 py-8 text-center text-sm text-slate-400"
+                                class="col-span-12 py-8 text-center text-xs text-slate-400"
                             >
                                 {{
                                     products.length
@@ -1039,35 +1033,38 @@ async function printQrCodes() {
                 </div>
 
                 <!-- Top productos -->
-                <div class="col-span-12 xl:col-span-4">
-                    <div class="box box--stacked flex h-full flex-col">
-                        <div
-                            class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
-                        >
-                            <Lucide
-                                icon="TrendingUp"
-                                class="h-4 w-4 stroke-[1.5] text-primary"
-                            />
-                            <h2 class="text-base font-medium">
-                                Más pedidos (7 días)
-                            </h2>
+                <div class="col-span-12 flex flex-col xl:col-span-4">
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-success/10 bg-success/10 text-success"
+                            >
+                                <Lucide icon="TrendingUp" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">Más pedidos</h2>
+                                <p class="text-xs text-slate-500">
+                                    Lo que más se antoja en 7 días.
+                                </p>
+                            </div>
                         </div>
                         <div
-                            class="flex flex-1 flex-col divide-y divide-dashed divide-slate-300/70 px-5"
+                            class="flex flex-1 flex-col divide-y divide-dashed divide-slate-300/70 px-4"
                         >
                             <div
                                 v-for="(top, index) in topProducts"
                                 :key="top.name"
-                                class="flex items-center gap-3 py-3"
+                                class="flex items-center gap-2.5 py-2.5"
                             >
                                 <span
-                                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary"
+                                    class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-[11px] font-medium text-primary"
                                     >{{ index + 1 }}</span
                                 >
-                                <span class="min-w-0 flex-1 truncate text-sm">{{
+                                <span class="min-w-0 flex-1 truncate text-xs">{{
                                     top.name
                                 }}</span>
-                                <span class="text-sm font-medium"
+                                <span class="text-xs font-medium"
                                     >{{ top.qty }} uds</span
                                 >
                             </div>
@@ -1076,9 +1073,9 @@ async function printQrCodes() {
                                 class="flex flex-1 flex-col items-center justify-center gap-2 py-10 text-center text-slate-400"
                             >
                                 <Lucide icon="TrendingUp" class="h-8 w-8" />
-                                <p class="text-sm">
-                                    Cuando lleguen pedidos verás aquí lo que
-                                    más se antoja.
+                                <p class="text-xs">
+                                    Cuando lleguen pedidos verás aquí lo que más
+                                    se antoja.
                                 </p>
                             </div>
                         </div>
@@ -1089,29 +1086,34 @@ async function printQrCodes() {
 
         <!-- ═══ Pestaña: Compartir y ajustes ═══ -->
         <template v-if="tab === 'ajustes'">
-            <div class="mt-5 grid grid-cols-12 gap-5">
+            <div class="mt-4 grid grid-cols-12 items-stretch gap-5">
                 <!-- Liga y QR -->
-                <div class="col-span-12 xl:col-span-4">
-                    <div class="box box--stacked flex h-full flex-col">
-                        <div
-                            class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
-                        >
-                            <Lucide
-                                icon="QrCode"
-                                class="h-4 w-4 stroke-[1.5] text-primary"
-                            />
-                            <h2 class="text-base font-medium">
-                                Liga y códigos QR
-                            </h2>
+                <div class="col-span-12 flex flex-col xl:col-span-4">
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-primary/10 bg-primary/10 text-primary"
+                            >
+                                <Lucide icon="QrCode" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">
+                                    Liga y códigos QR
+                                </h2>
+                                <p class="text-xs text-slate-500">
+                                    El QR que se pega en la habitación.
+                                </p>
+                            </div>
                         </div>
                         <div
-                            class="flex flex-1 flex-col items-center gap-4 p-5"
+                            class="flex flex-1 flex-col items-center gap-3 px-4 py-3"
                         >
                             <img
                                 v-if="qrDataUrl"
                                 :src="qrDataUrl"
                                 alt="QR del menú"
-                                class="h-44 w-44 rounded-xl border border-slate-200/70 p-2 dark:border-darkmode-400"
+                                class="h-36 w-36 rounded-xl border border-slate-200/70 p-2 dark:border-darkmode-400"
                             />
                             <div
                                 class="w-full truncate rounded-lg bg-slate-50 px-3 py-2 text-center font-mono text-xs text-slate-500 dark:bg-darkmode-400"
@@ -1119,29 +1121,27 @@ async function printQrCodes() {
                             >
                                 {{ menuUrl }}
                             </div>
-                            <div
-                                class="flex w-full flex-col gap-2 sm:flex-row"
-                            >
+                            <div class="flex w-full flex-col gap-2 sm:flex-row">
                                 <Button
                                     variant="outline-secondary"
-                                    class="flex-1"
+                                    class="h-9 flex-1 rounded-[0.5rem] bg-white text-xs"
                                     @click="copyLink"
                                 >
                                     <Lucide
                                         icon="Copy"
-                                        class="mr-2 h-4 w-4"
+                                        class="mr-1.5 h-3.5 w-3.5"
                                     />
                                     Copiar liga
                                 </Button>
                                 <Button
                                     variant="outline-secondary"
-                                    class="flex-1"
+                                    class="h-9 flex-1 rounded-[0.5rem] bg-white text-xs"
                                     :disabled="printingQr || !qrRooms.length"
                                     @click="printQrCodes"
                                 >
                                     <Lucide
                                         icon="Printer"
-                                        class="mr-2 h-4 w-4"
+                                        class="mr-1.5 h-3.5 w-3.5"
                                     />
                                     QR por habitación
                                 </Button>
@@ -1156,23 +1156,28 @@ async function printQrCodes() {
                 </div>
 
                 <!-- Cómo se paga -->
-                <div class="col-span-12 xl:col-span-4">
-                    <div class="box box--stacked flex h-full flex-col">
-                        <div
-                            class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
-                        >
-                            <Lucide
-                                icon="Wallet"
-                                class="h-4 w-4 stroke-[1.5] text-primary"
-                            />
-                            <h2 class="text-base font-medium">
-                                Cómo se paga el pedido
-                            </h2>
+                <div class="col-span-12 flex flex-col xl:col-span-4">
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-success/10 bg-success/10 text-success"
+                            >
+                                <Lucide icon="Wallet" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">
+                                    Cómo se paga el pedido
+                                </h2>
+                                <p class="text-xs text-slate-500">
+                                    Con qué modo se cobra lo que piden.
+                                </p>
+                            </div>
                         </div>
-                        <div class="flex flex-1 flex-col gap-2.5 p-5">
+                        <div class="flex flex-1 flex-col gap-2 px-4 py-3">
                             <button
                                 type="button"
-                                class="flex w-full items-start gap-3 rounded-lg border p-3.5 text-left transition"
+                                class="flex w-full items-start gap-2.5 rounded-lg border p-3 text-left transition"
                                 :class="[
                                     billingMode === 'hotel'
                                         ? 'border-primary bg-primary/5'
@@ -1198,11 +1203,11 @@ async function printQrCodes() {
                                     "
                                 />
                                 <span class="min-w-0">
-                                    <span class="block text-sm font-medium"
+                                    <span class="block text-xs font-medium"
                                         >Hotel</span
                                     >
                                     <span
-                                        class="mt-0.5 block text-xs text-slate-500"
+                                        class="mt-0.5 block text-[11px] text-slate-500"
                                         >El pedido puede cargarse a la
                                         habitación y se paga al final, en el
                                         check-out (o al recibir, si el huésped
@@ -1212,7 +1217,7 @@ async function printQrCodes() {
                             </button>
                             <button
                                 type="button"
-                                class="flex w-full items-start gap-3 rounded-lg border p-3.5 text-left transition"
+                                class="flex w-full items-start gap-2.5 rounded-lg border p-3 text-left transition"
                                 :class="[
                                     billingMode === 'motel'
                                         ? 'border-primary bg-primary/5'
@@ -1242,10 +1247,10 @@ async function printQrCodes() {
                                         >Motel</span
                                     >
                                     <span
-                                        class="mt-0.5 block text-xs text-slate-500"
-                                        >El pedido se paga SIEMPRE al
-                                        recibirlo (efectivo o tarjeta); no hay
-                                        cargo a la habitación.</span
+                                        class="mt-0.5 block text-[11px] text-slate-500"
+                                        >El pedido se paga SIEMPRE al recibirlo
+                                        (efectivo o tarjeta); no hay cargo a la
+                                        habitación.</span
                                     >
                                 </span>
                             </button>
@@ -1254,61 +1259,60 @@ async function printQrCodes() {
                 </div>
 
                 <!-- Horario y entrega -->
-                <div class="col-span-12 xl:col-span-4">
-                    <div class="box box--stacked flex h-full flex-col">
-                        <div
-                            class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
-                        >
-                            <Lucide
-                                icon="Clock"
-                                class="h-4 w-4 stroke-[1.5] text-primary"
-                            />
-                            <h2 class="text-base font-medium">
+                <div class="col-span-12 flex flex-col xl:col-span-4">
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-info/10 bg-info/10 text-info"
+                            >
+                                <Lucide icon="Clock" class="h-4 w-4" />
+                            </div>
+                            <h2 class="text-sm font-medium">
                                 Horario y entrega
                             </h2>
                         </div>
-                        <div class="flex flex-1 flex-col gap-4 p-5">
+                        <div class="flex flex-1 flex-col gap-3 px-4 py-3">
                             <div class="grid grid-cols-2 gap-4">
                                 <div>
                                     <label
                                         class="mb-1.5 block text-sm font-medium"
                                         >La cocina abre</label
                                     >
-                                    <FormInput
+                                    <FormTime
                                         v-model="hoursForm.from"
-                                        type="time"
+                                        input-class="h-9 text-xs"
                                         :disabled="!canManageProperty"
                                     />
                                 </div>
                                 <div>
                                     <label
-                                        class="mb-1.5 block text-sm font-medium"
+                                        class="mb-1.5 block text-xs font-medium"
                                         >Cierra</label
                                     >
-                                    <FormInput
+                                    <FormTime
                                         v-model="hoursForm.to"
-                                        type="time"
+                                        input-class="h-9 text-xs"
                                         :disabled="!canManageProperty"
                                     />
                                 </div>
                             </div>
                             <FormHelp>
-                                Fuera de este horario la carta avisa y no
-                                acepta pedidos. Déjalo vacío si la cocina
-                                atiende siempre; un rango como 22:00 a 02:00
-                                también vale.
+                                Fuera de este horario la carta avisa y no acepta
+                                pedidos. Déjalo vacío si la cocina atiende
+                                siempre; un rango como 22:00 a 02:00 también
+                                vale.
                             </FormHelp>
                             <div>
-                                <label
-                                    class="mb-1.5 block text-sm font-medium"
-                                    >Tiempo estimado de entrega
-                                    (minutos)</label
+                                <label class="mb-1.5 block text-xs font-medium"
+                                    >Tiempo estimado de entrega (minutos)</label
                                 >
                                 <FormInput
                                     v-model="hoursForm.eta"
                                     type="number"
                                     min="5"
                                     max="240"
+                                    class="h-9 text-xs"
                                     placeholder="Sin estimado"
                                     :disabled="!canManageProperty"
                                 />
@@ -1319,7 +1323,7 @@ async function printQrCodes() {
                             </div>
                             <Button
                                 variant="primary"
-                                class="mt-auto w-full shadow-md shadow-primary/20"
+                                class="mt-auto h-9 w-full rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                                 :disabled="savingHours || !canManageProperty"
                                 :title="
                                     canManageProperty
@@ -1328,10 +1332,13 @@ async function printQrCodes() {
                                 "
                                 @click="saveHours"
                             >
-                                <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                                <Lucide
+                                    icon="Check"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
                                 {{
                                     savingHours
-                                        ? 'Guardando…'
+                                        ? 'Guardando...'
                                         : 'Guardar horario y entrega'
                                 }}
                             </Button>

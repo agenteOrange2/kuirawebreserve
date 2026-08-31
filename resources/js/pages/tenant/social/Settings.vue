@@ -21,7 +21,8 @@ const props = defineProps<{
         clasificaciones: Record<string, ClassSetting>;
     };
     classifications: Record<string, string>;
-    lockedClassifications: string[];
+    // Clases donde el mensaje privado jamás se abre solo (hoy: queja).
+    privateLocked: string[];
     agentReady: boolean;
     connected: string[];
 }>();
@@ -51,8 +52,8 @@ function removeWord(word: string) {
     );
 }
 
-function isLocked(key: string) {
-    return props.lockedClassifications.includes(key);
+function isPrivateLocked(key: string) {
+    return props.privateLocked.includes(key);
 }
 
 function save() {
@@ -231,8 +232,9 @@ function save() {
                         Según el tipo de comentario
                     </h2>
                     <p class="mt-1 text-xs text-slate-500">
-                        La plantilla se usa solo si la IA no logra redactar la
-                        respuesta.
+                        Si escribes una plantilla, se publica tal cual (la IA
+                        solo redacta cuando no hay). Escribe [Nombre] donde
+                        quieras insertar el nombre de quien comenta.
                     </p>
 
                     <div class="mt-4 flex flex-col gap-4">
@@ -248,17 +250,14 @@ function save() {
                                     {{ label }}
                                 </span>
                                 <span
-                                    v-if="isLocked(key)"
-                                    class="rounded-full border border-danger/20 bg-danger/10 px-2 py-0.5 text-xs text-danger"
+                                    v-if="isPrivateLocked(key)"
+                                    class="rounded-full border border-warning/20 bg-warning/10 px-2 py-0.5 text-xs text-warning"
                                 >
-                                    siempre lo atiende una persona
+                                    el privado siempre lo inicia una persona
                                 </span>
                             </div>
 
-                            <div
-                                v-if="!isLocked(key)"
-                                class="mt-3 flex flex-col gap-3"
-                            >
+                            <div class="mt-3 flex flex-col gap-3">
                                 <FormSwitch>
                                     <FormSwitch.Input
                                         v-model="
@@ -271,7 +270,7 @@ function save() {
                                         Responder en el hilo público
                                     </FormSwitch.Label>
                                 </FormSwitch>
-                                <FormSwitch>
+                                <FormSwitch v-if="!isPrivateLocked(key)">
                                     <FormSwitch.Input
                                         v-model="
                                             form.clasificaciones[key]
@@ -285,10 +284,21 @@ function save() {
                                 </FormSwitch>
                                 <FormTextarea
                                     v-model="form.clasificaciones[key].plantilla"
-                                    rows="2"
+                                    rows="3"
                                     class="text-sm"
                                     placeholder="Respuesta de respaldo"
                                 />
+                                <p
+                                    v-if="isPrivateLocked(key)"
+                                    class="text-xs text-slate-500"
+                                >
+                                    En quejas solo se publica esta plantilla
+                                    tal cual (la IA nunca redacta) y el
+                                    comentario sigue quedando pendiente para
+                                    tu equipo. La plantilla invita al huésped
+                                    a escribir por privado; el sistema no le
+                                    manda mensajes que no pidió.
+                                </p>
                             </div>
                         </div>
                     </div>

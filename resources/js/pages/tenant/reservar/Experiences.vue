@@ -4,6 +4,7 @@ import axios from 'axios';
 import { computed, onMounted, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
+    FormDate,
     FormInput,
     FormLabel,
     FormSelect,
@@ -264,8 +265,7 @@ async function selectDate(date: string) {
     }
 }
 
-function onDateInput(event: Event) {
-    const value = (event.target as HTMLInputElement).value;
+function onOtherDate(value: string) {
     if (value) selectDate(value);
 }
 
@@ -800,23 +800,23 @@ async function requestPayment(
                         >
                             {{ formatDateChip(date) }}
                         </button>
-                        <label
-                            class="flex items-center gap-1.5 rounded-full border border-dashed border-slate-300 px-3 py-1 text-xs text-slate-500"
-                        >
-                            <Lucide icon="CalendarDays" class="h-3.5 w-3.5" />
-                            <input
-                                type="date"
-                                class="border-0 bg-transparent p-0 text-xs text-slate-600 focus:ring-0 focus:outline-none"
-                                :value="selectedDate"
-                                :min="selected.available_dates[0]"
-                                :max="
-                                    selected.available_dates[
-                                        selected.available_dates.length - 1
-                                    ]
-                                "
-                                @change="onDateInput"
-                            />
-                        </label>
+                        <!-- "Otra fecha": el mismo calendario del panel,
+                             sin marco propio para que se lea como una ficha
+                             más de la fila. -->
+                        <FormDate
+                            :model-value="selectedDate"
+                            :min="selected.available_dates[0]"
+                            :max="
+                                selected.available_dates[
+                                    selected.available_dates.length - 1
+                                ]
+                            "
+                            :clearable="false"
+                            placeholder="Otra fecha"
+                            class="w-36"
+                            input-class="rounded-full border-dashed border-slate-300 py-1 text-xs shadow-none"
+                            @update:model-value="onOtherDate"
+                        />
                     </div>
 
                     <!-- La fecha del calendario no opera: fechas cercanas con lugares -->

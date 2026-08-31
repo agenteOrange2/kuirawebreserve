@@ -81,17 +81,26 @@ async function remove(guideline: GuidelineRow) {
 <template>
     <RazeLayout title="Aprendizajes del asistente">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div class="min-w-0">
-                    <h1 class="text-lg font-medium">
-                        Aprendizajes del asistente
-                    </h1>
-                    <p class="mt-0.5 text-sm text-slate-500">
-                        Área aislada: correcciones de conversaciones reales que
-                        el bot recibe como reglas. Se capturan aquí o directo
-                        desde la conversación en la Bandeja ("Enseñar al
-                        asistente").
-                    </p>
+            <div
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="GraduationCap" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-base font-medium">
+                            Aprendizajes del asistente
+                        </h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Área aislada: correcciones de conversaciones reales
+                            que el bot recibe como reglas. Se capturan aquí o
+                            directo desde la conversación en la Bandeja
+                            ("Enseñar al asistente").
+                        </p>
+                    </div>
                 </div>
                 <Button
                     as="a"

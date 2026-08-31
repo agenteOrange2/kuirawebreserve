@@ -201,3 +201,213 @@ it('la fianza no es venta: fuera de los totales del corte, dentro del efectivo e
         // El cajón sí contiene la fianza en efectivo: arqueo la espera.
         ->and($cut['expected_cash'])->toEqual(1700.0);
 });
+
+/* ── Escalones por volumen y ajuste en el mostrador ──────────────────── */
+
+it('sin escalones el monto base aplica a cualquier cantidad de habitaciones', function () {
+    guaranteeSettings(['guarantee_enabled' => true, 'guarantee_amount' => 1500]);
+
+    $policy = app(ReservationPolicy::class);
+
+    expect($policy->guaranteeAmountFor(1))->toEqual(1500.0)
+        ->and($policy->guaranteeAmountFor(5))->toEqual(1500.0);
+});
+
+it('el escalón baja la fianza POR HABITACIÓN a partir de la cantidad configurada', function () {
+    guaranteeSettings([
+        'guarantee_enabled' => true,
+        'guarantee_amount' => 1500,
+        'guarantee_tiers' => [['from' => 3, 'amount' => 1000]],
+    ]);
+
+    $policy = app(ReservationPolicy::class);
+
+    // Dos cabañas siguen pagando el monto base; a partir de la tercera baja
+    // el precio unitario, así que el grupo de 3 deja lo mismo que el de 2.
+    expect($policy->guaranteeAmountFor(1))->toEqual(1500.0)
+        ->and($policy->guaranteeAmountFor(2))->toEqual(1500.0)
+        ->and($policy->guaranteeAmountFor(3))->toEqual(1000.0)
+        ->and($policy->guaranteeAmountFor(3) * 3)->toEqual(3000.0)
+        ->and($policy->guaranteeAmountFor(9))->toEqual(1000.0);
+});
+
+it('gana el escalón más alto que la cantidad alcanza, sin importar el orden guardado', function () {
+    guaranteeSettings([
+        'guarantee_enabled' => true,
+        'guarantee_amount' => 1500,
+        // A propósito desordenados y con basura que debe descartarse:
+        // `from` 1 sería el monto base con otro nombre.
+        'guarantee_tiers' => [
+            ['from' => 6, 'amount' => 700],
+            ['from' => 1, 'amount' => 99],
+            ['from' => 3, 'amount' => 1000],
+        ],
+    ]);
+
+    $policy = app(ReservationPolicy::class);
+
+    expect($policy->guaranteeTiers())->toHaveCount(2)
+        ->and($policy->guaranteeAmountFor(2))->toEqual(1500.0)
+        ->and($policy->guaranteeAmountFor(4))->toEqual(1000.0)
+        ->and($policy->guaranteeAmountFor(6))->toEqual(700.0);
+});
+
+it('cada reserva del grupo cobra el escalón que le toca, no el monto base', function () {
+    guaranteeSettings([
+        'guarantee_enabled' => true,
+        'guarantee_amount' => 1500,
+        'guarantee_tiers' => [['from' => 3, 'amount' => 1000]],
+    ]);
+
+    $group = \App\Models\ReservationGroup::create([
+        'property_id' => test()->property->id,
+        'code' => 'GRP-TEST',
+        'guest_name' => 'Grupo Cabañas',
+    ]);
+
+    $reservations = collect(range(1, 3))->map(function (int $i) use ($group) {
+        $room = Room::factory()->create([
+            'property_id' => test()->property->id,
+            'room_type_id' => test()->roomType->id,
+            'number' => '60'.$i,
+        ]);
+
+        $reservation = app(CreateReservation::class)->handle([
+            'rate_plan_id' => test()->blockPlan->id,
+            'room_id' => $room->id,
+            'starts_at' => now()->addHour(),
+            'confirmed' => true,
+            'guest_name' => 'Grupo Cabañas',
+        ]);
+
+        $reservation->update(['reservation_group_id' => $group->id]);
+
+        return $reservation->refresh();
+    });
+
+    expect($reservations->first()->partyRoomCount())->toBe(3);
+
+    $total = $reservations->sum(function ($reservation) {
+        $request = Request::create('/api/reservations/x/check-in', 'PATCH', ['guarantee_method' => 'cash']);
+        app(ReservationController::class)->checkIn($request, $reservation, app(TransitionReservation::class));
+
+        return (float) $reservation->refresh()->stay
+            ->payments()->where('kind', Payment::KIND_GUARANTEE)->first()->amount;
+    });
+
+    // $3,000 en total, no $4,500: es justo el punto del escalón.
+    expect($total)->toEqual(3000.0);
+});
+
+it('una reserva suelta no se contagia del escalón', function () {
+    guaranteeSettings([
+        'guarantee_enabled' => true,
+        'guarantee_amount' => 1500,
+        'guarantee_tiers' => [['from' => 3, 'amount' => 1000]],
+    ]);
+
+    $reservation = app(CreateReservation::class)->handle([
+        'rate_plan_id' => test()->blockPlan->id,
+        'room_id' => test()->room->id,
+        'starts_at' => now()->addHour(),
+        'confirmed' => true,
+        'guest_name' => 'Va Solo',
+    ]);
+
+    expect($reservation->partyRoomCount())->toBe(1)
+        ->and(app(ReservationPolicy::class)->guaranteeAmountForReservation($reservation))
+        ->toEqual(1500.0);
+});
+
+it('el mostrador puede cobrar otro monto, pero solo con motivo', function () {
+    guaranteeSettings(['guarantee_enabled' => true, 'guarantee_amount' => 1500]);
+
+    $reservation = app(CreateReservation::class)->handle([
+        'rate_plan_id' => test()->blockPlan->id,
+        'room_id' => test()->room->id,
+        'starts_at' => now()->addHour(),
+        'confirmed' => true,
+        'guest_name' => 'Ajuste Sin Motivo',
+    ]);
+
+    $request = Request::create('/api/reservations/x/check-in', 'PATCH', [
+        'guarantee_method' => 'cash',
+        'guarantee_amount' => 900,
+    ]);
+    $response = app(ReservationController::class)->checkIn($request, $reservation, app(TransitionReservation::class));
+
+    // 422 y NADA cobrado: un depósito distinto sin explicación es lo que
+    // hace impagable la devolución tres días después.
+    expect($response->getStatusCode())->toBe(422)
+        ->and(Payment::query()->where('kind', Payment::KIND_GUARANTEE)->count())->toBe(0);
+});
+
+it('el ajuste con motivo se cobra y deja rastro de cuánto pedía la política', function () {
+    guaranteeSettings(['guarantee_enabled' => true, 'guarantee_amount' => 1500]);
+
+    $reservation = app(CreateReservation::class)->handle([
+        'rate_plan_id' => test()->blockPlan->id,
+        'room_id' => test()->room->id,
+        'starts_at' => now()->addHour(),
+        'confirmed' => true,
+        'guest_name' => 'Ajuste Con Motivo',
+    ]);
+
+    $request = Request::create('/api/reservations/x/check-in', 'PATCH', [
+        'guarantee_method' => 'cash',
+        'guarantee_amount' => 900,
+        'guarantee_reason' => 'Solo traía $900 en efectivo; autorizó el gerente',
+    ]);
+    app(ReservationController::class)->checkIn($request, $reservation, app(TransitionReservation::class));
+
+    $guarantee = $reservation->refresh()->stay
+        ->payments()->where('kind', Payment::KIND_GUARANTEE)->first();
+
+    expect((float) $guarantee->amount)->toEqual(900.0)
+        ->and($guarantee->notes)->toContain('la política pedía $1,500.00')
+        ->and($guarantee->notes)->toContain('autorizó el gerente');
+});
+
+it('mandar el mismo monto de la política no cuenta como ajuste y no pide motivo', function () {
+    guaranteeSettings(['guarantee_enabled' => true, 'guarantee_amount' => 1500]);
+
+    $reservation = app(CreateReservation::class)->handle([
+        'rate_plan_id' => test()->blockPlan->id,
+        'room_id' => test()->room->id,
+        'starts_at' => now()->addHour(),
+        'confirmed' => true,
+        'guest_name' => 'Mismo Monto',
+    ]);
+
+    $request = Request::create('/api/reservations/x/check-in', 'PATCH', [
+        'guarantee_method' => 'cash',
+        'guarantee_amount' => 1500.00,
+    ]);
+    $response = app(ReservationController::class)->checkIn($request, $reservation, app(TransitionReservation::class));
+
+    $guarantee = $reservation->refresh()->stay
+        ->payments()->where('kind', Payment::KIND_GUARANTEE)->first();
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and((float) $guarantee->amount)->toEqual(1500.0)
+        ->and($guarantee->notes)->not->toContain('ajustado');
+});
+
+it('el huésped se entera de la fianza antes de venir: viaja al wizard y al bot', function () {
+    guaranteeSettings([
+        'guarantee_enabled' => true,
+        'guarantee_amount' => 1500,
+        'guarantee_tiers' => [['from' => 3, 'amount' => 1000]],
+    ]);
+
+    $public = app(ReservationPolicy::class)->guaranteePublic();
+
+    expect($public['amount'])->toEqual(1500.0)
+        ->and($public['label'])->toContain('$1,500.00')
+        ->and($public['label'])->toContain('se te devuelve')
+        ->and($public['tiers_label'])->toContain('desde 3 habitaciones');
+
+    // Con la fianza apagada no se le anuncia nada a nadie.
+    guaranteeSettings(['guarantee_enabled' => false]);
+    expect(app(ReservationPolicy::class)->guaranteePublic())->toBeNull();
+});

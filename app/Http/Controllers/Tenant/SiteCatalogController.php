@@ -68,6 +68,8 @@ class SiteCatalogController extends Controller
                         'duration_label' => $plan->durationLabel(),
                         'price' => (float) $plan->price,
                         'deposit_percent' => $plan->deposit_percent !== null ? (float) $plan->deposit_percent : null,
+                        'deposit_amount' => $plan->deposit_amount !== null ? (float) $plan->deposit_amount : null,
+                        'deposit_label' => $plan->depositLabel(),
                     ])->values(),
                 ]),
         ]);

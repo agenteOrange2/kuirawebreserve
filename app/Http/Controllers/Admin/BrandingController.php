@@ -12,7 +12,8 @@ use Inertia\Response;
 
 /**
  * Apariencia de la plataforma: nombre, logo, favicon y el lado derecho del
- * login (texto + fondo). Aplica en central Y en los dominios de los hoteles
+ * login (texto + fondo), más el contacto de soporte que se ofrece a los
+ * hoteles suspendidos. Aplica en central Y en los dominios de los hoteles
  * (el login es universal). Archivos en el disco public (branding/).
  */
 class BrandingController extends Controller
@@ -31,6 +32,8 @@ class BrandingController extends Controller
                 'app_name' => PlatformSetting::get('app_name', ''),
                 'login_title' => PlatformSetting::get('login_title', ''),
                 'login_subtitle' => PlatformSetting::get('login_subtitle', ''),
+                'support_email' => PlatformSetting::get('support_email', ''),
+                'support_whatsapp' => PlatformSetting::get('support_whatsapp', ''),
                 'logo_url' => $this->url(PlatformSetting::get('logo_path')),
                 'favicon_url' => $this->url(PlatformSetting::get('favicon_path')),
                 'login_background_url' => $this->url(PlatformSetting::get('login_background_path')),
@@ -44,6 +47,8 @@ class BrandingController extends Controller
             'app_name' => ['nullable', 'string', 'max:60'],
             'login_title' => ['nullable', 'string', 'max:120'],
             'login_subtitle' => ['nullable', 'string', 'max:300'],
+            'support_email' => ['nullable', 'email', 'max:120'],
+            'support_whatsapp' => ['nullable', 'string', 'max:30'],
             'logo' => ['nullable', 'image', 'mimes:png,jpg,jpeg,svg,webp', 'max:2048'],
             'favicon' => ['nullable', 'file', 'mimes:ico,png,svg', 'max:512'],
             'login_background' => ['nullable', 'image', 'mimes:png,jpg,jpeg,webp', 'max:4096'],
@@ -52,7 +57,7 @@ class BrandingController extends Controller
             'remove_login_background' => ['sometimes', 'boolean'],
         ]);
 
-        foreach (['app_name', 'login_title', 'login_subtitle'] as $key) {
+        foreach (['app_name', 'login_title', 'login_subtitle', 'support_email', 'support_whatsapp'] as $key) {
             if ($request->has($key)) {
                 PlatformSetting::set($key, trim((string) $request->input($key)) ?: null);
             }

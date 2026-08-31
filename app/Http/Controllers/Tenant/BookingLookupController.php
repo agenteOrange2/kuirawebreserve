@@ -241,6 +241,16 @@ class BookingLookupController extends Controller
             'cancel_refund_estimate' => in_array($reservation->status, [\App\Enums\ReservationStatus::Pending, \App\Enums\ReservationStatus::Confirmed], true)
                 ? $reservation->suggestedRefund()
                 : null,
+            // Fianza que le van a cobrar al llegar: la consulta pública es
+            // justo donde el huésped repasa su reserva antes de salir de
+            // casa, así que es el mejor momento para recordárselo. Con el
+            // escalón de su grupo, no el monto base.
+            'guarantee' => app(\App\Services\ReservationPolicy::class)->guaranteeEnabled()
+                ? [
+                    'amount' => app(\App\Services\ReservationPolicy::class)
+                        ->guaranteeAmountForReservation($reservation),
+                ]
+                : null,
         ]);
     }
 

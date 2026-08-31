@@ -23,6 +23,15 @@ class TenantAgentSetting extends CentralModel
         'platform_instructions',
         'context_editable',
         'guidelines_editable',
+        'channels_allowed',
+    ];
+
+    /** Canales que la plataforma puede habilitar por hotel. */
+    public const CHANNELS = [
+        'evolution' => 'WhatsApp (Evolution API)',
+        'meta' => 'WhatsApp (Cloud API de Meta)',
+        'telegram' => 'Telegram',
+        'tiktok' => 'TikTok',
     ];
 
     protected function casts(): array
@@ -33,12 +42,35 @@ class TenantAgentSetting extends CentralModel
             'api_allowed' => 'boolean',
             'context_editable' => 'boolean',
             'guidelines_editable' => 'boolean',
+            'channels_allowed' => 'array',
         ];
     }
 
     public function provider(): BelongsTo
     {
         return $this->belongsTo(PlatformAiProvider::class, 'platform_ai_provider_id');
+    }
+
+    /**
+     * Canales habilitados para este hotel. NULL en la columna significa
+     * "todos": así ningún hotel pierde lo que ya tenía al desplegar.
+     *
+     * @return array<int, string>
+     */
+    public function allowedChannels(): array
+    {
+        $allowed = $this->channels_allowed;
+
+        if (! is_array($allowed)) {
+            return array_keys(self::CHANNELS);
+        }
+
+        return array_values(array_intersect(array_keys(self::CHANNELS), $allowed));
+    }
+
+    public function allowsChannel(string $key): bool
+    {
+        return in_array($key, $this->allowedChannels(), true);
     }
 
     public static function for(string $tenantId): self

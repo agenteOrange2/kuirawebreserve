@@ -62,6 +62,9 @@ export interface UpcomingReservationSummary {
     vehicle_plate: string | null;
     adults: number;
     children: number;
+    // Fianza que le toca a ESTA reserva (con el escalón de su grupo).
+    // 0 = el hotel no cobra fianza.
+    guarantee_amount: number;
 }
 
 export interface RoomBlockEntry {

@@ -82,6 +82,7 @@ class CatalogPageController extends Controller
                     'min_advance_value' => $plan->min_advance_value,
                     'min_advance_label' => $plan->minAdvanceLabel(),
                     'deposit_percent' => $plan->deposit_percent,
+                    'deposit_amount' => $plan->deposit_amount,
                     'payment_due_unit' => $plan->payment_due_unit?->value,
                     'payment_due_value' => $plan->payment_due_value,
                     'payment_due_label' => $plan->paymentDueLabel(),

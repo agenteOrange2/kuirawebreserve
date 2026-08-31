@@ -71,6 +71,31 @@ it('el ajuste walkin_charge=checkin se lee desde la política', function () {
     expect(app(ReservationPolicy::class)->walkinChargeOnCheckIn())->toBeTrue();
 });
 
+it('el plano recibe el ajuste: su modal de llegada cobra o deja la cuenta abierta', function () {
+    \Spatie\Permission\Models\Permission::findOrCreate('rooms.view', 'web');
+    \Spatie\Permission\Models\Permission::findOrCreate('rooms.update-status', 'web');
+
+    $user = \App\Models\User::factory()->create();
+    $user->givePermissionTo(['rooms.view', 'rooms.update-status']);
+
+    $planoProps = function () use ($user) {
+        $request = Request::create('/plano', 'GET');
+        $request->headers->set('X-Inertia', 'true');
+        $request->setUserResolver(fn () => $user);
+
+        return app(\App\Http\Controllers\Tenant\FloorPlanController::class)($request)
+            ->toResponse($request)->getData(true)['props'];
+    };
+
+    expect($planoProps()['walkinChargeOnCheckin'])->toBeFalse();
+
+    $property = Property::firstOrFail();
+    $property->update(['settings' => array_merge($property->settings ?? [], ['walkin_charge' => 'checkin'])]);
+    app()->forgetInstance(ReservationPolicy::class);
+
+    expect($planoProps()['walkinChargeOnCheckin'])->toBeTrue();
+});
+
 it('el panel rechaza registrar una transferencia directa; efectivo sí pasa', function () {
     $reservation = app(CreateReservation::class)->handle([
         'rate_plan_id' => test()->blockPlan->id,

@@ -144,19 +144,17 @@ async function destroy() {
     <RazeLayout title="Extras de reserva">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Gift" class="h-5 w-5 sm:h-7 sm:w-7" />
+                        <Lucide icon="Gift" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">
-                            Extras de reserva
-                        </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Extras de reserva</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Add-ons que el huésped agrega a su reserva y suman
                             al total: decoración, desayuno, late checkout. El
                             anticipo y el saldo los incluyen solos.
@@ -166,17 +164,18 @@ async function destroy() {
                 <Button
                     v-if="canManage"
                     variant="primary"
-                    class="min-h-11 w-full rounded-[0.5rem] shadow-md shadow-primary/20 md:w-auto"
+                    class="h-10 w-full rounded-[0.5rem] text-xs shadow-md shadow-primary/20 md:w-auto"
                     @click="openForm()"
                 >
-                    <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Nuevo extra
+                    <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" /> Nuevo
+                    extra
                 </Button>
             </div>
 
             <div class="box box--stacked mt-5">
                 <div
                     v-if="extras.length"
-                    class="overflow-auto p-5 lg:overflow-visible"
+                    class="overflow-auto p-4 lg:overflow-visible"
                 >
                     <Table>
                         <Table.Thead>
@@ -198,18 +197,18 @@ async function destroy() {
                         <Table.Tbody>
                             <Table.Tr v-for="extra in extras" :key="extra.id">
                                 <Table.Td>
-                                    <div class="flex items-center gap-3">
+                                    <div class="flex items-center gap-2.5">
                                         <div
-                                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                                         >
                                             <Lucide
                                                 icon="Gift"
-                                                class="h-4 w-4 text-primary"
+                                                class="h-3.5 w-3.5 text-primary"
                                             />
                                         </div>
                                         <div class="min-w-0">
                                             <div
-                                                class="font-medium"
+                                                class="text-sm font-medium"
                                                 :class="{
                                                     'text-slate-400':
                                                         !extra.active,
@@ -226,7 +225,7 @@ async function destroy() {
                                         </div>
                                     </div>
                                 </Table.Td>
-                                <Table.Td class="font-medium">{{
+                                <Table.Td class="text-sm font-medium">{{
                                     money(extra.price)
                                 }}</Table.Td>
                                 <Table.Td>
@@ -267,7 +266,7 @@ async function destroy() {
                                         >
                                             <Lucide
                                                 icon="Pencil"
-                                                class="h-4 w-4"
+                                                class="h-3.5 w-3.5"
                                             />
                                         </a>
                                         <a
@@ -278,7 +277,7 @@ async function destroy() {
                                         >
                                             <Lucide
                                                 icon="Trash2"
-                                                class="h-4 w-4"
+                                                class="h-3.5 w-3.5"
                                             />
                                         </a>
                                     </div>
@@ -289,9 +288,9 @@ async function destroy() {
                 </div>
                 <div
                     v-else
-                    class="flex flex-col items-center gap-3 px-5 py-12 text-center"
+                    class="flex flex-col items-center gap-2.5 px-5 py-10 text-center"
                 >
-                    <Lucide icon="Gift" class="h-10 w-10 text-slate-300" />
+                    <Lucide icon="Gift" class="h-8 w-8 text-slate-300" />
                     <div>
                         <p class="text-sm font-medium text-slate-600">
                             Aún no tienes extras
@@ -308,7 +307,8 @@ async function destroy() {
                         class="rounded-[0.5rem]"
                         @click="openForm()"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Nuevo extra
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" /> Nuevo
+                        extra
                     </Button>
                 </div>
             </div>
@@ -340,7 +340,7 @@ async function destroy() {
                     </div>
                     <div class="space-y-4">
                         <div>
-                            <label class="mb-1 block text-sm">Nombre</label>
+                            <label class="mb-1 block text-xs">Nombre</label>
                             <FormInput
                                 v-model="form.name"
                                 type="text"
@@ -351,7 +351,7 @@ async function destroy() {
                             }}</FormHelp>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1 block text-xs"
                                 >Descripción (opcional)</label
                             >
                             <FormTextarea
@@ -367,7 +367,7 @@ async function destroy() {
                         </div>
                         <div class="grid grid-cols-2 gap-4">
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Precio ($)</label
                                 >
                                 <FormInput
@@ -384,7 +384,7 @@ async function destroy() {
                                 >
                             </div>
                             <div>
-                                <label class="mb-1 block text-sm">Orden</label>
+                                <label class="mb-1 block text-xs">Orden</label>
                                 <FormInput
                                     v-model.number="form.sort_order"
                                     type="number"
@@ -436,7 +436,7 @@ async function destroy() {
                 <div class="p-5 text-center">
                     <Lucide
                         icon="AlertTriangle"
-                        class="mx-auto mb-3 h-12 w-12 text-danger"
+                        class="mx-auto mb-3 h-10 w-10 text-danger"
                     />
                     <h2 class="text-base font-medium">
                         ¿Eliminar "{{ deleting?.name }}"?

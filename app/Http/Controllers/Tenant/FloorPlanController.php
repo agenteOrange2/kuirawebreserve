@@ -105,6 +105,10 @@ class FloorPlanController extends Controller
             'guaranteeAmount' => app(\App\Services\ReservationPolicy::class)->guaranteeEnabled()
                 ? app(\App\Services\ReservationPolicy::class)->guaranteeAmount()
                 : 0,
+            // Walk-in con cobro al llegar (/ajustes/metodos-pago): el modal de
+            // "Llegó sin reserva" del plano pide método de pago y cobra ahí
+            // mismo; apagado, la estancia nace con saldo para el check-out.
+            'walkinChargeOnCheckin' => app(\App\Services\ReservationPolicy::class)->walkinChargeOnCheckIn(),
             // Fotos de identificación en la ficha: mismo permiso que las
             // INE del CRM.
             'canViewDocuments' => $request->user()->can('guests.view-documents'),

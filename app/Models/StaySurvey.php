@@ -51,6 +51,10 @@ class StaySurvey extends Model
         'rating_facilities',
         'comment',
         'submitted_at',
+        'handled_at',
+        'handled_by',
+        'handled_notes',
+        'incident_id',
     ];
 
     protected function casts(): array
@@ -62,6 +66,7 @@ class StaySurvey extends Model
             'rating_service' => 'integer',
             'rating_facilities' => 'integer',
             'submitted_at' => 'datetime',
+            'handled_at' => 'datetime',
         ];
     }
 
@@ -114,6 +119,34 @@ class StaySurvey extends Model
     public function guest(): BelongsTo
     {
         return $this->belongsTo(Guest::class)->withTrashed();
+    }
+
+    /** Quién cerró el caso de esta respuesta. */
+    public function handler(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'handled_by');
+    }
+
+    /** La incidencia que se levantó a partir de esta queja. */
+    public function incident(): BelongsTo
+    {
+        return $this->belongsTo(Incident::class);
+    }
+
+    /**
+     * Respuestas que piden seguimiento: calificaron 3 o menos, o dejaron
+     * un comentario. Un 5 sin comentario no necesita que nadie lo cierre.
+     */
+    public function scopeNeedsFollowUp(Builder $query): Builder
+    {
+        return $query->where(fn (Builder $q) => $q
+            ->where('rating', '<=', 3)
+            ->orWhereNotNull('comment'));
+    }
+
+    public function isHandled(): bool
+    {
+        return $this->handled_at !== null;
     }
 
     public function isSubmitted(): bool

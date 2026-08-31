@@ -4,6 +4,7 @@ import { computed, reactive, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormCheck,
+    FormDate,
     FormHelp,
     FormInput,
     FormLabel,
@@ -575,7 +576,7 @@ const sectionIcon =
                     </nav>
 
                     <div
-                        class="min-h-0 flex-1 overflow-y-auto px-6 py-6 [&_input]:min-h-11 [&_select]:min-h-11 [&_textarea]:min-h-24"
+                        class="min-h-0 flex-1 overflow-y-auto px-6 py-6 [&_input:not([type=checkbox]):not([type=radio])]:min-h-11 [&_select]:min-h-11 [&_textarea]:min-h-24"
                     >
                         <p
                             v-if="generalError"
@@ -748,15 +749,9 @@ const sectionIcon =
                                         >Fecha de nacimiento</FormLabel
                                     >
                                     <div class="relative">
-                                        <Lucide
-                                            icon="Cake"
-                                            :class="iconInput"
-                                        />
-                                        <FormInput
+                                        <FormDate
                                             id="g-birth"
                                             v-model="form.birth_date"
-                                            type="date"
-                                            class="pl-9"
                                         />
                                     </div>
                                 </div>

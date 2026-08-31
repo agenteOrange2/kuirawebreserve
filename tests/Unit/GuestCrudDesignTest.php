@@ -55,9 +55,12 @@ it('distribuye la ficha del huésped entre información e historial', function (
 
     expect($show)
         ->toContain('Información personal')
-        ->toContain('Historial de estancias')
-        ->toContain('Historial de reservas')
         ->toContain('Datos para reconocerlo en el acceso')
-        ->toContain("status === 'no_show' ? 'No llegó'")
-        ->toContain('class="h-7 w-7');
+        // UN solo historial: la reserva y su estancia son la misma noche,
+        // no dos tablas donde la visita normal salía repetida.
+        ->toContain('Historial del huésped')
+        ->toContain('Próximas')
+        ->toContain('group.year')
+        ->not->toContain('Historial de estancias')
+        ->not->toContain('Historial de reservas');
 });

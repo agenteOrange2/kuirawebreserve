@@ -34,7 +34,7 @@ class MetaChannelController extends Controller
             return response()->json(['message' => 'Ese número/página ya está vinculado a un hotel.'], 422);
         }
 
-        $data['access_token'] = $this->resolveToken($data['type'], $data['external_id'], $data['access_token']);
+        $data['access_token'] = $this->resolveToken($data['type'], $data['external_id'], $data['access_token'], $data['tenant_id']);
 
         $link = MetaChannelLink::create($data + ['active' => true]);
 
@@ -47,13 +47,13 @@ class MetaChannelController extends Controller
      * cambiar un desplegable que nadie ve). Si ya venía el de página, o el
      * canje no procede, se guarda tal cual lo pegaron.
      */
-    protected function resolveToken(string $type, string $externalId, string $token): string
+    protected function resolveToken(string $type, string $externalId, string $token, ?string $tenantId = null): string
     {
         if (! in_array($type, ['messenger', 'instagram'], true)) {
             return $token;
         }
 
-        return app(MetaApi::class)->pageTokenFrom($token, $externalId) ?? $token;
+        return app(MetaApi::class)->pageTokenFrom($token, $externalId, $tenantId) ?? $token;
     }
 
     public function update(Request $request, MetaChannelLink $metaChannelLink): JsonResponse
@@ -77,6 +77,7 @@ class MetaChannelController extends Controller
                 $metaChannelLink->type,
                 (string) ($data['external_id'] ?? $metaChannelLink->external_id),
                 $data['access_token'],
+                $metaChannelLink->tenant_id,
             );
         }
 

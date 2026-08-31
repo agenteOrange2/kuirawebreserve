@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -149,38 +150,33 @@ async function submit() {
 <template>
     <RazeLayout title="Plazos y saldo">
         <div class="mt-2">
-            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
-                 círculo + título + acción a la derecha -->
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Clock" class="h-7 w-7" />
+                        <Lucide icon="Clock" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">Plazos y saldo</h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Plazos y saldo</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Cuánto vive un apartado, cuánto tiempo tiene el
                             huésped para pagar con cada método y qué pasa con el
                             saldo restante.
                         </p>
                     </div>
                 </div>
-                <Button
-                    as="a"
+                <!-- El volver vive con las acciones, no flotando encima
+                     de la tarjeta. -->
+                <Link
                     :href="route('tenant.payment-methods')"
-                    variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white"
+                    class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
                 >
-                    <Lucide
-                        icon="ArrowLeft"
-                        class="mr-2 h-4 w-4 stroke-[1.3]"
-                    />
-                    Volver a Métodos de pago
-                </Button>
+                    <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                    Métodos de pago
+                </Link>
             </div>
 
             <!-- Cómo queda la política, en palabras: seis números que se
@@ -208,7 +204,7 @@ async function submit() {
             <!-- Una tarjeta por tema, con sus ajustes como renglones dentro.
                  Antes cada ajuste era su propio recuadro punteado, así que
                  nada se veía agrupado: siete cajas hermanas flotando. -->
-            <div class="box box--stacked mt-5">
+            <div class="box box--stacked mt-4">
                 <div
                     class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
                 >
@@ -217,7 +213,7 @@ async function submit() {
                             icon="Clock"
                             class="h-4 w-4 stroke-[1.5] text-primary"
                         />
-                        <h2 class="text-base font-medium">
+                        <h2 class="text-sm font-medium">
                             Plazos de cada método
                         </h2>
                     </div>
@@ -356,7 +352,7 @@ async function submit() {
                 </div>
             </div>
 
-            <div class="box box--stacked mt-5">
+            <div class="box box--stacked mt-4">
                 <div
                     class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
                 >
@@ -365,7 +361,7 @@ async function submit() {
                             icon="CalendarClock"
                             class="h-4 w-4 stroke-[1.5] text-primary"
                         />
-                        <h2 class="text-base font-medium">
+                        <h2 class="text-sm font-medium">
                             Saldo antes de la llegada
                         </h2>
                     </div>
@@ -493,7 +489,7 @@ async function submit() {
                 </div>
             </div>
 
-            <div class="box box--stacked mt-5">
+            <div class="box box--stacked mt-4">
                 <div
                     class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
                 >
@@ -502,7 +498,7 @@ async function submit() {
                             icon="Zap"
                             class="h-4 w-4 stroke-[1.5] text-primary"
                         />
-                        <h2 class="text-base font-medium">Automatizaciones</h2>
+                        <h2 class="text-sm font-medium">Automatizaciones</h2>
                     </div>
                 </div>
                 <div class="px-5">

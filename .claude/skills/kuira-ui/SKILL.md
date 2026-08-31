@@ -18,6 +18,32 @@ description: Reglas de UI de KuiraWebReserve. Usar SIEMPRE al crear o editar pá
 - La retícula es la del theme: `grid grid-cols-12 gap-5` (o `gap-6`) con `col-span-12 sm:col-span-6 xl:col-span-N`. No inventar sistemas de columnas propios.
 - Iconos: SOLO el componente `Lucide` del theme (`@/components/Base/Lucide`, envuelve lucide-vue-next). Nada de SVG inline, ni otras librerías de iconos, ni emojis como iconos. Verificar el nombre antes de usarlo: `grep "@name NombreIcono$" node_modules/lucide-vue-next/dist/lucide-vue-next.d.ts` (si falla, buscar sin `$`: puede existir como alias, p.ej. AlertTriangle → TriangleAlert).
 
+## Anatomía de pantalla: la densidad chica (LEER ANTES DE MAQUETAR)
+
+Hay un canon de diseño acordado con el dueño y ya aplicado a casi todo el panel.
+**Leer `anatomia-de-pantalla.md` (junto a este archivo) antes de crear o
+retocar cualquier pantalla**: trae las medidas exactas y los bloques listos para
+copiar. Lo esencial:
+
+- Escala chica: botones `h-9 ... text-xs` con icono `h-3.5 w-3.5`; campos
+  `h-9 text-xs`; `h1` en `text-base`; subtítulos y datos en `text-xs`; badges y
+  rótulos en `text-[11px]`. Nunca `size="sm"`, `min-h-11` ni cifras `text-2xl`.
+- Encabezado de página: círculo `h-10` + título + subtítulo, acciones a la
+  derecha (`grid grid-cols-2` en móvil, `flex` en `md+`).
+- Encabezado de ficha: `box box--stacked overflow-hidden` en franjas —
+  identidad y acciones, avisos, nota recortada, y franja gris de datos duros.
+- **El botón "Volver" va dentro del encabezado, como primer elemento de las
+  acciones, con forma de pastilla**; nunca flotando encima de la tarjeta.
+- Listados: renglones a ras separados por `divide-y`, filtros en franja gris
+  dentro del mismo box, paginación en franja con `border-t`, y acciones por
+  renglón como botones fantasma `h-8 w-8` (gris que toma color al pasar).
+- Checkboxes con `FormCheck.Input`; `class="form-check-input"` es de Bootstrap y
+  aquí no pinta nada.
+- Modales: cabecera y pie fijos con el cuerpo scrolleable (`min-h-0 flex-1
+  overflow-y-auto`), formulario largo partido en secciones rotuladas.
+- Alturas parejas entre columnas vecinas; si un bloque desbalancea, se baja a
+  ancho completo.
+
 ## Obligatorio
 
 - Referencias de diseño en `estructura/diseño/` (DashboardOverview8.vue es la hotelera). Replicar estructura, no inventar layouts.

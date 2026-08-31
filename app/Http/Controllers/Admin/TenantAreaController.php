@@ -118,8 +118,10 @@ class TenantAreaController extends Controller
         $planModules = $plan['modules'] ?? [];
         $addonModules = $tenant->addonModules();
 
+        $groups = config('module_groups', []);
+
         $modules = collect(config('modules', []))
-            ->map(function (array $def, string $key) use ($overrides, $requests, $planModules, $addonModules) {
+            ->map(function (array $def, string $key) use ($overrides, $requests, $planModules, $addonModules, $groups) {
                 $override = $overrides->has($key) ? (bool) $overrides[$key] : null;
                 $inPlan = in_array($key, $planModules, true);
                 $inAddon = in_array($key, $addonModules, true);
@@ -129,6 +131,10 @@ class TenantAreaController extends Controller
                     'label' => $def['label'],
                     'description' => $def['description'],
                     'available' => $def['available'],
+                    // Familia del catálogo: aquí solo se muestra como
+                    // etiqueta (esta pantalla ordena por solicitudes, no
+                    // por grupo).
+                    'group_label' => $groups[$def['group'] ?? 'otros']['label'] ?? null,
                     'in_plan' => $inPlan,
                     // Lo aporta un servicio adicional contratado.
                     'in_addon' => $inAddon,
@@ -145,30 +151,68 @@ class TenantAreaController extends Controller
         ]);
     }
 
-    /** Equipo del hotel: quién entra al panel y con qué rol. */
+    /**
+     * Equipo del hotel: quién entra al panel, con qué rol y desde cuándo.
+     *
+     * El orden de los roles es el de ROLE_META, que va de más a menos
+     * mando — alfabético dejaba al gerente hasta abajo, después de cocina.
+     */
     public function team(Tenant $tenant): Response
     {
-        $team = $tenant->run(fn () => [
-            'owner' => ($owner = User::role('owner')->first()) ? $owner->only(['name', 'email']) : null,
-            'users' => User::with('roles:id,name')
-                ->whereDoesntHave('roles', fn ($q) => $q->where('name', 'agent'))
-                ->orderBy('name')->get()
-                ->map(fn (User $u) => [
-                    'id' => $u->id,
-                    'name' => $u->name,
-                    'email' => $u->email,
-                    'role' => $u->roles->first()?->name,
-                ])->values(),
-            'assignable_roles' => \App\Http\Controllers\Tenant\UserController::assignableRoles(),
-        ]);
+        $team = $tenant->run(function () {
+            $enTurno = \App\Models\Shift::query()->open()->pluck('user_id');
+            $duenos = User::role('owner')->count();
+            $orden = array_keys(\App\Http\Controllers\Tenant\UsersPageController::ROLE_META);
 
-        $plan = config("plans.{$tenant->plan}", []);
+            $users = User::query()
+                ->with('roles:id,name')
+                // El bot es identidad técnica (rol agent), no personal.
+                ->whereDoesntHave('roles', fn ($q) => $q->where('name', 'agent'))
+                ->orderBy('name')
+                ->get()
+                ->map(function (User $user) use ($enTurno, $duenos, $orden) {
+                    $role = $user->roles->first()?->name;
+
+                    return [
+                        'id' => $user->id,
+                        'name' => $user->name,
+                        'email' => $user->email,
+                        'phone' => $user->phone,
+                        'role' => $role,
+                        'role_label' => \App\Http\Controllers\Tenant\UsersPageController::ROLE_META[$role]['label'] ?? $role,
+                        'rank' => $role ? (array_search($role, $orden, true) ?: 0) : count($orden),
+                        'on_shift' => $enTurno->contains($user->id),
+                        'two_factor' => $user->two_factor_confirmed_at !== null,
+                        'created_at' => $user->created_at?->format('d/m/Y'),
+                        // El único dueño no se puede borrar ni degradar: el
+                        // backend ya lo impide, aquí se apaga el botón para
+                        // no ofrecer algo que va a fallar.
+                        'can_delete' => ! ($role === 'owner' && $duenos <= 1),
+                    ];
+                })
+                ->sortBy([['rank', 'asc'], ['name', 'asc']])
+                ->values();
+
+            return [
+                'users' => $users,
+                'assignable' => \App\Http\Controllers\Tenant\UserController::assignableRoles(),
+            ];
+        });
+
+        $meta = \App\Http\Controllers\Tenant\UsersPageController::ROLE_META;
 
         return Inertia::render('admin/tenants/Team', self::shell($tenant) + [
-            'owner' => $team['owner'],
             'users' => $team['users'],
-            'assignableRoles' => $team['assignable_roles'],
-            'maxUsers' => $plan['max_users'] ?? null,
+            // El catálogo en orden de jerarquía: alimenta los filtros y el
+            // selector del formulario, con la descripción de cada rol.
+            'roles' => collect(array_keys($meta))
+                ->filter(fn (string $name) => in_array($name, $team['assignable'], true))
+                ->map(fn (string $name) => [
+                    'name' => $name,
+                    'label' => $meta[$name]['label'],
+                    'description' => $meta[$name]['description'],
+                ])->values(),
+            'maxUsers' => $tenant->planLimit('max_users'),
         ]);
     }
 
@@ -258,6 +302,17 @@ class TenantAreaController extends Controller
                 'verify_token' => config('meta.verify_token'),
                 'app_configured' => filled(config('meta.app_id')),
             ],
+            // App de Meta propia del hotel (null = usa la de la plataforma).
+            'metaApp' => ($own = \App\Models\Central\TenantMetaApp::forTenant($tenant->id))
+                ? TenantMetaAppController::serialize($own)
+                : null,
+            'platformAppId' => (string) config('meta.app_id'),
+            // Qué canales puede conectar el hotel desde SU panel: la lista
+            // completa y los que hoy tiene habilitados.
+            'channelCatalog' => collect(\App\Models\Central\TenantAgentSetting::CHANNELS)
+                ->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])
+                ->values(),
+            'channelsAllowed' => \App\Models\Central\TenantAgentSetting::for($tenant->id)->allowedChannels(),
         ]);
     }
 

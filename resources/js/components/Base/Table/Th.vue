@@ -26,7 +26,8 @@ const attrs = useAttrs();
 
 const computedClass = computed(() =>
     twMerge([
-        'font-medium px-5 py-3 border-b-2 dark:border-darkmode-300',
+        // Cabecera densa y en letra chica: es rótulo, no contenido.
+        'font-medium text-xs px-4 py-2.5 border-b-2 dark:border-darkmode-300',
         thead?.variant === 'light' && 'border-b-0 text-slate-700',
         thead?.variant === 'dark' && 'border-b-0',
         table?.dark && 'border-slate-600 dark:border-darkmode-300',

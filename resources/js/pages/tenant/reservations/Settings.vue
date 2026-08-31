@@ -152,69 +152,66 @@ const previewDark = computed(() => form.theme === 'dark');
         <div class="mt-2">
             <!-- Encabezado -->
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Palette" class="h-5 w-5 sm:h-7 sm:w-7" />
+                        <Lucide icon="Palette" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">
+                        <h1 class="text-base font-medium">
                             Apariencia del wizard de reservas
                         </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <p class="mt-0.5 text-xs text-slate-500">
                             {{ property.name }} · aplica a todas las páginas
                             públicas: reservas, experiencias, grupos y consulta
                         </p>
                     </div>
                 </div>
                 <div
-                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:shrink-0 md:flex-wrap md:items-center md:gap-2"
                 >
-                    <Button
-                        as="a"
+                    <!-- El volver vive con las acciones, no flotando encima
+                         de la tarjeta. -->
+                    <Link
                         :href="route('tenant.wizard-settings')"
-                        variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="col-span-2 inline-flex h-9 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary md:col-auto dark:border-darkmode-400 dark:bg-darkmode-600"
                     >
-                        <Lucide
-                            icon="ArrowLeft"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
-                        />
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
                         Ajustes del wizard
-                    </Button>
+                    </Link>
                     <Button
                         as="a"
                         :href="wizardUrl"
                         target="_blank"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
                         <Lucide
                             icon="ExternalLink"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                            class="mr-1.5 h-3.5 w-3.5"
                         />
                         Ver wizard
                     </Button>
                     <Button
                         variant="primary"
-                        class="col-span-2 md:col-auto"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                         :disabled="!dirty || busy || !canManage"
                         @click="save"
                     >
-                        <Lucide icon="Save" class="mr-2 h-4 w-4" />
-                        {{ busy ? 'Guardando…' : 'Guardar cambios' }}
+                        <Lucide icon="Save" class="mr-1.5 h-3.5 w-3.5" />
+                        {{ busy ? 'Guardando...' : 'Guardar cambios' }}
                     </Button>
                 </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 gap-5">
+            <div class="mt-4 grid grid-cols-12 items-start gap-5">
                 <!-- Columna de ajustes -->
-                <div class="col-span-12 flex flex-col gap-5 xl:col-span-7">
+                <div class="col-span-12 flex flex-col gap-4 xl:col-span-7">
                     <!-- Logo: vive en Datos generales (identidad del hotel) -->
-                    <div class="box box--stacked p-5">
+                    <div class="box box--stacked p-4">
                         <div class="flex flex-wrap items-center gap-3">
                             <div
                                 class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full border border-primary/10 bg-primary/10 text-primary"
@@ -225,10 +222,12 @@ const previewDark = computed(() => form.theme === 'dark');
                                     alt="Logo del hotel"
                                     class="h-full w-full object-contain p-1"
                                 />
-                                <Lucide v-else icon="ImageUp" class="h-5 w-5" />
+                                <Lucide v-else icon="ImageUp" class="h-4 w-4" />
                             </div>
                             <div class="min-w-0 flex-1">
-                                <div class="font-medium">Logo del hotel</div>
+                                <div class="text-sm font-medium">
+                                    Logo del hotel
+                                </div>
                                 <div class="text-xs text-slate-500">
                                     Se administra en Datos generales; aquí solo
                                     se refleja en la vista previa.
@@ -238,27 +237,27 @@ const previewDark = computed(() => form.theme === 'dark');
                                 :as="Link"
                                 :href="route('tenant.general-settings')"
                                 variant="outline-secondary"
-                                class="rounded-[0.5rem]"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
                             >
                                 <Lucide
                                     icon="ChevronRight"
-                                    class="mr-2 h-4 w-4 stroke-[1.3]"
+                                    class="mr-1.5 h-3.5 w-3.5"
                                 />
-                                Ir a Datos generales
+                                Datos generales
                             </Button>
                         </div>
                     </div>
 
                     <!-- Colores -->
-                    <div class="box box--stacked p-5">
+                    <div class="box box--stacked p-4">
                         <div class="flex flex-wrap items-center gap-3">
                             <div
                                 class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                             >
-                                <Lucide icon="Palette" class="h-5 w-5" />
+                                <Lucide icon="Palette" class="h-4 w-4" />
                             </div>
                             <div class="min-w-0 flex-1">
-                                <div class="font-medium">Colores</div>
+                                <div class="text-sm font-medium">Colores</div>
                                 <div class="text-xs text-slate-500">
                                     Fondo degradado y color de acento de todas
                                     las páginas públicas.
@@ -319,15 +318,15 @@ const previewDark = computed(() => form.theme === 'dark');
                     </div>
 
                     <!-- Modo claro / oscuro -->
-                    <div class="box box--stacked p-5">
+                    <div class="box box--stacked p-4">
                         <div class="flex items-center gap-3">
                             <div
                                 class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                             >
-                                <Lucide icon="Moon" class="h-5 w-5" />
+                                <Lucide icon="Moon" class="h-4 w-4" />
                             </div>
                             <div>
-                                <div class="font-medium">
+                                <div class="text-sm font-medium">
                                     Modo de la tarjeta
                                 </div>
                                 <div class="text-xs text-slate-500">
@@ -379,9 +378,11 @@ const previewDark = computed(() => form.theme === 'dark');
                 <div class="col-span-12 xl:col-span-5">
                     <div class="box box--stacked sticky top-24 overflow-hidden">
                         <div
-                            class="flex items-center justify-between border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                            class="flex items-center justify-between border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                         >
-                            <div class="flex items-center gap-2 font-medium">
+                            <div
+                                class="flex items-center gap-2 text-sm font-medium"
+                            >
                                 <Lucide
                                     icon="Eye"
                                     class="h-4 w-4 text-slate-400"
@@ -395,9 +396,9 @@ const previewDark = computed(() => form.theme === 'dark');
                                 Automático: aquí se muestra el modo claro
                             </span>
                         </div>
-                        <div class="p-5">
+                        <div class="p-4">
                             <div
-                                class="rounded-2xl p-4 sm:p-5"
+                                class="rounded-2xl p-4"
                                 :style="previewGradient"
                             >
                                 <!-- Header del wizard -->

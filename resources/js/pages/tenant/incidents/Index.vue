@@ -4,6 +4,7 @@ import axios from 'axios';
 import { computed, reactive, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import {
+    FormCheck,
     FormHelp,
     FormInput,
     FormSelect,
@@ -222,6 +223,12 @@ watch(
 
 // ── Selección múltiple y borrado en bloque ──
 const selectedIds = ref<number[]>([]);
+/** Las filas marcadas: el diálogo enseña qué se va a borrar. */
+const selectedRows = computed(() =>
+    incidents.value.filter((incident) =>
+        selectedIds.value.includes(incident.id),
+    ),
+);
 const bulkDeleteOpen = ref(false);
 const bulkDeleting = ref(false);
 
@@ -548,26 +555,21 @@ async function destroy() {
             <!-- Encabezado -->
             <div class="col-span-12">
                 <div
-                    class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                    class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
                 >
-                    <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div class="flex min-w-0 items-center gap-3">
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <Lucide
-                                icon="Wrench"
-                                class="h-5 w-5 sm:h-7 sm:w-7"
-                            />
+                            <Lucide icon="Wrench" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0">
-                            <h1 class="text-lg font-medium sm:text-xl">
+                            <h1 class="text-base font-medium">
                                 Incidencias de mantenimiento
                             </h1>
-                            <p class="mt-1 text-sm text-slate-500">
-                                Reporta fallas de habitaciones o áreas generales
-                                y dales seguimiento hasta resolverlas. Una
-                                incidencia puede sacar la habitación del plano
-                                mientras se atiende.
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Fallas de habitaciones y áreas generales, con
+                                seguimiento hasta resolverlas.
                             </p>
                         </div>
                     </div>
@@ -577,19 +579,19 @@ async function destroy() {
                         <Button
                             v-if="canManage"
                             variant="outline-secondary"
-                            class="min-h-11 rounded-[0.5rem] bg-white"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
                             @click="showSla = true"
                         >
-                            <Lucide icon="Timer" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Timer" class="mr-1.5 h-3.5 w-3.5" />
                             Tiempos
                         </Button>
                         <Button
                             v-if="advanced && canManage"
                             variant="outline-secondary"
-                            class="min-h-11 rounded-[0.5rem] bg-white"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
                             @click="showTechnicians = true"
                         >
-                            <Lucide icon="HardHat" class="mr-2 h-4 w-4" />
+                            <Lucide icon="HardHat" class="mr-1.5 h-3.5 w-3.5" />
                             Quién repara
                         </Button>
                         <Button
@@ -597,19 +599,22 @@ async function destroy() {
                             as="a"
                             :href="route('tenant.incidents.reports')"
                             variant="outline-secondary"
-                            class="min-h-11 rounded-[0.5rem] bg-white"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
                         >
-                            <Lucide icon="ChartColumn" class="mr-2 h-4 w-4" />
+                            <Lucide
+                                icon="ChartColumn"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
                             Reportes
                         </Button>
                         <Button
                             v-if="canManage"
                             variant="primary"
-                            class="min-h-11 rounded-[0.5rem] shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                             @click="openForm()"
                         >
-                            <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Reportar
-                            incidencia
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                            Reportar incidencia
                         </Button>
                     </div>
                 </div>
@@ -618,50 +623,50 @@ async function destroy() {
             <!-- KPIs -->
             <div class="col-span-12 sm:col-span-6 lg:col-span-3">
                 <div
-                    class="box box--stacked flex h-full items-center gap-4 p-5"
+                    class="box box--stacked flex h-full items-center gap-2.5 p-3"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
                     >
-                        <Lucide icon="CircleAlert" class="h-5 w-5" />
+                        <Lucide icon="CircleAlert" class="h-4 w-4" />
                     </div>
                     <div>
-                        <div class="text-xl font-medium">{{ kpis.open }}</div>
-                        <div class="text-sm text-slate-500">Abiertas</div>
+                        <div class="text-sm font-medium">{{ kpis.open }}</div>
+                        <div class="text-xs text-slate-500">Abiertas</div>
                     </div>
                 </div>
             </div>
             <div class="col-span-12 sm:col-span-6 lg:col-span-3">
                 <div
-                    class="box box--stacked flex h-full items-center gap-4 p-5"
+                    class="box box--stacked flex h-full items-center gap-2.5 p-3"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10 text-warning"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10 text-warning"
                     >
-                        <Lucide icon="Hammer" class="h-5 w-5" />
+                        <Lucide icon="Hammer" class="h-4 w-4" />
                     </div>
                     <div>
-                        <div class="text-xl font-medium">
+                        <div class="text-sm font-medium">
                             {{ kpis.in_progress }}
                         </div>
-                        <div class="text-sm text-slate-500">En proceso</div>
+                        <div class="text-xs text-slate-500">En proceso</div>
                     </div>
                 </div>
             </div>
             <div class="col-span-12 sm:col-span-6 lg:col-span-3">
                 <div
-                    class="box box--stacked flex h-full items-center gap-4 p-5"
+                    class="box box--stacked flex h-full items-center gap-2.5 p-3"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
                     >
-                        <Lucide icon="CircleCheck" class="h-5 w-5" />
+                        <Lucide icon="CircleCheck" class="h-4 w-4" />
                     </div>
                     <div>
-                        <div class="text-xl font-medium">
+                        <div class="text-sm font-medium">
                             {{ kpis.resolved_month }}
                         </div>
-                        <div class="text-sm text-slate-500">
+                        <div class="text-xs text-slate-500">
                             Resueltas este mes
                         </div>
                     </div>
@@ -669,24 +674,24 @@ async function destroy() {
             </div>
             <div class="col-span-12 sm:col-span-6 lg:col-span-3">
                 <div
-                    class="box box--stacked flex h-full items-center gap-4 p-5"
+                    class="box box--stacked flex h-full items-center gap-2.5 p-3"
                     :class="kpis.overdue > 0 ? 'ring-1 ring-danger/30' : ''"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
                         :class="
                             kpis.overdue > 0
                                 ? 'border-danger/10 bg-danger/10 text-danger'
                                 : 'border-slate-200/70 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400'
                         "
                     >
-                        <Lucide icon="Timer" class="h-5 w-5" />
+                        <Lucide icon="Timer" class="h-4 w-4" />
                     </div>
                     <div>
-                        <div class="text-xl font-medium">
+                        <div class="text-sm font-medium">
                             {{ kpis.overdue }}
                         </div>
-                        <div class="text-sm text-slate-500">
+                        <div class="text-xs text-slate-500">
                             Fuera de tiempo
                         </div>
                     </div>
@@ -697,9 +702,9 @@ async function destroy() {
             <div class="col-span-12">
                 <div class="box box--stacked">
                     <div
-                        class="flex flex-col gap-3 border-b border-slate-200/70 p-5 dark:border-darkmode-400"
+                        class="flex flex-col gap-2.5 border-b border-slate-200/70 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                     >
-                        <div class="flex flex-col gap-3 sm:flex-row">
+                        <div class="flex flex-col gap-2.5 sm:flex-row">
                             <div class="relative sm:flex-1">
                                 <Lucide
                                     icon="Search"
@@ -707,18 +712,18 @@ async function destroy() {
                                 />
                                 <FormInput
                                     v-model="filterState.q"
-                                    class="pl-9"
-                                    placeholder="Buscar por falla, nota o habitación…"
+                                    class="h-9 pl-9 text-xs"
+                                    placeholder="Buscar por falla, nota o habitación"
                                 />
                             </div>
                             <div class="flex flex-wrap items-center gap-2">
                                 <button
                                     type="button"
-                                    class="flex min-h-11 items-center gap-1.5 rounded-lg border px-3 text-sm transition"
+                                    class="flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs transition"
                                     :class="
                                         filterState.overdue
                                             ? 'border-danger/30 bg-danger/10 font-medium text-danger'
-                                            : 'border-slate-200/70 text-slate-500 dark:border-darkmode-400'
+                                            : 'border-slate-200/70 bg-white text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-600'
                                     "
                                     @click="
                                         filterState.overdue =
@@ -726,26 +731,53 @@ async function destroy() {
                                         applyFilters();
                                     "
                                 >
-                                    <Lucide icon="Timer" class="h-4 w-4" />
+                                    <Lucide icon="Timer" class="h-3.5 w-3.5" />
                                     Fuera de tiempo
                                 </button>
                                 <button
                                     v-if="filtersActive"
                                     type="button"
-                                    class="flex min-h-11 items-center gap-1.5 rounded-lg border border-slate-200/70 px-3 text-sm text-slate-500 dark:border-darkmode-400"
+                                    class="flex h-9 items-center gap-1.5 rounded-lg border border-slate-200/70 bg-white px-3 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-600"
                                     @click="clearFilters"
                                 >
-                                    <Lucide icon="X" class="h-4 w-4" />
+                                    <Lucide icon="X" class="h-3.5 w-3.5" />
                                     Limpiar
                                 </button>
                             </div>
+                            <!-- Selección múltiple: mismos controles que el
+                                 listado de habitaciones. -->
+                            <template v-if="canDelete && selectedIds.length">
+                                <span
+                                    class="text-xs text-slate-500 sm:ml-auto sm:self-center"
+                                >
+                                    {{ selectedIds.length }} seleccionada(s)
+                                </span>
+                                <button
+                                    type="button"
+                                    class="text-xs font-medium text-primary hover:underline sm:self-center"
+                                    @click="selectedIds = []"
+                                >
+                                    Quitar selección
+                                </button>
+                                <Button
+                                    variant="danger"
+                                    class="h-8 rounded-[0.5rem] text-xs sm:self-center"
+                                    @click="bulkDeleteOpen = true"
+                                >
+                                    <Lucide
+                                        icon="Trash2"
+                                        class="mr-1.5 h-3.5 w-3.5"
+                                    />
+                                    Eliminar seleccionadas
+                                </Button>
+                            </template>
                         </div>
                         <div
-                            class="flex flex-col gap-3 sm:flex-row sm:flex-wrap"
+                            class="flex flex-col gap-2.5 sm:flex-row sm:flex-wrap"
                         >
                             <FormSelect
                                 v-model="filterState.status"
-                                class="sm:w-44"
+                                class="h-9 text-xs sm:w-44"
                                 @change="applyFilters"
                             >
                                 <option value="active">Pendientes</option>
@@ -756,7 +788,7 @@ async function destroy() {
                             </FormSelect>
                             <FormSelect
                                 v-model="filterState.priority"
-                                class="sm:w-44"
+                                class="h-9 text-xs sm:w-44"
                                 @change="applyFilters"
                             >
                                 <option value="">Toda prioridad</option>
@@ -766,7 +798,7 @@ async function destroy() {
                             </FormSelect>
                             <FormSelect
                                 v-model="filterState.room"
-                                class="sm:w-56"
+                                class="h-9 text-xs sm:w-56"
                                 @change="applyFilters"
                             >
                                 <option value="">Todas las habitaciones</option>
@@ -780,7 +812,7 @@ async function destroy() {
                             </FormSelect>
                             <FormSelect
                                 v-model="filterState.category"
-                                class="sm:w-56"
+                                class="h-9 text-xs sm:w-56"
                                 @change="applyFilters"
                             >
                                 <option value="">Todo tipo de falla</option>
@@ -795,7 +827,7 @@ async function destroy() {
                             <FormSelect
                                 v-if="advanced"
                                 v-model="filterState.assignee"
-                                class="sm:w-48"
+                                class="h-9 text-xs sm:w-48"
                                 @change="applyFilters"
                             >
                                 <option value="">Cualquier responsable</option>
@@ -810,7 +842,7 @@ async function destroy() {
                             </FormSelect>
                             <FormSelect
                                 v-model="filterState.source"
-                                class="sm:w-44"
+                                class="h-9 text-xs sm:w-44"
                                 @change="applyFilters"
                             >
                                 <option value="">Quien la reportó</option>
@@ -820,40 +852,9 @@ async function destroy() {
                         </div>
                     </div>
 
-                    <!-- Barra de selección: aparece solo con algo marcado -->
-                    <div
-                        v-if="selectedIds.length"
-                        class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/70 bg-primary/5 px-5 py-3 dark:border-darkmode-400"
-                    >
-                        <span class="text-sm font-medium">
-                            {{ selectedIds.length }} seleccionada(s)
-                        </span>
-                        <div class="flex items-center gap-2">
-                            <Button
-                                variant="outline-secondary"
-                                size="sm"
-                                class="bg-white"
-                                @click="selectedIds = []"
-                                >Quitar selección</Button
-                            >
-                            <Button
-                                v-if="canDelete"
-                                variant="danger"
-                                size="sm"
-                                @click="bulkDeleteOpen = true"
-                            >
-                                <Lucide
-                                    icon="Trash2"
-                                    class="mr-1.5 h-3.5 w-3.5"
-                                />
-                                Eliminar
-                            </Button>
-                        </div>
-                    </div>
-
                     <template v-if="incidents.length">
                         <!-- Móvil: tarjetas apiladas -->
-                        <div class="space-y-2.5 p-5 sm:hidden">
+                        <div class="space-y-2 p-4 sm:hidden">
                             <div
                                 v-for="incident in incidents"
                                 :key="`card-${incident.id}`"
@@ -862,10 +863,10 @@ async function destroy() {
                                 <div
                                     class="flex items-center justify-between gap-2"
                                 >
-                                    <input
+                                    <FormCheck.Input
                                         v-if="canDelete"
                                         type="checkbox"
-                                        class="form-check-input shrink-0"
+                                        class="shrink-0"
                                         :checked="
                                             selectedIds.includes(incident.id)
                                         "
@@ -991,15 +992,15 @@ async function destroy() {
 
                         <!-- Escritorio: tabla -->
                         <div
-                            class="hidden overflow-auto p-5 sm:block lg:overflow-visible"
+                            class="hidden overflow-auto p-4 sm:block lg:overflow-visible"
                         >
                             <Table>
                                 <Table.Thead>
                                     <Table.Tr>
                                         <Table.Th v-if="canDelete" class="w-10">
-                                            <input
+                                            <FormCheck.Input
                                                 type="checkbox"
-                                                class="form-check-input"
+                                                title="Seleccionar las visibles"
                                                 :checked="allSelected"
                                                 @change="toggleAll"
                                             />
@@ -1032,9 +1033,8 @@ async function destroy() {
                                         :key="incident.id"
                                     >
                                         <Table.Td v-if="canDelete">
-                                            <input
+                                            <FormCheck.Input
                                                 type="checkbox"
-                                                class="form-check-input"
                                                 :checked="
                                                     selectedIds.includes(
                                                         incident.id,
@@ -1168,8 +1168,12 @@ async function destroy() {
                                             >
                                         </Table.Td>
                                         <Table.Td>
+                                            <!-- Mismos botones fantasma que
+                                                 el listado de habitaciones:
+                                                 gris en reposo, color al
+                                                 pasar encima. -->
                                             <div
-                                                class="flex items-center justify-end gap-3"
+                                                class="flex items-center justify-end gap-1"
                                             >
                                                 <Link
                                                     :href="
@@ -1178,7 +1182,7 @@ async function destroy() {
                                                             incident.id,
                                                         )
                                                     "
-                                                    class="flex items-center text-slate-500 hover:text-primary"
+                                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
                                                     title="Ver detalle"
                                                 >
                                                     <Lucide
@@ -1187,15 +1191,15 @@ async function destroy() {
                                                     />
                                                 </Link>
                                                 <template v-if="canManage">
-                                                    <a
+                                                    <button
                                                         v-if="
                                                             incident.status ===
                                                             'open'
                                                         "
-                                                        href="#"
-                                                        class="flex items-center whitespace-nowrap text-warning"
+                                                        type="button"
+                                                        class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-warning/10 hover:text-warning"
                                                         title="Marcar en proceso"
-                                                        @click.prevent="
+                                                        @click="
                                                             patchStatus(
                                                                 incident,
                                                                 'in_progress',
@@ -1206,16 +1210,16 @@ async function destroy() {
                                                             icon="Hammer"
                                                             class="h-4 w-4"
                                                         />
-                                                    </a>
-                                                    <a
+                                                    </button>
+                                                    <button
                                                         v-if="
                                                             incident.status !==
                                                             'resolved'
                                                         "
-                                                        href="#"
-                                                        class="flex items-center text-success"
+                                                        type="button"
+                                                        class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-success/10 hover:text-success"
                                                         title="Resolver"
-                                                        @click.prevent="
+                                                        @click="
                                                             openResolve(
                                                                 incident,
                                                             )
@@ -1225,13 +1229,13 @@ async function destroy() {
                                                             icon="CircleCheck"
                                                             class="h-4 w-4"
                                                         />
-                                                    </a>
-                                                    <a
+                                                    </button>
+                                                    <button
                                                         v-else
-                                                        href="#"
-                                                        class="flex items-center text-slate-400"
+                                                        type="button"
+                                                        class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
                                                         title="Reabrir"
-                                                        @click.prevent="
+                                                        @click="
                                                             patchStatus(
                                                                 incident,
                                                                 'open',
@@ -1242,12 +1246,12 @@ async function destroy() {
                                                             icon="RefreshCw"
                                                             class="h-4 w-4"
                                                         />
-                                                    </a>
-                                                    <a
-                                                        href="#"
-                                                        class="flex items-center text-primary"
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
                                                         title="Editar"
-                                                        @click.prevent="
+                                                        @click="
                                                             openForm(incident)
                                                         "
                                                     >
@@ -1255,13 +1259,13 @@ async function destroy() {
                                                             icon="Pencil"
                                                             class="h-4 w-4"
                                                         />
-                                                    </a>
-                                                    <a
+                                                    </button>
+                                                    <button
                                                         v-if="canDelete"
-                                                        href="#"
-                                                        class="flex items-center text-danger"
+                                                        type="button"
+                                                        class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
                                                         title="Eliminar"
-                                                        @click.prevent="
+                                                        @click="
                                                             deleting = incident
                                                         "
                                                     >
@@ -1269,7 +1273,7 @@ async function destroy() {
                                                             icon="Trash2"
                                                             class="h-4 w-4"
                                                         />
-                                                    </a>
+                                                    </button>
                                                 </template>
                                             </div>
                                         </Table.Td>
@@ -1280,7 +1284,7 @@ async function destroy() {
 
                         <!-- Paginación: antes se cortaba en 100 sin avisar -->
                         <div
-                            class="flex flex-col items-center gap-3 border-t border-slate-200/70 px-5 py-4 sm:flex-row sm:justify-between dark:border-darkmode-400"
+                            class="flex flex-col items-center gap-2 border-t border-slate-200/70 px-4 py-3 sm:flex-row sm:justify-between dark:border-darkmode-400"
                         >
                             <p class="text-xs text-slate-500">
                                 Mostrando {{ paginator.from ?? 0 }}–{{
@@ -1301,7 +1305,7 @@ async function destroy() {
                                         :href="link.url"
                                         preserve-state
                                         preserve-scroll
-                                        class="rounded-md px-3 py-1.5 text-sm"
+                                        class="rounded-md px-2.5 py-1 text-xs"
                                         :class="
                                             link.active
                                                 ? 'bg-primary text-white'
@@ -1312,7 +1316,7 @@ async function destroy() {
                                     </Link>
                                     <span
                                         v-else
-                                        class="px-3 py-1.5 text-sm text-slate-400"
+                                        class="px-2.5 py-1 text-xs text-slate-400"
                                         v-html="link.label"
                                     />
                                 </template>
@@ -1321,12 +1325,9 @@ async function destroy() {
                     </template>
                     <div
                         v-else
-                        class="flex flex-col items-center gap-3 px-5 py-12 text-center"
+                        class="flex flex-col items-center gap-2.5 px-4 py-10 text-center"
                     >
-                        <Lucide
-                            icon="Wrench"
-                            class="h-10 w-10 text-slate-300"
-                        />
+                        <Lucide icon="Wrench" class="h-8 w-8 text-slate-300" />
                         <div>
                             <p class="text-sm font-medium text-slate-600">
                                 Sin incidencias con estos filtros
@@ -1339,10 +1340,10 @@ async function destroy() {
                         <Button
                             v-if="canManage"
                             variant="primary"
-                            class="rounded-[0.5rem]"
+                            class="h-9 rounded-[0.5rem] text-xs"
                             @click="openForm()"
                         >
-                            <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                             Reportar incidencia
                         </Button>
                     </div>
@@ -1772,31 +1773,39 @@ async function destroy() {
         <!-- Confirmar eliminación -->
         <Dialog :open="deleting !== null" @close="deleting = null">
             <Dialog.Panel>
-                <div class="p-5 text-center">
-                    <Lucide
-                        icon="AlertTriangle"
-                        class="mx-auto mb-3 h-12 w-12 text-danger"
-                    />
-                    <h2 class="text-base font-medium">
-                        ¿Eliminar "{{ deleting?.title }}"?
-                    </h2>
-                    <p class="mt-2 text-sm text-slate-500">
-                        Se borra el ticket y sus fotos. Si ya se atendió, mejor
-                        márcala como resuelta para conservar el historial.
-                    </p>
-                    <div class="mt-5 flex justify-center gap-2">
+                <div class="p-5">
+                    <div class="mb-3 flex items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
+                        >
+                            <Lucide icon="Trash2" class="h-5 w-5 text-danger" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                ¿Eliminar "{{ deleting?.title }}"?
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Se borra el ticket y sus fotos. Si ya se
+                                atendió, mejor márcala como resuelta para
+                                conservar el historial.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11"
+                            class="h-9 px-5 text-xs"
                             @click="deleting = null"
                             >Cancelar</Button
                         >
                         <Button
                             variant="danger"
-                            class="min-h-11"
+                            class="h-9 px-5 text-xs"
                             @click="destroy"
-                            >Sí, eliminar</Button
                         >
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
+                            Sí, eliminar
+                        </Button>
                     </div>
                 </div>
             </Dialog.Panel>
@@ -1804,33 +1813,58 @@ async function destroy() {
 
         <Dialog :open="bulkDeleteOpen" @close="bulkDeleteOpen = false">
             <Dialog.Panel>
-                <div class="p-5 text-center">
-                    <Lucide
-                        icon="AlertTriangle"
-                        class="mx-auto mb-3 h-12 w-12 text-danger"
-                    />
-                    <h2 class="text-base font-medium">
-                        ¿Eliminar {{ selectedIds.length }} incidencia(s)?
-                    </h2>
-                    <p class="mt-2 text-sm text-slate-500">
-                        Se borran los tickets y sus fotos. Lo que ya se atendió
-                        conviene dejarlo como resuelto: es el historial de la
-                        habitación.
-                    </p>
-                    <div class="mt-5 flex justify-center gap-2">
+                <div class="p-5">
+                    <div class="mb-3 flex items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10"
+                        >
+                            <Lucide icon="Trash2" class="h-5 w-5 text-danger" />
+                        </div>
+                        <div>
+                            <h2 class="text-base font-medium">
+                                Eliminar
+                                {{ selectedRows.length }} incidencia(s)
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Se borran los tickets y sus fotos. Lo que ya se
+                                atendió conviene dejarlo como resuelto: es el
+                                historial de la habitación.
+                            </p>
+                        </div>
+                    </div>
+                    <div
+                        class="max-h-48 space-y-1 overflow-y-auto rounded-lg border border-dashed border-slate-300/70 p-2 text-sm dark:border-darkmode-400"
+                    >
+                        <div
+                            v-for="row in selectedRows"
+                            :key="row.id"
+                            class="flex items-center justify-between gap-2 px-1"
+                        >
+                            <span class="min-w-0 truncate font-medium">
+                                {{ row.title }}
+                            </span>
+                            <span class="shrink-0 text-xs text-slate-500">
+                                {{ row.room ?? 'Área general' }}
+                            </span>
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11"
+                            class="h-9 px-5 text-xs"
                             @click="bulkDeleteOpen = false"
                             >Cancelar</Button
                         >
                         <Button
                             variant="danger"
-                            class="min-h-11"
+                            class="h-9 px-5 text-xs"
                             :disabled="bulkDeleting"
                             @click="bulkDelete"
                         >
-                            {{ bulkDeleting ? 'Eliminando…' : 'Sí, eliminar' }}
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
+                            {{
+                                bulkDeleting ? 'Eliminando...' : 'Sí, eliminar'
+                            }}
                         </Button>
                     </div>
                 </div>

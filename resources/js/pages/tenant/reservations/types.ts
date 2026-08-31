@@ -96,6 +96,9 @@ export interface ReservationRow {
     payment_overdue: boolean;
     paid_total: number;
     pending_balance: number;
+    // Fianza que le toca a ESTA reserva: con escalones por volumen, una del
+    // mismo grupo GRP- no paga lo mismo que una suelta.
+    guarantee_amount: number;
     payment_request: {
         id: number;
         concept: string;

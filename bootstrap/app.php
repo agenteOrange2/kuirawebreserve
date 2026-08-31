@@ -41,7 +41,11 @@ return Application::configure(basePath: dirname(__DIR__))
         // proxy dejaba falsificar X-Forwarded-For y saltarse todos los throttle:*.
         // $middleware->trustProxies(at: '*');
         //
-        // El https NO depende de esto: nginx manda fastcgi_param HTTPS on.
+        // El https NO depende de esto, pero SOLO porque nginx manda
+        // fastcgi_param HTTPS: sin eso Laravel arma los assets con http://
+        // y el navegador los bloquea por mixed content (panel sin CSS ni JS,
+        // 2026-08-26). Está en nginx/conf.d/kuirawebreserve.conf, con un map
+        // que lo enciende para los dominios .com y lo deja apagado en la LAN.
         // Con Cloudflare delante, aqui van SUS rangos de IP, nunca el comodin.
 
         // Marcador para Stancl\Tenancy\Features\UniversalRoutes: las rutas con

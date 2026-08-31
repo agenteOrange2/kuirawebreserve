@@ -19,9 +19,11 @@ class LandingController extends Controller
 
         return Inertia::render('Welcome', [
             'canRegister' => Features::enabled(Features::registration()),
+            // Solo los planes anunciados: los planes a la medida
+            // (public = false) existen en /admin pero no se publican.
             'plans' => Plan::query()
                 ->ordered()
-                ->where('active', true)
+                ->public()
                 ->get()
                 ->map(fn (Plan $plan) => [
                     'key' => $plan->key,
@@ -54,7 +56,7 @@ class LandingController extends Controller
     public function store(StorePlanProspectRequest $request): RedirectResponse
     {
         $data = $request->validated();
-        $plan = Plan::query()->findOrFail($data['plan_key']);
+        $plan = Plan::query()->public()->findOrFail($data['plan_key']);
 
         PlanProspect::query()->create([
             'name' => $data['name'],

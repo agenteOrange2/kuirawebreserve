@@ -238,7 +238,7 @@ async function saveInstructions() {
             <div class="col-span-12 xl:col-span-4">
                 <div class="box box--stacked flex h-full flex-col">
                     <div
-                        class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
+                        class="flex flex-wrap items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
                     >
                         <Lucide
                             icon="Bot"
@@ -247,7 +247,7 @@ async function saveInstructions() {
                         <h2 class="text-base font-medium">Estado del bot</h2>
                         <Link
                             :href="route('admin.ai')"
-                            class="ml-auto flex items-center text-xs text-primary"
+                            class="flex w-full items-center text-xs text-primary sm:ml-auto sm:w-auto"
                         >
                             Llaves de plataforma
                             <Lucide icon="ArrowRight" class="ml-1 h-3 w-3" />

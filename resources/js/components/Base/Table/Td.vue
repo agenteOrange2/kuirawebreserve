@@ -22,7 +22,10 @@ const attrs = useAttrs();
 
 const computedClass = computed(() =>
     twMerge([
-        'px-5 py-3 border-b dark:border-darkmode-300',
+        // Celda densa por default (antes px-5 py-3): con ~20 filas en pantalla
+        // esos 4px por lado eran media fila de diferencia. Una vista que
+        // necesite más aire lo pisa con su propia clase (twMerge).
+        'px-4 py-2.5 border-b dark:border-darkmode-300',
         table?.dark && 'border-slate-600 dark:border-darkmode-300',
         table?.bordered && 'border-l border-r border-t',
         table?.sm && 'px-4 py-2',

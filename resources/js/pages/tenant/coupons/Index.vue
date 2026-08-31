@@ -3,8 +3,10 @@ import axios from 'axios';
 import { reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
+    FormDate,
     FormHelp,
     FormInput,
+    FormLabel,
     FormSelect,
     FormSwitch,
 } from '@/components/Base/Form';
@@ -105,7 +107,8 @@ async function submit() {
         // habitación, cliente frecuente y cumpleaños.
         min_nights: form.min_nights === '' ? null : Number(form.min_nights),
         min_visits: form.min_visits === '' ? null : Number(form.min_visits),
-        room_type_id: form.room_type_id === '' ? null : Number(form.room_type_id),
+        room_type_id:
+            form.room_type_id === '' ? null : Number(form.room_type_id),
         birthday: form.birthday,
         active: form.active,
     };
@@ -185,20 +188,17 @@ async function destroy() {
     <RazeLayout title="Cupones">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide
-                            icon="TicketPercent"
-                            class="h-5 w-5 sm:h-7 sm:w-7"
-                        />
+                        <Lucide icon="TicketPercent" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">Cupones</h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Cupones</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Códigos de descuento que el huésped aplica al
                             reservar en línea. El uso se cuenta cuando la
                             reserva se confirma, no al apartar.
@@ -208,27 +208,28 @@ async function destroy() {
                 <Button
                     v-if="canManage"
                     variant="primary"
-                    class="min-h-11 w-full rounded-[0.5rem] shadow-md shadow-primary/20 md:w-auto"
+                    class="h-10 w-full rounded-[0.5rem] text-xs shadow-md shadow-primary/20 md:w-auto"
                     @click="openForm()"
                 >
-                    <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Nuevo cupón
+                    <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" /> Nuevo
+                    cupón
                 </Button>
             </div>
 
             <div class="box box--stacked mt-5">
                 <template v-if="coupons.length">
                     <!-- Móvil: tarjetas apiladas (patrón rooms/Index.vue) -->
-                    <div class="space-y-2.5 p-5 sm:hidden">
+                    <div class="space-y-2 p-4 sm:hidden">
                         <div
                             v-for="coupon in coupons"
                             :key="`card-${coupon.id}`"
-                            class="rounded-lg border border-slate-200/70 bg-white p-3.5 dark:border-darkmode-400 dark:bg-darkmode-600"
+                            class="rounded-lg border border-slate-200/70 bg-white p-3 dark:border-darkmode-400 dark:bg-darkmode-600"
                         >
                             <div
                                 class="flex items-center justify-between gap-2"
                             >
                                 <div
-                                    class="min-w-0 truncate font-medium"
+                                    class="min-w-0 truncate text-sm font-medium"
                                     :class="{
                                         'text-slate-400': !coupon.active,
                                     }"
@@ -294,7 +295,7 @@ async function destroy() {
 
                     <!-- Escritorio: tabla -->
                     <div
-                        class="hidden overflow-auto p-5 sm:block lg:overflow-visible"
+                        class="hidden overflow-auto p-4 sm:block lg:overflow-visible"
                     >
                         <Table>
                             <Table.Thead>
@@ -326,17 +327,17 @@ async function destroy() {
                                     :key="coupon.id"
                                 >
                                     <Table.Td>
-                                        <div class="flex items-center gap-3">
+                                        <div class="flex items-center gap-2.5">
                                             <div
-                                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                                             >
                                                 <Lucide
                                                     icon="TicketPercent"
-                                                    class="h-4 w-4 text-primary"
+                                                    class="h-3.5 w-3.5 text-primary"
                                                 />
                                             </div>
                                             <div
-                                                class="font-medium"
+                                                class="text-sm font-medium"
                                                 :class="{
                                                     'text-slate-400':
                                                         !coupon.active,
@@ -346,7 +347,7 @@ async function destroy() {
                                             </div>
                                         </div>
                                     </Table.Td>
-                                    <Table.Td class="font-medium">
+                                    <Table.Td class="text-sm font-medium">
                                         {{ coupon.label }}
                                         <span
                                             class="block text-xs font-normal text-slate-500"
@@ -427,7 +428,7 @@ async function destroy() {
                                             >
                                                 <Lucide
                                                     icon="Pencil"
-                                                    class="h-4 w-4"
+                                                    class="h-3.5 w-3.5"
                                                 />
                                             </a>
                                             <a
@@ -440,7 +441,7 @@ async function destroy() {
                                             >
                                                 <Lucide
                                                     icon="Trash2"
-                                                    class="h-4 w-4"
+                                                    class="h-3.5 w-3.5"
                                                 />
                                             </a>
                                         </div>
@@ -452,11 +453,11 @@ async function destroy() {
                 </template>
                 <div
                     v-else
-                    class="flex flex-col items-center gap-3 px-5 py-12 text-center"
+                    class="flex flex-col items-center gap-2.5 px-5 py-10 text-center"
                 >
                     <Lucide
                         icon="TicketPercent"
-                        class="h-10 w-10 text-slate-300"
+                        class="h-8 w-8 text-slate-300"
                     />
                     <div>
                         <p class="text-sm font-medium text-slate-600">
@@ -473,26 +474,31 @@ async function destroy() {
                         class="rounded-[0.5rem]"
                         @click="openForm()"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Nuevo cupón
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" /> Nuevo
+                        cupón
                     </Button>
                 </div>
             </div>
         </div>
 
-        <!-- Modal crear/editar -->
-        <Dialog :open="showForm" @close="showForm = false">
-            <Dialog.Panel>
-                <form class="p-5" @submit.prevent="submit">
-                    <div class="mb-4 flex items-center gap-3">
+        <!-- Alta y edición: cabecera y pie fijos, cuerpo con scroll propio (en
+             laptop el formulario se salía de la pantalla y el botón de guardar
+             quedaba fuera de alcance). -->
+        <Dialog :open="showForm" size="lg" @close="showForm = false">
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[720px]">
+                <form
+                    class="flex max-h-[calc(100dvh-6rem)] flex-col"
+                    @submit.prevent="submit"
+                >
+                    <div
+                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    >
                         <div
-                            class="flex h-10 w-10 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <Lucide
-                                icon="TicketPercent"
-                                class="h-5 w-5 text-primary"
-                            />
+                            <Lucide icon="TicketPercent" class="h-5 w-5" />
                         </div>
-                        <div>
+                        <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">
                                 {{
                                     editing
@@ -505,150 +511,222 @@ async function destroy() {
                                 momento de apartar.
                             </p>
                         </div>
+                        <button
+                            type="button"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            title="Cerrar"
+                            @click="showForm = false"
+                        >
+                            <Lucide icon="X" class="h-4 w-4" />
+                        </button>
                     </div>
-                    <div class="space-y-4">
+
+                    <div
+                        class="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4"
+                    >
+                        <!-- Qué descuenta -->
                         <div>
-                            <label class="mb-1 block text-sm">Código</label>
-                            <FormInput
-                                v-model="form.code"
-                                type="text"
-                                class="uppercase"
-                                placeholder="VERANO25"
-                            />
-                            <FormHelp v-if="errors.code" class="text-danger">{{
-                                errors.code
-                            }}</FormHelp>
-                        </div>
-                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <div>
-                                <label class="mb-1 block text-sm">Tipo</label>
-                                <FormSelect v-model="form.kind">
-                                    <option value="percent">
-                                        Porcentaje (%)
-                                    </option>
-                                    <option value="amount">
-                                        Monto fijo ($)
-                                    </option>
-                                </FormSelect>
-                            </div>
-                            <div>
-                                <label class="mb-1 block text-sm">
-                                    {{
-                                        form.kind === 'percent'
-                                            ? 'Porcentaje'
-                                            : 'Monto ($)'
-                                    }}
-                                </label>
-                                <FormInput
-                                    v-model="form.value"
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    :placeholder="
-                                        form.kind === 'percent'
-                                            ? '10'
-                                            : '200.00'
-                                    "
+                            <div
+                                class="mb-2 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                <Lucide
+                                    icon="TicketPercent"
+                                    class="h-3.5 w-3.5"
                                 />
-                                <FormHelp
-                                    v-if="errors.value"
-                                    class="text-danger"
-                                    >{{ errors.value }}</FormHelp
-                                >
+                                El descuento
+                            </div>
+                            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <div>
+                                    <FormLabel htmlFor="coupon-code">
+                                        Código
+                                    </FormLabel>
+                                    <FormInput
+                                        id="coupon-code"
+                                        v-model="form.code"
+                                        type="text"
+                                        class="h-9 text-xs uppercase"
+                                        placeholder="VERANO25"
+                                    />
+                                    <FormHelp
+                                        v-if="errors.code"
+                                        class="text-danger"
+                                    >
+                                        {{ errors.code }}
+                                    </FormHelp>
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="coupon-kind">
+                                        Tipo
+                                    </FormLabel>
+                                    <FormSelect
+                                        id="coupon-kind"
+                                        v-model="form.kind"
+                                        class="h-9 text-xs"
+                                    >
+                                        <option value="percent">
+                                            Porcentaje (%)
+                                        </option>
+                                        <option value="amount">
+                                            Monto fijo ($)
+                                        </option>
+                                    </FormSelect>
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="coupon-value">
+                                        {{
+                                            form.kind === 'percent'
+                                                ? 'Porcentaje'
+                                                : 'Monto ($)'
+                                        }}
+                                    </FormLabel>
+                                    <FormInput
+                                        id="coupon-value"
+                                        v-model="form.value"
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        class="h-9 text-xs"
+                                        :placeholder="
+                                            form.kind === 'percent'
+                                                ? '10'
+                                                : '200.00'
+                                        "
+                                    />
+                                    <FormHelp
+                                        v-if="errors.value"
+                                        class="text-danger"
+                                    >
+                                        {{ errors.value }}
+                                    </FormHelp>
+                                </div>
                             </div>
                         </div>
-                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <div>
-                                <label class="mb-1 block text-sm"
-                                    >Vigente desde (opcional)</label
-                                >
-                                <FormInput
-                                    v-model="form.starts_at"
-                                    type="date"
-                                />
-                            </div>
-                            <div>
-                                <label class="mb-1 block text-sm"
-                                    >Vigente hasta (opcional)</label
-                                >
-                                <FormInput v-model="form.ends_at" type="date" />
-                                <FormHelp
-                                    v-if="errors.ends_at"
-                                    class="text-danger"
-                                    >{{ errors.ends_at }}</FormHelp
-                                >
-                            </div>
-                        </div>
+
+                        <!-- Cuándo se puede usar -->
                         <div>
-                            <label class="mb-1 block text-sm"
-                                >Límite de usos (opcional)</label
+                            <div
+                                class="mb-2 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                             >
-                            <FormInput
-                                v-model="form.max_uses"
-                                type="number"
-                                min="1"
-                                placeholder="Sin límite"
-                            />
-                            <FormHelp
-                                v-if="errors.max_uses"
-                                class="text-danger"
-                                >{{ errors.max_uses }}</FormHelp
-                            >
-                            <FormHelp v-else>
-                                El uso se descuenta cuando la reserva se
-                                confirma, no al apartar.
+                                <Lucide
+                                    icon="CalendarRange"
+                                    class="h-3.5 w-3.5"
+                                />
+                                Vigencia y usos
+                            </div>
+                            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                                <div>
+                                    <FormLabel htmlFor="coupon-starts">
+                                        Vigente desde
+                                    </FormLabel>
+                                    <FormDate
+                                        id="coupon-starts"
+                                        v-model="form.starts_at"
+                                        input-class="h-9 text-xs"
+                                    />
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="coupon-ends">
+                                        Vigente hasta
+                                    </FormLabel>
+                                    <FormDate
+                                        id="coupon-ends"
+                                        v-model="form.ends_at"
+                                        input-class="h-9 text-xs"
+                                    />
+                                    <FormHelp
+                                        v-if="errors.ends_at"
+                                        class="text-danger"
+                                    >
+                                        {{ errors.ends_at }}
+                                    </FormHelp>
+                                </div>
+                                <div>
+                                    <FormLabel htmlFor="coupon-max-uses">
+                                        Límite de usos
+                                    </FormLabel>
+                                    <FormInput
+                                        id="coupon-max-uses"
+                                        v-model="form.max_uses"
+                                        type="number"
+                                        min="1"
+                                        class="h-9 text-xs"
+                                        placeholder="Sin límite"
+                                    />
+                                    <FormHelp
+                                        v-if="errors.max_uses"
+                                        class="text-danger"
+                                    >
+                                        {{ errors.max_uses }}
+                                    </FormHelp>
+                                </div>
+                            </div>
+                            <FormHelp class="mt-1.5">
+                                Las tres son opcionales. El uso se descuenta
+                                cuando la reserva se confirma, no al apartar.
                             </FormHelp>
                         </div>
 
-                        <!-- Condiciones opcionales -->
+                        <!-- A quién se le aplica -->
                         <div
                             class="rounded-lg border border-dashed border-slate-300/70 p-3.5 dark:border-darkmode-400"
                         >
                             <div
-                                class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                class="mb-2.5 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                             >
-                                <Lucide icon="SlidersHorizontal" class="h-3.5 w-3.5" />
+                                <Lucide
+                                    icon="SlidersHorizontal"
+                                    class="h-3.5 w-3.5"
+                                />
                                 Condiciones (opcionales)
                             </div>
-                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                            <div class="grid grid-cols-1 gap-3 sm:grid-cols-3">
                                 <div>
-                                    <label class="mb-1 block text-sm"
-                                        >Noches mínimas</label
-                                    >
+                                    <FormLabel htmlFor="coupon-min-nights">
+                                        Noches mínimas
+                                    </FormLabel>
                                     <FormInput
+                                        id="coupon-min-nights"
                                         v-model="form.min_nights"
                                         type="number"
                                         min="1"
+                                        class="h-9 text-xs"
                                         placeholder="Sin mínimo"
                                     />
                                     <FormHelp
                                         v-if="errors.min_nights"
                                         class="text-danger"
-                                        >{{ errors.min_nights }}</FormHelp
                                     >
+                                        {{ errors.min_nights }}
+                                    </FormHelp>
                                 </div>
                                 <div>
-                                    <label class="mb-1 block text-sm"
-                                        >Cliente frecuente (visitas
-                                        mínimas)</label
-                                    >
+                                    <FormLabel htmlFor="coupon-min-visits">
+                                        Visitas mínimas
+                                    </FormLabel>
                                     <FormInput
+                                        id="coupon-min-visits"
                                         v-model="form.min_visits"
                                         type="number"
                                         min="1"
+                                        class="h-9 text-xs"
                                         placeholder="Cualquier huésped"
                                     />
                                     <FormHelp
                                         v-if="errors.min_visits"
                                         class="text-danger"
-                                        >{{ errors.min_visits }}</FormHelp
                                     >
+                                        {{ errors.min_visits }}
+                                    </FormHelp>
                                 </div>
                                 <div>
-                                    <label class="mb-1 block text-sm"
-                                        >Solo para el tipo</label
+                                    <FormLabel htmlFor="coupon-room-type">
+                                        Solo para el tipo
+                                    </FormLabel>
+                                    <FormSelect
+                                        id="coupon-room-type"
+                                        v-model="form.room_type_id"
+                                        class="h-9 text-xs"
                                     >
-                                    <FormSelect v-model="form.room_type_id">
                                         <option value="">
                                             Cualquier habitación
                                         </option>
@@ -663,30 +741,43 @@ async function destroy() {
                                     <FormHelp
                                         v-if="errors.room_type_id"
                                         class="text-danger"
-                                        >{{ errors.room_type_id }}</FormHelp
                                     >
-                                </div>
-                                <div class="flex items-end pb-1.5">
-                                    <label
-                                        class="flex cursor-pointer items-center gap-2.5 text-sm"
-                                    >
-                                        <FormSwitch.Input
-                                            v-model="form.birthday"
-                                            type="checkbox"
-                                        />
-                                        Solo en cumpleaños (± 7 días)
-                                    </label>
+                                        {{ errors.room_type_id }}
+                                    </FormHelp>
                                 </div>
                             </div>
+                            <label
+                                class="mt-3 flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-slate-200/70 bg-white px-3 py-2.5 dark:border-darkmode-400 dark:bg-darkmode-600"
+                            >
+                                <span class="min-w-0">
+                                    <span class="block text-xs font-medium">
+                                        Solo en cumpleaños
+                                    </span>
+                                    <span
+                                        class="block text-[11px] text-slate-500"
+                                    >
+                                        Vale desde siete días antes hasta siete
+                                        después de la fecha del huésped.
+                                    </span>
+                                </span>
+                                <FormSwitch>
+                                    <FormSwitch.Input
+                                        v-model="form.birthday"
+                                        type="checkbox"
+                                    />
+                                </FormSwitch>
+                            </label>
                             <FormHelp class="mt-2">
                                 El cumpleaños y las visitas se validan con el
                                 teléfono del huésped registrado en el CRM.
                             </FormHelp>
                         </div>
-                        <div
-                            class="flex items-center justify-between rounded-lg border border-dashed border-slate-300/70 px-3 py-2.5 dark:border-darkmode-400"
-                        >
-                            <span class="text-sm">Activo</span>
+                    </div>
+
+                    <div
+                        class="flex flex-col gap-3 border-t border-slate-200/70 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between dark:border-darkmode-400"
+                    >
+                        <label class="flex cursor-pointer items-center gap-2.5">
                             <FormSwitch>
                                 <FormSwitch.Input
                                     :checked="form.active"
@@ -694,30 +785,39 @@ async function destroy() {
                                     @change="form.active = !form.active"
                                 />
                             </FormSwitch>
+                            <span class="text-xs">
+                                <span class="block font-medium">
+                                    Cupón activo
+                                </span>
+                                <span class="block text-slate-500">
+                                    Apagado deja de canjearse de inmediato.
+                                </span>
+                            </span>
+                        </label>
+                        <div class="flex justify-end gap-2">
+                            <Button
+                                type="button"
+                                variant="outline-secondary"
+                                class="h-9 px-5 text-xs"
+                                @click="showForm = false"
+                            >
+                                Cancelar
+                            </Button>
+                            <Button
+                                type="submit"
+                                variant="primary"
+                                class="h-9 px-5 text-xs"
+                                :disabled="saving"
+                            >
+                                {{
+                                    saving
+                                        ? 'Guardando...'
+                                        : editing
+                                          ? 'Guardar cambios'
+                                          : 'Crear cupón'
+                                }}
+                            </Button>
                         </div>
-                    </div>
-                    <div class="mt-5 flex justify-end gap-2">
-                        <Button
-                            type="button"
-                            variant="outline-secondary"
-                            class="min-h-11"
-                            @click="showForm = false"
-                            >Cancelar</Button
-                        >
-                        <Button
-                            type="submit"
-                            variant="primary"
-                            class="min-h-11"
-                            :disabled="saving"
-                        >
-                            {{
-                                saving
-                                    ? 'Guardando…'
-                                    : editing
-                                      ? 'Guardar cambios'
-                                      : 'Crear cupón'
-                            }}
-                        </Button>
                     </div>
                 </form>
             </Dialog.Panel>
@@ -729,7 +829,7 @@ async function destroy() {
                 <div class="p-5 text-center">
                     <Lucide
                         icon="AlertTriangle"
-                        class="mx-auto mb-3 h-12 w-12 text-danger"
+                        class="mx-auto mb-3 h-10 w-10 text-danger"
                     />
                     <h2 class="text-base font-medium">
                         ¿Eliminar "{{ deleting?.code }}"?
@@ -742,13 +842,13 @@ async function destroy() {
                     <div class="mt-5 flex justify-center gap-2">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11"
+                            class="h-10 text-xs"
                             @click="deleting = null"
                             >Cancelar</Button
                         >
                         <Button
                             variant="danger"
-                            class="min-h-11"
+                            class="h-10 text-xs"
                             @click="destroy"
                             >Sí, eliminar</Button
                         >

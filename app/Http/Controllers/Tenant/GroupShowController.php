@@ -7,6 +7,7 @@ use App\Models\Payment;
 use App\Models\PaymentRequest;
 use App\Models\ReservationGroup;
 use App\Models\RoomType;
+use App\Services\Payments\PaymentMethodGate;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -90,6 +91,10 @@ class GroupShowController extends Controller
                     'rooms_count' => $type->rooms_count,
                 ]),
             'hasExperiencesModule' => (bool) tenant()?->hasModule('experiencias'),
+            // Sin pasarela conectada el botón de link de pago solo llevaba a un
+            // error: se esconde y queda la transferencia, que sí funciona.
+            'hasGateway' => app(PaymentMethodGate::class)
+                ->activeGatewayLink((string) tenant('id')) !== null,
             'canManage' => $request->user()->can('reservations.manage'),
         ]);
     }

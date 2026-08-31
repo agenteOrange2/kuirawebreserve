@@ -3,6 +3,8 @@ import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormInput, FormSelect, FormSwitch } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
+import type { CounterMethod } from '@/composables/useCounterMethods';
+import { useCounterMethods } from '@/composables/useCounterMethods';
 import Lucide from '@/components/Base/Lucide';
 
 /**
@@ -30,8 +32,6 @@ const props = defineProps<{
     busy: boolean;
     /** Conceptos y precios sugeridos de /ajustes/danos. */
     damageCatalog: { concept: string; amount: number }[];
-    /** La revisión de la habitación al salir es paso de la operación motel. */
-    canReview: boolean;
     /** Hay ficha de vehículo o de huésped a quién vetar. */
     canBlacklist: boolean;
 }>();
@@ -53,20 +53,33 @@ const emit = defineEmits<{
     ): void;
 }>();
 
-const method = ref<'cash' | 'card' | 'transfer'>('cash');
+// Formas de cobro que acepta la recepción (/ajustes/metodos-pago →
+// Políticas): lo que el hotel no acepta ni se ofrece aquí.
+const {
+    methods: counterMethods,
+    first: firstMethod,
+    coerce: coerceMethod,
+} = useCounterMethods();
+
+const method = ref<CounterMethod>('cash');
 const reference = ref('');
 const refundGuarantee = ref(true);
 const retainReason = ref('');
 
-/* --- Revisión de la habitación (motel) ---------------------------------
- * Se revisa antes de dejar salir al cliente. Cada daño sube la cuenta, y el
- * check-out ya se niega con saldo pendiente: por eso cobrar el daño ANTES es
- * el camino natural, sin inventar un candado nuevo.
+/* --- Revisión de la habitación ------------------------------------------
+ * Se revisa ANTES de dejar salir al huésped, en cualquier tipo de propiedad:
+ * hotel, cabañas o motel. Cada daño sube la cuenta (y con saldo pendiente la
+ * salida no se registra sola), o se cubre con la fianza.
+ *
+ * La casilla "ya revisé" es el candado: sin ella no se registra la salida,
+ * para que el paso no se salte con las prisas del mostrador.
  */
 const damageConcept = ref('');
 const damageAmount = ref<string>('');
 const blacklist = ref(false);
 const blacklistReason = ref('');
+const reviewed = ref(false);
+const damagesAdded = ref(0);
 
 /** Elegir del catálogo llena las dos casillas; el precio se puede ajustar. */
 function pickDamage(concept: string, amount: number) {
@@ -83,6 +96,7 @@ function addDamage() {
     }
 
     emit('damage', { concept, amount });
+    damagesAdded.value += 1;
     damageConcept.value = '';
     damageAmount.value = '';
 }
@@ -106,7 +120,7 @@ watch(
     () => props.open,
     (open) => {
         if (open) {
-            method.value = 'cash';
+            method.value = firstMethod.value;
             reference.value = '';
             refundGuarantee.value = true;
             retainReason.value = '';
@@ -114,13 +128,16 @@ watch(
             damageAmount.value = '';
             blacklist.value = false;
             blacklistReason.value = '';
+            reviewed.value = false;
+            damagesAdded.value = 0;
         }
     },
 );
 
 function confirm(force = false) {
     emit('confirm', {
-        payment_method: force || pending.value <= 0 ? null : method.value,
+        payment_method:
+            force || pending.value <= 0 ? null : coerceMethod(method.value),
         reference: reference.value || null,
         force,
         guarantee_refund: refundGuarantee.value,
@@ -142,10 +159,10 @@ function confirm(force = false) {
     <Dialog :open="open" @close="$emit('close')">
         <Dialog.Panel>
             <div
-                class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                 >
                     <Lucide icon="LogOut" class="h-5 w-5 text-primary" />
                 </div>
@@ -159,7 +176,7 @@ function confirm(force = false) {
                 </div>
             </div>
 
-            <div class="space-y-4 px-6 py-5">
+            <div class="space-y-4 px-5 py-4">
                 <div
                     v-if="folio"
                     class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
@@ -192,9 +209,13 @@ function confirm(force = false) {
                             v-model="method"
                             class="mt-1"
                         >
-                            <option value="cash">Efectivo</option>
-                            <option value="card">Tarjeta / terminal</option>
-                            <option value="transfer">Transferencia</option>
+                            <option
+                                v-for="m in counterMethods"
+                                :key="m.key"
+                                :value="m.key"
+                            >
+                                {{ m.label }}
+                            </option>
                         </FormSelect>
                     </div>
                     <div v-if="method !== 'cash'">
@@ -213,29 +234,38 @@ function confirm(force = false) {
                     </div>
                 </template>
 
-                <p v-else class="text-sm text-slate-500">
+                <p v-else class="text-xs text-slate-500">
                     No queda nada por cobrar: la salida se registra directo.
                 </p>
 
-                <!-- Revisión de la habitación: el paso que hace la caseta
-                     antes de levantar la pluma. Cada daño sube la cuenta, y
-                     con saldo pendiente la salida no se registra sola. -->
+                <!-- Revisión de la habitación: el paso obligado antes de
+                     dejar salir al huésped. Cada daño sube la cuenta o se
+                     cubre con la fianza, y queda como incidencia. -->
                 <div
-                    v-if="canReview"
-                    class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
+                    class="rounded-xl border p-4"
+                    :class="
+                        reviewed
+                            ? 'border-slate-200/70 dark:border-darkmode-400'
+                            : 'border-warning/40 bg-warning/5'
+                    "
                 >
                     <div class="flex items-center gap-2">
                         <Lucide
                             icon="Hammer"
-                            class="h-4 w-4 shrink-0 text-slate-400"
+                            class="h-4 w-4 shrink-0"
+                            :class="
+                                reviewed ? 'text-slate-400' : 'text-warning'
+                            "
                         />
-                        <span class="text-sm font-medium"
-                            >Revisión de la habitación</span
-                        >
+                        <span class="text-sm font-medium">
+                            Revisión de la habitación
+                        </span>
                     </div>
                     <p class="mt-1 text-xs text-slate-500">
-                        Si hay daños, agrégalos: se suman a la cuenta y quedan
-                        registrados como incidencia del huésped.
+                        Antes de dejar salir al huésped, revisa que no falte ni
+                        esté dañado nada. Lo que agregues sube a la cuenta y
+                        queda como incidencia; si hay fianza, puedes cubrirlo
+                        con ella.
                     </p>
 
                     <div
@@ -252,6 +282,19 @@ function confirm(force = false) {
                             {{ damage.concept }} · {{ money(damage.amount) }}
                         </button>
                     </div>
+
+                    <p
+                        v-else
+                        class="mt-3 rounded-lg border border-dashed border-slate-300/70 px-3 py-2 text-[11px] text-slate-500 dark:border-darkmode-400"
+                    >
+                        Todavía no tienes lista de daños con precio.
+                        <a
+                            :href="route('tenant.damage-catalog')"
+                            class="font-medium text-primary hover:underline"
+                            >Ármala en Ajustes</a
+                        >
+                        para que todos los turnos cobren lo mismo.
+                    </p>
 
                     <div class="mt-3 flex flex-wrap items-end gap-2">
                         <div class="min-w-0 flex-1">
@@ -286,13 +329,50 @@ function confirm(force = false) {
                         </div>
                         <Button
                             variant="outline-primary"
-                            class="min-h-11 rounded-[0.5rem]"
+                            class="min-h-11 rounded-[0.5rem] text-xs"
                             :disabled="busy || !damageConcept.trim()"
                             @click="addDamage"
                         >
                             Agregar a la cuenta
                         </Button>
                     </div>
+
+                    <p
+                        v-if="damagesAdded > 0"
+                        class="mt-3 rounded-lg bg-pending/10 px-3 py-2 text-[11px] font-medium text-pending"
+                    >
+                        {{ damagesAdded }}
+                        {{
+                            damagesAdded === 1
+                                ? 'daño cargado'
+                                : 'daños cargados'
+                        }}
+                        a la cuenta de esta estancia.
+                    </p>
+
+                    <label
+                        class="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5"
+                        :class="
+                            reviewed
+                                ? 'border-success/30 bg-success/5'
+                                : 'border-slate-200/70 bg-white dark:border-darkmode-400 dark:bg-darkmode-600'
+                        "
+                    >
+                        <input
+                            v-model="reviewed"
+                            type="checkbox"
+                            class="mt-0.5 rounded border-slate-300"
+                        />
+                        <span class="min-w-0">
+                            <span class="block text-xs font-medium">
+                                Ya revisé la habitación
+                            </span>
+                            <span class="block text-[11px] text-slate-500">
+                                Sin faltantes ni daños, o los que había ya
+                                quedaron cargados arriba.
+                            </span>
+                        </span>
+                    </label>
 
                     <label
                         v-if="canBlacklist"
@@ -332,19 +412,27 @@ function confirm(force = false) {
                             >Devolver la fianza de {{ money(guarantee) }}</span
                         >
                     </label>
+                    <p
+                        v-if="damagesAdded > 0 && refundGuarantee"
+                        class="mt-2 text-[11px] text-slate-500"
+                    >
+                        Los daños ya se cargaron a la cuenta. Si prefieres
+                        cubrirlos con la fianza, apaga la devolución y anota el
+                        motivo.
+                    </p>
                     <FormInput
                         v-if="!refundGuarantee"
                         v-model="retainReason"
                         type="text"
                         maxlength="255"
                         class="mt-3"
-                        placeholder="Motivo de la retención (daños, faltantes…)"
+                        placeholder="Motivo de la retención (daños, faltantes)"
                     />
                 </div>
             </div>
 
             <div
-                class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
             >
                 <Button
                     variant="outline-secondary"
@@ -356,7 +444,7 @@ function confirm(force = false) {
                     v-if="pending > 0"
                     variant="outline-danger"
                     class="rounded-[0.5rem]"
-                    :disabled="busy"
+                    :disabled="busy || !reviewed"
                     title="El huésped se va debiendo; el saldo queda en su historial"
                     @click="confirm(true)"
                     >Salir sin cobrar</Button
@@ -364,8 +452,15 @@ function confirm(force = false) {
                 <Button
                     variant="primary"
                     class="rounded-[0.5rem]"
+                    :title="
+                        reviewed
+                            ? undefined
+                            : 'Marca «Ya revisé la habitación» para registrar la salida'
+                    "
                     :disabled="
-                        busy || (!refundGuarantee && !retainReason.trim())
+                        busy ||
+                        !reviewed ||
+                        (!refundGuarantee && !retainReason.trim())
                     "
                     @click="confirm(false)"
                 >

@@ -57,6 +57,31 @@ it('un hold pendiente no avisa al crearse: el aviso sale al confirmar', function
     expect($reservation->status)->toBe(ReservationStatus::Pending);
 });
 
+it('con fianza configurada, la confirmación anuncia el depósito y su monto', function () {
+    test()->property->update(['settings' => array_merge(test()->property->settings ?? [], [
+        'guarantee_enabled' => true,
+        'guarantee_amount' => 1500,
+    ])]);
+
+    // Sin conversación ligada, el aviso sale directo: ahí se lee el cuerpo.
+    $this->mock(\App\Services\Channels\DirectGuestMessenger::class)
+        ->shouldReceive('send')
+        ->once()
+        ->withArgs(fn ($res, string $body) => str_contains($body, 'depósito en garantía de $1,500.00')
+            && str_contains($body, 'identificación oficial'));
+
+    app(CreateReservation::class)->handle(confirmedNoticePayload(true));
+});
+
+it('sin fianza, la confirmación no menciona ningún depósito', function () {
+    $this->mock(\App\Services\Channels\DirectGuestMessenger::class)
+        ->shouldReceive('send')
+        ->once()
+        ->withArgs(fn ($res, string $body) => ! str_contains($body, 'depósito en garantía'));
+
+    app(CreateReservation::class)->handle(confirmedNoticePayload(true));
+});
+
 it('si el aviso truena, la reserva confirmada sobrevive igual', function () {
     $this->mock(PaymentGuestNotifier::class)
         ->shouldReceive('reservationConfirmed')

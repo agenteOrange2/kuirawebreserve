@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { router } from '@inertiajs/vue3';
+import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -256,74 +256,85 @@ async function submitDelete() {
 <template>
     <RazeLayout title="Usuarios">
         <div class="mt-2">
-            <!-- Header de tarjeta, mismo patrón que el directorio de
-                 huéspedes: icono en círculo + título + acción a la derecha -->
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="UserCog" class="h-7 w-7" />
+                        <Lucide icon="UserCog" class="h-4 w-4" />
                     </div>
-                    <div>
-                        <h1 class="text-xl font-medium">
+                    <div class="min-w-0">
+                        <h1 class="text-base font-medium">
                             Usuarios del sistema
                         </h1>
-                        <p class="mt-1 text-sm text-slate-500">
-                            Da acceso a tu equipo de {{ property.name }} y
-                            controla qué puede hacer cada quien ·
-                            {{ users.length
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Quién entra al panel de {{ property.name }} y qué
+                            puede hacer · {{ users.length
                             }}<span v-if="maxUsers"> de {{ maxUsers }}</span>
                             usuario{{ users.length === 1 ? '' : 's' }}.
                         </p>
                     </div>
                 </div>
-                <Button
-                    v-if="canManage"
-                    variant="primary"
-                    class="min-h-11 rounded-[0.5rem] px-5 shadow-md shadow-primary/20"
-                    :disabled="atLimit"
-                    :title="
-                        atLimit
-                            ? 'Alcanzaste el límite de usuarios de tu plan'
-                            : undefined
-                    "
-                    @click="openCreate"
+                <div
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
                 >
-                    <Lucide icon="UserPlus" class="mr-2 h-5 w-5 stroke-[1.5]" />
-                    Nuevo usuario
-                </Button>
+                    <Button
+                        :as="Link"
+                        :href="route('tenant.activity')"
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
+                    >
+                        <Lucide icon="History" class="mr-1.5 h-3.5 w-3.5" />
+                        Bitácora
+                    </Button>
+                    <Button
+                        v-if="canManage"
+                        variant="primary"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                        :disabled="atLimit"
+                        :title="
+                            atLimit
+                                ? 'Alcanzaste el límite de usuarios de tu plan'
+                                : undefined
+                        "
+                        @click="openCreate"
+                    >
+                        <Lucide icon="UserPlus" class="mr-1.5 h-3.5 w-3.5" />
+                        Nuevo usuario
+                    </Button>
+                </div>
             </div>
 
-            <!-- Buscador + acción masiva, en su tarjeta (patrón huéspedes) -->
-            <div class="box box--stacked mt-5 p-5">
-                <div class="mb-4 flex items-center gap-3">
-                    <div
-                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
-                    >
-                        <Lucide icon="Search" class="h-5 w-5" />
-                    </div>
-                    <div>
-                        <div class="text-sm font-medium">
-                            Encuentra a alguien de tu equipo
-                        </div>
-                        <div class="text-xs text-slate-500">
-                            Busca por nombre, correo o teléfono.
-                        </div>
+            <!-- Buscador y equipo en la misma caja: el filtro pegado a lo
+                 que filtra. -->
+            <div class="box box--stacked mt-4">
+                <div
+                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                >
+                    <div class="flex items-center gap-2 text-sm font-medium">
+                        <Lucide icon="Users" class="h-4 w-4 text-slate-400" />
+                        Tu equipo
+                        <span
+                            class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
+                        >
+                            {{ filteredUsers.length }}
+                        </span>
                     </div>
                 </div>
-                <div class="flex flex-wrap items-center gap-3">
-                    <div class="relative w-full sm:w-96">
+                <div
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                >
+                    <div class="relative w-full sm:w-80">
                         <Lucide
                             icon="Search"
-                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3.5 h-5 w-5 stroke-[1.5] text-slate-400"
+                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
                         />
                         <FormInput
                             v-model="search"
                             type="search"
-                            class="h-11 pl-11 text-sm"
+                            class="h-9 pl-9 text-xs"
                             placeholder="Nombre, correo o teléfono"
                         />
                     </div>
@@ -342,7 +353,7 @@ async function submitDelete() {
                         </button>
                         <Button
                             variant="danger"
-                            class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                            class="h-8 rounded-[0.5rem] text-xs"
                             @click="bulkDeleteOpen = true"
                         >
                             <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
@@ -350,33 +361,21 @@ async function submitDelete() {
                         </Button>
                     </template>
                 </div>
-            </div>
 
-            <div
-                v-if="atLimit"
-                class="mt-4 flex items-center gap-2 rounded-lg border-l-4 border-l-warning bg-warning/5 px-4 py-3 text-sm"
-            >
-                <Lucide
-                    icon="TriangleAlert"
-                    class="h-4 w-4 shrink-0 text-warning"
-                />
-                Alcanzaste el límite de usuarios de tu plan ({{ maxUsers }}).
-                Mejora el plan para agregar más.
-            </div>
-
-            <!-- La tabla vive en su tarjeta blanca, no suelta sobre el
-                 fondo de la página (patrón huéspedes) -->
-            <div class="box box--stacked mt-5 p-5">
-                <div class="mb-1">
-                    <h2 class="text-base font-medium">Tu equipo</h2>
-                    <p class="text-xs text-slate-500">
-                        {{ filteredUsers.length }} usuario{{
-                            filteredUsers.length === 1 ? '' : 's'
-                        }}
-                        en la lista.
-                    </p>
+                <div
+                    v-if="atLimit"
+                    class="box box--stacked mt-4 flex items-center gap-2 border-l-4 border-l-warning px-4 py-3 text-xs"
+                >
+                    <Lucide
+                        icon="TriangleAlert"
+                        class="h-4 w-4 shrink-0 text-warning"
+                    />
+                    Alcanzaste el límite de usuarios de tu plan ({{
+                        maxUsers
+                    }}). Mejora el plan para agregar más.
                 </div>
-                <div class="overflow-auto lg:overflow-visible">
+
+                <div class="overflow-auto p-4 lg:overflow-visible">
                     <Table class="border-separate border-spacing-y-[8px]">
                         <Table.Thead>
                             <Table.Tr>
@@ -451,12 +450,22 @@ async function submitDelete() {
                                         </div>
                                         <div class="min-w-0">
                                             <div
-                                                class="flex items-center gap-1.5 font-medium"
+                                                class="flex items-center gap-1.5"
                                             >
-                                                {{ u.name }}
+                                                <Link
+                                                    :href="
+                                                        route(
+                                                            'tenant.users.show',
+                                                            u.id,
+                                                        )
+                                                    "
+                                                    class="truncate text-sm font-medium text-primary hover:underline"
+                                                >
+                                                    {{ u.name }}
+                                                </Link>
                                                 <span
                                                     v-if="u.is_self"
-                                                    class="rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] text-slate-500 dark:bg-darkmode-400"
+                                                    class="rounded-full bg-slate-100 px-1.5 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
                                                     >tú</span
                                                 >
                                             </div>
@@ -490,7 +499,7 @@ async function submitDelete() {
                                     <span
                                         v-for="(role, i) in u.roles"
                                         :key="role"
-                                        class="mr-1 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium"
+                                        class="mr-1 inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
                                         :class="
                                             roleBadge[role] ??
                                             'bg-slate-100 text-slate-500'
@@ -513,7 +522,7 @@ async function submitDelete() {
                                 <Table.Td :class="cellClass">
                                     <span
                                         v-if="u.on_shift"
-                                        class="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success"
+                                        class="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-[11px] font-medium text-success"
                                     >
                                         <span
                                             class="h-1.5 w-1.5 rounded-full bg-success"
@@ -522,7 +531,7 @@ async function submitDelete() {
                                     </span>
                                     <span
                                         v-else-if="u.roles.includes('agent')"
-                                        class="inline-flex items-center gap-1.5 rounded-full bg-info/10 px-2.5 py-1 text-xs font-medium text-info"
+                                        class="inline-flex items-center gap-1.5 rounded-full bg-info/10 px-2.5 py-1 text-[11px] font-medium text-info"
                                     >
                                         <span
                                             class="h-1.5 w-1.5 rounded-full bg-info"
@@ -531,25 +540,37 @@ async function submitDelete() {
                                     </span>
                                     <span
                                         v-else
-                                        class="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-500 dark:bg-darkmode-400"
+                                        class="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] text-slate-500 dark:bg-darkmode-400"
                                     >
                                         Fuera de turno
                                     </span>
                                 </Table.Td>
                                 <Table.Td
                                     :class="cellClass"
-                                    class="text-sm whitespace-nowrap text-slate-500"
+                                    class="text-xs whitespace-nowrap text-slate-500"
                                     >{{ u.created_at ?? '—' }}</Table.Td
                                 >
                                 <Table.Td :class="cellClass" class="text-right">
                                     <div
-                                        v-if="canManage"
-                                        class="flex items-center justify-end gap-2"
+                                        class="flex items-center justify-end gap-1"
                                     >
+                                        <Link
+                                            :href="
+                                                route('tenant.users.show', u.id)
+                                            "
+                                            title="Ver ficha y actividad"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
+                                        >
+                                            <Lucide
+                                                icon="Eye"
+                                                class="h-4 w-4"
+                                            />
+                                        </Link>
                                         <button
+                                            v-if="canManage"
                                             type="button"
                                             title="Editar"
-                                            class="flex h-9 w-9 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
                                             @click="openEdit(u)"
                                         >
                                             <Lucide
@@ -558,13 +579,14 @@ async function submitDelete() {
                                             />
                                         </button>
                                         <button
+                                            v-if="canManage"
                                             type="button"
                                             :title="
                                                 u.is_self
                                                     ? 'No puedes eliminar tu propia cuenta'
                                                     : 'Eliminar'
                                             "
-                                            class="flex h-9 w-9 items-center justify-center rounded-full transition"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full transition"
                                             :class="
                                                 u.is_self
                                                     ? 'cursor-not-allowed text-slate-300 dark:text-darkmode-300'

@@ -61,14 +61,14 @@ function inertiaProps(string $controller, array $query = []): array
     return app($controller)($request)->toResponse($request)->getData(true)['props'];
 }
 
-it('la lista de /reservas recorta el historial a 20 y expone el total real', function () {
+it('la lista de /reservas recorta el historial a 10 y expone el total real', function () {
     foreach (range(1, 23) as $i) {
         makeHistoryReservation(['guest_name' => "Huésped {$i}"]);
     }
 
     $props = inertiaProps(ReservationsPageController::class);
 
-    expect($props['history'])->toHaveCount(20)
+    expect($props['history'])->toHaveCount(10)
         ->and($props['historyTotal'])->toBe(23);
 });
 

@@ -54,6 +54,18 @@ const inactiveModules = computed(() =>
     props.planCard.modules.filter((mod) => !mod.enabled),
 );
 
+/** Los límites que ya se toparon: es lo que hay que avisar arriba. */
+const limitsAtCap = computed(() =>
+    props.planCard.limits.filter(
+        (l) => l.max !== null && limitPercent(l) >= 100,
+    ),
+);
+
+const stripItem = 'inline-flex items-center gap-1.5 text-slate-500';
+const stripValue = 'font-medium text-slate-700 dark:text-slate-300';
+const stripDivider =
+    'hidden h-3.5 w-px bg-slate-300/70 sm:block dark:bg-darkmode-400';
+
 const requestedLocal = reactive<Record<string, boolean>>({});
 const requestingModule = ref<string | null>(null);
 
@@ -83,206 +95,279 @@ async function requestModule(mod: PlanModuleRow) {
 <template>
     <RazeLayout title="Ajustes del hotel">
         <div class="mt-2">
-            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
-                 círculo + título + acción a la derecha -->
-            <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
-            >
-                <div class="flex items-center gap-4">
-                    <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                    >
-                        <Lucide icon="Settings" class="h-7 w-7" />
-                    </div>
-                    <div>
-                        <h1 class="text-xl font-medium">Ajustes del hotel</h1>
-                        <p class="mt-1 text-sm text-slate-500">
-                            Tu plan y las áreas de configuración del hotel.
-                        </p>
-                    </div>
-                </div>
-                <span
-                    class="flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary capitalize"
-                >
-                    <Lucide icon="BadgeCheck" class="h-3.5 w-3.5" /> Plan
-                    {{ plan }}
-                </span>
-            </div>
-
-            <!-- Tu plan: límites con uso real y módulos incluidos -->
-            <div class="box box--stacked mt-5 p-5">
-                <div class="flex flex-wrap items-center gap-3">
-                    <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
-                    >
-                        <Lucide icon="Layers" class="h-5 w-5 text-primary" />
-                    </div>
-                    <div class="min-w-0 flex-1">
-                        <div class="text-base font-medium">
-                            Tu plan: {{ planCard.label }}
-                        </div>
-                        <div class="text-xs text-slate-500">
-                            Lo que incluye tu plan y cuánto llevas usado. Para
-                            cambiar de plan o activar un módulo, usa "Solicitar
-                            activación" o contacta a la plataforma.
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Límites: tarjetas compactas en fila. Antes era una
-                     columna estirada a la altura de los 24 módulos, con
-                     huecos enormes entre barra y barra. -->
+            <div class="box box--stacked overflow-hidden">
                 <div
-                    class="mt-5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                    class="flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
                 >
-                    <Lucide icon="Gauge" class="h-3.5 w-3.5" /> Límites de tu
-                    plan
-                </div>
-                <div
-                    class="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5"
-                >
-                    <div
-                        v-for="l in planCard.limits"
-                        :key="l.label"
-                        class="rounded-[0.6rem] border border-dashed border-slate-300/70 p-3.5 dark:border-darkmode-400"
-                    >
-                        <div class="text-xs text-slate-500">{{ l.label }}</div>
-                        <div class="mt-1 flex items-baseline gap-1">
-                            <span
-                                class="text-lg font-medium"
-                                :class="
-                                    l.max !== null && limitPercent(l) >= 100
-                                        ? 'text-danger'
-                                        : ''
-                                "
-                                >{{ l.used }}</span
-                            >
-                            <span class="text-xs text-slate-400">
-                                {{
-                                    l.max !== null
-                                        ? `de ${l.max}`
-                                        : 'sin límite'
-                                }}
-                            </span>
-                        </div>
+                    <div class="flex min-w-0 items-center gap-3">
                         <div
-                            v-if="l.max !== null"
-                            class="mt-2 h-1.5 rounded-full bg-slate-200/70 dark:bg-darkmode-400"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <div
-                                class="h-1.5 rounded-full"
-                                :class="
-                                    limitPercent(l) >= 100
-                                        ? 'bg-danger'
-                                        : limitPercent(l) >= 80
-                                          ? 'bg-warning'
-                                          : 'bg-primary'
-                                "
-                                :style="{ width: `${limitPercent(l)}%` }"
-                            />
+                            <Lucide icon="Settings" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <h1 class="text-base font-medium">
+                                Ajustes del hotel
+                            </h1>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Tu plan y las áreas de configuración, cada una
+                                con su propia pantalla.
+                            </p>
                         </div>
                     </div>
-                </div>
-
-                <!-- Módulos en dos grupos: lo que ya tienes se lee de un
-                     vistazo; lo que no, se explica y se puede solicitar. -->
-                <div
-                    class="mt-6 flex flex-wrap items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                >
-                    <Lucide icon="Blocks" class="h-3.5 w-3.5" /> Módulos
-                    <span class="text-slate-400 normal-case">
-                        ({{ activeModules.length }} de
-                        {{ planCard.modules.length }} activos)
+                    <span
+                        class="inline-flex shrink-0 items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[11px] font-medium text-primary capitalize"
+                    >
+                        <Lucide icon="BadgeCheck" class="h-3.5 w-3.5" />
+                        Plan {{ plan }}
                     </span>
                 </div>
 
+                <!-- Cómo está el hotel de un vistazo -->
                 <div
-                    v-if="activeModules.length"
-                    class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3"
+                    class="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-slate-200/60 bg-slate-50/70 px-4 py-3 text-xs sm:px-5 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                >
+                    <span :class="stripItem">
+                        <Lucide
+                            icon="Blocks"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span :class="stripValue">
+                            {{ activeModules.length }} de
+                            {{ planCard.modules.length }}
+                        </span>
+                        módulos activos
+                    </span>
+                    <span :class="stripDivider" />
+                    <span :class="stripItem">
+                        <Lucide
+                            icon="CreditCard"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span :class="stripValue">
+                            {{ paymentSummary.active_gateways }}
+                        </span>
+                        pasarela(s) ·
+                        <span :class="stripValue">
+                            {{ paymentSummary.transfer_accounts }}
+                        </span>
+                        cuenta(s)
+                    </span>
+                    <span :class="stripDivider" />
+                    <span :class="stripItem">
+                        <Lucide
+                            icon="Mail"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span :class="stripValue">
+                            {{
+                                mailSummary.configured
+                                    ? 'Correo configurado'
+                                    : 'Correo sin configurar'
+                            }}
+                        </span>
+                    </span>
+                    <span
+                        v-if="limitsAtCap.length"
+                        class="inline-flex items-center gap-1.5 rounded-full bg-danger/10 px-2.5 py-1 text-[11px] font-medium text-danger md:ml-auto"
+                        :title="limitsAtCap.map((l) => l.label).join(' · ')"
+                    >
+                        <Lucide icon="TriangleAlert" class="h-3.5 w-3.5" />
+                        {{ limitsAtCap.length }} límite(s) al tope
+                    </span>
+                </div>
+            </div>
+
+            <!-- Tu plan: límites con uso real y módulos incluidos -->
+            <div class="box box--stacked mt-4">
+                <div
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
                     <div
-                        v-for="mod in activeModules"
-                        :key="mod.key"
-                        class="flex items-center gap-2.5 rounded-[0.5rem] border border-slate-200/70 px-3 py-2.5 dark:border-darkmode-400"
-                        :title="mod.description"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <div
-                            class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
-                        >
-                            <Lucide icon="Check" class="h-3 w-3" />
-                        </div>
-                        <span class="min-w-0 truncate text-sm">{{
-                            mod.label
-                        }}</span>
+                        <Lucide icon="Layers" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h2 class="text-sm font-medium">
+                            Tu plan: {{ planCard.label }}
+                        </h2>
+                        <p class="text-xs text-slate-500">
+                            Qué incluye y cuánto llevas usado. Para cambiar de
+                            plan, contacta a la plataforma.
+                        </p>
                     </div>
                 </div>
-
-                <template v-if="inactiveModules.length">
-                    <div class="mt-6 text-xs text-slate-500">
-                        No incluidos en tu plan
+                <div class="px-4 py-3">
+                    <!-- Límites: tarjetas compactas en fila. Antes era una
+                     columna estirada a la altura de los 24 módulos, con
+                     huecos enormes entre barra y barra. -->
+                    <div
+                        class="flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                    >
+                        <Lucide icon="Gauge" class="h-3.5 w-3.5" />
+                        Límites de tu plan
                     </div>
-                    <div class="mt-3 grid grid-cols-12 gap-3">
+                    <div
+                        class="mt-2.5 grid auto-rows-fr grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-5"
+                    >
                         <div
-                            v-for="mod in inactiveModules"
-                            :key="mod.key"
-                            class="col-span-12 flex flex-col gap-3 rounded-[0.6rem] border border-dashed border-slate-300/70 p-4 sm:flex-row sm:items-center xl:col-span-6 dark:border-darkmode-400"
+                            v-for="l in planCard.limits"
+                            :key="l.label"
+                            class="rounded-[0.6rem] border border-dashed border-slate-300/70 p-3 dark:border-darkmode-400"
                         >
+                            <div class="truncate text-xs text-slate-500">
+                                {{ l.label }}
+                            </div>
+                            <div class="mt-0.5 flex items-baseline gap-1">
+                                <span
+                                    class="text-sm font-medium"
+                                    :class="
+                                        l.max !== null && limitPercent(l) >= 100
+                                            ? 'text-danger'
+                                            : ''
+                                    "
+                                    >{{ l.used }}</span
+                                >
+                                <span class="text-[11px] text-slate-400">
+                                    {{
+                                        l.max !== null
+                                            ? `de ${l.max}`
+                                            : 'sin límite'
+                                    }}
+                                </span>
+                            </div>
                             <div
-                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/80 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400/50"
+                                v-if="l.max !== null"
+                                class="mt-2 h-1.5 rounded-full bg-slate-200/70 dark:bg-darkmode-400"
                             >
-                                <Lucide icon="Lock" class="h-3.5 w-3.5" />
+                                <div
+                                    class="h-1.5 rounded-full"
+                                    :class="
+                                        limitPercent(l) >= 100
+                                            ? 'bg-danger'
+                                            : limitPercent(l) >= 80
+                                              ? 'bg-warning'
+                                              : 'bg-primary'
+                                    "
+                                    :style="{ width: `${limitPercent(l)}%` }"
+                                />
                             </div>
-                            <div class="min-w-0 flex-1">
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <span
-                                        class="text-sm font-medium text-slate-500"
-                                        >{{ mod.label }}</span
-                                    >
-                                    <span
-                                        v-if="!mod.available"
-                                        class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending"
-                                    >
-                                        Próximamente
-                                    </span>
-                                </div>
-                                <div class="mt-0.5 text-xs text-slate-400">
-                                    {{ mod.description }}
-                                </div>
-                            </div>
-                            <span
-                                v-if="isRequested(mod)"
-                                class="shrink-0 rounded-full bg-warning/10 px-2.5 py-1 text-center text-xs text-warning"
-                            >
-                                Solicitud enviada
-                            </span>
-                            <Button
-                                v-else
-                                type="button"
-                                variant="outline-secondary"
-                                class="shrink-0 !px-3 !py-1 text-xs"
-                                :disabled="requestingModule === mod.key"
-                                @click="requestModule(mod)"
-                            >
-                                Solicitar activación
-                            </Button>
                         </div>
                     </div>
-                </template>
+
+                    <!-- Módulos en dos grupos: lo que ya tienes se lee de un
+                     vistazo; lo que no, se explica y se puede solicitar. -->
+                    <div
+                        class="mt-4 flex flex-wrap items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                    >
+                        <Lucide icon="Blocks" class="h-3.5 w-3.5" />
+                        Módulos
+                        <span class="text-slate-400 normal-case">
+                            ({{ activeModules.length }} de
+                            {{ planCard.modules.length }} activos)
+                        </span>
+                    </div>
+
+                    <div
+                        v-if="activeModules.length"
+                        class="mt-2.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2 xl:grid-cols-3"
+                    >
+                        <div
+                            v-for="mod in activeModules"
+                            :key="mod.key"
+                            class="flex items-center gap-2 rounded-[0.5rem] border border-slate-200/70 px-2.5 py-2 dark:border-darkmode-400"
+                            :title="mod.description"
+                        >
+                            <div
+                                class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                            >
+                                <Lucide icon="Check" class="h-3 w-3" />
+                            </div>
+                            <span class="min-w-0 truncate text-xs">{{
+                                mod.label
+                            }}</span>
+                        </div>
+                    </div>
+
+                    <template v-if="inactiveModules.length">
+                        <div
+                            class="mt-4 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            <Lucide icon="Lock" class="h-3.5 w-3.5" />
+                            No incluidos en tu plan
+                        </div>
+                        <div
+                            class="mt-2.5 grid auto-rows-fr grid-cols-12 gap-2.5"
+                        >
+                            <div
+                                v-for="mod in inactiveModules"
+                                :key="mod.key"
+                                class="col-span-12 flex flex-col gap-2.5 rounded-[0.6rem] border border-dashed border-slate-300/70 p-3 sm:flex-row sm:items-center xl:col-span-6 dark:border-darkmode-400"
+                            >
+                                <div
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200/80 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400/50"
+                                >
+                                    <Lucide icon="Lock" class="h-3.5 w-3.5" />
+                                </div>
+                                <div class="min-w-0 flex-1">
+                                    <div
+                                        class="flex flex-wrap items-center gap-2"
+                                    >
+                                        <span
+                                            class="text-xs font-medium text-slate-500"
+                                            >{{ mod.label }}</span
+                                        >
+                                        <span
+                                            v-if="!mod.available"
+                                            class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
+                                        >
+                                            Próximamente
+                                        </span>
+                                    </div>
+                                    <div
+                                        class="mt-0.5 text-[11px] text-slate-400"
+                                    >
+                                        {{ mod.description }}
+                                    </div>
+                                </div>
+                                <span
+                                    v-if="isRequested(mod)"
+                                    class="shrink-0 rounded-full bg-warning/10 px-2.5 py-1 text-center text-[11px] font-medium text-warning"
+                                >
+                                    Solicitud enviada
+                                </span>
+                                <Button
+                                    v-else
+                                    type="button"
+                                    variant="outline-secondary"
+                                    class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
+                                    :disabled="requestingModule === mod.key"
+                                    @click="requestModule(mod)"
+                                >
+                                    Solicitar activación
+                                </Button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
             </div>
 
             <!-- Áreas de configuración (cada una con superficie propia) -->
-            <div class="mt-6 grid grid-cols-12 gap-6">
+            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
                 <Link
                     :href="route('tenant.wizard-settings')"
-                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="ShoppingBag" class="h-5 w-5" />
+                        <Lucide icon="ShoppingBag" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="font-medium">Wizard de reservas</div>
+                        <div class="text-sm font-medium">
+                            Wizard de reservas
+                        </div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: modalidad y huéspedes, extras del punto
                             de venta, apariencia (logo y colores) y resumen de
@@ -291,27 +376,27 @@ async function requestModule(mod: PlanModuleRow) {
                     </div>
                     <Lucide
                         icon="ArrowRight"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                 </Link>
 
                 <Link
                     :href="route('tenant.payment-methods')"
-                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="CreditCard" class="h-5 w-5" />
+                        <Lucide icon="CreditCard" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="font-medium">Métodos de pago</div>
+                        <div class="text-sm font-medium">Métodos de pago</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: pasarelas de pago, cuentas para
                             transferencia, confirmación automática y saldos.
                         </p>
                         <p
-                            class="mt-1 text-xs"
+                            class="mt-1 text-[11px]"
                             :class="
                                 paymentSummary.active_gateways +
                                     paymentSummary.transfer_accounts >
@@ -328,28 +413,28 @@ async function requestModule(mod: PlanModuleRow) {
                     </div>
                     <Lucide
                         icon="ArrowRight"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                 </Link>
 
                 <Link
                     :href="route('tenant.mail-settings')"
-                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Mail" class="h-5 w-5" />
+                        <Lucide icon="Mail" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="font-medium">Correo saliente</div>
+                        <div class="text-sm font-medium">Correo saliente</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: SMTP propio del hotel para que
                             confirmaciones y avisos al huésped salgan por
                             correo.
                         </p>
                         <p
-                            class="mt-1 text-xs"
+                            class="mt-1 text-[11px]"
                             :class="
                                 mailSummary.configured
                                     ? 'text-success'
@@ -365,22 +450,22 @@ async function requestModule(mod: PlanModuleRow) {
                     </div>
                     <Lucide
                         icon="ArrowRight"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                 </Link>
 
                 <!-- Avisos al huésped: recordatorios y agradecimiento post-estancia -->
                 <Link
                     :href="route('tenant.guest-notices')"
-                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="BellRing" class="h-5 w-5" />
+                        <Lucide icon="BellRing" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="font-medium">Avisos al huésped</div>
+                        <div class="text-sm font-medium">Avisos al huésped</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: canal de envío, recordatorios de
                             llegada y agradecimiento al salir con encuesta y
@@ -389,22 +474,22 @@ async function requestModule(mod: PlanModuleRow) {
                     </div>
                     <Lucide
                         icon="ArrowRight"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                 </Link>
 
                 <!-- Daños: lo que se cobra al revisar la habitación al salir -->
                 <Link
                     :href="route('tenant.damage-catalog')"
-                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Hammer" class="h-5 w-5" />
+                        <Lucide icon="Hammer" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="font-medium">Daños</div>
+                        <div class="text-sm font-medium">Daños</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: los conceptos y precios que se cobran
                             cuando se revisa la habitación antes de dejar salir
@@ -413,22 +498,22 @@ async function requestModule(mod: PlanModuleRow) {
                     </div>
                     <Lucide
                         icon="ArrowRight"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                 </Link>
 
                 <!-- Operación del día: check-in automático, limpieza y cierre -->
                 <Link
                     :href="route('tenant.housekeeping-settings')"
-                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Brush" class="h-5 w-5" />
+                        <Lucide icon="Brush" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="font-medium">Operación del día</div>
+                        <div class="text-sm font-medium">Operación del día</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: check-in automático a la hora de
                             llegada, flujo de limpieza (manual, automático o
@@ -437,22 +522,22 @@ async function requestModule(mod: PlanModuleRow) {
                     </div>
                     <Lucide
                         icon="ArrowRight"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                 </Link>
 
                 <!-- Cuestionario de experiencia: aspectos de la encuesta -->
                 <Link
                     :href="route('tenant.survey-settings')"
-                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Smile" class="h-5 w-5" />
+                        <Lucide icon="Smile" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="font-medium">Encuestas</div>
+                        <div class="text-sm font-medium">Encuestas</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: personaliza los aspectos que el huésped
                             califica en el cuestionario que llega con el
@@ -461,28 +546,28 @@ async function requestModule(mod: PlanModuleRow) {
                     </div>
                     <Lucide
                         icon="ArrowRight"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                 </Link>
 
                 <!-- Datos generales: contacto, redes, horarios/moneda, políticas, FAQs -->
                 <Link
                     :href="route('tenant.general-settings')"
-                    class="box box--stacked col-span-12 flex items-center gap-4 p-5 transition hover:border-primary/30 xl:col-span-6"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Building2" class="h-5 w-5" />
+                        <Lucide icon="Building2" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="font-medium">Datos generales</div>
+                        <div class="text-sm font-medium">Datos generales</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Área aparte: contacto y redes, horarios y moneda,
                             políticas del hotel, preguntas frecuentes y
                             apariencia del panel.
                         </p>
-                        <p class="mt-1 text-xs text-slate-500">
+                        <p class="mt-1 text-[11px] text-slate-500">
                             {{ generalSummary.phones }} teléfono(s) ·
                             {{ generalSummary.socials }} red(es) ·
                             {{
@@ -494,7 +579,7 @@ async function requestModule(mod: PlanModuleRow) {
                     </div>
                     <Lucide
                         icon="ArrowRight"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                 </Link>
             </div>

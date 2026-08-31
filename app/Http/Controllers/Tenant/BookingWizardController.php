@@ -68,6 +68,11 @@ class BookingWizardController extends Controller
                 'label' => app(\App\Services\ReservationPolicy::class)->cancellationPolicyLabel(),
                 'text' => app(\App\Services\ReservationPolicy::class)->cancellationPolicyText(),
             ],
+            // Fianza (depósito en garantía): el huésped tiene que saber ANTES
+            // de venir que al llegar se le cobra un depósito aparte del
+            // precio — llegar sin ese dinero es un problema en el mostrador,
+            // no en el sistema. null = el hotel no cobra fianza.
+            'guarantee' => app(\App\Services\ReservationPolicy::class)->guaranteePublic(),
             // Enlace cruzado al wizard de experiencias, solo si el módulo
             // está activo Y hay algo reservable.
             'hasExperiences' => (bool) tenant()?->hasModule('experiencias')

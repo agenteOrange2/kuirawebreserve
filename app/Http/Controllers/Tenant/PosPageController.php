@@ -24,10 +24,28 @@ class PosPageController extends Controller
             ->orderBy('name')
             ->get();
 
+        $today = now()->startOfDay();
+
+        $soldToday = Order::query()
+            ->where('status', Order::STATUS_COMPLETED)
+            ->where('created_at', '>=', $today);
+
         return Inertia::render('tenant/pos/Index', [
             'property' => $property->only(['id', 'name']),
             'categories' => $products->pluck('category')->filter()->unique()->sort()->values(),
             'products' => $products->map(fn (Product $p) => $p->posPayload()),
+            // Contexto del turno: lo que el cajero no tenía a la vista y
+            // acababa preguntando o abriendo el historial para saberlo.
+            'stats' => [
+                'products' => $products->count(),
+                'out_of_stock' => $products
+                    ->filter(fn (Product $p) => $p->type === 'simple'
+                        && $p->track_stock
+                        && (float) $p->stock_qty <= 0)
+                    ->count(),
+                'orders_today' => (clone $soldToday)->count(),
+                'sold_today' => round((float) (clone $soldToday)->sum('total'), 2),
+            ],
             // Habitación preseleccionada al llegar desde el plano
             // (/pos?stay=N). Sin esto el cajero llegaba y volvía a elegirla
             // a mano, con el riesgo de cargarle el consumo a otra.

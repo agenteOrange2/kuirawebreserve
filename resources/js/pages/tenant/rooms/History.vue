@@ -224,28 +224,39 @@ const monthlyOptions = {
         <div class="grid grid-cols-12 gap-x-6 gap-y-8">
             <!-- Encabezado estilo reportes -->
             <div class="col-span-12">
-                <div class="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                        <div class="flex items-center gap-2.5">
-                            <h1 class="text-lg font-medium">
-                                Historial · Habitación {{ room.number }}
-                            </h1>
-                            <span
-                                class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium"
-                                :class="tint[room.status_color]"
-                            >
-                                <span
-                                    class="h-2 w-2 rounded-full"
-                                    :class="dotColor[room.status_color]"
-                                />
-                                {{ room.status_label }}
-                            </span>
+                <div
+                    class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
+                >
+                    <div class="flex min-w-0 items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="History" class="h-4 w-4" />
                         </div>
-                        <p class="text-sm text-slate-500">
-                            {{ room.name ? `${room.name} · ` : ''
-                            }}{{ room.room_type
-                            }}<span v-if="room.zone"> · {{ room.zone }}</span>
-                        </p>
+                        <div>
+                            <div class="flex items-center gap-2.5">
+                                <h1 class="text-base font-medium">
+                                    Historial · Habitación {{ room.number }}
+                                </h1>
+                                <span
+                                    class="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs font-medium"
+                                    :class="tint[room.status_color]"
+                                >
+                                    <span
+                                        class="h-2 w-2 rounded-full"
+                                        :class="dotColor[room.status_color]"
+                                    />
+                                    {{ room.status_label }}
+                                </span>
+                            </div>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                {{ room.name ? `${room.name} · ` : ''
+                                }}{{ room.room_type
+                                }}<span v-if="room.zone">
+                                    · {{ room.zone }}</span
+                                >
+                            </p>
+                        </div>
                     </div>
                     <div class="flex flex-wrap gap-2">
                         <Button
@@ -461,11 +472,14 @@ const monthlyOptions = {
                                     <span class="text-slate-400">→</span>
                                     {{ stay.check_out_at ?? '—' }}
                                 </Table.Td>
-                                <Table.Td class="text-sm text-slate-500">{{
-                                    channelLabels[stay.channel ?? ''] ??
-                                    stay.channel ??
-                                    '—'
-                                }}</Table.Td>
+                                <Table.Td
+                                    class="mt-0.5 text-xs text-slate-500"
+                                    >{{
+                                        channelLabels[stay.channel ?? ''] ??
+                                        stay.channel ??
+                                        '—'
+                                    }}</Table.Td
+                                >
                                 <Table.Td class="text-right font-medium">{{
                                     money(stay.amount)
                                 }}</Table.Td>

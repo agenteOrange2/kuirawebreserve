@@ -17,6 +17,30 @@ use Inertia\Response;
  */
 class SurveySettingsPageController extends Controller
 {
+    /**
+     * Resultados a la vista: cuántas respondieron, cómo califican y qué
+     * tan seguido contesta la gente.
+     *
+     * @return array<string, mixed>
+     */
+    protected function stats(): array
+    {
+        $submitted = StaySurvey::query()->submitted();
+
+        $average = (clone $submitted)->avg('rating');
+        $recent = (clone $submitted)->where('submitted_at', '>=', now()->subDays(30))->count();
+        $low = (clone $submitted)->where('rating', '<=', 3)->count();
+
+        return [
+            'answered' => (clone $submitted)->count(),
+            'average' => $average !== null ? round((float) $average, 1) : null,
+            'last_30_days' => $recent,
+            // Las que hay que atender: 3 estrellas o menos.
+            'low' => $low,
+            'sent' => StaySurvey::query()->count(),
+        ];
+    }
+
     public function __invoke(): Response
     {
         $property = Property::firstOrFail();
@@ -32,6 +56,9 @@ class SurveySettingsPageController extends Controller
                 'survey_enabled' => (bool) ($settings['post_stay_survey_enabled'] ?? true),
             ],
             'answeredCount' => StaySurvey::query()->submitted()->count(),
+            // Lo que la encuesta ya rindió: sin esto la página de ajustes
+            // es un formulario a ciegas — no se ve si vale la pena tocarla.
+            'stats' => $this->stats(),
             // QR por habitación: una URL fija por cuarto que resuelve la
             // estancia en curso — se imprimen desde aquí y se pegan en la
             // habitación (acceso del documento base: "QR dentro de la

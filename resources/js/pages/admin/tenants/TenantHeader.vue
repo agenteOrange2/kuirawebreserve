@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Link, router, useForm } from '@inertiajs/vue3';
 import axios from 'axios';
-import { computed, ref } from 'vue';
+import { computed, onMounted, ref, useTemplateRef } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormHelp,
@@ -131,6 +131,16 @@ function submitEdit() {
     });
 }
 
+// La pestaña abierta se trae a la vista: en celular la barra se
+// desplaza y "Cobros" (la última) quedaba fuera de cuadro.
+const nav = useTemplateRef<HTMLElement>('nav');
+
+onMounted(() => {
+    nav.value
+        ?.querySelector('[data-activa]')
+        ?.scrollIntoView({ block: 'nearest', inline: 'center' });
+});
+
 const tabClass = computed(
     () => (key: string) =>
         key === props.active
@@ -186,29 +196,37 @@ const tabClass = computed(
                         >
                     </div>
                     <div
-                        class="mt-0.5 flex items-center gap-2 text-sm text-slate-500"
+                        class="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-sm text-slate-500"
                     >
                         <a
                             v-if="tenant.domain"
                             :href="`http://${tenant.domain}`"
                             target="_blank"
-                            class="flex items-center gap-1 text-primary hover:underline"
+                            class="flex min-w-0 items-center gap-1 text-primary hover:underline"
                         >
-                            {{ tenant.domain }}
-                            <Lucide icon="ExternalLink" class="h-3 w-3" />
+                            <span class="truncate">{{ tenant.domain }}</span>
+                            <Lucide
+                                icon="ExternalLink"
+                                class="h-3 w-3 shrink-0"
+                            />
                         </a>
-                        <span v-if="tenant.created_at"
-                            >· cliente desde {{ tenant.created_at }}</span
+                        <span
+                            v-if="tenant.created_at"
+                            class="whitespace-nowrap"
                         >
+                            Cliente desde {{ tenant.created_at }}
+                        </span>
                     </div>
                 </div>
             </div>
-            <div class="flex flex-wrap gap-2 md:ml-auto">
+            <div
+                class="grid grid-cols-2 gap-2 md:ml-auto md:flex md:flex-wrap md:items-center"
+            >
                 <Button
                     :as="Link"
                     :href="route('admin.tenants.index')"
                     variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white/80 dark:bg-darkmode-400/80"
+                    class="min-h-10 justify-center rounded-[0.5rem] bg-white/80 dark:bg-darkmode-400/80"
                 >
                     <Lucide
                         icon="ArrowLeft"
@@ -218,7 +236,7 @@ const tabClass = computed(
                 </Button>
                 <Button
                     variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white/80 dark:bg-darkmode-400/80"
+                    class="min-h-10 justify-center rounded-[0.5rem] bg-white/80 dark:bg-darkmode-400/80"
                     @click="openEdit"
                 >
                     <Lucide icon="Pencil" class="mr-2 h-4 w-4 stroke-[1.3]" />
@@ -226,9 +244,11 @@ const tabClass = computed(
                 </Button>
                 <Button
                     variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white/80 dark:bg-darkmode-400/80"
+                    class="min-h-10 justify-center rounded-[0.5rem] bg-white/80 dark:bg-darkmode-400/80"
                     :class="
-                        tenant.suspended ? '!text-success' : '!text-warning'
+                        tenant.suspended
+                            ? 'col-span-2 !text-success md:col-span-1'
+                            : '!text-warning'
                     "
                     @click="toggleSuspend"
                 >
@@ -241,7 +261,7 @@ const tabClass = computed(
                 <Button
                     v-if="!tenant.suspended"
                     variant="primary"
-                    class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                    class="min-h-10 justify-center rounded-[0.5rem] shadow-md shadow-primary/20"
                     :disabled="impersonating"
                     @click="impersonate"
                 >
@@ -263,11 +283,12 @@ const tabClass = computed(
         <div
             class="overflow-x-auto border-t border-slate-200/70 dark:border-darkmode-400"
         >
-            <nav class="flex min-w-max gap-1 px-3">
+            <nav ref="nav" class="flex min-w-max gap-1 px-3">
                 <Link
                     v-for="tab in tabs"
                     :key="tab.key"
                     :href="route(tab.routeName, tenant.id)"
+                    :data-activa="tab.key === active ? '' : null"
                     class="flex items-center gap-2 border-b-2 px-3.5 py-3 text-sm whitespace-nowrap transition"
                     :class="tabClass(tab.key)"
                 >

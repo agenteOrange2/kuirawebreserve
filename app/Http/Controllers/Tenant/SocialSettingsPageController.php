@@ -16,8 +16,9 @@ use Inertia\Response;
  * Ajustes del módulo de redes sociales, en su propia pantalla: qué contesta
  * solo el asistente y qué espera a una persona.
  *
- * La queja se muestra en la lista pero con sus palancas bloqueadas: esa
- * regla no se negocia desde la UI.
+ * En la queja el mensaje privado está bloqueado (esa regla no se negocia
+ * desde la UI); su respuesta pública sí es configurable, pero solo con
+ * plantilla fija — la IA nunca redacta una queja.
  */
 class SocialSettingsPageController extends Controller
 {
@@ -26,7 +27,7 @@ class SocialSettingsPageController extends Controller
         return Inertia::render('tenant/social/Settings', [
             'settings' => (new SocialSettings)->all(),
             'classifications' => SocialComment::CLASSIFICATION_LABELS,
-            'lockedClassifications' => [SocialComment::CLASS_COMPLAINT],
+            'privateLocked' => [SocialComment::CLASS_COMPLAINT],
             'agentReady' => $brain->isConfigured(),
             'connected' => MetaChannelLink::query()
                 ->where('tenant_id', (string) tenant('id'))
@@ -48,7 +49,7 @@ class SocialSettingsPageController extends Controller
             'clasificaciones' => ['array'],
             'clasificaciones.*.responder_publico' => ['boolean'],
             'clasificaciones.*.mandar_privado' => ['boolean'],
-            'clasificaciones.*.plantilla' => ['nullable', 'string', 'max:200'],
+            'clasificaciones.*.plantilla' => ['nullable', 'string', 'max:500'],
         ]);
 
         (new SocialSettings)->save($data);

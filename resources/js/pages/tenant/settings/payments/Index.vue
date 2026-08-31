@@ -219,20 +219,18 @@ const sectionCards = computed<
 <template>
     <RazeLayout title="Métodos de pago">
         <div class="mt-2">
-            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
-                 círculo + título + acciones a la derecha -->
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Wallet" class="h-7 w-7" />
+                        <Lucide icon="Wallet" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">Métodos de pago</h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Métodos de pago</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Cómo cobra tu hotel, con cada tema en su propia
                             página: pasarelas, transferencias, plazos y
                             políticas. Las usan el wizard de reservas, el
@@ -240,45 +238,41 @@ const sectionCards = computed<
                         </p>
                     </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
-                    <Button
-                        as="a"
+                <div
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
+                >
+                    <!-- El volver vive con las acciones, no flotando encima
+                         de la tarjeta. -->
+                    <Link
                         :href="route('tenant.hotel-settings')"
-                        variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
                     >
-                        <Lucide
-                            icon="ArrowLeft"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
-                        />
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
                         Volver a Ajustes
-                    </Button>
+                    </Link>
                     <Button
                         as="a"
                         :href="route('tenant.online-payments')"
                         variant="outline-primary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
-                        <Lucide
-                            icon="Landmark"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
-                        />
+                        <Lucide icon="Landmark" class="mr-1.5 h-3.5 w-3.5" />
                         Ver cobros en línea
                     </Button>
                 </div>
             </div>
 
             <!-- Estado: qué está listo y si el wizard de verdad va a cobrar -->
-            <div class="box box--stacked mt-5 p-5">
+            <div class="box box--stacked mt-4 p-4">
                 <div
-                    class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                    class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                 >
                     <Lucide icon="Wallet" class="h-3.5 w-3.5" /> Estado de tus
                     cobros en línea
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                     <span
-                        class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
+                        class="flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
                         :class="
                             gatewaysSummary.active > 0
                                 ? 'bg-success/10 text-success'
@@ -300,7 +294,7 @@ const sectionCards = computed<
                         }}
                     </span>
                     <span
-                        class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
+                        class="flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
                         :class="
                             transferSummary.accounts_active > 0
                                 ? 'bg-success/10 text-success'
@@ -323,7 +317,7 @@ const sectionCards = computed<
                     </span>
                     <span
                         v-if="hasMotorWebModule"
-                        class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium"
+                        class="flex h-7 items-center gap-1.5 rounded-full px-2.5 text-[11px] font-medium"
                         :class="
                             wizardWillCharge
                                 ? 'bg-success/10 text-success'
@@ -395,9 +389,9 @@ const sectionCards = computed<
             </div>
 
             <!-- Modo de pago del wizard: el interruptor maestro vive en el hub -->
-            <div v-if="hasMotorWebModule" class="box box--stacked mt-5 p-5">
+            <div v-if="hasMotorWebModule" class="box box--stacked mt-4 p-4">
                 <div
-                    class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                    class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                 >
                     <Lucide icon="ShoppingBag" class="h-3.5 w-3.5" />
                     Pago en el wizard de reservas
@@ -416,6 +410,7 @@ const sectionCards = computed<
                             v-model="paymentMode"
                             :disabled="savingPaymentMode"
                             @change="savePaymentMode"
+                            class="h-9 text-xs"
                         >
                             <option
                                 v-for="(label, key) in paymentModeLabels"
@@ -494,7 +489,7 @@ const sectionCards = computed<
             </div>
 
             <!-- Cada tema de cobro, encapsulado en su propia página -->
-            <div class="mt-5 grid grid-cols-12 gap-6">
+            <div class="mt-4 grid grid-cols-12 gap-5">
                 <Link
                     v-for="card in sectionCards"
                     :key="card.route"
@@ -507,7 +502,7 @@ const sectionCards = computed<
                         <Lucide :icon="card.icon" class="h-5 w-5" />
                     </div>
                     <div class="min-w-0 flex-1">
-                        <div class="font-medium">{{ card.title }}</div>
+                        <div class="text-sm font-medium">{{ card.title }}</div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             {{ card.description }}
                         </p>
@@ -542,7 +537,7 @@ const sectionCards = computed<
                             <Lucide icon="BellRing" class="h-5 w-5" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <div class="font-medium">
+                            <div class="text-sm font-medium">
                                 ¿Buscas los avisos al huésped?
                             </div>
                             <p class="mt-0.5 text-xs text-slate-500">

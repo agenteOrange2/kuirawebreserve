@@ -3,7 +3,7 @@ import { Link, router } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import Chart from '@/components/Base/Chart';
-import { FormInput, FormSelect } from '@/components/Base/Form';
+import { FormDate, FormSelect } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import Table from '@/components/Base/Table';
@@ -215,42 +215,160 @@ const hoursLabel = (hours: number | null) =>
         : hours >= 48
           ? `${Math.round(hours / 24)} días`
           : `${hours} h`;
+
+/** Tarjetas de cifras: mismo renglón compacto que el resto del panel. */
+const kpiCards = computed(() => [
+    {
+        label: 'Reportadas',
+        value: String(props.kpis.reported),
+        icon: 'Wrench' as Icon,
+        tint: 'border-primary/10 bg-primary/10 text-primary',
+    },
+    {
+        label: 'Resueltas en el periodo',
+        value: String(props.kpis.resolved),
+        icon: 'CircleCheck' as Icon,
+        tint: 'border-success/10 bg-success/10 text-success',
+    },
+    {
+        label: 'Siguen pendientes',
+        value: String(props.kpis.pending),
+        icon: 'CircleAlert' as Icon,
+        tint: 'border-danger/10 bg-danger/10 text-danger',
+    },
+    {
+        label: 'Tasa de resolución',
+        value: `${props.kpis.resolution_rate}%`,
+        icon: 'ChartPie' as Icon,
+        tint: 'border-info/10 bg-info/10 text-info',
+    },
+    {
+        label: 'Tiempo promedio',
+        value: hoursLabel(props.kpis.avg_hours),
+        icon: 'Timer' as Icon,
+        tint: 'border-warning/10 bg-warning/10 text-warning',
+    },
+    {
+        label: 'Pendientes hoy (total)',
+        value: String(props.kpis.open_now),
+        icon: 'Hammer' as Icon,
+        tint: 'border-pending/10 bg-pending/10 text-pending',
+    },
+]);
+
+/** Qué habitación se está mirando, para la franja del encabezado. */
+const roomFilterLabel = computed(
+    () =>
+        props.rooms.find((room) => room.id === props.filters.room)?.label ??
+        'Todas las habitaciones',
+);
+
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const cardHeader =
+    'flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400';
+const stripItem = 'inline-flex items-center gap-1.5 text-slate-500';
+const stripValue = 'font-medium text-slate-700 dark:text-slate-300';
+const stripDivider =
+    'hidden h-3.5 w-px bg-slate-300/70 sm:block dark:bg-darkmode-400';
 </script>
 
 <template>
     <RazeLayout title="Reportes de incidencias">
         <div class="mt-2">
-            <!-- Encabezado -->
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <Link
-                        :href="route('tenant.incidents')"
-                        class="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
-                    >
-                        <Lucide icon="ArrowLeft" class="h-4 w-4" /> Incidencias
-                    </Link>
-                    <h1 class="mt-1 text-lg font-medium">
-                        Reportes de incidencias
-                    </h1>
-                    <p class="text-sm text-slate-500">
-                        {{ period.label }} · del {{ period.from }} al
-                        {{ period.to }}
-                    </p>
-                </div>
-                <Button
-                    as="a"
-                    :href="pdfUrl"
-                    variant="outline-primary"
-                    class="rounded-[0.5rem] bg-white"
+            <!-- Encabezado: el volver ya no cuelga sobre el título, va del
+                 lado de las acciones. -->
+            <div class="box box--stacked overflow-hidden">
+                <div
+                    class="flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
                 >
-                    <Lucide icon="Download" class="mr-2 h-4 w-4" />
-                    Descargar PDF
-                </Button>
+                    <div class="flex min-w-0 items-center gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="ChartColumn" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <h1 class="text-base font-medium">
+                                Reportes de incidencias
+                            </h1>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Cuánto se rompe, qué tan rápido se arregla y
+                                cuánto cuesta.
+                            </p>
+                        </div>
+                    </div>
+                    <div
+                        class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
+                    >
+                        <Link
+                            :href="route('tenant.incidents')"
+                            class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
+                        >
+                            <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                            Volver a incidencias
+                        </Link>
+                        <Button
+                            as="a"
+                            :href="pdfUrl"
+                            variant="primary"
+                            class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                        >
+                            <Lucide
+                                icon="Download"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Descargar PDF
+                        </Button>
+                    </div>
+                </div>
+
+                <!-- Qué se está viendo: periodo, filtro y alcance -->
+                <div
+                    class="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-slate-200/60 bg-slate-50/70 px-4 py-3 text-xs sm:px-5 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                >
+                    <span :class="stripItem">
+                        <Lucide
+                            icon="CalendarRange"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span :class="stripValue">{{ period.label }}</span>
+                        del {{ period.from }} al {{ period.to }}
+                    </span>
+                    <span :class="stripDivider" />
+                    <span :class="stripItem">
+                        <Lucide
+                            icon="BedDouble"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span :class="stripValue">
+                            {{ roomFilterLabel }}
+                        </span>
+                    </span>
+                    <span :class="stripDivider" />
+                    <span :class="stripItem">
+                        <Lucide
+                            icon="Building2"
+                            class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                        />
+                        <span :class="stripValue">
+                            {{ kpis.rooms_affected }}
+                        </span>
+                        con al menos una falla
+                    </span>
+                    <span
+                        v-if="guestReported > 0"
+                        class="inline-flex items-center gap-1.5 rounded-full bg-info/10 px-2.5 py-1 text-[11px] font-medium text-info md:ml-auto"
+                    >
+                        <Lucide icon="MessageSquare" class="h-3.5 w-3.5" />
+                        {{ guestReported }} reportada(s) por huéspedes
+                    </span>
+                </div>
             </div>
 
-            <!-- Filtros: periodo + habitación -->
+            <!-- Periodo y habitación -->
             <div
-                class="box box--stacked mt-5 flex flex-wrap items-center gap-2 p-3"
+                class="box box--stacked mt-4 flex flex-wrap items-center gap-2 p-3"
             >
                 <Button
                     v-for="p in periods"
@@ -260,32 +378,32 @@ const hoursLabel = (hours: number | null) =>
                             ? 'primary'
                             : 'outline-secondary'
                     "
-                    class="rounded-[0.5rem]"
+                    class="h-9 rounded-[0.5rem] text-xs"
                     :class="filters.period !== p.key && 'bg-white'"
                     @click="goTo(p.key)"
                 >
-                    <Lucide :icon="p.icon" class="mr-2 h-4 w-4" />
+                    <Lucide :icon="p.icon" class="mr-1.5 h-3.5 w-3.5" />
                     {{ p.label }}
                 </Button>
                 <template v-if="showCustom">
-                    <FormInput
+                    <FormDate
                         v-model="customFrom"
-                        type="date"
-                        class="w-40"
+                        class="w-36"
+                        input-class="h-9 text-xs"
                         @change="applyCustom"
                     />
                     <span class="text-xs text-slate-400">→</span>
-                    <FormInput
+                    <FormDate
                         v-model="customTo"
-                        type="date"
-                        class="w-40"
+                        class="w-36"
+                        input-class="h-9 text-xs"
                         @change="applyCustom"
                     />
                 </template>
-                <div class="sm:ml-auto">
+                <div class="w-full sm:ml-auto sm:w-56">
                     <FormSelect
                         v-model="roomSel"
-                        class="w-56"
+                        class="h-9 text-xs"
                         @change="applyRoom"
                     >
                         <option value="">Todas las habitaciones</option>
@@ -300,230 +418,257 @@ const hoursLabel = (hours: number | null) =>
                 </div>
             </div>
 
-            <!-- KPIs -->
-            <div class="mt-5 grid grid-cols-12 gap-5">
-                <div class="col-span-6 sm:col-span-4 2xl:col-span-2">
-                    <div class="box box--stacked h-full p-5">
-                        <div class="text-2xl font-medium">
-                            {{ kpis.reported }}
+            <!-- Cifras del periodo -->
+            <div class="mt-4 grid grid-cols-12 gap-4">
+                <div
+                    v-for="card in kpiCards"
+                    :key="card.label"
+                    class="col-span-6 sm:col-span-4 xl:col-span-2"
+                >
+                    <div
+                        class="box box--stacked flex h-full items-center gap-2.5 p-3"
+                    >
+                        <div
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
+                            :class="card.tint"
+                        >
+                            <Lucide :icon="card.icon" class="h-4 w-4" />
                         </div>
-                        <div class="mt-1 text-sm text-slate-500">
-                            Reportadas
-                        </div>
-                    </div>
-                </div>
-                <div class="col-span-6 sm:col-span-4 2xl:col-span-2">
-                    <div class="box box--stacked h-full p-5">
-                        <div class="text-2xl font-medium text-success">
-                            {{ kpis.resolved }}
-                        </div>
-                        <div class="mt-1 text-sm text-slate-500">
-                            Resueltas en el periodo
-                        </div>
-                    </div>
-                </div>
-                <div class="col-span-6 sm:col-span-4 2xl:col-span-2">
-                    <div class="box box--stacked h-full p-5">
-                        <div class="text-2xl font-medium text-danger">
-                            {{ kpis.pending }}
-                        </div>
-                        <div class="mt-1 text-sm text-slate-500">
-                            Siguen pendientes
-                        </div>
-                    </div>
-                </div>
-                <div class="col-span-6 sm:col-span-4 2xl:col-span-2">
-                    <div class="box box--stacked h-full p-5">
-                        <div class="text-2xl font-medium">
-                            {{ kpis.resolution_rate }}%
-                        </div>
-                        <div class="mt-1 text-sm text-slate-500">
-                            Tasa de resolución
-                        </div>
-                    </div>
-                </div>
-                <div class="col-span-6 sm:col-span-4 2xl:col-span-2">
-                    <div class="box box--stacked h-full p-5">
-                        <div class="text-2xl font-medium">
-                            {{ hoursLabel(kpis.avg_hours) }}
-                        </div>
-                        <div class="mt-1 text-sm text-slate-500">
-                            Tiempo promedio de resolución
-                        </div>
-                    </div>
-                </div>
-                <div class="col-span-6 sm:col-span-4 2xl:col-span-2">
-                    <div class="box box--stacked h-full p-5">
-                        <div class="text-2xl font-medium text-warning">
-                            {{ kpis.open_now }}
-                        </div>
-                        <div class="mt-1 text-sm text-slate-500">
-                            Pendientes hoy (total)
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
+                                {{ card.value }}
+                            </div>
+                            <div class="truncate text-xs text-slate-500">
+                                {{ card.label }}
+                            </div>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 gap-6">
+            <div class="mt-4 grid grid-cols-12 gap-5">
                 <!-- Serie temporal -->
                 <div class="col-span-12 flex flex-col xl:col-span-8">
-                    <div class="box box--stacked flex-1 p-5">
-                        <div class="text-base font-medium">
-                            Evolución del periodo
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-primary/10 bg-primary/10 text-primary"
+                            >
+                                <Lucide icon="ChartLine" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">
+                                    Evolución del periodo
+                                </h2>
+                                <p class="text-xs text-slate-500">
+                                    Lo que se reportó contra lo que se resolvió.
+                                </p>
+                            </div>
                         </div>
-                        <div v-if="series.length" class="mt-4 h-64">
-                            <Chart
-                                type="line"
-                                :data="lineData"
-                                :options="lineOptions"
-                            />
-                        </div>
-                        <div
-                            v-else
-                            class="flex flex-col items-center gap-2 py-10 text-slate-400"
-                        >
-                            <Lucide icon="ChartLine" class="h-8 w-8" />
-                            <p class="text-sm">Sin datos en el periodo.</p>
+                        <div class="flex-1 px-4 py-3">
+                            <div v-if="series.length" class="h-64">
+                                <Chart
+                                    type="line"
+                                    :data="lineData"
+                                    :options="lineOptions"
+                                />
+                            </div>
+                            <div
+                                v-else
+                                class="flex flex-col items-center gap-2 py-10 text-slate-400"
+                            >
+                                <Lucide icon="ChartLine" class="h-8 w-8" />
+                                <p class="text-xs">Sin datos en el periodo.</p>
+                            </div>
                         </div>
                     </div>
                 </div>
 
                 <!-- Por prioridad -->
                 <div class="col-span-12 flex flex-col xl:col-span-4">
-                    <div class="box box--stacked flex-1 p-5">
-                        <div class="text-base font-medium">Por prioridad</div>
-                        <template v-if="byPriority.length">
-                            <div class="mx-auto mt-4 h-40 w-40">
-                                <Chart
-                                    type="doughnut"
-                                    :data="donutData"
-                                    :options="donutOptions"
-                                />
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-danger/10 bg-danger/10 text-danger"
+                            >
+                                <Lucide icon="ChartPie" class="h-4 w-4" />
                             </div>
-                            <div class="mt-4 space-y-1.5">
-                                <div
-                                    v-for="row in byPriority"
-                                    :key="row.priority"
-                                    class="flex items-center justify-between text-sm"
-                                >
-                                    <span class="flex items-center gap-2">
-                                        <span
-                                            class="h-2.5 w-2.5 rounded-full"
-                                            :style="{
-                                                backgroundColor:
-                                                    priorityHex[row.priority],
-                                            }"
-                                        />
-                                        {{ row.label }}
-                                    </span>
-                                    <span class="font-medium">{{
-                                        row.count
-                                    }}</span>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">
+                                    Por prioridad
+                                </h2>
+                                <p class="text-xs text-slate-500">
+                                    Qué tan urgente es lo que entra.
+                                </p>
+                            </div>
+                        </div>
+                        <div class="flex-1 px-4 py-3">
+                            <template v-if="byPriority.length">
+                                <div class="mx-auto h-36 w-36">
+                                    <Chart
+                                        type="doughnut"
+                                        :data="donutData"
+                                        :options="donutOptions"
+                                    />
                                 </div>
+                                <div class="mt-3 space-y-1.5">
+                                    <div
+                                        v-for="row in byPriority"
+                                        :key="row.priority"
+                                        class="flex items-center justify-between text-xs"
+                                    >
+                                        <span class="flex items-center gap-2">
+                                            <span
+                                                class="h-2.5 w-2.5 rounded-full"
+                                                :style="{
+                                                    backgroundColor:
+                                                        priorityHex[
+                                                            row.priority
+                                                        ],
+                                                }"
+                                            />
+                                            {{ row.label }}
+                                        </span>
+                                        <span class="font-medium">
+                                            {{ row.count }}
+                                        </span>
+                                    </div>
+                                </div>
+                            </template>
+                            <div
+                                v-else
+                                class="flex flex-col items-center gap-2 py-10 text-slate-400"
+                            >
+                                <Lucide icon="ChartPie" class="h-8 w-8" />
+                                <p class="text-xs">Sin datos.</p>
                             </div>
-                        </template>
-                        <div
-                            v-else
-                            class="flex flex-col items-center gap-2 py-10 text-slate-400"
-                        >
-                            <Lucide icon="ChartPie" class="h-8 w-8" />
-                            <p class="text-sm">Sin datos.</p>
                         </div>
                     </div>
                 </div>
 
                 <!-- Por habitación -->
-                <div class="col-span-12 xl:col-span-8">
-                    <div
-                        class="box box--stacked overflow-auto p-5 lg:overflow-visible"
-                    >
-                        <div class="text-base font-medium">Por habitación</div>
-                        <Table v-if="byRoom.length" class="mt-3">
-                            <Table.Thead>
-                                <Table.Tr>
-                                    <Table.Th>Habitación</Table.Th>
-                                    <Table.Th class="text-right"
-                                        >Incidencias</Table.Th
+                <div class="col-span-12 flex flex-col xl:col-span-8">
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-info/10 bg-info/10 text-info"
+                            >
+                                <Lucide icon="BedDouble" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">
+                                    Por habitación
+                                </h2>
+                                <p class="text-xs text-slate-500">
+                                    Dónde se concentran las fallas.
+                                </p>
+                            </div>
+                        </div>
+                        <div
+                            class="flex-1 overflow-auto px-4 py-3 lg:overflow-visible"
+                        >
+                            <Table v-if="byRoom.length">
+                                <Table.Thead>
+                                    <Table.Tr>
+                                        <Table.Th>Habitación</Table.Th>
+                                        <Table.Th class="text-right">
+                                            Incidencias
+                                        </Table.Th>
+                                        <Table.Th class="text-right">
+                                            Alta prioridad
+                                        </Table.Th>
+                                        <Table.Th class="text-right">
+                                            Resueltas
+                                        </Table.Th>
+                                        <Table.Th
+                                            class="text-right whitespace-nowrap"
+                                        >
+                                            Tiempo promedio
+                                        </Table.Th>
+                                    </Table.Tr>
+                                </Table.Thead>
+                                <Table.Tbody>
+                                    <Table.Tr
+                                        v-for="row in byRoom"
+                                        :key="row.name"
                                     >
-                                    <Table.Th class="text-right"
-                                        >Alta prioridad</Table.Th
-                                    >
-                                    <Table.Th class="text-right"
-                                        >Resueltas</Table.Th
-                                    >
-                                    <Table.Th
-                                        class="text-right whitespace-nowrap"
-                                        >Tiempo promedio</Table.Th
-                                    >
-                                </Table.Tr>
-                            </Table.Thead>
-                            <Table.Tbody>
-                                <Table.Tr v-for="row in byRoom" :key="row.name">
-                                    <Table.Td class="font-medium">{{
-                                        row.name
-                                    }}</Table.Td>
-                                    <Table.Td class="text-right">{{
-                                        row.total
-                                    }}</Table.Td>
-                                    <Table.Td
-                                        class="text-right"
-                                        :class="
-                                            row.high
-                                                ? 'font-medium text-danger'
-                                                : 'text-slate-400'
-                                        "
-                                        >{{ row.high }}</Table.Td
-                                    >
-                                    <Table.Td class="text-right">{{
-                                        row.resolved
-                                    }}</Table.Td>
-                                    <Table.Td
-                                        class="text-right whitespace-nowrap"
-                                        >{{
-                                            hoursLabel(row.avg_hours)
-                                        }}</Table.Td
-                                    >
-                                </Table.Tr>
-                            </Table.Tbody>
-                        </Table>
-                        <p v-else class="mt-3 text-sm text-slate-400">
-                            Sin incidencias en el periodo.
-                        </p>
+                                        <Table.Td class="font-medium">
+                                            {{ row.name }}
+                                        </Table.Td>
+                                        <Table.Td class="text-right">
+                                            {{ row.total }}
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="text-right"
+                                            :class="
+                                                row.high
+                                                    ? 'font-medium text-danger'
+                                                    : 'text-slate-400'
+                                            "
+                                        >
+                                            {{ row.high }}
+                                        </Table.Td>
+                                        <Table.Td class="text-right">
+                                            {{ row.resolved }}
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="text-right whitespace-nowrap"
+                                        >
+                                            {{ hoursLabel(row.avg_hours) }}
+                                        </Table.Td>
+                                    </Table.Tr>
+                                </Table.Tbody>
+                            </Table>
+                            <p v-else class="text-xs text-slate-400">
+                                Sin incidencias en el periodo.
+                            </p>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Por estado -->
-                <div class="col-span-12 xl:col-span-4">
-                    <div class="box box--stacked h-full p-5">
-                        <div class="text-base font-medium">
-                            Estado de lo reportado
+                <div class="col-span-12 flex flex-col xl:col-span-4">
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-warning/10 bg-warning/10 text-warning"
+                            >
+                                <Lucide icon="ListChecks" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">
+                                    Estado de lo reportado
+                                </h2>
+                                <p class="text-xs text-slate-500">
+                                    En qué acabó lo que entró en el periodo.
+                                </p>
+                            </div>
                         </div>
-                        <div class="mt-3 space-y-2">
+                        <div class="flex-1 space-y-2 px-4 py-3">
                             <div
                                 v-for="row in byStatus"
                                 :key="row.status"
-                                class="flex items-center justify-between rounded-lg border border-slate-200/70 px-3.5 py-2.5 dark:border-darkmode-400"
+                                class="flex items-center justify-between rounded-lg border border-slate-200/70 px-3 py-2 dark:border-darkmode-400"
                             >
                                 <span
-                                    class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                     :class="statusClass(row.status)"
                                 >
                                     {{ row.label }}
                                 </span>
-                                <span class="font-medium">{{ row.count }}</span>
+                                <span class="text-sm font-medium">
+                                    {{ row.count }}
+                                </span>
                             </div>
                             <p
                                 v-if="!byStatus.length"
-                                class="text-sm text-slate-400"
+                                class="text-xs text-slate-400"
                             >
                                 Sin datos.
-                            </p>
-                            <p
-                                class="flex items-center gap-1.5 pt-1 text-xs text-slate-400"
-                            >
-                                <Lucide icon="Info" class="h-3.5 w-3.5" />
-                                {{ kpis.rooms_affected }} habitación(es) con al
-                                menos una incidencia en el periodo.
                             </p>
                         </div>
                     </div>
@@ -531,249 +676,288 @@ const hoursLabel = (hours: number | null) =>
 
                 <!-- Por tipo de falla -->
                 <div class="col-span-12">
-                    <div
-                        class="box box--stacked overflow-auto p-5 lg:overflow-visible"
-                    >
-                        <div class="flex flex-wrap items-center gap-2">
-                            <div class="text-base font-medium">
-                                Por tipo de falla
-                            </div>
-                            <span
-                                v-if="guestReported > 0"
-                                class="rounded-full bg-info/10 px-2.5 py-0.5 text-xs font-medium text-info"
+                    <div class="box box--stacked">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-primary/10 bg-primary/10 text-primary"
                             >
-                                {{ guestReported }} reportada(s) por huéspedes
-                            </span>
+                                <Lucide
+                                    icon="SlidersHorizontal"
+                                    class="h-4 w-4"
+                                />
+                            </div>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">
+                                    Por tipo de falla
+                                </h2>
+                                <p class="text-xs text-slate-500">
+                                    Qué se descompone una y otra vez.
+                                </p>
+                            </div>
                         </div>
-                        <Table v-if="byCategory.length" class="mt-3">
-                            <Table.Thead>
-                                <Table.Tr>
-                                    <Table.Th>Tipo</Table.Th>
-                                    <Table.Th class="text-right"
-                                        >Incidencias</Table.Th
+                        <div
+                            class="overflow-auto px-4 py-3 lg:overflow-visible"
+                        >
+                            <Table v-if="byCategory.length">
+                                <Table.Thead>
+                                    <Table.Tr>
+                                        <Table.Th>Tipo</Table.Th>
+                                        <Table.Th class="text-right">
+                                            Incidencias
+                                        </Table.Th>
+                                        <Table.Th class="text-right">
+                                            Alta prioridad
+                                        </Table.Th>
+                                        <Table.Th
+                                            class="text-right whitespace-nowrap"
+                                        >
+                                            Reportó huésped
+                                        </Table.Th>
+                                    </Table.Tr>
+                                </Table.Thead>
+                                <Table.Tbody>
+                                    <Table.Tr
+                                        v-for="row in byCategory"
+                                        :key="row.name"
                                     >
-                                    <Table.Th class="text-right"
-                                        >Alta prioridad</Table.Th
-                                    >
-                                    <Table.Th
-                                        class="text-right whitespace-nowrap"
-                                        >Reportó huésped</Table.Th
-                                    >
-                                </Table.Tr>
-                            </Table.Thead>
-                            <Table.Tbody>
-                                <Table.Tr
-                                    v-for="row in byCategory"
-                                    :key="row.name"
-                                >
-                                    <Table.Td class="font-medium">{{
-                                        row.name
-                                    }}</Table.Td>
-                                    <Table.Td class="text-right">{{
-                                        row.total
-                                    }}</Table.Td>
-                                    <Table.Td
-                                        class="text-right"
-                                        :class="
-                                            row.high
-                                                ? 'font-medium text-danger'
-                                                : 'text-slate-400'
-                                        "
-                                        >{{ row.high }}</Table.Td
-                                    >
-                                    <Table.Td
-                                        class="text-right"
-                                        :class="
-                                            row.guest ? '' : 'text-slate-400'
-                                        "
-                                        >{{ row.guest }}</Table.Td
-                                    >
-                                </Table.Tr>
-                            </Table.Tbody>
-                        </Table>
-                        <p v-else class="mt-3 text-sm text-slate-400">
-                            Sin incidencias en el periodo.
-                        </p>
+                                        <Table.Td class="font-medium">
+                                            {{ row.name }}
+                                        </Table.Td>
+                                        <Table.Td class="text-right">
+                                            {{ row.total }}
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="text-right"
+                                            :class="
+                                                row.high
+                                                    ? 'font-medium text-danger'
+                                                    : 'text-slate-400'
+                                            "
+                                        >
+                                            {{ row.high }}
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="text-right"
+                                            :class="
+                                                row.guest
+                                                    ? ''
+                                                    : 'text-slate-400'
+                                            "
+                                        >
+                                            {{ row.guest }}
+                                        </Table.Td>
+                                    </Table.Tr>
+                                </Table.Tbody>
+                            </Table>
+                            <p v-else class="text-xs text-slate-400">
+                                Sin incidencias en el periodo.
+                            </p>
+                        </div>
                     </div>
                 </div>
 
                 <!-- Costo de las reparaciones: se mide sobre lo resuelto,
                      que es cuando se paga, no cuando se reporta -->
                 <div class="col-span-12">
-                    <div class="box box--stacked p-5">
-                        <div class="flex flex-wrap items-center gap-2">
-                            <div class="text-base font-medium">
-                                Costo de las reparaciones
+                    <div class="box box--stacked">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-success/10 bg-success/10 text-success"
+                            >
+                                <Lucide icon="Wallet" class="h-4 w-4" />
                             </div>
-                            <span class="text-xs text-slate-400">
-                                de lo resuelto en el periodo
-                            </span>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">
+                                    Costo de las reparaciones
+                                </h2>
+                                <p class="text-xs text-slate-500">
+                                    De lo resuelto en el periodo, que es cuando
+                                    se paga.
+                                </p>
+                            </div>
                         </div>
-                        <div class="mt-3 grid grid-cols-12 gap-3">
-                            <div class="col-span-12 sm:col-span-4">
-                                <div
-                                    class="h-full rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
-                                >
-                                    <div class="text-xs text-slate-500">
-                                        Se gastó
-                                    </div>
-                                    <div class="mt-0.5 text-xl font-medium">
-                                        {{ money.format(costs.total) }}
-                                    </div>
-                                    <div class="mt-0.5 text-xs text-slate-400">
-                                        {{ costs.jobs }} reparación(es) con
-                                        costo capturado
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-span-12 sm:col-span-4">
-                                <div
-                                    class="h-full rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
-                                >
-                                    <div class="text-xs text-slate-500">
-                                        Se le cobró al huésped
-                                    </div>
-                                    <div class="mt-0.5 text-xl font-medium">
-                                        {{ money.format(costs.charged) }}
-                                    </div>
-                                    <div class="mt-0.5 text-xs text-slate-400">
-                                        {{ costs.charged_jobs }} daño(s)
-                                        cargados a una cuenta
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="col-span-12 sm:col-span-4">
-                                <div
-                                    class="h-full rounded-lg border p-3.5"
-                                    :class="
-                                        costs.total - costs.charged > 0
-                                            ? 'border-pending/20 bg-pending/5'
-                                            : 'border-success/20 bg-success/5'
-                                    "
-                                >
-                                    <div class="text-xs text-slate-500">
-                                        Puso la casa
-                                    </div>
-                                    <div class="mt-0.5 text-xl font-medium">
-                                        {{
-                                            money.format(
-                                                Math.max(
-                                                    0,
-                                                    costs.total - costs.charged,
-                                                ),
-                                            )
-                                        }}
-                                    </div>
+                        <div class="px-4 py-3">
+                            <div class="grid grid-cols-12 gap-3">
+                                <div class="col-span-12 sm:col-span-4">
                                     <div
-                                        v-if="costs.missing > 0"
-                                        class="mt-0.5 text-xs text-slate-400"
+                                        class="h-full rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
                                     >
-                                        {{ costs.missing }} resuelta(s) sin
-                                        costo capturado: la cuenta puede ser
-                                        mayor.
+                                        <div class="text-xs text-slate-500">
+                                            Se gastó
+                                        </div>
+                                        <div
+                                            class="mt-0.5 text-base font-medium"
+                                        >
+                                            {{ money.format(costs.total) }}
+                                        </div>
+                                        <div
+                                            class="mt-0.5 text-xs text-slate-400"
+                                        >
+                                            {{ costs.jobs }} reparación(es) con
+                                            costo capturado
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-span-12 sm:col-span-4">
+                                    <div
+                                        class="h-full rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
+                                    >
+                                        <div class="text-xs text-slate-500">
+                                            Se le cobró al huésped
+                                        </div>
+                                        <div
+                                            class="mt-0.5 text-base font-medium"
+                                        >
+                                            {{ money.format(costs.charged) }}
+                                        </div>
+                                        <div
+                                            class="mt-0.5 text-xs text-slate-400"
+                                        >
+                                            {{ costs.charged_jobs }} daño(s)
+                                            cargados a una cuenta
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-span-12 sm:col-span-4">
+                                    <div
+                                        class="h-full rounded-lg border p-3"
+                                        :class="
+                                            costs.total - costs.charged > 0
+                                                ? 'border-pending/20 bg-pending/5'
+                                                : 'border-success/20 bg-success/5'
+                                        "
+                                    >
+                                        <div class="text-xs text-slate-500">
+                                            Puso la casa
+                                        </div>
+                                        <div
+                                            class="mt-0.5 text-base font-medium"
+                                        >
+                                            {{
+                                                money.format(
+                                                    Math.max(
+                                                        0,
+                                                        costs.total -
+                                                            costs.charged,
+                                                    ),
+                                                )
+                                            }}
+                                        </div>
+                                        <div
+                                            v-if="costs.missing > 0"
+                                            class="mt-0.5 text-xs text-slate-400"
+                                        >
+                                            {{ costs.missing }} resuelta(s) sin
+                                            costo capturado: la cuenta puede ser
+                                            mayor.
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
 
-                        <div class="mt-4 grid grid-cols-12 gap-5">
-                            <div class="col-span-12 lg:col-span-6">
-                                <div
-                                    class="text-xs font-medium tracking-wide text-slate-400 uppercase"
-                                >
-                                    Qué habitación sale cara
-                                </div>
-                                <Table
-                                    v-if="costs.byRoom.length"
-                                    class="mt-2.5"
-                                >
-                                    <Table.Thead>
-                                        <Table.Tr>
-                                            <Table.Th>Habitación</Table.Th>
-                                            <Table.Th class="text-right"
-                                                >Trabajos</Table.Th
+                            <div class="mt-4 grid grid-cols-12 gap-5">
+                                <div class="col-span-12 lg:col-span-6">
+                                    <div
+                                        class="mb-2 flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                                    >
+                                        <Lucide
+                                            icon="BedDouble"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        Qué habitación sale cara
+                                    </div>
+                                    <Table v-if="costs.byRoom.length">
+                                        <Table.Thead>
+                                            <Table.Tr>
+                                                <Table.Th>Habitación</Table.Th>
+                                                <Table.Th class="text-right">
+                                                    Trabajos
+                                                </Table.Th>
+                                                <Table.Th class="text-right">
+                                                    Costo
+                                                </Table.Th>
+                                            </Table.Tr>
+                                        </Table.Thead>
+                                        <Table.Tbody>
+                                            <Table.Tr
+                                                v-for="row in costs.byRoom"
+                                                :key="row.name"
                                             >
-                                            <Table.Th class="text-right"
-                                                >Costo</Table.Th
-                                            >
-                                        </Table.Tr>
-                                    </Table.Thead>
-                                    <Table.Tbody>
-                                        <Table.Tr
-                                            v-for="row in costs.byRoom"
-                                            :key="row.name"
-                                        >
-                                            <Table.Td class="font-medium">{{
-                                                row.name
-                                            }}</Table.Td>
-                                            <Table.Td class="text-right">{{
-                                                row.jobs
-                                            }}</Table.Td>
-                                            <Table.Td
-                                                class="text-right font-medium whitespace-nowrap"
-                                                >{{
-                                                    money.format(row.cost)
-                                                }}</Table.Td
-                                            >
-                                        </Table.Tr>
-                                    </Table.Tbody>
-                                </Table>
-                                <p v-else class="mt-2.5 text-sm text-slate-400">
-                                    Nadie capturó costos en el periodo.
-                                </p>
-                            </div>
-                            <div class="col-span-12 lg:col-span-6">
-                                <div
-                                    class="text-xs font-medium tracking-wide text-slate-400 uppercase"
-                                >
-                                    Quién hizo el trabajo
-                                </div>
-                                <Table
-                                    v-if="costs.byTechnician.length"
-                                    class="mt-2.5"
-                                >
-                                    <Table.Thead>
-                                        <Table.Tr>
-                                            <Table.Th>Quién reparó</Table.Th>
-                                            <Table.Th class="text-right"
-                                                >Trabajos</Table.Th
-                                            >
-                                            <Table.Th class="text-right"
-                                                >Costo</Table.Th
-                                            >
-                                        </Table.Tr>
-                                    </Table.Thead>
-                                    <Table.Tbody>
-                                        <Table.Tr
-                                            v-for="row in costs.byTechnician"
-                                            :key="row.name"
-                                        >
-                                            <Table.Td>
-                                                <span class="font-medium">{{
-                                                    row.name
-                                                }}</span>
-                                                <div
-                                                    v-if="row.kind"
-                                                    class="text-[11px] text-slate-400"
+                                                <Table.Td class="font-medium">
+                                                    {{ row.name }}
+                                                </Table.Td>
+                                                <Table.Td class="text-right">
+                                                    {{ row.jobs }}
+                                                </Table.Td>
+                                                <Table.Td
+                                                    class="text-right font-medium whitespace-nowrap"
                                                 >
-                                                    {{ row.kind }}
-                                                </div>
-                                            </Table.Td>
-                                            <Table.Td class="text-right">{{
-                                                row.jobs
-                                            }}</Table.Td>
-                                            <Table.Td
-                                                class="text-right font-medium whitespace-nowrap"
-                                                >{{
-                                                    money.format(row.cost)
-                                                }}</Table.Td
+                                                    {{ money.format(row.cost) }}
+                                                </Table.Td>
+                                            </Table.Tr>
+                                        </Table.Tbody>
+                                    </Table>
+                                    <p v-else class="text-xs text-slate-400">
+                                        Nadie capturó costos en el periodo.
+                                    </p>
+                                </div>
+                                <div class="col-span-12 lg:col-span-6">
+                                    <div
+                                        class="mb-2 flex items-center gap-1.5 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                                    >
+                                        <Lucide
+                                            icon="HardHat"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        Quién hizo el trabajo
+                                    </div>
+                                    <Table v-if="costs.byTechnician.length">
+                                        <Table.Thead>
+                                            <Table.Tr>
+                                                <Table.Th>
+                                                    Quién reparó
+                                                </Table.Th>
+                                                <Table.Th class="text-right">
+                                                    Trabajos
+                                                </Table.Th>
+                                                <Table.Th class="text-right">
+                                                    Costo
+                                                </Table.Th>
+                                            </Table.Tr>
+                                        </Table.Thead>
+                                        <Table.Tbody>
+                                            <Table.Tr
+                                                v-for="row in costs.byTechnician"
+                                                :key="row.name"
                                             >
-                                        </Table.Tr>
-                                    </Table.Tbody>
-                                </Table>
-                                <p v-else class="mt-2.5 text-sm text-slate-400">
-                                    Nadie capturó costos en el periodo.
-                                </p>
+                                                <Table.Td>
+                                                    <span class="font-medium">
+                                                        {{ row.name }}
+                                                    </span>
+                                                    <div
+                                                        v-if="row.kind"
+                                                        class="text-[11px] text-slate-400"
+                                                    >
+                                                        {{ row.kind }}
+                                                    </div>
+                                                </Table.Td>
+                                                <Table.Td class="text-right">
+                                                    {{ row.jobs }}
+                                                </Table.Td>
+                                                <Table.Td
+                                                    class="text-right font-medium whitespace-nowrap"
+                                                >
+                                                    {{ money.format(row.cost) }}
+                                                </Table.Td>
+                                            </Table.Tr>
+                                        </Table.Tbody>
+                                    </Table>
+                                    <p v-else class="text-xs text-slate-400">
+                                        Nadie capturó costos en el periodo.
+                                    </p>
+                                </div>
                             </div>
                         </div>
                     </div>

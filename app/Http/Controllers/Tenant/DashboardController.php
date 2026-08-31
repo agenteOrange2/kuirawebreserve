@@ -184,7 +184,8 @@ class DashboardController extends Controller
                 'to' => RoomStatus::tryFrom($log->to_status)?->label() ?? $log->to_status,
                 'to_color' => RoomStatus::tryFrom($log->to_status)?->color() ?? 'gray',
                 'by' => $log->changedBy?->name ?? 'Sistema',
-                'at' => $log->created_at->diffForHumans(),
+                'at' => $log->created_at->diffForHumans(short: true),
+                'at_full' => $log->created_at->isoFormat('D MMM YYYY, HH:mm'),
             ]);
 
         // Holds por vencer (spec-plan-maestro E4): apartados pendientes cuyo

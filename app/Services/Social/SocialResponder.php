@@ -17,7 +17,9 @@ use App\Services\StaffNotifier;
  * conversación ligada en la bandeja.
  *
  * Reglas que no dependen de la configuración del hotel:
- * - Una queja NUNCA se responde sola: se avisa al staff y se espera.
+ * - En una queja el bot NUNCA abre el mensaje privado ni deja que la IA
+ *   redacte: como mucho publica la PLANTILLA fija del hotel (texto
+ *   pre-aprobado) y siempre avisa al staff para que siga una persona.
  * - Ocultar nunca borra y siempre queda auditado.
  * - Si el clasificador no entendió, el comentario va a manos de una persona.
  */
@@ -73,7 +75,7 @@ class SocialResponder
         ]);
 
         match ($result['clasificacion']) {
-            SocialComment::CLASS_COMPLAINT => $this->handleComplaint($comment, $settings),
+            SocialComment::CLASS_COMPLAINT => $this->handleComplaint($comment, $link, $settings),
             SocialComment::CLASS_SPAM => $this->handleSpam($comment, $link, $settings),
             default => $this->handleAnswerable($comment, $link, $settings, $result),
         };
@@ -98,7 +100,10 @@ class SocialResponder
             // público pesa más ser correcto y predecible que personalizado;
             // lo personalizado va en el privado, que sí lo escribe la IA.
             $text = trim($settings->template($classification)) !== ''
-                ? $settings->template($classification)
+                ? SocialSettings::personalize(
+                    $settings->template($classification),
+                    $comment->author_name,
+                )
                 : $result['respuesta_publica'];
 
             if (trim($text) !== '') {
@@ -221,11 +226,29 @@ class SocialResponder
     }
 
     /**
-     * Queja: el bot no responde solo (spec §4.6). Se avisa al staff para que
-     * conteste una persona.
+     * Queja (spec §4.6): si el hotel lo activó, se publica SU plantilla fija
+     * en el hilo — un acuse empático pre-aprobado que invita al huésped a
+     * escribir por privado; la IA jamás redacta aquí y el privado jamás se
+     * abre solo (con alguien molesto, un DM no pedido empeora). Responda o
+     * no, el comentario queda pendiente y se avisa para que siga una persona.
      */
-    protected function handleComplaint(SocialComment $comment, SocialSettings $settings): void
+    protected function handleComplaint(SocialComment $comment, MetaChannelLink $link, SocialSettings $settings): void
     {
+        $template = trim($settings->template(SocialComment::CLASS_COMPLAINT));
+
+        if ($settings->repliesPublicly(SocialComment::CLASS_COMPLAINT) && $template !== '') {
+            $text = SocialSettings::personalize($template, $comment->author_name);
+            $replyId = $this->api->replyToComment($link, $comment->external_id, $text);
+
+            if ($replyId) {
+                $comment->update([
+                    'public_reply_text' => $text,
+                    'public_reply_external_id' => $replyId,
+                    'public_replied_at' => now(),
+                ]);
+            }
+        }
+
         $comment->update(['status' => SocialComment::STATUS_PENDING_STAFF]);
 
         if ($settings->all()['avisar_quejas']) {

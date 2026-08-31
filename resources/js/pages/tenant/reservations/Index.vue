@@ -12,16 +12,21 @@ import {
 import Button from '@/components/Base/Button';
 import {
     FormCheck,
+    FormDate,
+    FormDateTime,
     FormHelp,
     FormInput,
     FormLabel,
     FormSelect,
     FormTextarea,
+    FormTime,
 } from '@/components/Base/Form';
 import { Dialog, Menu, Slideover } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
+import type { CounterMethod } from '@/composables/useCounterMethods';
+import { useCounterMethods } from '@/composables/useCounterMethods';
 import { useModules } from '@/composables/useModules';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
@@ -121,6 +126,9 @@ interface ReservationRow {
     payment_overdue: boolean;
     paid_total: number;
     pending_balance: number;
+    // Fianza que le toca a ESTA reserva: con escalones por volumen, una del
+    // mismo grupo GRP- no paga lo mismo que una suelta.
+    guarantee_amount: number;
     payment_request: {
         id: number;
         concept: string;
@@ -175,7 +183,11 @@ interface RatePlanOption {
     duration_value: number | null;
     duration_label: string;
     deposit_percent: string | null;
+    deposit_amount: string | null;
     min_advance_label: string | null;
+    /** Horarios efectivos del tipo (HH:mm); anclan llegada/salida por noche. */
+    check_in_time: string;
+    check_out_time: string;
 }
 
 const props = defineProps<{
@@ -188,6 +200,10 @@ const props = defineProps<{
     historyTotal: number;
     inHouse: ReservationRow[];
     stays: StayRow[];
+    // Cuántas estancias activas hay en total: la lista solo asoma las
+    // primeras (el resto vive en /reservas/alojados).
+    staysTotal: number;
+    focusStayId: number | null;
     ratePlans: RatePlanOption[];
     canManage: boolean;
     manualCheckinAllowed: boolean;
@@ -195,6 +211,9 @@ const props = defineProps<{
     // Fianza (depósito en garantía): monto fijo que se cobra al registrar
     // la llegada y se devuelve al registrar la salida. 0 = apagada.
     guaranteeAmount: number;
+    // ¿El hotel puede cobrar en línea? Con la pasarela apagada, el modal
+    // de pago ofrece transferencia en vez de un link que no existe.
+    gatewayAvailable: boolean;
     holdMinutes: number;
     focusReservationId: number | null;
     prefill: {
@@ -279,17 +298,22 @@ function createFromRack(payload: {
     date: string;
 }) {
     openCreate(false, payload.room);
-    // Llegada precargada desde la celda del rack (15:00, hora hotelera
-    // típica); la salida se autocalcula según la tarifa.
-    form.starts_at = `${payload.date}T15:00`;
+    // Llegada precargada desde la celda del rack: la hora de entrada del
+    // tipo si la tarifa es por noche; 15:00 como hora hotelera típica si no.
+    form.starts_at = `${payload.date}T${defaultArrivalTime()}`;
     autoFillEnd();
 }
 
 // Desde un día del calendario mensual: sin habitación preseleccionada.
 function createFromDate(date: string) {
     openCreate(false);
-    form.starts_at = `${date}T15:00`;
+    form.starts_at = `${date}T${defaultArrivalTime()}`;
     autoFillEnd();
+}
+
+function defaultArrivalTime(): string {
+    const plan = selectedPlan.value;
+    return (plan?.type === 'night' && plan.check_in_time) || '15:00';
 }
 
 // ── Holds por vencer (< 30 min): que nadie los vea morir ──
@@ -333,6 +357,16 @@ function clearListFilters() {
     listFilters.from = '';
     listFilters.to = '';
 }
+
+// La lista local solo filtra lo cargado: si no aparece, la búsqueda de
+// verdad (todas las próximas, server-side) se lleva el texto escrito.
+const upcomingSearchHref = computed(() => {
+    const query = listFilters.query.trim();
+
+    return query
+        ? `${route('tenant.reservations.upcoming')}?q=${encodeURIComponent(query)}`
+        : route('tenant.reservations.upcoming');
+});
 
 const filteredReservations = computed(() =>
     props.reservations.filter((r) => {
@@ -414,11 +448,24 @@ async function bulkDeleteHistory() {
 const selectedReservationId = ref<number | null>(null);
 const prefillConsumed = ref(false);
 const focusReservationConsumed = ref(false);
+const focusStayConsumed = ref(false);
 const editingReservationId = ref<number | null>(null);
 const currentRoomPreset = ref<typeof props.prefill.room>(null);
 
 function reload() {
-    router.reload({ only: ['reservations', 'history', 'inHouse', 'stays'] });
+    // Los totales viajan con las listas: si no, los contadores ("30 de
+    // 90", "20 de 45") se quedaban con el número de la carga anterior.
+    router.reload({
+        only: [
+            'reservations',
+            'upcomingTotal',
+            'history',
+            'historyTotal',
+            'inHouse',
+            'stays',
+            'staysTotal',
+        ],
+    });
 }
 
 // ── Acciones de estado con confirmación en modal ──
@@ -495,6 +542,11 @@ const askAction = (
 ) => {
     confirmReason.value = '';
     guaranteeMethod.value = 'cash';
+    guaranteeAmountInput.value = Number(
+        r.guarantee_amount ?? props.guaranteeAmount,
+    );
+    guaranteeReason.value = '';
+    guaranteeEditing.value = false;
     confirmAction.value = { kind, reservation: r };
 };
 const askConfirm = (r: ReservationRow) => askAction('confirm', r);
@@ -519,23 +571,55 @@ interface FolioData {
 }
 const folio = ref<FolioData | null>(null);
 const folioLoading = ref(false);
-const folioMethod = ref<'cash' | 'card' | 'transfer'>('cash');
+const folioMethod = ref<CounterMethod>('cash');
 const folioForce = ref(false);
-const folioMethods = [
-    { key: 'cash', label: 'Efectivo', icon: 'Banknote' },
-    { key: 'card', label: 'Tarjeta', icon: 'CreditCard' },
-    { key: 'transfer', label: 'Transfer.', icon: 'ArrowLeftRight' },
-] as const;
+// Formas de cobro que acepta la recepción (/ajustes/metodos-pago →
+// Políticas): las mismas en el folio de salida, en el walk-in y en la fianza.
+const {
+    methods: counterMethods,
+    first: firstCounterMethod,
+    coerce: coerceCounterMethod,
+    subset: counterSubset,
+} = useCounterMethods();
+const folioMethods = counterMethods;
+// La fianza se recibe en la mano: efectivo o terminal, nunca transferencia.
+const guaranteeMethods = counterSubset(['cash', 'card']);
 // Fianza al registrar la llegada (método presencial) y su devolución al
 // registrar la salida (marcada por default; desmarcar exige motivo).
 const guaranteeMethod = ref<'cash' | 'card'>('cash');
 const guaranteeRefund = ref(true);
 const guaranteeRetainReason = ref('');
+// Monto y motivo del ajuste al cobrarla. Arranca en el de la política (con
+// el escalón de la partida) y solo se manda "motivo" si el mostrador lo
+// cambió: el servidor exige el porqué de cualquier monto distinto.
+const guaranteeAmountInput = ref<number | string>(0);
+const guaranteeReason = ref('');
+const guaranteeEditing = ref(false);
+
+/**
+ * Fianza que le toca a la reserva del diálogo abierto: con escalones por
+ * volumen, una del mismo grupo GRP- no paga lo mismo que una suelta, así que
+ * el monto viene por reserva y no de la página.
+ */
+const guaranteeDue = computed(() => {
+    const action = confirmAction.value;
+
+    if (!action || action.kind !== 'check_in') return 0;
+
+    return Number(action.reservation.guarantee_amount ?? props.guaranteeAmount);
+});
+
+const guaranteeAdjusted = computed(
+    () =>
+        guaranteeEditing.value &&
+        Math.round(Number(guaranteeAmountInput.value || 0) * 100) !==
+            Math.round(guaranteeDue.value * 100),
+);
 
 const askCheckOut = async (s: StayRow) => {
     confirmReason.value = '';
     folio.value = null;
-    folioMethod.value = 'cash';
+    folioMethod.value = firstCounterMethod.value;
     folioForce.value = false;
     guaranteeRefund.value = true;
     guaranteeRetainReason.value = '';
@@ -571,7 +655,9 @@ async function submitConfirmAction() {
             const guaranteePending = folio.value?.guarantee_refundable ?? 0;
             await axios.patch(`/api/stays/${action.stay.id}/check-out`, {
                 payment_method:
-                    pending > 0 && !folioForce.value ? folioMethod.value : null,
+                    pending > 0 && !folioForce.value
+                        ? coerceCounterMethod(folioMethod.value)
+                        : null,
                 force: pending > 0 && folioForce.value,
                 // Fianza viva: devolverla (default) o retenerla con motivo.
                 ...(guaranteePending > 0
@@ -598,18 +684,31 @@ async function submitConfirmAction() {
                 `${action.reservation.code} · ${action.reservation.guest_name ?? 'Anónimo'}`,
             );
         } else if (action.kind === 'check_in') {
+            const guaranteeCharged = guaranteeAdjusted.value
+                ? Number(guaranteeAmountInput.value || 0)
+                : guaranteeDue.value;
             await axios.patch(
                 `/api/reservations/${action.reservation.id}/check-in`,
                 // Fianza activa: se cobra al registrar la llegada con el
-                // método presencial elegido (el monto lo pone el servidor).
-                props.guaranteeAmount > 0
-                    ? { guarantee_method: guaranteeMethod.value }
+                // método presencial elegido. El monto default lo pone el
+                // servidor; solo se manda si el mostrador lo ajustó, y
+                // entonces va con su motivo (el servidor lo exige).
+                guaranteeDue.value > 0
+                    ? {
+                          guarantee_method: guaranteeMethod.value,
+                          ...(guaranteeAdjusted.value
+                              ? {
+                                    guarantee_amount: guaranteeCharged,
+                                    guarantee_reason: guaranteeReason.value,
+                                }
+                              : {}),
+                      }
                     : {},
             );
             toast.success(
                 'Llegada registrada',
-                props.guaranteeAmount > 0
-                    ? `${action.reservation.guest_name ?? 'Anónimo'} entró; fianza de ${money(props.guaranteeAmount)} cobrada.`
+                guaranteeDue.value > 0
+                    ? `${action.reservation.guest_name ?? 'Anónimo'} entró; fianza de ${money(guaranteeCharged)} cobrada.`
                     : `${action.reservation.guest_name ?? 'Anónimo'} entró; la hab. ${action.reservation.room ?? '—'} quedó en uso.`,
             );
         } else {
@@ -829,12 +928,16 @@ const fromLocalInput = (value: string): Date | null => {
     return Number.isNaN(d.getTime()) ? null : d;
 };
 
-// Espejo de RatePlan::suggestedEnd(): noche → día siguiente 12:00; resto → inicio + periodo.
+// Espejo de RatePlan::suggestedEnd(): noche → día siguiente a la hora de
+// salida del tipo; resto → inicio + periodo.
 function suggestedEndFor(plan: RatePlanOption, start: Date): Date {
     const end = new Date(start);
     if (plan.type === 'night') {
+        const [outHour, outMinute] = (plan.check_out_time ?? '12:00')
+            .split(':')
+            .map(Number);
         end.setDate(end.getDate() + 1);
-        end.setHours(12, 0, 0, 0);
+        end.setHours(outHour || 0, outMinute || 0, 0, 0);
         return end;
     }
     const value = Math.max(
@@ -887,6 +990,40 @@ function unitsForEstimate(
 
 // La salida se rellena sola mientras el usuario no la edite a mano.
 const endsAutoFilled = ref(false);
+
+/* --- La hora de entrada del walk-in, a la vista ----------------------
+ * El servidor sella check_in_at = now(), así que aquí no hay campo que
+ * llenar: hay una hora que decir. Se refresca mientras el modal está
+ * abierto para que un formulario que se quedó abierto no la muestre vieja.
+ */
+const walkInClock = ref(new Date());
+let walkInClockTimer: ReturnType<typeof setInterval> | null = null;
+
+const walkInArrivalLabel = computed(() =>
+    new Intl.DateTimeFormat('es-MX', {
+        dateStyle: 'long',
+        timeStyle: 'short',
+    }).format(walkInClock.value),
+);
+
+watch(
+    () => [showCreate.value, walkIn.value] as const,
+    ([open, isWalkIn]) => {
+        if (walkInClockTimer) {
+            clearInterval(walkInClockTimer);
+            walkInClockTimer = null;
+        }
+        if (!open || !isWalkIn) return;
+        walkInClock.value = new Date();
+        walkInClockTimer = setInterval(() => {
+            walkInClock.value = new Date();
+        }, 30000);
+    },
+);
+
+onBeforeUnmount(() => {
+    if (walkInClockTimer) clearInterval(walkInClockTimer);
+});
 
 function autoFillEnd() {
     const plan = selectedPlan.value;
@@ -978,6 +1115,10 @@ const estimate = computed(() => {
     const depositPct = plan.deposit_percent
         ? Number(plan.deposit_percent)
         : null;
+    // Anticipo fijo (sin %): mismo tope que el backend — nunca más del total.
+    const depositFixed = plan.deposit_amount
+        ? Math.min(total, Number(plan.deposit_amount))
+        : null;
     return {
         units,
         breakdown:
@@ -992,7 +1133,9 @@ const estimate = computed(() => {
         optionalCharges,
         total,
         depositPct,
-        deposit: depositPct ? Math.round(total * depositPct) / 100 : null,
+        deposit: depositPct
+            ? Math.round(total * depositPct) / 100
+            : depositFixed,
     };
 });
 
@@ -1008,18 +1151,34 @@ function openCreate(
     form.starts_at = '';
     form.ends_at = '';
     endsAutoFilled.value = true;
-    // Llegada sugerida: próxima media hora; la salida se calcula sola
-    // según la tarifa (el usuario puede ajustar ambas).
+    // Llegada sugerida: en el walk-in es AHORA (el servidor sella
+    // check_in_at = now() al registrar), y en una reserva la hora de
+    // entrada del tipo si aún no pasa hoy (tarifa por noche) o la próxima
+    // media hora. En los dos casos la salida se calcula sola según la
+    // tarifa. El walk-in dejaba las dos en blanco y el mostrador no veía ni
+    // con qué hora estaba registrando ni hasta cuándo se queda el huésped.
+    const start = new Date();
     if (!asWalkIn) {
-        const start = new Date();
         start.setMinutes(
             start.getMinutes() + (30 - (start.getMinutes() % 30)),
             0,
             0,
         );
-        form.starts_at = toLocalInput(start);
-        autoFillEnd();
+        const plan = selectedPlan.value;
+        if (plan?.type === 'night' && plan.check_in_time) {
+            const [inHour, inMinute] = plan.check_in_time
+                .split(':')
+                .map(Number);
+            const scheduled = new Date();
+            scheduled.setHours(inHour || 0, inMinute || 0, 0, 0);
+            if (scheduled > new Date()) {
+                start.setTime(scheduled.getTime());
+            }
+        }
     }
+    form.starts_at = toLocalInput(start);
+    walkInClock.value = start;
+    autoFillEnd();
     form.room_id = roomPreset?.id ?? '';
     form.guest_id = null;
     form.guest_name = '';
@@ -1035,9 +1194,11 @@ function openCreate(
     form.extra_charges = [];
     form.notes = '';
     form.guest_notes = '';
-    form.payment_method = 'cash';
+    form.payment_method = firstCounterMethod.value;
     form.payment_reference = '';
-    form.guarantee_method = 'cash';
+    form.guarantee_method = (guaranteeMethods.value[0]?.key ?? 'cash') as
+        | 'cash'
+        | 'card';
     showAdvancedReservationFields.value = false;
     selectedGuest.value = null;
     resetFormErrors();
@@ -1180,6 +1341,28 @@ watch(
     { immediate: true, deep: true },
 );
 
+// Llegada desde /reservas/alojados con ?stay=: se abre directo el modal de
+// salida de esa estancia (el controlador la manda al frente de la lista
+// para que siempre esté cargada).
+watch(
+    () => [props.focusStayId, props.stays] as const,
+    ([stayId, stays]) => {
+        if (!stayId || focusStayConsumed.value) {
+            return;
+        }
+
+        const stay = stays.find((s) => s.id === stayId);
+
+        if (!stay) {
+            return;
+        }
+
+        focusStayConsumed.value = true;
+        askCheckOut(stay);
+    },
+    { immediate: true, deep: true },
+);
+
 async function searchAvailability() {
     if (!form.rate_plan_id || !showCreate.value) return;
     searching.value = true;
@@ -1234,7 +1417,10 @@ watch(
         if (!walkIn.value && !form.starts_at) return;
         availabilityTimer = setTimeout(searchAvailability, 400);
     },
-    { immediate: false },
+    // immediate: el prefill de ?intent= abre el modal ANTES de que este
+    // watcher exista, así que sin esto la llegada desde el plano se quedaba
+    // sin consultar disponibilidad hasta tocar algo.
+    { immediate: true },
 );
 
 async function submitCreate() {
@@ -1277,7 +1463,7 @@ async function submitCreate() {
                 extra_charges: form.extra_charges,
                 notes: form.notes || undefined,
                 payment_method: props.walkinChargeOnCheckin
-                    ? form.payment_method
+                    ? coerceCounterMethod(form.payment_method)
                     : undefined,
                 payment_reference:
                     props.walkinChargeOnCheckin && form.payment_reference
@@ -1286,7 +1472,7 @@ async function submitCreate() {
                 // Fianza activa: el registro de llegada la cobra siempre
                 // (el monto sale del ajuste del hotel, no del cliente).
                 guarantee_method:
-                    props.guaranteeAmount > 0
+                    props.guaranteeAmount > 0 && guaranteeMethods.value.length
                         ? form.guarantee_method
                         : undefined,
             });
@@ -1432,11 +1618,11 @@ const modalDescription = computed(() => {
     <RazeLayout :title="view === 'calendar' ? 'Calendario' : 'Reservas'">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
                         <Lucide
                             :icon="
@@ -1444,18 +1630,18 @@ const modalDescription = computed(() => {
                                     ? 'CalendarRange'
                                     : 'CalendarDays'
                             "
-                            class="h-5 w-5 sm:h-7 sm:w-7"
+                            class="h-4 w-4"
                         />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">
+                        <h1 class="text-base font-medium">
                             {{
                                 view === 'calendar'
                                     ? 'Calendario de ocupación'
                                     : 'Reservas'
                             }}
                         </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <p class="mt-0.5 text-xs text-slate-500">
                             {{ property.name }} ·
                             {{
                                 view === 'calendar'
@@ -1475,11 +1661,11 @@ const modalDescription = computed(() => {
                         :as="Link"
                         :href="route('tenant.reservations.calendar')"
                         variant="outline-secondary"
-                        class="min-h-10 rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
                         <Lucide
                             icon="CalendarRange"
-                            class="mr-2 h-5 w-5 stroke-[1.5]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
                         />
                         Calendario
                     </Button>
@@ -1488,41 +1674,44 @@ const modalDescription = computed(() => {
                         :as="Link"
                         :href="route('tenant.reservations')"
                         variant="outline-secondary"
-                        class="min-h-10 rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
-                        <Lucide icon="List" class="mr-2 h-5 w-5 stroke-[1.5]" />
+                        <Lucide
+                            icon="List"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
+                        />
                         Lista de reservas
                     </Button>
                     <Button
                         as="a"
                         :href="route('tenant.reservations.reports')"
                         variant="outline-secondary"
-                        class="min-h-10 rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
                         <Lucide
                             icon="ChartColumn"
-                            class="mr-2 h-5 w-5 stroke-[1.5]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
                         />
                         Reportes
                     </Button>
                     <template v-if="canManage">
                         <Button
                             variant="outline-primary"
-                            class="min-h-10"
+                            class="h-9 text-xs"
                             :disabled="!ratePlans.length"
                             @click="openCreate(true)"
                         >
-                            <Lucide icon="Zap" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Zap" class="mr-1.5 h-3.5 w-3.5" />
                             Llegó sin reserva
                         </Button>
                         <Button
                             variant="primary"
-                            class="col-span-2 min-h-10 md:col-auto"
+                            class="col-span-2 h-9 text-xs md:col-auto"
                             :disabled="!ratePlans.length"
                             @click="openCreate(false)"
                         >
-                            <Lucide icon="Plus" class="mr-2 h-5 w-5" /> Nueva
-                            reserva
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                            Nueva reserva
                         </Button>
                     </template>
                 </div>
@@ -1530,7 +1719,7 @@ const modalDescription = computed(() => {
 
             <div
                 v-if="!ratePlans.length"
-                class="box mt-5 border-l-4 border-l-warning p-5"
+                class="box mt-5 border-l-4 border-l-warning p-4"
             >
                 <p class="text-sm">
                     Define al menos una tarifa en "Zonas y tipos" para poder
@@ -1570,15 +1759,15 @@ const modalDescription = computed(() => {
             <!-- Resumen operativo del día -->
             <div v-if="view === 'list'" class="mt-5 grid grid-cols-12 gap-5">
                 <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 sm:col-span-6 xl:col-span-3"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10"
                     >
-                        <Lucide icon="LogIn" class="h-5 w-5 text-info" />
+                        <Lucide icon="LogIn" class="h-4 w-4 text-info" />
                     </div>
                     <div class="min-w-0">
-                        <div class="text-xl font-medium">
+                        <div class="text-base font-medium">
                             {{ arrivalsToday }}
                         </div>
                         <div class="truncate text-xs text-slate-500">
@@ -1587,18 +1776,18 @@ const modalDescription = computed(() => {
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 sm:col-span-6 xl:col-span-3"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
                     >
                         <Lucide
                             icon="AlarmClock"
-                            class="h-5 w-5 text-pending"
+                            class="h-4 w-4 text-pending"
                         />
                     </div>
                     <div class="min-w-0">
-                        <div class="text-xl font-medium">
+                        <div class="text-base font-medium">
                             {{ pendingCount }}
                         </div>
                         <div class="truncate text-xs text-slate-500">
@@ -1607,15 +1796,15 @@ const modalDescription = computed(() => {
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 sm:col-span-6 xl:col-span-3"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                     >
-                        <Lucide icon="DoorOpen" class="h-5 w-5 text-primary" />
+                        <Lucide icon="DoorOpen" class="h-4 w-4 text-primary" />
                     </div>
                     <div class="min-w-0">
-                        <div class="text-xl font-medium">
+                        <div class="text-base font-medium">
                             {{ stays.length }}
                         </div>
                         <div class="truncate text-xs text-slate-500">
@@ -1624,15 +1813,15 @@ const modalDescription = computed(() => {
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 sm:col-span-6 xl:col-span-3"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10"
                     >
-                        <Lucide icon="LogOut" class="h-5 w-5 text-success" />
+                        <Lucide icon="LogOut" class="h-4 w-4 text-success" />
                     </div>
                     <div class="min-w-0">
-                        <div class="text-xl font-medium">
+                        <div class="text-base font-medium">
                             {{ departuresToday }}
                         </div>
                         <div class="truncate text-xs text-slate-500">
@@ -1652,9 +1841,9 @@ const modalDescription = computed(() => {
             <!-- Próximas -->
             <div v-if="view === 'list'" class="box box--stacked mt-5">
                 <div
-                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
-                    <div class="flex items-center gap-2 font-medium">
+                    <div class="flex items-center gap-2 text-sm font-medium">
                         <Lucide
                             icon="CalendarDays"
                             class="h-4 w-4 text-slate-400"
@@ -1679,31 +1868,45 @@ const modalDescription = computed(() => {
                             Limpiar filtros
                         </button>
                     </div>
-                    <!-- Si hay más allá del horizonte se dice, en vez de
-                         ocultarlas en silencio. -->
+                    <!-- Si hay más se dice, en vez de ocultarlas en
+                         silencio: aquí solo caben las llegadas más
+                         cercanas. -->
                     <div
-                        v-else-if="upcomingTotal > reservations.length"
-                        class="ml-auto text-xs text-slate-500"
+                        v-else
+                        class="ml-auto flex flex-wrap items-center gap-3"
                     >
-                        Próximos {{ upcomingDays }} días ·
-                        {{ upcomingTotal - reservations.length }} más en el
-                        <Link
-                            :href="route('tenant.reservations.calendar')"
-                            class="font-medium text-primary hover:underline"
-                            >calendario</Link
+                        <span
+                            v-if="upcomingTotal > reservations.length"
+                            class="text-xs text-slate-500"
                         >
+                            Las {{ reservations.length }} llegadas más cercanas
+                            de {{ upcomingTotal }} en los próximos
+                            {{ upcomingDays }} días
+                        </span>
+                        <Button
+                            :as="Link"
+                            :href="route('tenant.reservations.upcoming')"
+                            variant="outline-secondary"
+                            class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                        >
+                            <Lucide
+                                icon="ChevronRight"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Ver todas las próximas
+                        </Button>
                     </div>
                 </div>
                 <!-- Filtros principales de la operación -->
                 <div
                     v-if="reservations.length"
-                    class="border-b border-slate-200/60 bg-slate-50/70 px-5 py-4 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                    class="border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                 >
                     <div class="mb-3 flex items-center gap-3">
                         <div
                             class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <Lucide icon="Filter" class="h-5 w-5" />
+                            <Lucide icon="Filter" class="h-4 w-4" />
                         </div>
                         <div>
                             <div class="text-sm font-medium">
@@ -1724,13 +1927,13 @@ const modalDescription = computed(() => {
                             <div class="relative">
                                 <Lucide
                                     icon="Search"
-                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3.5 h-5 w-5 text-slate-400"
+                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
                                 />
                                 <FormInput
                                     id="reservation-search"
                                     v-model="listFilters.query"
                                     type="search"
-                                    class="h-11 pl-11 text-sm"
+                                    class="h-9 pl-9 text-xs"
                                     placeholder="Nombre, teléfono, folio o habitación"
                                 />
                             </div>
@@ -1742,7 +1945,7 @@ const modalDescription = computed(() => {
                             <FormSelect
                                 id="reservation-status"
                                 v-model="listFilters.status"
-                                class="h-11"
+                                class="h-9 text-xs"
                             >
                                 <option value="">Todos los estados</option>
                                 <option value="pending">Pendiente</option>
@@ -1753,22 +1956,20 @@ const modalDescription = computed(() => {
                             <FormLabel htmlFor="reservation-from"
                                 >Llegada desde</FormLabel
                             >
-                            <FormInput
+                            <FormDate
                                 id="reservation-from"
                                 v-model="listFilters.from"
-                                type="date"
-                                class="h-11"
+                                input-class="h-9 text-xs"
                             />
                         </div>
                         <div>
                             <FormLabel htmlFor="reservation-to"
                                 >Llegada hasta</FormLabel
                             >
-                            <FormInput
+                            <FormDate
                                 id="reservation-to"
                                 v-model="listFilters.to"
-                                type="date"
-                                class="h-11"
+                                input-class="h-9 text-xs"
                             />
                         </div>
                         <div class="flex items-end">
@@ -1776,16 +1977,16 @@ const modalDescription = computed(() => {
                                 v-if="listFiltersActive"
                                 type="button"
                                 variant="outline-secondary"
-                                class="h-11 w-full whitespace-nowrap xl:w-auto"
+                                class="h-9 w-full text-xs whitespace-nowrap xl:w-auto"
                                 @click="clearListFilters"
                             >
-                                <Lucide icon="X" class="mr-2 h-5 w-5" />
+                                <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
                                 Limpiar
                             </Button>
                         </div>
                     </div>
                 </div>
-                <div class="overflow-auto p-5 lg:overflow-visible">
+                <div class="overflow-auto p-4 lg:overflow-visible">
                     <Table v-if="filteredReservations.length" striped>
                         <Table.Thead>
                             <Table.Tr>
@@ -1803,7 +2004,6 @@ const modalDescription = computed(() => {
                             <Table.Tr
                                 v-for="r in filteredReservations"
                                 :key="r.id"
-                                class="[&>td]:py-4"
                             >
                                 <Table.Td>
                                     <div
@@ -1838,7 +2038,7 @@ const modalDescription = computed(() => {
                                             }}
                                         </span>
                                     </div>
-                                    <div class="mt-1 font-medium">
+                                    <div class="mt-1 text-sm font-medium">
                                         {{ r.guest_name ?? 'Anónimo' }}
                                     </div>
                                     <div class="text-xs text-slate-500">
@@ -1941,24 +2141,24 @@ const modalDescription = computed(() => {
                                         <Button
                                             v-if="r.status === 'pending'"
                                             variant="primary"
-                                            class="min-h-10 rounded-[0.5rem] whitespace-nowrap"
+                                            class="h-9 rounded-[0.5rem] text-xs whitespace-nowrap"
                                             @click="askConfirm(r)"
                                         >
                                             <Lucide
                                                 icon="CircleCheck"
-                                                class="mr-2 h-5 w-5"
+                                                class="mr-1.5 h-3.5 w-3.5"
                                             />
                                             Confirmar
                                         </Button>
                                         <Button
                                             v-else-if="manualCheckinAllowed"
                                             variant="outline-success"
-                                            class="min-h-10 rounded-[0.5rem] whitespace-nowrap"
+                                            class="h-9 rounded-[0.5rem] text-xs whitespace-nowrap"
                                             @click="askCheckIn(r)"
                                         >
                                             <Lucide
                                                 icon="LogIn"
-                                                class="mr-2 h-5 w-5"
+                                                class="mr-1.5 h-3.5 w-3.5"
                                             />
                                             Registrar llegada
                                         </Button>
@@ -1966,11 +2166,11 @@ const modalDescription = computed(() => {
                                         <!-- Menú de acciones secundarias -->
                                         <Menu>
                                             <Menu.Button
-                                                class="flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                                class="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
                                             >
                                                 <Lucide
                                                     icon="MoreVertical"
-                                                    class="h-5 w-5"
+                                                    class="h-4 w-4"
                                                 />
                                             </Menu.Button>
                                             <Menu.Items class="w-52">
@@ -1984,7 +2184,7 @@ const modalDescription = computed(() => {
                                                 >
                                                     <Lucide
                                                         icon="Eye"
-                                                        class="mr-2 h-4 w-4"
+                                                        class="mr-1.5 h-3.5 w-3.5"
                                                     />
                                                     Ver detalle
                                                 </Menu.Item>
@@ -1995,7 +2195,7 @@ const modalDescription = computed(() => {
                                                 >
                                                     <Lucide
                                                         icon="Pencil"
-                                                        class="mr-2 h-4 w-4"
+                                                        class="mr-1.5 h-3.5 w-3.5"
                                                     />
                                                     Editar reserva
                                                 </Menu.Item>
@@ -2008,7 +2208,7 @@ const modalDescription = computed(() => {
                                                 >
                                                     <Lucide
                                                         icon="Banknote"
-                                                        class="mr-2 h-4 w-4"
+                                                        class="mr-1.5 h-3.5 w-3.5"
                                                     />
                                                     Registrar pago
                                                 </Menu.Item>
@@ -2025,7 +2225,7 @@ const modalDescription = computed(() => {
                                                 >
                                                     <Lucide
                                                         icon="LogIn"
-                                                        class="mr-2 h-4 w-4"
+                                                        class="mr-1.5 h-3.5 w-3.5"
                                                     />
                                                     Registrar llegada
                                                 </Menu.Item>
@@ -2038,7 +2238,7 @@ const modalDescription = computed(() => {
                                                 >
                                                     <Lucide
                                                         icon="UserX"
-                                                        class="mr-2 h-4 w-4"
+                                                        class="mr-1.5 h-3.5 w-3.5"
                                                     />
                                                     El huésped no llegó
                                                 </Menu.Item>
@@ -2050,7 +2250,7 @@ const modalDescription = computed(() => {
                                                 >
                                                     <Lucide
                                                         icon="Ban"
-                                                        class="mr-2 h-4 w-4"
+                                                        class="mr-1.5 h-3.5 w-3.5"
                                                     />
                                                     Cancelar reserva
                                                 </Menu.Item>
@@ -2066,6 +2266,15 @@ const modalDescription = computed(() => {
                         class="flex flex-col items-center gap-2 py-8 text-center text-slate-500"
                     >
                         Ninguna reserva coincide con los filtros.
+                        <span class="text-xs">
+                            Esta lista solo trae las llegadas más cercanas; si
+                            la reserva es de más adelante, búscala en
+                            <Link
+                                :href="upcomingSearchHref"
+                                class="font-medium text-primary hover:underline"
+                                >todas las próximas</Link
+                            >.
+                        </span>
                         <button
                             type="button"
                             class="text-sm font-medium text-primary hover:underline"
@@ -2074,7 +2283,7 @@ const modalDescription = computed(() => {
                             Limpiar filtros
                         </button>
                     </div>
-                    <div v-else class="py-8 text-center text-slate-500">
+                    <div v-else class="py-8 text-center text-xs text-slate-500">
                         Sin reservas próximas.
                     </div>
                 </div>
@@ -2087,7 +2296,7 @@ const modalDescription = computed(() => {
                 >
                     <button
                         type="button"
-                        class="flex items-center gap-2 rounded-[0.5rem] px-4 py-1.5 text-sm font-medium transition"
+                        class="flex items-center gap-2 rounded-[0.5rem] px-3.5 py-1.5 text-xs font-medium transition"
                         :class="
                             calMode === 'month'
                                 ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
@@ -2099,7 +2308,7 @@ const modalDescription = computed(() => {
                     </button>
                     <button
                         type="button"
-                        class="flex items-center gap-2 rounded-[0.5rem] px-4 py-1.5 text-sm font-medium transition"
+                        class="flex items-center gap-2 rounded-[0.5rem] px-3.5 py-1.5 text-xs font-medium transition"
                         :class="
                             calMode === 'rooms'
                                 ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
@@ -2128,16 +2337,33 @@ const modalDescription = computed(() => {
             <!-- Huéspedes alojados (estancias activas) -->
             <div v-if="view === 'list'" class="box box--stacked mt-5">
                 <div
-                    class="flex flex-wrap items-center gap-2 border-b border-slate-200/60 px-5 py-4 font-medium dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2 border-b border-slate-200/60 px-4 py-3 text-sm font-medium dark:border-darkmode-400"
                 >
                     <Lucide icon="DoorOpen" class="h-4 w-4 text-slate-400" />
                     Huéspedes alojados ahora
                     <span
                         class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
-                        >{{ stays.length }}</span
                     >
+                        <template v-if="staysTotal > stays.length"
+                            >{{ stays.length }} de {{ staysTotal }}</template
+                        >
+                        <template v-else>{{ staysTotal }}</template>
+                    </span>
+                    <Button
+                        v-if="staysTotal > 0"
+                        :as="Link"
+                        :href="route('tenant.reservations.in-house')"
+                        variant="outline-secondary"
+                        class="ml-auto rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                    >
+                        <Lucide
+                            icon="ChevronRight"
+                            class="mr-1.5 h-3.5 w-3.5"
+                        />
+                        Ver todos
+                    </Button>
                 </div>
-                <div class="overflow-auto p-5 lg:overflow-visible">
+                <div class="overflow-auto p-4 lg:overflow-visible">
                     <Table v-if="stays.length" striped>
                         <Table.Thead>
                             <Table.Tr>
@@ -2210,7 +2436,7 @@ const modalDescription = computed(() => {
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
-                    <div v-else class="py-8 text-center text-slate-500">
+                    <div v-else class="py-8 text-center text-xs text-slate-500">
                         Ninguna habitación en uso ahora mismo.
                     </div>
                 </div>
@@ -2219,9 +2445,9 @@ const modalDescription = computed(() => {
             <!-- Historial: completadas, canceladas y huéspedes que no llegaron -->
             <div v-if="view === 'list'" class="box box--stacked mt-5">
                 <div
-                    class="flex flex-wrap items-center gap-2 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
-                    <div class="flex items-center gap-2 font-medium">
+                    <div class="flex items-center gap-2 text-sm font-medium">
                         <Lucide icon="History" class="h-4 w-4 text-slate-400" />
                         Historial
                         <span
@@ -2279,7 +2505,7 @@ const modalDescription = computed(() => {
                         </Button>
                     </div>
                 </div>
-                <div class="overflow-auto p-5 lg:overflow-visible">
+                <div class="overflow-auto p-4 lg:overflow-visible">
                     <Table v-if="history.length" striped>
                         <Table.Thead>
                             <Table.Tr>
@@ -2316,7 +2542,7 @@ const modalDescription = computed(() => {
                                     >
                                         {{ r.code }}
                                     </span>
-                                    <div class="mt-1 font-medium">
+                                    <div class="mt-1 text-sm font-medium">
                                         {{ r.guest_name ?? 'Anónimo' }}
                                     </div>
                                 </Table.Td>
@@ -2372,7 +2598,7 @@ const modalDescription = computed(() => {
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
-                    <div v-else class="py-8 text-center text-slate-500">
+                    <div v-else class="py-8 text-center text-xs text-slate-500">
                         Aún no hay historial.
                     </div>
                 </div>
@@ -2387,9 +2613,9 @@ const modalDescription = computed(() => {
         >
             <Dialog.Panel>
                 <div class="flex max-h-[85vh] flex-col">
-                    <div class="flex items-start gap-3.5 p-6 pb-4">
+                    <div class="flex items-start gap-3.5 p-5 pb-4">
                         <div
-                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
                         >
                             <Lucide icon="Trash2" class="h-7 w-7" />
                         </div>
@@ -2406,7 +2632,7 @@ const modalDescription = computed(() => {
                             </p>
                         </div>
                     </div>
-                    <div class="min-h-0 flex-1 overflow-y-auto px-6">
+                    <div class="min-h-0 flex-1 overflow-y-auto px-5">
                         <div
                             class="rounded-lg border border-dashed border-slate-300/70 dark:border-darkmode-400"
                         >
@@ -2438,22 +2664,22 @@ const modalDescription = computed(() => {
                             </div>
                         </div>
                     </div>
-                    <div class="flex justify-end gap-3 p-6 pt-5">
+                    <div class="flex justify-end gap-3 p-5 pt-5">
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="bulkDeleteOpen = false"
                             >Cancelar</Button
                         >
                         <Button
                             type="button"
                             variant="danger"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="bulkDeleting"
                             @click="bulkDeleteHistory"
                         >
-                            <Lucide icon="Trash2" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                             {{ bulkDeleting ? 'Eliminando…' : 'Sí, eliminar' }}
                         </Button>
                     </div>
@@ -2468,10 +2694,10 @@ const modalDescription = computed(() => {
             @close="confirmAction = null"
         >
             <Dialog.Panel>
-                <div v-if="confirmAction" class="p-6">
+                <div v-if="confirmAction" class="p-5">
                     <div class="flex items-start gap-3.5">
                         <div
-                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full"
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
                             :class="confirmMeta[confirmAction.kind].tone"
                         >
                             <Lucide
@@ -2518,11 +2744,11 @@ const modalDescription = computed(() => {
                                     <span class="font-medium">Ocupada</span> en
                                     el plano.
                                 </li>
-                                <li v-if="guaranteeAmount > 0">
+                                <li v-if="guaranteeDue > 0">
                                     Se cobra la
                                     <span class="font-medium">fianza</span>
-                                    de {{ money(guaranteeAmount) }}; se devuelve
-                                    al registrar la salida.
+                                    de {{ money(guaranteeDue) }}; se devuelve al
+                                    registrar la salida.
                                 </li>
                             </template>
                             <template
@@ -2611,24 +2837,82 @@ const modalDescription = computed(() => {
                     <div
                         v-if="
                             confirmAction.kind === 'check_in' &&
-                            guaranteeAmount > 0
+                            guaranteeDue > 0
                         "
                         class="mt-4 rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300"
+                            class="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300"
                         >
                             <Lucide
                                 icon="ShieldCheck"
                                 class="h-4 w-4 text-primary"
                             />
-                            Fianza: {{ money(guaranteeAmount) }}
+                            Fianza: {{ money(guaranteeDue) }}
+                            <button
+                                v-if="!guaranteeEditing"
+                                type="button"
+                                class="ml-auto text-xs font-medium text-primary hover:underline"
+                                @click="guaranteeEditing = true"
+                            >
+                                Cobrar otro monto
+                            </button>
                         </div>
                         <p class="mt-1 text-xs text-slate-500">
                             Depósito en garantía: se cobra ahora y se devuelve
                             al registrar la salida. No cuenta como pago del
                             hospedaje.
                         </p>
+
+                        <!-- Ajuste a mano: el caso real es el grupo que
+                             apartó por separado y llega junto, o el que trae
+                             menos efectivo del que pide la política. El
+                             motivo es obligatorio porque quien devuelva ese
+                             dinero días después solo va a tener esta nota. -->
+                        <div
+                            v-if="guaranteeEditing"
+                            class="mt-3 rounded-lg bg-slate-50 p-3 dark:bg-darkmode-700"
+                        >
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-xs text-slate-500"
+                                    >Cobrar</span
+                                >
+                                <span class="text-sm text-slate-500">$</span>
+                                <FormInput
+                                    v-model="guaranteeAmountInput"
+                                    type="number"
+                                    step="0.01"
+                                    min="0"
+                                    class="!w-28 text-center"
+                                />
+                                <button
+                                    type="button"
+                                    class="ml-auto text-xs font-medium text-slate-400 hover:text-slate-600"
+                                    @click="
+                                        guaranteeEditing = false;
+                                        guaranteeAmountInput = guaranteeDue;
+                                        guaranteeReason = '';
+                                    "
+                                >
+                                    Usar {{ money(guaranteeDue) }}
+                                </button>
+                            </div>
+                            <FormInput
+                                v-if="guaranteeAdjusted"
+                                v-model="guaranteeReason"
+                                type="text"
+                                maxlength="255"
+                                class="mt-2"
+                                placeholder="Motivo del ajuste (queda en el registro del pago)"
+                            />
+                            <p
+                                v-if="guaranteeAdjusted && !guaranteeReason"
+                                class="mt-1 text-xs text-danger"
+                            >
+                                Sin motivo no se puede cobrar un monto distinto
+                                al de la política.
+                            </p>
+                        </div>
                         <div class="mt-3 grid grid-cols-2 gap-2">
                             <button
                                 v-for="m in [
@@ -2645,7 +2929,7 @@ const modalDescription = computed(() => {
                                 ]"
                                 :key="m.key"
                                 type="button"
-                                class="flex min-h-11 flex-col items-center justify-center gap-1 rounded-lg border py-2 text-xs font-medium transition"
+                                class="flex h-10 flex-col items-center justify-center gap-1 rounded-lg border py-2 text-xs font-medium transition"
                                 :class="
                                     guaranteeMethod === m.key
                                         ? 'border-primary bg-primary/10 text-primary'
@@ -2871,14 +3155,14 @@ const modalDescription = computed(() => {
                     <div class="mt-6 flex justify-end gap-3">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="confirmAction = null"
                         >
                             Volver
                         </Button>
                         <Button
                             :variant="confirmMeta[confirmAction.kind].variant"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="
                                 confirmBusy ||
                                 (confirmAction.kind === 'check_out' &&
@@ -2886,13 +3170,16 @@ const modalDescription = computed(() => {
                                 (confirmAction.kind === 'check_out' &&
                                     (folio?.guarantee_refundable ?? 0) > 0 &&
                                     !guaranteeRefund &&
-                                    !guaranteeRetainReason.trim())
+                                    !guaranteeRetainReason.trim()) ||
+                                (confirmAction.kind === 'check_in' &&
+                                    guaranteeAdjusted &&
+                                    !guaranteeReason.trim())
                             "
                             @click="submitConfirmAction"
                         >
                             <Lucide
                                 :icon="confirmMeta[confirmAction.kind].icon"
-                                class="mr-2 h-5 w-5"
+                                class="mr-1.5 h-3.5 w-3.5"
                             />
                             {{
                                 confirmBusy
@@ -2912,7 +3199,11 @@ const modalDescription = computed(() => {
 
         <!-- Dinero de la reserva: abono, cobro en línea y reembolso.
              Vive en su propio componente. -->
-        <PaymentModal ref="paymentModal" @saved="reload" />
+        <PaymentModal
+            ref="paymentModal"
+            :gateway-available="gatewayAvailable"
+            @saved="reload"
+        />
 
         <!-- Modal: nueva reserva / walk-in -->
         <Dialog size="xl" :open="showCreate" @close="showCreate = false">
@@ -2923,10 +3214,10 @@ const modalDescription = computed(() => {
                 >
                     <!-- Header -->
                     <div
-                        class="flex items-center gap-4 border-b border-slate-200/70 px-6 py-5 dark:border-darkmode-400"
+                        class="flex items-center gap-4 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full"
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
                             :class="
                                 walkIn
                                     ? 'bg-warning/10 text-warning'
@@ -2948,7 +3239,7 @@ const modalDescription = computed(() => {
                             <h2 class="text-lg font-medium">
                                 {{ modalTitle }}
                             </h2>
-                            <p class="mt-1 text-sm text-slate-500">
+                            <p class="mt-0.5 text-xs text-slate-500">
                                 {{ modalDescription }}
                             </p>
                         </div>
@@ -2963,7 +3254,7 @@ const modalDescription = computed(() => {
 
                     <!-- Body -->
                     <div
-                        class="grid flex-1 grid-cols-1 gap-x-6 gap-y-6 overflow-y-auto px-6 py-6 sm:grid-cols-2 [&_input]:min-h-11 [&_select]:min-h-11 [&_svg]:stroke-[1.5]"
+                        class="grid flex-1 grid-cols-1 gap-x-6 gap-y-6 overflow-y-auto px-5 py-5 text-xs sm:grid-cols-2 [&_input:not([type=checkbox]):not([type=radio])]:h-10 [&_select]:h-10 [&_svg]:stroke-[1.5]"
                     >
                         <!-- Sección: estancia -->
                         <div
@@ -2971,7 +3262,7 @@ const modalDescription = computed(() => {
                         >
                             <Lucide
                                 icon="BedDouble"
-                                class="h-5 w-5 text-primary"
+                                class="h-4 w-4 text-primary"
                             />
                             ¿Cuándo y dónde se hospedará?
                         </div>
@@ -3014,16 +3305,9 @@ const modalDescription = computed(() => {
                                     >Llegada</FormLabel
                                 >
                                 <div class="relative">
-                                    <Lucide
-                                        icon="CalendarCheck2"
-                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                    />
-                                    <FormInput
+                                    <FormDateTime
                                         id="res-start"
                                         v-model="form.starts_at"
-                                        type="datetime-local"
-                                        lang="es-MX"
-                                        class="pl-9"
                                         @change="availability = null"
                                     />
                                 </div>
@@ -3052,16 +3336,9 @@ const modalDescription = computed(() => {
                                     </span>
                                 </FormLabel>
                                 <div class="relative">
-                                    <Lucide
-                                        icon="CalendarX2"
-                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                    />
-                                    <FormInput
+                                    <FormDateTime
                                         id="res-end"
                                         v-model="form.ends_at"
-                                        type="datetime-local"
-                                        lang="es-MX"
-                                        class="pl-9"
                                         @change="
                                             availability = null;
                                             endsAutoFilled = false;
@@ -3075,27 +3352,65 @@ const modalDescription = computed(() => {
                                 >
                             </div>
                         </template>
-                        <div v-else class="col-span-full">
-                            <FormLabel htmlFor="res-end-walkin">
-                                Salida prevista
-                                <span class="text-slate-400"
-                                    >(auto según tarifa si vacío)</span
+                        <template v-else>
+                            <!-- Entrada del walk-in: no se teclea, se dice.
+                                 El servidor sella check_in_at = now() al
+                                 registrar; el mostrador tiene que ver con qué
+                                 hora está quedando la estancia. -->
+                            <div>
+                                <FormLabel class="flex items-center gap-1.5">
+                                    Entrada
+                                    <span
+                                        class="inline-flex items-center gap-1 rounded-full bg-success/10 px-1.5 py-0.5 text-[11px] font-medium text-success"
+                                    >
+                                        <Lucide icon="Clock" class="h-3 w-3" />
+                                        ahora
+                                    </span>
+                                </FormLabel>
+                                <div
+                                    class="flex h-10 items-center gap-2 rounded-md border border-slate-200/70 bg-slate-50/70 px-3 text-sm font-medium dark:border-darkmode-400 dark:bg-darkmode-700"
                                 >
-                            </FormLabel>
-                            <div class="relative">
-                                <Lucide
-                                    icon="CalendarX2"
-                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                />
-                                <FormInput
-                                    id="res-end-walkin"
-                                    v-model="form.ends_at"
-                                    type="datetime-local"
-                                    lang="es-MX"
-                                    class="pl-9"
-                                />
+                                    <Lucide
+                                        icon="CalendarCheck2"
+                                        class="h-4 w-4 shrink-0 stroke-[1.3] text-slate-400"
+                                    />
+                                    {{ walkInArrivalLabel }}
+                                </div>
                             </div>
-                        </div>
+                            <div>
+                                <FormLabel
+                                    htmlFor="res-end-walkin"
+                                    class="flex items-center gap-1.5"
+                                >
+                                    Salida prevista
+                                    <span
+                                        v-if="endsAutoFilled && form.ends_at"
+                                        title="Calculada según la duración de la tarifa. Puedes ajustarla a mano."
+                                        class="inline-flex cursor-help items-center gap-1 rounded-full bg-primary/10 px-1.5 py-0.5 text-[11px] font-medium text-primary"
+                                    >
+                                        <Lucide
+                                            icon="Sparkles"
+                                            class="h-3 w-3"
+                                        />
+                                        auto
+                                    </span>
+                                </FormLabel>
+                                <div class="relative">
+                                    <FormDateTime
+                                        id="res-end-walkin"
+                                        v-model="form.ends_at"
+                                        @change="
+                                            availability = null;
+                                            endsAutoFilled = false;
+                                        "
+                                    />
+                                </div>
+                                <FormHelp
+                                    >Se calcula con la tarifa; ajústala si se
+                                    quedan más.</FormHelp
+                                >
+                            </div>
+                        </template>
 
                         <!-- Disponibilidad (se consulta sola) -->
                         <div
@@ -3235,7 +3550,11 @@ const modalDescription = computed(() => {
                                 class="mt-1.5 flex items-center gap-1.5 text-xs text-slate-500"
                             >
                                 <Lucide icon="PiggyBank" class="h-3.5 w-3.5" />
-                                Anticipo {{ estimate.depositPct }}%:
+                                Anticipo{{
+                                    estimate.depositPct
+                                        ? ` ${estimate.depositPct}%`
+                                        : ' (monto fijo)'
+                                }}:
                                 <span class="font-medium"
                                     >${{ estimate.deposit.toFixed(2) }}</span
                                 >
@@ -3300,7 +3619,7 @@ const modalDescription = computed(() => {
                                 >
                                     <Lucide
                                         icon="Wallet"
-                                        class="h-5 w-5 text-primary"
+                                        class="h-4 w-4 text-primary"
                                     />
                                     Cobro del hospedaje
                                 </div>
@@ -3326,15 +3645,16 @@ const modalDescription = computed(() => {
                                                 v-model="form.payment_method"
                                                 class="pl-9"
                                             >
-                                                <option value="cash">
-                                                    Efectivo
-                                                </option>
-                                                <option value="card">
-                                                    Tarjeta
-                                                </option>
-                                                <option value="transfer">
-                                                    Transferencia (comprobante a
-                                                    la vista)
+                                                <option
+                                                    v-for="m in counterMethods"
+                                                    :key="m.key"
+                                                    :value="m.key"
+                                                >
+                                                    {{
+                                                        m.key === 'transfer'
+                                                            ? 'Transferencia (comprobante a la vista)'
+                                                            : m.label
+                                                    }}
                                                 </option>
                                             </FormSelect>
                                         </div>
@@ -3378,7 +3698,10 @@ const modalDescription = computed(() => {
                             <!-- Fianza (depósito en garantía): siempre se
                                  cobra al llegar cuando el ajuste está activo -->
                             <div
-                                v-if="guaranteeAmount > 0"
+                                v-if="
+                                    guaranteeAmount > 0 &&
+                                    guaranteeMethods.length
+                                "
                                 class="col-span-full mt-2 border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
                             >
                                 <div
@@ -3386,7 +3709,7 @@ const modalDescription = computed(() => {
                                 >
                                     <Lucide
                                         icon="ShieldCheck"
-                                        class="h-5 w-5 text-primary"
+                                        class="h-4 w-4 text-primary"
                                     />
                                     Fianza: {{ money(guaranteeAmount) }}
                                 </div>
@@ -3413,11 +3736,12 @@ const modalDescription = computed(() => {
                                                 v-model="form.guarantee_method"
                                                 class="pl-9"
                                             >
-                                                <option value="cash">
-                                                    Efectivo
-                                                </option>
-                                                <option value="card">
-                                                    Tarjeta
+                                                <option
+                                                    v-for="m in guaranteeMethods"
+                                                    :key="m.key"
+                                                    :value="m.key"
+                                                >
+                                                    {{ m.label }}
                                                 </option>
                                             </FormSelect>
                                         </div>
@@ -3430,7 +3754,7 @@ const modalDescription = computed(() => {
                         <div
                             class="col-span-full mt-2 flex items-center gap-2 border-t border-slate-200/60 pt-5 text-sm font-medium text-slate-600 dark:border-darkmode-400 dark:text-slate-300"
                         >
-                            <Lucide icon="User" class="h-5 w-5 text-primary" />
+                            <Lucide icon="User" class="h-4 w-4 text-primary" />
                             Datos del huésped
                         </div>
                         <div class="col-span-full">
@@ -3699,16 +4023,7 @@ const modalDescription = computed(() => {
                                     >Llegada estimada</FormLabel
                                 >
                                 <div class="relative">
-                                    <Lucide
-                                        icon="Clock"
-                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                    />
-                                    <FormInput
-                                        id="res-eta"
-                                        v-model="form.eta"
-                                        type="time"
-                                        class="pl-9"
-                                    />
+                                    <FormTime id="res-eta" v-model="form.eta" />
                                 </div>
                                 <FormHelp
                                     v-if="errors.eta"
@@ -3734,7 +4049,7 @@ const modalDescription = computed(() => {
                                             ? 'ChevronUp'
                                             : 'Plus'
                                     "
-                                    class="mr-2 h-4 w-4"
+                                    class="mr-1.5 h-3.5 w-3.5"
                                 />
                                 {{
                                     showAdvancedReservationFields
@@ -3969,24 +4284,24 @@ const modalDescription = computed(() => {
 
                     <!-- Footer -->
                     <div
-                        class="flex items-center justify-end gap-3 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center justify-end gap-3 border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="showCreate = false"
                             >Cancelar</Button
                         >
                         <Button
                             type="submit"
                             variant="primary"
-                            class="min-h-11 px-5 shadow-md shadow-primary/20"
+                            class="h-10 px-5 text-xs shadow-md shadow-primary/20"
                             :disabled="saving || (walkIn && !form.room_id)"
                         >
                             <Lucide
                                 :icon="walkIn ? 'Zap' : 'Check'"
-                                class="mr-2 h-5 w-5"
+                                class="mr-1.5 h-3.5 w-3.5"
                             />
                             {{
                                 saving
@@ -4011,7 +4326,7 @@ const modalDescription = computed(() => {
                 class="w-full overflow-hidden rounded-[1rem_0_0_1rem/1.25rem_0_0_1.25rem] sm:w-[640px]"
             >
                 <template v-if="selectedReservation">
-                    <Slideover.Title class="px-6 py-5">
+                    <Slideover.Title class="px-5 py-4">
                         <div
                             class="flex w-full items-start justify-between gap-4"
                         >
@@ -4079,7 +4394,7 @@ const modalDescription = computed(() => {
                         </div>
                     </Slideover.Title>
 
-                    <Slideover.Description class="space-y-5 px-6 py-5">
+                    <Slideover.Description class="space-y-5 px-5 py-4">
                         <section
                             class="rounded-2xl border border-slate-200/70 bg-slate-50/70 p-4"
                         >
@@ -4141,7 +4456,7 @@ const modalDescription = computed(() => {
                                 >
                                     <Lucide
                                         icon="UserRound"
-                                        class="mr-2 h-4 w-4"
+                                        class="mr-1.5 h-3.5 w-3.5"
                                     />
                                     Ver perfil del huésped
                                 </Link>
@@ -4155,13 +4470,13 @@ const modalDescription = computed(() => {
                             <dl class="mt-3 grid grid-cols-2 gap-3 text-sm">
                                 <div class="rounded-xl bg-slate-50/80 p-3">
                                     <dt class="text-slate-500">Folio</dt>
-                                    <dd class="mt-1 font-medium">
+                                    <dd class="mt-1 text-sm font-medium">
                                         {{ selectedReservation.code }}
                                     </dd>
                                 </div>
                                 <div class="rounded-xl bg-slate-50/80 p-3">
                                     <dt class="text-slate-500">Habitación</dt>
-                                    <dd class="mt-1 font-medium">
+                                    <dd class="mt-1 text-sm font-medium">
                                         {{
                                             selectedReservation.room ??
                                             'Por asignar'
@@ -4170,7 +4485,7 @@ const modalDescription = computed(() => {
                                 </div>
                                 <div class="rounded-xl bg-slate-50/80 p-3">
                                     <dt class="text-slate-500">Tipo</dt>
-                                    <dd class="mt-1 font-medium">
+                                    <dd class="mt-1 text-sm font-medium">
                                         {{
                                             selectedReservation.room_type ?? '—'
                                         }}
@@ -4178,7 +4493,7 @@ const modalDescription = computed(() => {
                                 </div>
                                 <div class="rounded-xl bg-slate-50/80 p-3">
                                     <dt class="text-slate-500">Llegada</dt>
-                                    <dd class="mt-1 font-medium">
+                                    <dd class="mt-1 text-sm font-medium">
                                         {{ selectedReservation.starts_at }}
                                         <span
                                             v-if="selectedReservation.eta"
@@ -4190,7 +4505,7 @@ const modalDescription = computed(() => {
                                 </div>
                                 <div class="rounded-xl bg-slate-50/80 p-3">
                                     <dt class="text-slate-500">Salida</dt>
-                                    <dd class="mt-1 font-medium">
+                                    <dd class="mt-1 text-sm font-medium">
                                         {{ selectedReservation.ends_at }}
                                     </dd>
                                 </div>
@@ -4198,7 +4513,7 @@ const modalDescription = computed(() => {
                                     <dt class="text-slate-500">
                                         Tipo de estancia
                                     </dt>
-                                    <dd class="mt-1 font-medium">
+                                    <dd class="mt-1 text-sm font-medium">
                                         {{
                                             selectedReservation.rate_plan ?? '—'
                                         }}
@@ -4206,7 +4521,7 @@ const modalDescription = computed(() => {
                                 </div>
                                 <div class="rounded-xl bg-slate-50/80 p-3">
                                     <dt class="text-slate-500">Total</dt>
-                                    <dd class="mt-1 font-medium">
+                                    <dd class="mt-1 text-sm font-medium">
                                         ${{ selectedReservation.total_amount }}
                                         <span
                                             v-if="
@@ -4379,7 +4694,7 @@ const modalDescription = computed(() => {
                                     <h3 class="text-sm font-medium">
                                         Timeline
                                     </h3>
-                                    <p class="mt-1 text-sm text-slate-500">
+                                    <p class="mt-0.5 text-xs text-slate-500">
                                         Actividad reciente de la reserva.
                                     </p>
                                 </div>
@@ -4428,7 +4743,7 @@ const modalDescription = computed(() => {
                             variant="outline-primary"
                             @click="openEdit(selectedReservation)"
                         >
-                            <Lucide icon="Pencil" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Pencil" class="mr-1.5 h-3.5 w-3.5" />
                             Editar
                         </Button>
                         <Button
@@ -4436,7 +4751,10 @@ const modalDescription = computed(() => {
                             variant="outline-primary"
                             @click="askConfirm(selectedReservation)"
                         >
-                            <Lucide icon="CircleCheck" class="mr-2 h-4 w-4" />
+                            <Lucide
+                                icon="CircleCheck"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
                             Confirmar
                         </Button>
                         <Button
@@ -4444,21 +4762,21 @@ const modalDescription = computed(() => {
                             variant="primary"
                             @click="askCheckIn(selectedReservation)"
                         >
-                            <Lucide icon="LogIn" class="mr-2 h-4 w-4" />
+                            <Lucide icon="LogIn" class="mr-1.5 h-3.5 w-3.5" />
                             Registrar llegada
                         </Button>
                         <Button
                             variant="outline-warning"
                             @click="askNoShow(selectedReservation)"
                         >
-                            <Lucide icon="UserX" class="mr-2 h-4 w-4" />
+                            <Lucide icon="UserX" class="mr-1.5 h-3.5 w-3.5" />
                             No llegó
                         </Button>
                         <Button
                             variant="danger"
                             @click="askCancel(selectedReservation)"
                         >
-                            <Lucide icon="Ban" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Ban" class="mr-1.5 h-3.5 w-3.5" />
                             Cancelar
                         </Button>
                     </Slideover.Footer>

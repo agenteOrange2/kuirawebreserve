@@ -32,10 +32,10 @@ const emit = defineEmits<{
         <Dialog.Panel class="sm:w-[680px] lg:w-[860px]">
             <div class="flex max-h-[88vh] flex-col">
                 <div
-                    class="flex shrink-0 items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                    class="flex shrink-0 items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                 >
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                     >
                         <Lucide icon="Wallet" class="h-5 w-5 text-primary" />
                     </div>
@@ -52,11 +52,11 @@ const emit = defineEmits<{
                 </div>
 
                 <div
-                    class="flex shrink-0 items-center justify-end border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                    class="flex shrink-0 items-center justify-end border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                 >
                     <Button
                         variant="outline-secondary"
-                        class="rounded-[0.5rem]"
+                        class="rounded-[0.5rem] text-xs"
                         @click="emit('close')"
                         >Cerrar</Button
                     >

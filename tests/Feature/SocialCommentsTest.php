@@ -191,6 +191,56 @@ it('una queja nunca se responde sola: queda para el staff y suena la campana', f
     expect(StaffNotification::where('type', 'social')->count())->toBe(1);
 });
 
+it('queja con plantilla activada: publica el texto fijo con el nombre, sin privado, y sigue pendiente', function () {
+    Http::fake([
+        'graph.test/*/comments' => Http::response(['id' => 'reply-q1']),
+    ]);
+
+    // El hotel activa la respuesta pública de quejas con SU plantilla.
+    (new SocialSettings)->save([
+        'activo' => true,
+        'clasificaciones' => [
+            SocialComment::CLASS_COMPLAINT => [
+                'responder_publico' => true,
+                // El privado se manda como true a propósito: la regla dura
+                // debe ignorarlo aunque venga activado en el payload.
+                'mandar_privado' => true,
+                'plantilla' => 'Hola [Nombre], lamentamos tu experiencia. Escríbenos por privado para revisarlo.',
+            ],
+        ],
+    ]);
+
+    $comment = socialComment(['body' => 'No lo recomiendo, pésima atención']);
+
+    socialResponder([
+        'clasificacion' => SocialComment::CLASS_COMPLAINT,
+        'respuesta_publica' => 'Texto de la IA que NO debe publicarse',
+        'mensaje_privado' => 'Privado que NO debe mandarse',
+    ])->handle($comment->fresh(), socialLink());
+
+    $comment->refresh();
+
+    // Publica la plantilla personalizada, jamás lo que redacte la IA.
+    expect($comment->public_reply_external_id)->toBe('reply-q1')
+        ->and($comment->public_reply_text)->toBe('Hola Ana Ruiz, lamentamos tu experiencia. Escríbenos por privado para revisarlo.')
+        ->and($comment->private_reply_sent_at)->toBeNull()
+        ->and($comment->conversation_id)->toBeNull()
+        // Aunque respondió, una persona debe dar seguimiento.
+        ->and($comment->status)->toBe(SocialComment::STATUS_PENDING_STAFF);
+
+    Http::assertNotSent(fn ($request) => str_contains($request->url(), 'me/messages'));
+    expect(StaffNotification::where('type', 'social')->count())->toBe(1);
+});
+
+it('el placeholder [Nombre] se limpia cuando el comentarista no trae nombre', function () {
+    expect(SocialSettings::personalize('Hola [Nombre], gracias por escribirnos.', null))
+        ->toBe('Hola, gracias por escribirnos.')
+        ->and(SocialSettings::personalize('[Nombre] ¡Qué alegría leerte!', ''))
+        ->toBe('¡Qué alegría leerte!')
+        ->and(SocialSettings::personalize('Hola [Nombre], bienvenida.', 'Lili Rios'))
+        ->toBe('Hola Lili Rios, bienvenida.');
+});
+
 it('spam: se oculta solo si el hotel activó la moderación, y siempre queda auditado', function () {
     Http::fake(['graph.test/*' => Http::response(['success' => true])]);
 

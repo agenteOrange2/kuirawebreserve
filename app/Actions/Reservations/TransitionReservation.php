@@ -127,16 +127,29 @@ class TransitionReservation
      *                                        al registrar la llegada; null =
      *                                        sin fianza (ajuste apagado o
      *                                        check-in automático sin staff).
+     * @param  float|null  $guaranteeAmount  Monto capturado a mano en el
+     *                                       mostrador; null = el de la
+     *                                       política (con su escalón).
+     * @param  string|null  $guaranteeReason  Motivo del ajuste — obligatorio
+     *                                        si el monto difiere del de la
+     *                                        política (ver ChargeGuarantee).
      *
      * @throws NoAvailabilityException
+     * @throws \InvalidArgumentException
      */
-    public function checkIn(Reservation $reservation, ?User $user = null, array $context = [], ?string $guaranteeMethod = null): Stay
-    {
+    public function checkIn(
+        Reservation $reservation,
+        ?User $user = null,
+        array $context = [],
+        ?string $guaranteeMethod = null,
+        ?float $guaranteeAmount = null,
+        ?string $guaranteeReason = null,
+    ): Stay {
         $this->assertStatus($reservation, [ReservationStatus::Pending, ReservationStatus::Confirmed]);
 
         $wasPending = $reservation->status === ReservationStatus::Pending;
 
-        return DB::transaction(function () use ($reservation, $user, $context, $guaranteeMethod, $wasPending) {
+        return DB::transaction(function () use ($reservation, $user, $context, $guaranteeMethod, $guaranteeAmount, $guaranteeReason, $wasPending) {
             $room = Room::whereKey($reservation->room_id)->lockForUpdate()->firstOrFail();
 
             $roomState = $room->status->getMorphClass();
@@ -181,19 +194,16 @@ class TransitionReservation
             // Fianza (depósito en garantía): se cobra al registrar la
             // llegada con método presencial. Va ligada SOLO a la estancia
             // (stay_id, sin reservation_id) para no inflar paidTotal() ni
-            // el folio de hospedaje — no es ingreso, es pasivo.
-            $policy = app(\App\Services\ReservationPolicy::class);
-            if ($guaranteeMethod !== null && $policy->guaranteeEnabled()) {
-                $stay->payments()->create([
-                    'amount' => $policy->guaranteeAmount(),
-                    'method' => $guaranteeMethod,
-                    'kind' => \App\Models\Payment::KIND_GUARANTEE,
-                    'notes' => 'Fianza (depósito en garantía) cobrada al registrar la llegada',
-                    'received_by' => $user?->id,
-                    'paid_at' => now(),
-                    'created_at' => now(),
-                ]);
-            }
+            // el folio de hospedaje — no es ingreso, es pasivo. El monto lo
+            // resuelve ChargeGuarantee con el escalón de la partida.
+            app(\App\Actions\Payments\ChargeGuarantee::class)->handle(
+                $stay,
+                $guaranteeMethod,
+                $user,
+                $guaranteeAmount,
+                $guaranteeReason,
+                $reservation->partyRoomCount(),
+            );
 
             // Check-in directo desde pendiente: los tours ligados quedan firmes.
             $this->syncLinkedExperiences($reservation, \App\Models\ExperienceBooking::STATUS_CONFIRMED);

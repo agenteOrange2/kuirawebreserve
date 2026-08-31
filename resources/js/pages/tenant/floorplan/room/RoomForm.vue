@@ -130,7 +130,7 @@ function submit() {
             <Button
                 variant="primary"
                 type="submit"
-                class="min-h-11 rounded-[0.5rem]"
+                class="min-h-11 rounded-[0.5rem] text-xs"
                 :disabled="busy"
             >
                 {{ mode === 'create' ? 'Crear' : 'Guardar' }}
@@ -138,7 +138,7 @@ function submit() {
             <Button
                 variant="outline-secondary"
                 type="button"
-                class="min-h-11 rounded-[0.5rem] bg-white dark:bg-darkmode-600"
+                class="min-h-11 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
                 @click="emit('cancel')"
             >
                 Cancelar

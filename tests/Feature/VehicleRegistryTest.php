@@ -134,6 +134,51 @@ it('una placa inválida no crea ficha y la estancia queda sin vínculo', functio
         ->and(Stay::firstOrFail()->vehicle_id)->toBeNull();
 });
 
+it('la placa corta no tira marca, modelo y color: quedan en la ficha CRM del huésped', function () {
+    registerPlate([
+        'guest_name' => 'Mauricio Belmont',
+        'guest_phone' => '7775502704',
+        'vehicle_plate' => 'ABC',
+        'vehicle_brand' => 'Nissan',
+        'vehicle_model' => 'Versa',
+        'vehicle_color' => 'Blanco',
+    ]);
+
+    $guest = Guest::firstOrFail();
+
+    // Sin ficha en el registro (la placa no alcanza), pero lo estructurado
+    // aparece en los campos del editor del huésped, no perdido en una línea.
+    expect(Vehicle::count())->toBe(0)
+        ->and($guest->vehicle())->toMatchArray([
+            'plate' => 'ABC',
+            'brand' => 'Nissan',
+            'model' => 'Versa',
+            'color' => 'Blanco',
+        ]);
+});
+
+it('el mostrador no pisa el vehículo que el CRM ya tiene capturado', function () {
+    $guest = Guest::create([
+        'first_name' => 'Mauricio',
+        'phone' => '7775502704',
+        'meta' => ['vehicle' => ['plate' => 'XYZ-987-B', 'brand' => 'Chevrolet']],
+    ]);
+
+    registerPlate([
+        'guest_id' => $guest->id,
+        'vehicle_plate' => 'XYZ-987-B',
+        'vehicle_brand' => 'Nissan',
+        'vehicle_color' => 'Rojo',
+    ]);
+
+    // La primera captura manda; solo el hueco (color) se rellena.
+    expect($guest->fresh()->vehicle())->toMatchArray([
+        'plate' => 'XYZ-987-B',
+        'brand' => 'Chevrolet',
+        'color' => 'Rojo',
+    ]);
+});
+
 it('el backfill levanta el registro con lo ya capturado, sin duplicar', function () {
     // Estancias viejas con placa suelta, como las que existen en producción.
     Stay::create([
@@ -179,4 +224,34 @@ it('el backfill levanta el registro con lo ya capturado, sin duplicar', function
         ->toContain('Sedán gris')
         ->and(Vehicle::where('plate_normalized', 'GHI777')->firstOrFail()->label())
         ->toBe('Mazda 3');
+});
+
+it('reservar desde el plano guarda la ficha del carro con marca, modelo y color', function () {
+    $request = Request::create('/api/reservations', 'POST', [
+        'rate_plan_id' => test()->plan->id,
+        'room_id' => test()->room->id,
+        'starts_at' => now()->addDay()->setTime(15, 0)->format('Y-m-d H:i'),
+        'ends_at' => now()->addDay()->setTime(23, 0)->format('Y-m-d H:i'),
+        'confirmed' => true,
+        'guest_name' => 'Reserva Con Carro',
+        'guest_phone' => '6149998877',
+        'vehicle_plate' => 'JKL-456-M',
+        'vehicle_desc' => 'Nissan Versa · blanco',
+        'vehicle_brand' => 'Nissan',
+        'vehicle_model' => 'Versa',
+        'vehicle_color' => 'blanco',
+    ]);
+    $request->setUserResolver(fn () => null);
+
+    app(\App\Http\Controllers\Tenant\ReservationController::class)
+        ->store($request, app(\App\Actions\Reservations\CreateReservation::class));
+
+    $vehicle = Vehicle::where('plate_normalized', 'JKL456M')->firstOrFail();
+
+    // La reserva guarda placa y descripción; lo estructurado, la ficha.
+    expect($vehicle->brand)->toBe('Nissan')
+        ->and($vehicle->model)->toBe('Versa')
+        ->and($vehicle->color)->toBe('blanco')
+        // Y queda ligada al huésped que reservó, para reconocerlo al llegar.
+        ->and($vehicle->guest_id)->not->toBeNull();
 });

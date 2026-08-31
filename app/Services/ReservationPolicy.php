@@ -148,6 +148,39 @@ class ReservationPolicy
     }
 
     /**
+     * Formas de cobro que acepta el MOSTRADOR (efectivo, terminal, depósito
+     * recibido en recepción). Es otra cosa que PaymentMethodGate: ese rige
+     * el cobro EN LÍNEA que se le ofrece al huésped en el wizard público
+     * (pasarelas, transferencia con comprobante, "pago al llegar"), y un
+     * hotel puede tener terminal bancaria sin ninguna pasarela, o al revés.
+     *
+     * Default: las tres, que es como operaba el panel antes de existir este
+     * ajuste. Nunca devuelve vacío: sin ninguna marcada, el efectivo queda
+     * — un mostrador que no puede cobrar de ninguna forma no es un estado
+     * válido, es un candado.
+     *
+     * @return array<int, string>
+     */
+    public function counterMethods(): array
+    {
+        $saved = $this->settings()['counter_methods'] ?? null;
+
+        if (! is_array($saved)) {
+            return \App\Models\Payment::METHODS;
+        }
+
+        $methods = array_values(array_intersect(\App\Models\Payment::METHODS, $saved));
+
+        return $methods ?: ['cash'];
+    }
+
+    /** ¿La recepción puede cobrar así? */
+    public function counterMethodEnabled(string $method): bool
+    {
+        return in_array($method, $this->counterMethods(), true);
+    }
+
+    /**
      * ¿El walk-in (mostrador) se cobra al registrar la llegada? Default:
      * no — la cuenta final se cobra al registrar la salida, como siempre.
      * Con esto prendido, el modal de llegada pide el método de pago y el
@@ -245,10 +278,108 @@ class ReservationPolicy
             && $this->guaranteeAmount() > 0;
     }
 
-    /** Monto fijo de la fianza por estancia. */
+    /**
+     * Monto de la fianza de UNA habitación suelta (el caso normal). Para
+     * una reserva que trae varias, usa guaranteeAmountFor().
+     */
     public function guaranteeAmount(): float
     {
         return max(0.0, round((float) ($this->settings()['guarantee_amount'] ?? 0), 2));
+    }
+
+    /**
+     * Escalones por volumen: hay hoteles que bajan la fianza POR HABITACIÓN
+     * cuando el mismo grupo aparta varias (Real de la Sierra: $1,500 hasta
+     * dos cabañas, $1,000 cada una de ahí en adelante). Cada escalón es
+     * "desde N habitaciones, $X cada una"; sin escalones, el monto base
+     * aplica siempre.
+     *
+     * @return array<int, array{from: int, amount: float}> ordenados por `from`
+     */
+    public function guaranteeTiers(): array
+    {
+        return collect($this->settings()['guarantee_tiers'] ?? [])
+            ->map(fn ($tier) => [
+                'from' => (int) ($tier['from'] ?? 0),
+                'amount' => round((float) ($tier['amount'] ?? 0), 2),
+            ])
+            // Un escalón "desde 1" sería el monto base con otro nombre, y
+            // uno negativo no significa nada: se descartan en vez de
+            // competir con guarantee_amount.
+            ->filter(fn (array $tier) => $tier['from'] >= 2 && $tier['amount'] >= 0)
+            ->unique('from')
+            ->sortBy('from')
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Fianza POR HABITACIÓN cuando el mismo grupo aparta $rooms. Gana el
+     * escalón más alto que la cantidad alcanza; sin escalón aplicable, el
+     * monto base. Devuelve el precio unitario, no el total: la fianza se
+     * cobra una vez por estancia y cada cabaña registra su propia llegada.
+     */
+    public function guaranteeAmountFor(int $rooms = 1): float
+    {
+        $amount = $this->guaranteeAmount();
+
+        foreach ($this->guaranteeTiers() as $tier) {
+            if ($rooms >= $tier['from']) {
+                $amount = $tier['amount'];
+            }
+        }
+
+        return max(0.0, round($amount, 2));
+    }
+
+    /**
+     * Lo que el mostrador va a cobrarle a ESTA reserva, para que los
+     * modales de llegada muestren el número real y no el monto base.
+     *
+     * Sin escalones configurados el conteo de la partida no cambia nada, y
+     * este atajo se lo ahorra: las listas de reservas serializan decenas de
+     * filas y un COUNT por cada una sería un N+1 a cambio de la misma cifra.
+     */
+    public function guaranteeAmountForReservation(?\App\Models\Reservation $reservation): float
+    {
+        if (! $this->guaranteeEnabled()) {
+            return 0.0;
+        }
+
+        if ($reservation === null || $this->guaranteeTiers() === []) {
+            return $this->guaranteeAmount();
+        }
+
+        return $this->guaranteeAmountFor($reservation->partyRoomCount());
+    }
+
+    /**
+     * La fianza en palabras para el huésped: el wizard, la consulta pública
+     * y el asistente la dicen ANTES de que llegue con el dinero. Sin esto
+     * el depósito era una sorpresa en el mostrador — nadie lo veía al
+     * reservar, solo el personal en el modal de llegada.
+     *
+     * @return array{amount: float, label: string, tiers: array<int, array{from: int, amount: float}>, tiers_label: ?string}|null
+     */
+    public function guaranteePublic(): ?array
+    {
+        if (! $this->guaranteeEnabled()) {
+            return null;
+        }
+
+        $money = fn (float $amount) => '$'.number_format($amount, 2);
+        $tiers = $this->guaranteeTiers();
+
+        return [
+            'amount' => $this->guaranteeAmount(),
+            'label' => 'Al llegar se cobra un depósito en garantía de '
+                .$money($this->guaranteeAmount())
+                .' por habitación, que se te devuelve al registrar tu salida. No es parte del precio de tu estancia.',
+            'tiers' => $tiers,
+            'tiers_label' => $tiers === [] ? null : collect($tiers)
+                ->map(fn (array $tier) => 'desde '.$tier['from'].' habitaciones, '.$money($tier['amount']).' cada una')
+                ->implode('; '),
+        ];
     }
 
     /**

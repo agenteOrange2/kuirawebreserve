@@ -252,3 +252,85 @@ it('quien no ha reparado nada sí se borra', function () {
 
     expect(Technician::find($this->plomeria->id))->toBeNull();
 });
+
+/**
+ * Seguimiento del ticket sin moverle el estado: la bitácora y el contexto
+ * que la ficha necesita para no ser una lista de campos.
+ */
+it('una nota de seguimiento entra a la línea de tiempo sin tocar el estado', function () {
+    $incident = Incident::create([
+        'room_id' => $this->room->id,
+        'title' => 'Fuga en el lavabo',
+        'category' => 'plomeria',
+        'priority' => 'high',
+        'status' => Incident::STATUS_OPEN,
+        'reported_by' => $this->user->id,
+    ]);
+
+    $request = Request::create("/api/incidents/{$incident->id}/notes", 'POST', [
+        'note' => 'Pedí la refacción, llega el jueves.',
+    ]);
+    $request->setUserResolver(fn () => $this->user);
+
+    $response = app(IncidentController::class)->addNote($request, $incident);
+
+    expect($response->getStatusCode())->toBe(201)
+        ->and($incident->refresh()->status)->toBe(Incident::STATUS_OPEN);
+
+    $showRequest = Request::create("/incidencias/{$incident->id}", 'GET');
+    $showRequest->setUserResolver(fn () => $this->user);
+
+    $props = app(\App\Http\Controllers\Tenant\IncidentShowController::class)($showRequest, $incident)
+        ->toResponse($showRequest)->getOriginalContent()->getData()['page']['props'];
+
+    $note = collect($props['timeline'])->firstWhere('kind', 'note');
+
+    expect($note)->not->toBeNull()
+        ->and($note['lines'][0])->toBe('Pedí la refacción, llega el jueves.')
+        ->and($note['by'])->toBe($this->user->name);
+});
+
+it('la ficha trae el reloj del ticket y las fallas previas del cuarto', function () {
+    // Dos fallas anteriores del mismo cuarto, una del mismo tipo.
+    Incident::create([
+        'room_id' => $this->room->id,
+        'title' => 'Fuga anterior',
+        'category' => 'plomeria',
+        'priority' => 'medium',
+        'status' => Incident::STATUS_RESOLVED,
+        'reported_by' => $this->user->id,
+        'cost' => 400,
+    ]);
+    Incident::create([
+        'room_id' => $this->room->id,
+        'title' => 'Foco fundido',
+        'category' => 'electricidad',
+        'priority' => 'low',
+        'status' => Incident::STATUS_OPEN,
+        'reported_by' => $this->user->id,
+    ]);
+
+    $incident = Incident::create([
+        'room_id' => $this->room->id,
+        'title' => 'Otra fuga',
+        'category' => 'plomeria',
+        'priority' => 'high',
+        'status' => Incident::STATUS_OPEN,
+        'reported_by' => $this->user->id,
+    ]);
+
+    $request = Request::create("/incidencias/{$incident->id}", 'GET');
+    $request->setUserResolver(fn () => $this->user);
+
+    $props = app(\App\Http\Controllers\Tenant\IncidentShowController::class)($request, $incident)
+        ->toResponse($request)->getOriginalContent()->getData()['page']['props'];
+
+    // Prioridad alta = 4 horas objetivo (default de IncidentPolicy).
+    expect($props['sla']['target_hours'])->toBe(4)
+        ->and($props['sla']['percent'])->toBeLessThanOrEqual(100)
+        ->and($props['roomHistory']['total'])->toBe(2)
+        ->and($props['roomHistory']['same_category'])->toBe(1)
+        ->and($props['roomHistory']['open'])->toBe(1)
+        ->and($props['roomHistory']['spent'])->toBe(400.0)
+        ->and($props['categories'])->toHaveCount(9);
+});

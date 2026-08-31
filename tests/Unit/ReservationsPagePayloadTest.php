@@ -13,7 +13,12 @@ use Illuminate\Http\Request;
 uses(Tests\TestCase::class);
 
 beforeEach(function () {
-    $this->artisan('migrate:fresh', ['--path' => 'database/migrations/tenant']);
+    // Centrales primero: la página pregunta a PaymentMethodGate (tablas
+    // de plataforma) si el hotel puede cobrar en línea. Las del tenant se
+    // montan encima; las de nombre repetido (users, permisos) ya quedaron
+    // registradas y no se vuelven a correr.
+    $this->artisan('migrate:fresh');
+    $this->artisan('migrate', ['--path' => 'database/migrations/tenant']);
     $this->seed(TenantRolesSeeder::class);
 
     $this->user = User::factory()->create();

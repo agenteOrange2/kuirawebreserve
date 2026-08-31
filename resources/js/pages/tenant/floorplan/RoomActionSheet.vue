@@ -86,12 +86,12 @@ const busyReservation = () =>
     >
         <div
             v-if="room"
-            class="absolute inset-x-0 bottom-0 z-40 rounded-t-2xl border-t border-slate-200/70 bg-white p-4 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] sm:p-5 dark:border-darkmode-400 dark:bg-darkmode-600"
+            class="absolute inset-x-0 bottom-0 z-40 rounded-t-2xl border-t border-slate-200/70 bg-white p-4 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] sm:p-4 dark:border-darkmode-400 dark:bg-darkmode-600"
         >
             <div class="mx-auto w-full max-w-3xl">
                 <div class="flex items-start gap-3">
                     <div
-                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/10 bg-primary/10 text-primary"
                     >
                         <Lucide icon="DoorClosed" class="h-6 w-6" />
                     </div>
@@ -99,7 +99,7 @@ const busyReservation = () =>
                         <div
                             class="flex flex-wrap items-center gap-x-2 gap-y-1"
                         >
-                            <span class="text-lg font-semibold"
+                            <span class="text-base font-semibold"
                                 >Habitación {{ room.number }}</span
                             >
                             <span
@@ -107,7 +107,7 @@ const busyReservation = () =>
                                 >{{ room.label }}</span
                             >
                         </div>
-                        <p class="mt-0.5 truncate text-sm text-slate-500">
+                        <p class="mt-0.5 truncate text-xs text-slate-500">
                             <template v-if="room.active_stay?.guest_name">
                                 {{ room.active_stay.guest_name }}
                             </template>
@@ -150,7 +150,7 @@ const busyReservation = () =>
                             :variant="
                                 action.primary ? 'primary' : 'outline-primary'
                             "
-                            class="min-h-14 justify-start rounded-xl px-4 text-left"
+                            class="min-h-12 justify-start rounded-xl px-4 text-left"
                             :class="
                                 action.primary
                                     ? ''
@@ -188,11 +188,11 @@ const busyReservation = () =>
                             manualCheckinAllowed
                         "
                         variant="primary"
-                        class="min-h-14 justify-center rounded-xl"
+                        class="min-h-12 justify-center rounded-xl"
                         :disabled="busyReservation()"
                         @click="$emit('checkin')"
                     >
-                        <Lucide icon="LogIn" class="mr-2 h-5 w-5" />
+                        <Lucide icon="LogIn" class="mr-2 h-4 w-4" />
                         {{
                             busyReservation()
                                 ? 'Procesando…'
@@ -204,41 +204,41 @@ const busyReservation = () =>
                     <template v-if="room.active_stay && canManageReservations">
                         <Button
                             variant="primary"
-                            class="min-h-14 justify-center rounded-xl"
+                            class="min-h-12 justify-center rounded-xl"
                             :disabled="busyStay()"
                             @click="$emit('checkout')"
                         >
-                            <Lucide icon="LogOut" class="mr-2 h-5 w-5" />
+                            <Lucide icon="LogOut" class="mr-2 h-4 w-4" />
                             {{
                                 busyStay() ? 'Procesando…' : 'Registrar salida'
                             }}
                         </Button>
                         <Button
                             variant="outline-primary"
-                            class="min-h-14 justify-center rounded-xl bg-white dark:bg-darkmode-600"
+                            class="min-h-12 justify-center rounded-xl bg-white dark:bg-darkmode-600"
                             @click="$emit('extend')"
                         >
-                            <Lucide icon="CalendarPlus" class="mr-2 h-5 w-5" />
+                            <Lucide icon="CalendarPlus" class="mr-2 h-4 w-4" />
                             Extender
                         </Button>
                         <Button
                             variant="outline-primary"
-                            class="min-h-14 justify-center rounded-xl bg-white dark:bg-darkmode-600"
+                            class="min-h-12 justify-center rounded-xl bg-white dark:bg-darkmode-600"
                             @click="$emit('move')"
                         >
                             <Lucide
                                 icon="ArrowRightLeft"
-                                class="mr-2 h-5 w-5"
+                                class="mr-2 h-4 w-4"
                             />
                             Cambiar de cuarto
                         </Button>
                         <Button
                             v-if="canChargeConsumption"
                             variant="outline-primary"
-                            class="min-h-14 justify-center rounded-xl bg-white dark:bg-darkmode-600"
+                            class="min-h-12 justify-center rounded-xl bg-white dark:bg-darkmode-600"
                             @click="$emit('pos')"
                         >
-                            <Lucide icon="ReceiptText" class="mr-2 h-5 w-5" />
+                            <Lucide icon="ReceiptText" class="mr-2 h-4 w-4" />
                             Cargar consumo
                         </Button>
                     </template>
@@ -249,11 +249,11 @@ const busyReservation = () =>
                         v-for="transition in transitions"
                         :key="transition.status"
                         variant="outline-secondary"
-                        class="min-h-14 justify-center rounded-xl bg-white dark:bg-darkmode-600"
+                        class="min-h-12 justify-center rounded-xl bg-white dark:bg-darkmode-600"
                         :disabled="saving"
                         @click="$emit('status', transition.status)"
                     >
-                        <Lucide :icon="transition.icon" class="mr-2 h-5 w-5" />
+                        <Lucide :icon="transition.icon" class="mr-2 h-4 w-4" />
                         {{ transition.label }}
                     </Button>
 
@@ -261,10 +261,10 @@ const busyReservation = () =>
                          con historial, amenidades y todo lo demás. -->
                     <Button
                         variant="outline-secondary"
-                        class="min-h-14 justify-center rounded-xl bg-white sm:col-span-2 dark:bg-darkmode-600"
+                        class="min-h-12 justify-center rounded-xl bg-white sm:col-span-2 dark:bg-darkmode-600"
                         @click="$emit('ficha')"
                     >
-                        <Lucide icon="PanelRightOpen" class="mr-2 h-5 w-5" />
+                        <Lucide icon="PanelRightOpen" class="mr-2 h-4 w-4" />
                         Ver ficha completa
                     </Button>
                 </div>

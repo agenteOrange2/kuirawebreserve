@@ -25,6 +25,7 @@ class RatePlan extends Model
         'duration_value',
         'price',
         'deposit_percent',
+        'deposit_amount',
         'min_advance_unit',
         'min_advance_value',
         'payment_due_unit',
@@ -51,6 +52,7 @@ class RatePlan extends Model
             'cancel_penalty_percent' => 'decimal:2',
             'price' => 'decimal:2',
             'deposit_percent' => 'decimal:2',
+            'deposit_amount' => 'decimal:2',
             'active' => 'boolean',
         ];
     }
@@ -246,7 +248,13 @@ class RatePlan extends Model
     public function suggestedEnd(CarbonInterface $start): CarbonInterface
     {
         if ($this->type === RatePlanType::Night) {
-            return $start->copy()->addDay()->setTime(12, 0);
+            // La noche termina a la hora de check-out del tipo (Catálogo →
+            // Horarios, con los fallbacks de effectiveScheduleTimes), no a un
+            // 12:00 fijo: en cabañas con salida a las 11 el walk-in sugería
+            // una hora que el hotel no opera.
+            [, [$outHour, $outMinute]] = $this->roomType?->effectiveScheduleTimes() ?? [[15, 0], [12, 0]];
+
+            return $start->copy()->addDay()->setTime($outHour, $outMinute);
         }
 
         return $this->durationUnit()->addTo(
@@ -298,11 +306,13 @@ class RatePlan extends Model
     }
 
     /**
-     * Cobro anticipado (spec §2.6.3). Null = la tarifa no lo exige.
+     * Cobro anticipado (spec §2.6.3): porcentaje del total O monto fijo,
+     * excluyentes. Null en ambos = la tarifa no lo exige.
      */
     public function requiresPrepayment(): bool
     {
-        return $this->deposit_percent !== null && (float) $this->deposit_percent > 0;
+        return ($this->deposit_percent !== null && (float) $this->deposit_percent > 0)
+            || ($this->deposit_amount !== null && (float) $this->deposit_amount > 0);
     }
 
     public function depositAmountFor(float $total): ?float
@@ -311,7 +321,27 @@ class RatePlan extends Model
             return null;
         }
 
-        return round($total * (float) $this->deposit_percent / 100, 2);
+        if ($this->deposit_percent !== null && (float) $this->deposit_percent > 0) {
+            return round($total * (float) $this->deposit_percent / 100, 2);
+        }
+
+        // Monto fijo: topado al total — en estancias baratas el anticipo no
+        // puede rebasar lo que cuesta la estancia completa.
+        return round(min($total, (float) $this->deposit_amount), 2);
+    }
+
+    /** "33%" o "$1,500" — un solo texto para panel, bots y sitios. */
+    public function depositLabel(): ?string
+    {
+        if (! $this->requiresPrepayment()) {
+            return null;
+        }
+
+        if ($this->deposit_percent !== null && (float) $this->deposit_percent > 0) {
+            return rtrim(rtrim(number_format((float) $this->deposit_percent, 2), '0'), '.').'%';
+        }
+
+        return '$'.number_format((float) $this->deposit_amount, 2);
     }
 
     /**

@@ -37,10 +37,10 @@ const initial = computed<RoomFormValue>(() => ({
     <Dialog :open="open" size="lg" @close="emit('close')">
         <Dialog.Panel>
             <div
-                class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                 >
                     <Lucide icon="BedDouble" class="h-5 w-5 text-primary" />
                 </div>
@@ -53,8 +53,8 @@ const initial = computed<RoomFormValue>(() => ({
                 </div>
             </div>
 
-            <div class="px-6 py-5">
-                <p v-if="!roomTypes.length" class="text-sm text-slate-500">
+            <div class="px-5 py-4">
+                <p v-if="!roomTypes.length" class="text-xs text-slate-500">
                     Primero crea un tipo de habitación en el catálogo: una
                     habitación sin tipo no tiene tarifa que cobrar.
                 </p>

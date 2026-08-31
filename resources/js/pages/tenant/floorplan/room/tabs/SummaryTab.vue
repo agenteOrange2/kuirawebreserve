@@ -65,24 +65,24 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
 </script>
 
 <template>
-    <div class="space-y-5">
+    <div class="space-y-4">
         <section
             v-if="room.status === 'available' && canManageReservations"
-            class="rounded-2xl border border-primary/20 bg-primary/5 p-5 dark:border-primary/30 dark:bg-primary/10"
+            class="rounded-xl border border-primary/20 bg-primary/5 p-4 dark:border-primary/30 dark:bg-primary/10"
         >
             <div class="flex items-start gap-3">
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                 >
-                    <Lucide icon="MousePointerClick" class="h-5 w-5" />
+                    <Lucide icon="MousePointerClick" class="h-4 w-4" />
                 </div>
                 <div>
                     <h3
-                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
                     >
                         ¿Qué necesitas hacer?
                     </h3>
-                    <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                    <p class="mt-1 text-xs text-slate-600 dark:text-slate-300">
                         La habitación está libre. Elige cómo quieres venderla.
                     </p>
                 </div>
@@ -99,15 +99,18 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                     v-for="action in arrivalActions"
                     :key="action.key"
                     :variant="action.primary ? 'primary' : 'outline-primary'"
-                    class="h-auto min-h-14 justify-start rounded-xl px-4 py-3 text-left"
+                    class="h-auto min-h-12 justify-start rounded-lg px-3.5 py-2.5 text-left"
                     :class="
                         action.primary ? '' : 'bg-white dark:bg-darkmode-600'
                     "
                     @click="dispatchArrival(action.key, room)"
                 >
-                    <Lucide :icon="action.icon" class="mr-3 h-5 w-5 shrink-0" />
+                    <Lucide
+                        :icon="action.icon"
+                        class="mr-2.5 h-4 w-4 shrink-0"
+                    />
                     <span class="min-w-0">
-                        <span class="block font-semibold">{{
+                        <span class="block text-sm font-medium">{{
                             action.label
                         }}</span>
                         <span
@@ -126,21 +129,21 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
              capturar. Va arriba de todo porque es lo que hay que hacer. -->
         <section
             v-if="room.active_stay?.arrival_pending"
-            class="rounded-2xl border border-pending/30 bg-pending/5 p-5 dark:border-pending/30 dark:bg-pending/10"
+            class="rounded-xl border border-pending/30 bg-pending/5 p-4 dark:border-pending/30 dark:bg-pending/10"
         >
             <div class="flex items-start gap-3">
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-pending/20 bg-pending/10 text-pending"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/20 bg-pending/10 text-pending"
                 >
-                    <Lucide icon="ClipboardPen" class="h-5 w-5" />
+                    <Lucide icon="ClipboardPen" class="h-4 w-4" />
                 </div>
                 <div class="min-w-0 flex-1">
                     <h3
-                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
                     >
                         Falta capturar esta llegada
                     </h3>
-                    <p class="mt-1 text-sm text-slate-600 dark:text-slate-300">
+                    <p class="mt-1 text-xs text-slate-600 dark:text-slate-300">
                         La caseta abrió el acceso. Cuando regrese el papel,
                         anota la placa —o la identificación— y marca el cobro
                         que hizo el encargado.
@@ -149,36 +152,36 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
             </div>
             <Button
                 variant="primary"
-                class="mt-4 min-h-11 w-full justify-center rounded-[0.5rem] sm:w-auto"
+                class="mt-3 min-h-11 w-full justify-center rounded-[0.5rem] text-xs sm:w-auto"
                 @click="completeArrival(room)"
             >
-                <Lucide icon="ClipboardPen" class="mr-2 h-4 w-4" />
+                <Lucide icon="ClipboardPen" class="mr-1.5 h-3.5 w-3.5" />
                 Completar registro
             </Button>
         </section>
 
         <section
             v-if="room.active_stay"
-            class="rounded-2xl border border-primary/20 bg-primary/5 p-5 dark:border-primary/30 dark:bg-primary/10"
+            class="rounded-xl border border-primary/20 bg-primary/5 p-4 dark:border-primary/30 dark:bg-primary/10"
         >
             <div class="flex items-start justify-between gap-3">
                 <div>
                     <h3
-                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
                     >
                         Estancia activa
                     </h3>
-                    <p class="mt-1 text-lg font-semibold">
+                    <p class="mt-1 text-base font-semibold">
                         {{ room.active_stay.guest_name }}
                     </p>
-                    <p class="mt-1 text-sm text-slate-500">
+                    <p class="mt-1 text-xs text-slate-500">
                         {{ room.active_stay.rate_plan ?? 'Sin tarifa' }}
                         ·
                         {{ formatChannel(room.active_stay.channel) }}
                     </p>
                 </div>
                 <div
-                    class="rounded-xl bg-white px-3 py-2 text-right shadow-sm dark:bg-darkmode-600"
+                    class="rounded-lg bg-white px-3 py-2 text-right shadow-sm dark:bg-darkmode-600"
                 >
                     <div
                         class="text-[11px] tracking-wide text-slate-500 uppercase"
@@ -194,8 +197,10 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 </div>
             </div>
 
-            <dl class="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <div class="rounded-xl bg-white/80 p-3 dark:bg-darkmode-600/80">
+            <dl class="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <div
+                    class="rounded-xl bg-white/80 p-2.5 dark:bg-darkmode-600/80"
+                >
                     <dt class="text-slate-500">Entrada registrada</dt>
                     <dd
                         class="mt-1 font-medium text-slate-900 dark:text-slate-100"
@@ -203,7 +208,9 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         {{ room.active_stay.check_in_at ?? '—' }}
                     </dd>
                 </div>
-                <div class="rounded-xl bg-white/80 p-3 dark:bg-darkmode-600/80">
+                <div
+                    class="rounded-xl bg-white/80 p-2.5 dark:bg-darkmode-600/80"
+                >
                     <dt class="text-slate-500">Fin estimado</dt>
                     <dd
                         class="mt-1 font-medium text-slate-900 dark:text-slate-100"
@@ -211,7 +218,9 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         {{ room.active_stay.planned_end_at ?? '—' }}
                     </dd>
                 </div>
-                <div class="rounded-xl bg-white/80 p-3 dark:bg-darkmode-600/80">
+                <div
+                    class="rounded-xl bg-white/80 p-2.5 dark:bg-darkmode-600/80"
+                >
                     <dt class="text-slate-500">Hospedaje</dt>
                     <dd
                         class="mt-1 font-medium text-slate-900 dark:text-slate-100"
@@ -219,7 +228,9 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         {{ formatMoney(room.active_stay.amount) }}
                     </dd>
                 </div>
-                <div class="rounded-xl bg-white/80 p-3 dark:bg-darkmode-600/80">
+                <div
+                    class="rounded-xl bg-white/80 p-2.5 dark:bg-darkmode-600/80"
+                >
                     <dt class="text-slate-500">Consumos</dt>
                     <dd
                         class="mt-1 font-medium text-slate-900 dark:text-slate-100"
@@ -227,7 +238,9 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         {{ formatMoney(room.active_stay.consumos_total) }}
                     </dd>
                 </div>
-                <div class="rounded-xl bg-white/80 p-3 dark:bg-darkmode-600/80">
+                <div
+                    class="rounded-xl bg-white/80 p-2.5 dark:bg-darkmode-600/80"
+                >
                     <dt class="text-slate-500">Total acumulado</dt>
                     <dd
                         class="mt-1 font-medium text-slate-900 dark:text-slate-100"
@@ -274,9 +287,9 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
             <a
                 v-if="room.active_stay.vehicle_id"
                 :href="`/vehiculos/${room.active_stay.vehicle_id}`"
-                class="mt-3 inline-flex items-center gap-2 text-sm text-primary hover:underline"
+                class="mt-3 inline-flex items-center gap-2 text-xs text-primary hover:underline"
             >
-                <Lucide icon="Car" class="h-4 w-4" />
+                <Lucide icon="Car" class="h-3.5 w-3.5" />
                 Ver la ficha del vehículo
                 <span
                     v-if="room.active_stay.vehicle_plate"
@@ -289,15 +302,15 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                  en el mostrador la pregunta que sigue es "¿ya me pagó algo?". -->
             <div
                 v-if="payments.length"
-                class="mt-4 rounded-xl bg-white/80 p-4 dark:bg-darkmode-600/80"
+                class="mt-3 rounded-lg bg-white/80 p-3 dark:bg-darkmode-600/80"
             >
-                <div class="mb-2 text-xs font-medium text-slate-500">
+                <div class="mb-1.5 text-xs font-medium text-slate-500">
                     Ya pagado
                 </div>
                 <div
                     v-for="payment in payments"
                     :key="payment.id"
-                    class="flex items-center gap-3 py-1 text-sm"
+                    class="flex items-center gap-3 py-0.5 text-xs"
                 >
                     <span class="min-w-0 flex-1 truncate">
                         {{ payment.kind_label }} ·
@@ -322,7 +335,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                     room.active_stay.num_people > 0 ||
                     room.active_stay.vehicle_plate
                 "
-                class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600 dark:text-slate-300"
+                class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-300"
             >
                 <span
                     v-if="room.active_stay.num_people > 0"
@@ -330,7 +343,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 >
                     <Lucide
                         icon="Users"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                     {{ room.active_stay.num_people }}
                     {{
@@ -345,7 +358,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 >
                     <Lucide
                         icon="Car"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                     {{ room.active_stay.vehicle_plate
                     }}<template v-if="room.active_stay.vehicle_desc">
@@ -363,12 +376,12 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                     (room.active_stay.id_document_type ||
                         room.active_stay.id_document_photos.length)
                 "
-                class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-slate-600 dark:text-slate-300"
+                class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-slate-600 dark:text-slate-300"
             >
                 <span class="inline-flex items-center gap-1.5">
                     <Lucide
                         icon="IdCard"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                     Identificación:
                     {{
@@ -397,10 +410,10 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 <Button
                     v-if="canChargeConsumption"
                     variant="outline-primary"
-                    class="min-h-11 justify-center"
+                    class="min-h-11 justify-center text-xs"
                     @click="openPos(room.active_stay.id)"
                 >
-                    <Lucide icon="ReceiptText" class="mr-2 h-5 w-5" />
+                    <Lucide icon="ReceiptText" class="mr-1.5 h-3.5 w-3.5" />
                     Cargar consumo
                 </Button>
                 <Button
@@ -408,12 +421,12 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         canManageReservations && room.active_stay.reservation_id
                     "
                     variant="outline-primary"
-                    class="min-h-11 justify-center"
+                    class="min-h-11 justify-center text-xs"
                     @click="
                         openReservationDetail(room.active_stay.reservation_id)
                     "
                 >
-                    <Lucide icon="CalendarSearch" class="mr-2 h-5 w-5" />
+                    <Lucide icon="CalendarSearch" class="mr-1.5 h-3.5 w-3.5" />
                     Ver reserva
                 </Button>
                 <!-- Antes, "una noche más" o mover de cuarto a
@@ -423,29 +436,29 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 <Button
                     v-if="canManageReservations"
                     variant="outline-primary"
-                    class="min-h-11 justify-center"
+                    class="min-h-11 justify-center text-xs"
                     @click="openExtend(room)"
                 >
-                    <Lucide icon="CalendarPlus" class="mr-2 h-5 w-5" />
+                    <Lucide icon="CalendarPlus" class="mr-1.5 h-3.5 w-3.5" />
                     Extender
                 </Button>
                 <Button
                     v-if="canManageReservations"
                     variant="outline-primary"
-                    class="min-h-11 justify-center"
+                    class="min-h-11 justify-center text-xs"
                     @click="openMove(room)"
                 >
-                    <Lucide icon="ArrowRightLeft" class="mr-2 h-5 w-5" />
+                    <Lucide icon="ArrowRightLeft" class="mr-1.5 h-3.5 w-3.5" />
                     Cambiar de cuarto
                 </Button>
                 <Button
                     v-if="canManageReservations"
                     variant="primary"
-                    class="min-h-11 justify-center"
+                    class="min-h-11 justify-center text-xs"
                     :disabled="busyAction === `stay:${room.active_stay.id}`"
                     @click="requestCheckout(room)"
                 >
-                    <Lucide icon="LogOut" class="mr-2 h-5 w-5" />
+                    <Lucide icon="LogOut" class="mr-1.5 h-3.5 w-3.5" />
                     {{
                         busyAction === `stay:${room.active_stay.id}`
                             ? 'Procesando…'
@@ -457,19 +470,19 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
 
         <section
             v-if="room.upcoming_reservation"
-            class="rounded-2xl border border-info/20 bg-info/5 p-5 dark:border-info/30 dark:bg-info/10"
+            class="rounded-xl border border-info/20 bg-info/5 p-4 dark:border-info/30 dark:bg-info/10"
         >
             <div class="flex items-start justify-between gap-3">
                 <div>
                     <h3
-                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
                     >
                         Reserva próxima
                     </h3>
-                    <p class="mt-1 text-lg font-semibold">
+                    <p class="mt-1 text-base font-semibold">
                         {{ room.upcoming_reservation.guest_name }}
                     </p>
-                    <p class="mt-1 text-sm text-slate-500">
+                    <p class="mt-1 text-xs text-slate-500">
                         {{
                             room.upcoming_reservation.rate_plan ?? 'Sin tarifa'
                         }}
@@ -478,7 +491,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                     </p>
                 </div>
                 <div
-                    class="rounded-xl bg-white px-3 py-2 text-right shadow-sm dark:bg-darkmode-600"
+                    class="rounded-lg bg-white px-3 py-2 text-right shadow-sm dark:bg-darkmode-600"
                 >
                     <div
                         class="text-[11px] tracking-wide text-slate-500 uppercase"
@@ -497,8 +510,10 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 </div>
             </div>
 
-            <dl class="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <div class="rounded-xl bg-white/80 p-3 dark:bg-darkmode-600/80">
+            <dl class="mt-3 grid grid-cols-2 gap-2 text-xs">
+                <div
+                    class="rounded-xl bg-white/80 p-2.5 dark:bg-darkmode-600/80"
+                >
                     <dt class="text-slate-500">Entrada</dt>
                     <dd
                         class="mt-1 font-medium text-slate-900 dark:text-slate-100"
@@ -506,7 +521,9 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         {{ room.upcoming_reservation.starts_at }}
                     </dd>
                 </div>
-                <div class="rounded-xl bg-white/80 p-3 dark:bg-darkmode-600/80">
+                <div
+                    class="rounded-xl bg-white/80 p-2.5 dark:bg-darkmode-600/80"
+                >
                     <dt class="text-slate-500">Salida</dt>
                     <dd
                         class="mt-1 font-medium text-slate-900 dark:text-slate-100"
@@ -514,7 +531,9 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         {{ room.upcoming_reservation.ends_at }}
                     </dd>
                 </div>
-                <div class="rounded-xl bg-white/80 p-3 dark:bg-darkmode-600/80">
+                <div
+                    class="rounded-xl bg-white/80 p-2.5 dark:bg-darkmode-600/80"
+                >
                     <dt class="text-slate-500">Folio</dt>
                     <dd
                         class="mt-1 font-medium text-slate-900 dark:text-slate-100"
@@ -522,7 +541,9 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         {{ room.upcoming_reservation.code }}
                     </dd>
                 </div>
-                <div class="rounded-xl bg-white/80 p-3 dark:bg-darkmode-600/80">
+                <div
+                    class="rounded-xl bg-white/80 p-2.5 dark:bg-darkmode-600/80"
+                >
                     <dt class="text-slate-500">Monto</dt>
                     <dd
                         class="mt-1 font-medium text-slate-900 dark:text-slate-100"
@@ -542,7 +563,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         room.upcoming_reservation.children >
                         0
                 "
-                class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-slate-600 dark:text-slate-300"
+                class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-600 dark:text-slate-300"
             >
                 <span
                     v-if="room.upcoming_reservation.eta"
@@ -550,7 +571,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 >
                     <Lucide
                         icon="Clock"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                     Llegada estimada
                     {{ room.upcoming_reservation.eta }}
@@ -561,7 +582,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 >
                     <Lucide
                         icon="Car"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                     {{ room.upcoming_reservation.vehicle_plate }}
                 </span>
@@ -575,7 +596,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 >
                     <Lucide
                         icon="Users"
-                        class="h-4 w-4 shrink-0 text-slate-400"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
                     />
                     {{
                         guestCountLabel(
@@ -593,14 +614,14 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 <Button
                     v-if="manualCheckinAllowed"
                     variant="primary"
-                    class="min-h-11 justify-center"
+                    class="min-h-11 justify-center text-xs"
                     :disabled="
                         busyAction ===
                         `reservation:${room.upcoming_reservation.id}`
                     "
                     @click="checkInReservation(room)"
                 >
-                    <Lucide icon="LogIn" class="mr-2 h-5 w-5" />
+                    <Lucide icon="LogIn" class="mr-1.5 h-3.5 w-3.5" />
                     {{
                         busyAction ===
                         `reservation:${room.upcoming_reservation.id}`
@@ -610,10 +631,10 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 </Button>
                 <Button
                     variant="outline-primary"
-                    class="min-h-11 justify-center"
+                    class="min-h-11 justify-center text-xs"
                     @click="openReservationDetail(room.upcoming_reservation.id)"
                 >
-                    <Lucide icon="CalendarSearch" class="mr-2 h-5 w-5" />
+                    <Lucide icon="CalendarSearch" class="mr-1.5 h-3.5 w-3.5" />
                     Ver reserva
                 </Button>
             </div>
@@ -621,28 +642,28 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
 
         <section
             v-if="room.status === 'available'"
-            class="rounded-2xl border border-success/20 bg-success/5 p-5 dark:border-success/30 dark:bg-success/10"
+            class="rounded-xl border border-success/20 bg-success/5 p-4 dark:border-success/30 dark:bg-success/10"
         >
             <div class="flex items-start justify-between gap-3">
                 <div>
                     <h3
-                        class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                        class="text-sm font-medium text-slate-900 dark:text-slate-100"
                     >
                         Precios disponibles
                     </h3>
-                    <p class="mt-1 text-sm text-slate-500">
+                    <p class="mt-1 text-xs text-slate-500">
                         Elige según el tiempo que ocuparán la habitación.
                     </p>
                 </div>
                 <div
-                    class="rounded-xl bg-white px-4 py-3 text-right shadow-sm dark:bg-darkmode-600"
+                    class="rounded-lg bg-white px-3.5 py-2.5 text-right shadow-sm dark:bg-darkmode-600"
                 >
                     <div
                         class="text-xs font-medium tracking-wide text-slate-500 uppercase"
                     >
                         Desde
                     </div>
-                    <div class="mt-1 text-lg font-semibold text-success">
+                    <div class="mt-1 text-base font-semibold text-success">
                         {{
                             room.rate_plans.length
                                 ? formatMoney(room.rate_plans[0].price)
@@ -656,28 +677,28 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 <div
                     v-for="plan in room.rate_plans"
                     :key="plan.id"
-                    class="flex items-center justify-between gap-4 rounded-xl bg-white/90 p-4 shadow-sm dark:bg-darkmode-600/80"
+                    class="flex items-center justify-between gap-4 rounded-lg bg-white/90 p-3 shadow-sm dark:bg-darkmode-600/80"
                 >
-                    <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-2.5">
                         <div
-                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
                         >
-                            <Lucide icon="Clock" class="h-5 w-5" />
+                            <Lucide icon="Clock" class="h-4 w-4" />
                         </div>
                         <div>
                             <div
-                                class="text-base font-semibold text-slate-900 dark:text-slate-100"
+                                class="text-sm font-medium text-slate-900 dark:text-slate-100"
                             >
                                 {{ plan.name }}
                             </div>
-                            <div class="mt-0.5 text-sm text-slate-500">
+                            <div class="mt-0.5 text-xs text-slate-500">
                                 Duración:
                                 {{ plan.duration_label }}
                             </div>
                         </div>
                     </div>
                     <div
-                        class="shrink-0 text-lg font-semibold text-slate-900 dark:text-slate-100"
+                        class="shrink-0 text-sm font-semibold text-slate-900 dark:text-slate-100"
                     >
                         {{ formatMoney(plan.price) }}
                     </div>
@@ -705,12 +726,12 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 room.status === 'cleaning' ||
                 room.status === 'maintenance'
             "
-            class="rounded-2xl border border-slate-200/70 p-4 dark:border-darkmode-400"
+            class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
         >
             <h3 class="text-sm font-medium text-slate-900 dark:text-slate-100">
                 Contexto operativo
             </h3>
-            <p class="mt-2 text-sm text-slate-500">
+            <p class="mt-2 text-xs text-slate-500">
                 <span v-if="room.status === 'dirty'"
                     >La habitación está pendiente de limpieza antes de volver a
                     venderse.</span
@@ -741,14 +762,12 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
 
         <section
             v-if="canManage && room.transitions.length"
-            class="rounded-2xl border border-slate-200/70 p-4 dark:border-darkmode-400"
+            class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
         >
-            <h3
-                class="text-base font-semibold text-slate-900 dark:text-slate-100"
-            >
+            <h3 class="text-sm font-medium text-slate-900 dark:text-slate-100">
                 Limpieza y mantenimiento
             </h3>
-            <p class="mt-1 text-sm text-slate-500">
+            <p class="mt-1 text-xs text-slate-500">
                 Aquí solo vive la operación física del cuarto (limpieza y
                 mantenimiento). Reservada y ocupada se mueven solas cuando creas
                 una reserva o registras la llegada del huésped.
@@ -764,18 +783,22 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                     cancela la reserva desde "Ver reserva".
                 </span>
             </p>
-            <div class="mt-4 flex flex-col gap-2">
+            <!-- En fila y no apilados: tres botones a lo ancho de un modal de
+                 1200px eran tres barras enormes para tres acciones chicas. -->
+            <div
+                class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3"
+            >
                 <Button
                     v-for="status in room.transitions"
                     :key="status"
                     :variant="transitionMeta[status].variant"
                     :disabled="saving"
-                    class="min-h-11 w-full justify-center py-2.5"
+                    class="min-h-11 w-full justify-center text-xs"
                     @click="changeStatus(room, status)"
                 >
                     <Lucide
                         :icon="transitionMeta[status].icon"
-                        class="mr-2 h-5 w-5"
+                        class="mr-1.5 h-3.5 w-3.5"
                     />
                     {{ transitionMeta[status].label }}
                 </Button>

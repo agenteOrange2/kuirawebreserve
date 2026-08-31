@@ -3,7 +3,7 @@ import { router } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import Chart from '@/components/Base/Chart';
-import { FormInput, FormSelect } from '@/components/Base/Form';
+import { FormDate, FormSelect } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import Table from '@/components/Base/Table';
@@ -257,22 +257,19 @@ const maxRoomUses = computed(() =>
             <!-- Encabezado -->
             <div class="col-span-12">
                 <div
-                    class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                    class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
                 >
-                    <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                    <div class="flex min-w-0 items-center gap-3">
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <Lucide
-                                icon="ChartColumn"
-                                class="h-5 w-5 sm:h-7 sm:w-7"
-                            />
+                            <Lucide icon="ChartColumn" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0">
-                            <h1 class="text-lg font-medium sm:text-xl">
+                            <h1 class="text-base font-medium">
                                 Reportes de reservas
                             </h1>
-                            <p class="mt-1 text-sm text-slate-500">
+                            <p class="mt-0.5 text-xs text-slate-500">
                                 {{ property.name }}
                             </p>
                         </div>
@@ -341,27 +338,11 @@ const maxRoomUses = computed(() =>
                         class="flex flex-wrap items-center gap-2"
                     >
                         <div class="relative">
-                            <Lucide
-                                icon="Calendar"
-                                class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                            />
-                            <FormInput
-                                v-model="customFrom"
-                                type="date"
-                                class="w-40 pl-9"
-                            />
+                            <FormDate v-model="customFrom" class="w-40" />
                         </div>
                         <span class="text-slate-400">→</span>
                         <div class="relative">
-                            <Lucide
-                                icon="Calendar"
-                                class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                            />
-                            <FormInput
-                                v-model="customTo"
-                                type="date"
-                                class="w-40 pl-9"
-                            />
+                            <FormDate v-model="customTo" class="w-40" />
                         </div>
                         <Button
                             variant="outline-primary"

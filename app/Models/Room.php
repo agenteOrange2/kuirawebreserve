@@ -560,6 +560,11 @@ class Room extends Model
                 'vehicle_plate' => $upcomingReservation->vehicle_plate,
                 'adults' => $upcomingReservation->adults,
                 'children' => $upcomingReservation->children,
+                // Fianza que le toca a ESTA reserva (el escalón de su grupo,
+                // no el monto base): el plano la cobra al registrar la
+                // llegada y necesita decir la cifra correcta antes.
+                'guarantee_amount' => app(\App\Services\ReservationPolicy::class)
+                    ->guaranteeAmountForReservation($upcomingReservation),
             ] : null,
             // Bloqueos por fechas vigentes o futuros. El semáforo NO los
             // refleja (un cuarto bloqueado la semana que entra hoy sigue

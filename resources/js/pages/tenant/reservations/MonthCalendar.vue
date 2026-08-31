@@ -208,7 +208,7 @@ const weekdayLabels = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
     <div class="box box--stacked overflow-hidden">
         <!-- Controles -->
         <div
-            class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+            class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
         >
             <div class="flex items-center gap-1.5">
                 <Button

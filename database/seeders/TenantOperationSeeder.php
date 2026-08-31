@@ -14,6 +14,7 @@ use App\Models\ExperienceBooking;
 use App\Models\ExperienceSession;
 use App\Models\Extra;
 use App\Models\Guest;
+use App\Models\Housekeeper;
 use App\Models\Incident;
 use App\Models\MenuRequest;
 use App\Models\Message;
@@ -28,6 +29,7 @@ use App\Models\Reservation;
 use App\Models\ReservationGroup;
 use App\Models\Room;
 use App\Models\RoomBlock;
+use App\Models\RoomCleaning;
 use App\Models\RoomStatusLog;
 use App\Models\Shift;
 use App\Models\ShiftAssignment;
@@ -36,6 +38,7 @@ use App\Models\StaffNotification;
 use App\Models\Stay;
 use App\Models\StaySurvey;
 use App\Models\StockMovement;
+use App\Models\Technician;
 use App\Models\User;
 use App\Models\WaitlistEntry;
 use App\Services\CashCutService;
@@ -49,7 +52,8 @@ use Spatie\Activitylog\Models\Activity;
 /**
  * Operación ficticia completa para demos: staff, huéspedes, ~6 semanas de
  * reservas con pagos y encuestas, ventas POS, turnos con cortes, incidencias,
- * cupones, experiencias, grupo, lista de espera, menú digital y bandeja.
+ * camaristas con su bitácora de limpiezas, cupones, experiencias, grupo,
+ * lista de espera, menú digital y bandeja.
  *
  * Usa el catálogo de habitaciones y productos que ya exista. Cada sección
  * tiene su guard, así que re-correrlo no duplica datos (y reanuda lo que
@@ -112,6 +116,9 @@ class TenantOperationSeeder extends Seeder
         $this->seedFuture();
         $this->seedWaitlist();
         $this->seedIncidents();
+        $this->seedMaintenanceCrew();
+        $this->seedHousekeeping();
+        $this->seedCrewRoster();
         $this->seedMenuRequests();
         $this->seedMessaging();
         $this->seedStock();
@@ -174,7 +181,8 @@ class TenantOperationSeeder extends Seeder
             foreach ([['luis', 'matutino'], ['sofia', 'vespertino'], ['marta', 'matutino']] as [$who, $type]) {
                 ShiftAssignment::firstOrCreate([
                     'property_id' => $this->property->id,
-                    'user_id' => $this->staff[$who]->id,
+                    'assignable_type' => User::class,
+                    'assignable_id' => $this->staff[$who]->id,
                     'shift_type_id' => $types[$type]->id,
                     'date' => $date,
                 ], ['created_by' => $this->staff['carolina']->id]);
@@ -1457,6 +1465,345 @@ class TenantOperationSeeder extends Seeder
                 'resolution_notes' => $resolution,
             ]);
             $this->backdate($incident, $createdAt);
+        }
+    }
+
+    /**
+     * Técnicos de mantenimiento: dos de casa y dos externos. Tampoco entran
+     * al panel — viven en su propia tabla por lo mismo que las camaristas.
+     * De paso se les cuelgan las incidencias ya resueltas, que estaban sin
+     * quién las reparó ni cuánto costaron.
+     */
+    private function seedMaintenanceCrew(): void
+    {
+        if (Technician::query()->exists()) {
+            return;
+        }
+
+        $crew = [];
+
+        foreach ([
+            ['Jesús "Chuy" Barraza', '+52 614 155 3308', 'Plomería y electricidad', false, true, 'De planta. Entra de lunes a viernes por la mañana.'],
+            ['Iván Domínguez', '+52 614 287 9012', 'Mantenimiento general', false, true, 'De planta, turno vespertino.'],
+            ['Clima del Norte', '+52 614 410 2266', 'Aire acondicionado y refrigeración', true, true, 'Externo. Se le llama; no tiene rol fijo.'],
+            ['Cerrajería Delicias', '+52 614 332 7749', 'Chapas y control de acceso', true, true, 'Externo, atiende urgencias el mismo día.'],
+        ] as [$name, $phone, $specialty, $external, $active, $notes]) {
+            $crew[] = Technician::create([
+                'name' => $name,
+                'phone' => $phone,
+                'specialty' => $specialty,
+                'external' => $external,
+                'active' => $active,
+                'notes' => $notes,
+            ]);
+        }
+
+        // Las resueltas ya tuvieron que costarle algo a alguien.
+        $resolved = Incident::query()->where('status', Incident::STATUS_RESOLVED)->get();
+
+        foreach ($resolved as $index => $incident) {
+            $technician = $crew[$index % count($crew)];
+
+            $incident->forceFill([
+                'technician_id' => $technician->id,
+                // Lo externo cobra más que el de planta.
+                'cost' => $technician->external ? mt_rand(650, 2400) : mt_rand(120, 850),
+            ])->saveQuietly();
+        }
+    }
+
+    /**
+     * Rol de la semana para quienes NO tienen cuenta: camaristas y técnicos
+     * de planta. Los externos no entran al rol a propósito — se les llama
+     * cuando hace falta, no cubren turno.
+     */
+    private function seedCrewRoster(): void
+    {
+        $morning = ShiftType::query()->where('name', 'Matutino')->first();
+        $evening = ShiftType::query()->where('name', 'Vespertino')->first();
+
+        if (! $morning || ! $evening) {
+            return;
+        }
+
+        $byName = fn (string $class, string $name) => $class::query()->where('name', $name)->first();
+
+        // [clase, nombre, turno, días de la semana (0 = lunes)]
+        $plan = [
+            [Housekeeper::class, 'Rosa Elena Prieto', $morning, [0, 1, 2, 3, 4]],
+            [Housekeeper::class, 'Guadalupe Terrazas', $morning, [0, 1, 2, 3, 4]],
+            [Housekeeper::class, 'Alma Delia Ríos', $evening, [0, 1, 2, 3, 4]],
+            [Housekeeper::class, 'Norma Vázquez', $evening, [2, 3, 4, 5, 6]],
+            [Housekeeper::class, 'Brenda Carrasco', $morning, [5, 6]],
+            [Technician::class, 'Jesús "Chuy" Barraza', $morning, [0, 1, 2, 3, 4]],
+            [Technician::class, 'Iván Domínguez', $evening, [0, 1, 2, 3, 4, 5]],
+        ];
+
+        $monday = $this->today->startOfWeek();
+
+        foreach ($plan as [$class, $name, $type, $days]) {
+            $person = $byName($class, $name);
+
+            if (! $person) {
+                continue;
+            }
+
+            foreach ($days as $offset) {
+                ShiftAssignment::firstOrCreate(
+                    [
+                        'assignable_type' => $class,
+                        'assignable_id' => $person->id,
+                        'shift_type_id' => $type->id,
+                        'date' => $monday->addDays($offset)->toDateString(),
+                    ],
+                    ['property_id' => $this->property->id, 'created_by' => $this->staff['carolina']->id],
+                );
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // Limpieza: camaristas y su bitácora
+    // ------------------------------------------------------------------
+
+    /**
+     * Camaristas y tres semanas de limpiezas registradas. Las camaristas
+     * NO son usuarios del sistema (tabla aparte, no consumen el límite del
+     * plan); la supervisora sí, y por eso lleva user_id.
+     *
+     * Deja el tablero del día con trabajo real: habitaciones sucias
+     * esperando y dos limpiezas con el cronómetro corriendo.
+     */
+    private function seedHousekeeping(): void
+    {
+        if (Housekeeper::query()->exists()) {
+            return;
+        }
+
+        // [nombre, teléfono, activa, notas, ¿tiene cuenta?]
+        $people = [
+            ['Rosa Elena Prieto', '+52 614 133 8890', true, 'Turno matutino. Cinco años en la casa; es la que entrena a las nuevas.', null],
+            ['Guadalupe Terrazas', '+52 614 271 5512', true, 'Turno matutino. Pisos 1 y 2.', null],
+            ['Alma Delia Ríos', '+52 614 408 9034', true, 'Turno vespertino. Entra a las 14:00.', null],
+            ['Norma Vázquez', '+52 614 592 7761', true, 'Turno vespertino y fines de semana.', null],
+            ['Brenda Carrasco', '+52 614 316 2247', true, 'Apoyo de fin de semana y días de lleno.', null],
+            ['Marta Chávez', '+52 614 577 8841', true, 'Supervisora de piso; también entra al panel.', 'marta'],
+            ['Yolanda Sáenz', '+52 614 224 6618', false, 'Baja en julio. Su historial se conserva.', null],
+        ];
+
+        /** @var array<string, Housekeeper> $crew */
+        $crew = [];
+
+        foreach ($people as [$name, $phone, $active, $notes, $staffKey]) {
+            $crew[$name] = Housekeeper::create([
+                'name' => $name,
+                'phone' => $phone,
+                'active' => $active,
+                'notes' => $notes,
+                'user_id' => $staffKey ? $this->staff[$staffKey]->id : null,
+            ]);
+        }
+
+        $rooms = Room::query()->orderBy('number')->get()->values();
+
+        if ($rooms->isEmpty()) {
+            return;
+        }
+
+        $checklist = collect(app(\App\Services\HousekeepingChecklist::class)->tasks(onlyActive: true))
+            ->pluck('key')
+            ->all();
+
+        // Quiénes trabajan cada turno: el reparto no es al azar, así el
+        // reporte por persona se parece a una plantilla real.
+        $morning = [$crew['Rosa Elena Prieto'], $crew['Guadalupe Terrazas'], $crew['Marta Chávez']];
+        $evening = [$crew['Alma Delia Ríos'], $crew['Norma Vázquez']];
+        $weekend = [$crew['Brenda Carrasco'], $crew['Norma Vázquez'], $crew['Rosa Elena Prieto']];
+
+        // Estancias terminadas, para colgar la limpieza de salida de la
+        // estancia que de verdad la ensució: se busca la salida del MISMO
+        // día, no la última que hubo en ese cuarto — si no, el detalle
+        // mostraría un huésped que se fue tres semanas antes.
+        $stays = Stay::query()
+            ->where('status', Stay::STATUS_COMPLETED)
+            ->whereNotNull('check_out_at')
+            ->orderBy('check_out_at')
+            ->get()
+            ->groupBy('room_id');
+
+        $notes = [
+            'Se encontró todo en orden.',
+            'Faltaba una toalla; se repuso.',
+            'El huésped dejó la habitación muy limpia.',
+            'Se reportó el foco del baño a mantenimiento.',
+            'Cambio completo de blancos, la cama estaba con manchas de maquillaje.',
+            'Se ventiló media hora: olía a cigarro.',
+            null,
+            null,
+            null,
+        ];
+
+        // Tres semanas hacia atrás, sin contar hoy (hoy va aparte).
+        foreach (range(21, 1) as $daysAgo) {
+            $date = $this->today->subDays($daysAgo);
+            $isWeekend = in_array($date->dayOfWeek, [0, 6], true);
+
+            // Fin de semana pesa más: más salidas, más cuartos que hacer.
+            $howMany = $isWeekend ? mt_rand(4, 6) : mt_rand(2, 4);
+            $picked = $rooms->shuffle()->take($howMany);
+
+            foreach ($picked as $index => $room) {
+                $evening_shift = $index % 3 === 2;
+                $pool = $isWeekend ? $weekend : ($evening_shift ? $evening : $morning);
+                $housekeeper = $pool[array_rand($pool)];
+
+                // La mayoría son de salida; el retoque es del huésped que
+                // sigue adentro y la profunda cae de vez en cuando.
+                $kind = match (true) {
+                    mt_rand(1, 100) <= 12 => RoomCleaning::KIND_TOUCHUP,
+                    mt_rand(1, 100) <= 8 => RoomCleaning::KIND_DEEP,
+                    default => RoomCleaning::KIND_CHECKOUT,
+                };
+
+                $minutes = match ($kind) {
+                    RoomCleaning::KIND_TOUCHUP => mt_rand(10, 20),
+                    RoomCleaning::KIND_DEEP => mt_rand(55, 95),
+                    default => mt_rand(22, 48),
+                };
+
+                // Si ese día hubo una salida en el cuarto, la limpieza
+                // arranca poco después de ella y queda ligada.
+                $stay = $kind === RoomCleaning::KIND_CHECKOUT
+                    ? ($stays->get($room->id)?->first(fn (Stay $s) => $s->check_out_at?->isSameDay($date)))
+                    : null;
+
+                $startedAt = $stay
+                    ? CarbonImmutable::instance($stay->check_out_at)->addMinutes(mt_rand(20, 150))
+                    : $date->setTime(
+                        $evening_shift ? mt_rand(15, 19) : mt_rand(9, 13),
+                        mt_rand(0, 59),
+                    );
+
+                // Checklist casi siempre completo; a veces queda algo sin
+                // marcar, que es lo que el reporte debe poder mostrar.
+                $done = $checklist;
+                if (mt_rand(1, 100) <= 18 && count($done) > 2) {
+                    array_pop($done);
+                }
+
+                $cleaning = RoomCleaning::create([
+                    'room_id' => $room->id,
+                    'housekeeper_id' => $housekeeper->id,
+                    'stay_id' => $stay?->id,
+                    'kind' => $kind,
+                    'started_at' => $startedAt,
+                    'ended_at' => $startedAt->addMinutes($minutes),
+                    'minutes' => $minutes,
+                    'checklist' => $done,
+                    'linens' => [
+                        'sabanas' => $kind === RoomCleaning::KIND_TOUCHUP ? 0 : mt_rand(1, 2),
+                        'toallas' => mt_rand(2, 4),
+                    ],
+                    'notes' => $notes[array_rand($notes)],
+                    // La mayoría se registra desde el plano con cronómetro;
+                    // lo capturado después va como manual y con quién lo
+                    // escribió.
+                    'source' => mt_rand(1, 100) <= 25
+                        ? RoomCleaning::SOURCE_MANUAL
+                        : RoomCleaning::SOURCE_FLOORPLAN,
+                    'recorded_by' => $this->staff['marta']->id,
+                ]);
+
+                $this->backdate($cleaning, $startedAt);
+            }
+        }
+
+        $this->seedHousekeepingToday($crew, $rooms, $checklist);
+    }
+
+    /**
+     * El día de hoy: lo ya hecho, lo que se está limpiando ahorita (con el
+     * cronómetro corriendo) y las que siguen sucias esperando turno.
+     *
+     * @param  array<string, Housekeeper>  $crew
+     * @param  \Illuminate\Support\Collection<int, Room>  $rooms
+     * @param  array<int, string>  $checklist
+     */
+    private function seedHousekeepingToday(array $crew, $rooms, array $checklist): void
+    {
+        // Las de la mañana ya pasaron: la habitación pudo volver a
+        // venderse desde entonces, así que aquí cualquier cuarto sirve.
+        foreach ([[0, 'Rosa Elena Prieto', 9, 34], [1, 'Guadalupe Terrazas', 10, 27]] as [$i, $who, $hour, $minutes]) {
+            $startedAt = $this->today->setTime($hour, mt_rand(0, 40));
+            $cleaning = RoomCleaning::create([
+                'room_id' => $rooms[$i]->id,
+                'housekeeper_id' => $crew[$who]->id,
+                'kind' => RoomCleaning::KIND_CHECKOUT,
+                'started_at' => $startedAt,
+                'ended_at' => $startedAt->addMinutes($minutes),
+                'minutes' => $minutes,
+                'checklist' => $checklist,
+                'linens' => ['sabanas' => 1, 'toallas' => 3],
+                'source' => RoomCleaning::SOURCE_FLOORPLAN,
+                'recorded_by' => $this->staff['marta']->id,
+            ]);
+            $this->backdate($cleaning, $startedAt);
+        }
+
+        // Con el cronómetro corriendo. Primero las que YA están en
+        // limpieza según el semáforo (ahí el registro es lo que falta);
+        // si no alcanzan, se toma alguna disponible y se manda a limpiar.
+        $inCleaning = $rooms
+            ->filter(fn (Room $room) => $room->status->getMorphClass() === RoomStatus::Cleaning->value)
+            ->values();
+
+        $free = $rooms
+            ->filter(fn (Room $room) => $room->status->getMorphClass() === RoomStatus::Available->value)
+            ->values();
+
+        $working = [$crew['Alma Delia Ríos'], $crew['Norma Vázquez']];
+
+        foreach ([18, 41] as $slot => $agoMinutes) {
+            $room = $inCleaning[$slot] ?? $free->shift();
+
+            if (! $room) {
+                break;
+            }
+
+            $startedAt = CarbonImmutable::instance(now())->subMinutes($agoMinutes);
+
+            $cleaning = RoomCleaning::create([
+                'room_id' => $room->id,
+                'housekeeper_id' => $working[$slot]->id,
+                'kind' => RoomCleaning::KIND_CHECKOUT,
+                'started_at' => $startedAt,
+                'ended_at' => null,
+                'checklist' => [],
+                'source' => RoomCleaning::SOURCE_FLOORPLAN,
+                'recorded_by' => $this->staff['marta']->id,
+            ]);
+            $this->backdate($cleaning, $startedAt);
+
+            if ($room->status->getMorphClass() !== RoomStatus::Cleaning->value) {
+                $this->setRoomStatus($room, RoomStatus::Cleaning, 'Limpieza en curso', $startedAt, $this->staff['marta']);
+            }
+        }
+
+        // Y las que salieron y siguen esperando turno: hasta completar
+        // tres sucias en el tablero, sin tocar ocupadas ni mantenimiento.
+        $dirty = $rooms
+            ->filter(fn (Room $room) => $room->status->getMorphClass() === RoomStatus::Dirty->value)
+            ->count();
+
+        while ($dirty < 3 && $free->isNotEmpty()) {
+            $this->setRoomStatus(
+                $free->shift(),
+                RoomStatus::Dirty,
+                'Check-out',
+                CarbonImmutable::instance(now())->subMinutes(mt_rand(25, 110)),
+                $this->staff['luis'],
+            );
+            $dirty++;
         }
     }
 

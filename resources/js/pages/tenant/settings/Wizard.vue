@@ -224,65 +224,60 @@ const money = (n: number) =>
 <template>
     <RazeLayout title="Wizard de reservas">
         <div class="mt-2">
-            <!-- Header de tarjeta, mismo patrón que Usuarios: icono en
-                 círculo + título + acciones a la derecha -->
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="ShoppingBag" class="h-7 w-7" />
+                        <Lucide icon="ShoppingBag" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">Wizard de reservas</h1>
-                        <p class="mt-1 text-sm text-slate-500">
-                            Área aislada: todo lo que controla cómo se comporta
+                        <h1 class="text-base font-medium">
+                            Wizard de reservas
+                        </h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Cómo se comporta
                             <code
                                 class="rounded bg-slate-100 px-1 py-0.5 dark:bg-darkmode-400"
                                 >/reservar</code
-                            >
-                            vive aquí.
+                            >: pasos, huéspedes, pago y extras.
                         </p>
                     </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
-                    <Button
-                        as="a"
+                <div
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
+                >
+                    <!-- El volver vive con las acciones, no flotando encima
+                         de la tarjeta. -->
+                    <Link
                         :href="route('tenant.hotel-settings')"
-                        variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
                     >
-                        <Lucide
-                            icon="ArrowLeft"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
-                        />
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
                         Volver a Ajustes
-                    </Button>
+                    </Link>
                     <Button
                         as="a"
                         :href="route('tenant.reservations.settings')"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                         title="Logo, colores y modo oscuro del wizard público"
                     >
-                        <Lucide
-                            icon="Palette"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
-                        />
+                        <Lucide icon="Palette" class="mr-1.5 h-3.5 w-3.5" />
                         Apariencia
                     </Button>
                     <Button
                         as="a"
                         :href="wizardUrl"
                         target="_blank"
-                        variant="outline-primary"
-                        class="rounded-[0.5rem] bg-white"
+                        variant="primary"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                     >
                         <Lucide
                             icon="ExternalLink"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                            class="mr-1.5 h-3.5 w-3.5"
                         />
                         Ver mi wizard
                     </Button>
@@ -290,17 +285,17 @@ const money = (n: number) =>
             </div>
 
             <!-- Vista previa: así se ve el wizard hoy, con la configuración actual -->
-            <div class="box box--stacked mt-5 p-5">
+            <div class="box box--stacked mt-4 px-4 py-3">
                 <div
-                    class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                    class="mb-2.5 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                 >
-                    <Lucide icon="Eye" class="h-3.5 w-3.5" /> Así se ve tu
-                    wizard hoy
+                    <Lucide icon="Eye" class="h-3.5 w-3.5" />
+                    Así se ve tu wizard hoy
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                     <template v-for="(step, i) in previewSteps" :key="step">
                         <span
-                            class="flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary"
+                            class="flex h-7 items-center gap-1.5 rounded-full bg-primary/10 px-2.5 text-[11px] font-medium text-primary"
                         >
                             <span
                                 class="flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] text-white"
@@ -315,7 +310,7 @@ const money = (n: number) =>
                         />
                     </template>
                 </div>
-                <p class="mt-3 text-xs text-slate-500">
+                <p class="mt-2.5 text-[11px] text-slate-500">
                     <span v-if="paymentMode === 'automatic'">
                         En "Confirmación" se pide pago en línea solo si la
                         tarifa elegida tiene anticipo configurado — si no, el
@@ -336,9 +331,9 @@ const money = (n: number) =>
             <div class="mt-5 grid grid-cols-12 gap-6">
                 <!-- 1. Modalidad y huéspedes -->
                 <div class="col-span-12 xl:col-span-6">
-                    <div class="box box--stacked flex h-full flex-col p-5">
+                    <div class="box box--stacked flex h-full flex-col p-4">
                         <div
-                            class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                         >
                             <Lucide icon="Users" class="h-3.5 w-3.5" />
                             Modalidad y huéspedes
@@ -415,9 +410,9 @@ const money = (n: number) =>
 
                 <!-- 2. Pago (resumen, enlaza a donde se configura de verdad) -->
                 <div class="col-span-12 xl:col-span-6">
-                    <div class="box box--stacked flex h-full flex-col p-5">
+                    <div class="box box--stacked flex h-full flex-col p-4">
                         <div
-                            class="mb-1 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                         >
                             <Lucide icon="CreditCard" class="h-3.5 w-3.5" />
                             Pago
@@ -540,11 +535,11 @@ const money = (n: number) =>
                 <div class="col-span-12">
                     <div class="box box--stacked">
                         <div
-                            class="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                            class="flex flex-wrap items-center justify-between gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                         >
                             <div>
                                 <div
-                                    class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                    class="flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                                 >
                                     <Lucide
                                         icon="ShoppingBag"
@@ -573,7 +568,7 @@ const money = (n: number) =>
 
                         <div
                             v-if="!hasPosModule"
-                            class="flex items-center gap-2 p-5 text-sm text-slate-500"
+                            class="flex items-center gap-2 px-4 py-3 text-xs text-slate-500"
                         >
                             <Lucide
                                 icon="Blocks"
@@ -587,12 +582,12 @@ const money = (n: number) =>
                         <template v-else>
                             <div
                                 v-if="!extrasEnabled"
-                                class="p-5 text-sm text-slate-500"
+                                class="px-4 py-3 text-xs text-slate-500"
                             >
                                 El paso está apagado — actívalo arriba para
                                 curar qué productos se ofrecen.
                             </div>
-                            <div v-else class="p-5">
+                            <div v-else class="p-4">
                                 <div
                                     v-if="!products.length"
                                     class="flex flex-col items-center gap-2 py-8 text-center text-sm text-slate-500"
@@ -628,8 +623,7 @@ const money = (n: number) =>
                                         <Button
                                             v-if="canManage"
                                             variant="outline-primary"
-                                            size="sm"
-                                            class="rounded-[0.5rem] bg-white"
+                                            class="h-8 rounded-[0.5rem] bg-white text-xs"
                                             @click="openPicker"
                                         >
                                             <Lucide
@@ -685,7 +679,7 @@ const money = (n: number) =>
                                             :key="category"
                                         >
                                             <div
-                                                class="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                                class="mb-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                                             >
                                                 {{ category }}
                                             </div>
@@ -833,8 +827,7 @@ const money = (n: number) =>
                                         ? 'outline-secondary'
                                         : 'outline-primary'
                                 "
-                                size="sm"
-                                class="shrink-0 rounded-[0.5rem] bg-white"
+                                class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
                                 :disabled="busyProduct === p.id"
                                 @click="setAvailability(p, !isSelected(p.id))"
                             >

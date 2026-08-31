@@ -112,6 +112,27 @@ it('el panel genera un cobro por transferencia sin pasarela (§7.5)', function (
         ->and($data['payment_request']['checkout_url'])->toBeNull();
 });
 
+it('el panel NO cobra con una pasarela apagada: cae a transferencia', function () {
+    $reservation = reservaF3();
+    // Conectada y activa, pero el método está apagado para este hotel
+    // (caso real de cabañas, 2026-08-28: el panel ofrecía links de Stripe
+    // a un hotel que solo cobra por transferencia y en mostrador).
+    paypalLink();
+    app(\App\Services\Payments\PaymentMethodGate::class)
+        ->set((string) tenant('id'), 'paypal', false);
+
+    $response = app(ReservationController::class)->issuePayment(
+        Request::create('/x', 'POST'),
+        $reservation,
+        app(IssuePaymentRequest::class),
+    );
+
+    $data = json_decode($response->getContent(), true);
+
+    expect($data['payment_request']['method'])->toBe(PaymentRequest::METHOD_TRANSFER)
+        ->and($data['payment_request']['checkout_url'])->toBeNull();
+});
+
 it('el panel cancela un cobro pendiente (§7.5)', function () {
     $reservation = reservaF3();
     $request = app(IssuePaymentRequest::class)->handle($reservation);

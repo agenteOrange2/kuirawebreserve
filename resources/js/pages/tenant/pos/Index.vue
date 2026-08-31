@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { router } from '@inertiajs/vue3';
+import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormInput, FormSelect } from '@/components/Base/Form';
+import { FormInput, FormLabel, FormSelect } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import Table from '@/components/Base/Table';
+import type { CounterMethod } from '@/composables/useCounterMethods';
+import { useCounterMethods } from '@/composables/useCounterMethods';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
 interface PosProduct {
@@ -31,6 +34,12 @@ const props = defineProps<{
     activeStays: { id: number; label: string }[];
     // Habitación con la que llega el cajero desde el plano (/pos?stay=N).
     preselectStay: number | null;
+    stats: {
+        products: number;
+        out_of_stock: number;
+        orders_today: number;
+        sold_today: number;
+    };
     recentOrders: {
         id: number;
         total: number;
@@ -89,16 +98,18 @@ watch(
 // Si el plano mandó una habitación, se llega con ella puesta: eso es lo que
 // pidió quien tocó "Cargar consumo" ahí.
 const stayId = ref<string | number>(props.preselectStay ?? '');
-const paymentMethod = ref<'cash' | 'card' | 'transfer'>('cash');
+const paymentMethod = ref<CounterMethod>('cash');
 const paymentReference = ref('');
 const discount = ref<number | string>('');
 const discountReason = ref('');
 const tip = ref<number | string>('');
-const methods = [
-    { key: 'cash', label: 'Efectivo', icon: 'Banknote' },
-    { key: 'card', label: 'Tarjeta', icon: 'CreditCard' },
-    { key: 'transfer', label: 'Transfer.', icon: 'ArrowLeftRight' },
-] as const;
+// Formas de cobro que acepta la recepción (/ajustes/metodos-pago →
+// Políticas): sin terminal, el POS tampoco ofrece tarjeta.
+const {
+    methods,
+    first: firstMethod,
+    coerce: coerceMethod,
+} = useCounterMethods();
 const saving = ref(false);
 const error = ref<string | null>(null);
 const success = ref<string | null>(null);
@@ -114,6 +125,15 @@ const money = (n: number) =>
 
 const isOutOfStock = (p: PosProduct) =>
     p.track_stock && p.type === 'simple' && p.stock_qty <= 0;
+
+const catalogFiltered = computed(
+    () => search.value.trim() !== '' || categoryFilter.value !== '',
+);
+
+function clearCatalogFilters() {
+    search.value = '';
+    categoryFilter.value = '';
+}
 
 const filteredProducts = computed(() =>
     props.products.filter((p) => {
@@ -203,7 +223,7 @@ async function submit() {
         const { data } = await axios.post('/api/orders', {
             property_id: props.property.id,
             stay_id: stayId.value || null,
-            payment_method: paymentMethod.value,
+            payment_method: coerceMethod(paymentMethod.value),
             payment_reference: paymentReference.value || null,
             discount: discountAmount.value || null,
             discount_reason: discountReason.value || null,
@@ -261,58 +281,131 @@ async function confirmVoid() {
     <RazeLayout title="POS">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide
-                            icon="ShoppingCart"
-                            class="h-5 w-5 sm:h-7 sm:w-7"
-                        />
+                        <Lucide icon="ShoppingCart" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">
-                            Punto de venta
-                        </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Punto de venta</h1>
+                        <p class="mt-0.5 truncate text-xs text-slate-500">
                             {{ property.name }}
                         </p>
                     </div>
                 </div>
                 <div
-                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:gap-2.5"
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
                 >
                     <Button
-                        as="a"
+                        :as="Link"
                         :href="route('tenant.pos.history')"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
                         <Lucide
                             icon="Receipt"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
                         />
                         Historial
                     </Button>
                     <Button
-                        as="a"
+                        :as="Link"
                         :href="route('tenant.inventory')"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
                         <Lucide
                             icon="Package"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
                         />
                         Inventario
                     </Button>
                 </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 gap-6">
-                <!-- Productos -->
+            <!-- Cifras del turno: lo que el cajero preguntaba o iba a buscar
+                 al historial. -->
+            <div class="mt-4 grid grid-cols-12 gap-4">
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                    >
+                        <Lucide icon="Coins" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="truncate text-sm font-medium">
+                            {{ money(stats.sold_today) }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Vendido hoy
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Receipt" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.orders_today }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Ventas de hoy
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                    >
+                        <Lucide icon="Package" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.products }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Productos a la venta
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
+                        :class="
+                            stats.out_of_stock > 0
+                                ? 'border-danger/10 bg-danger/10 text-danger'
+                                : 'border-slate-200 bg-slate-100 text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-400'
+                        "
+                    >
+                        <Lucide icon="PackageX" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.out_of_stock }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Agotados
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="mt-4 grid grid-cols-12 items-start gap-5">
+                <!-- Catálogo -->
                 <div class="col-span-12 xl:col-span-7">
                     <!-- Buscador + categorías. Pegajoso: con un catálogo largo
                          la búsqueda se perdía al scrollear y había que subir
@@ -320,24 +413,36 @@ async function confirmVoid() {
                     <div
                         class="sticky top-[68px] z-20 -mx-1 px-1 pb-1 backdrop-blur"
                     >
-                        <div class="box box--stacked flex flex-col gap-2.5 p-3">
-                            <div class="relative">
-                                <Lucide
-                                    icon="Search"
-                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                />
-                                <FormInput
-                                    v-model="search"
-                                    type="text"
-                                    placeholder="Buscar producto…"
-                                    class="pl-9"
-                                />
+                        <div
+                            class="box box--stacked flex flex-col gap-2 px-3 py-2.5"
+                        >
+                            <div class="flex items-center gap-2">
+                                <div class="relative min-w-0 flex-1">
+                                    <Lucide
+                                        icon="Search"
+                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
+                                    />
+                                    <FormInput
+                                        v-model="search"
+                                        type="search"
+                                        placeholder="Buscar producto"
+                                        class="h-9 pl-9 text-xs"
+                                    />
+                                </div>
+                                <span
+                                    class="shrink-0 text-xs text-slate-500"
+                                    :title="`${filteredProducts.length} de ${products.length} productos`"
+                                >
+                                    {{ filteredProducts.length }}/{{
+                                        products.length
+                                    }}
+                                </span>
                                 <button
-                                    v-if="search"
+                                    v-if="catalogFiltered"
                                     type="button"
-                                    title="Limpiar búsqueda"
-                                    class="absolute inset-y-0 right-0 z-10 mr-2 flex w-8 items-center justify-center text-slate-400 transition hover:text-slate-600"
-                                    @click="search = ''"
+                                    title="Limpiar filtros del catálogo"
+                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                    @click="clearCatalogFilters"
                                 >
                                     <Lucide icon="X" class="h-4 w-4" />
                                 </button>
@@ -349,7 +454,7 @@ async function confirmVoid() {
                                 class="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1"
                             >
                                 <button
-                                    class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium transition"
+                                    class="h-7 shrink-0 rounded-full px-3 text-xs font-medium transition"
                                     :class="
                                         !categoryFilter
                                             ? 'bg-primary text-white'
@@ -362,7 +467,7 @@ async function confirmVoid() {
                                 <button
                                     v-for="c in categories"
                                     :key="c"
-                                    class="shrink-0 rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap transition"
+                                    class="h-7 shrink-0 rounded-full px-3 text-xs font-medium whitespace-nowrap transition"
                                     :class="
                                         categoryFilter === c
                                             ? 'bg-primary text-white'
@@ -373,13 +478,6 @@ async function confirmVoid() {
                                     {{ c }}
                                 </button>
                             </div>
-                            <p
-                                v-if="search || categoryFilter"
-                                class="text-xs text-slate-500"
-                            >
-                                {{ filteredProducts.length }} de
-                                {{ products.length }} productos
-                            </p>
                         </div>
                     </div>
 
@@ -388,18 +486,18 @@ async function confirmVoid() {
                          que en rejilla y se leen de corrido. -->
                     <div
                         v-if="filteredProducts.length"
-                        class="box box--stacked mt-4 divide-y divide-slate-100 dark:divide-darkmode-400"
+                        class="box box--stacked mt-4 divide-y divide-slate-200/60 dark:divide-darkmode-400"
                     >
                         <button
                             v-for="p in filteredProducts"
                             :key="p.id"
-                            class="flex w-full items-center gap-3.5 p-3.5 text-left transition hover:bg-slate-50 disabled:cursor-not-allowed dark:hover:bg-darkmode-600"
+                            class="flex w-full items-center gap-3 px-4 py-2.5 text-left transition hover:bg-slate-50 disabled:cursor-not-allowed dark:hover:bg-darkmode-600"
                             :disabled="isOutOfStock(p)"
                             :class="{ 'opacity-40': isOutOfStock(p) }"
                             @click="add(p)"
                         >
                             <span
-                                class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 dark:bg-darkmode-400"
+                                class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-slate-100 dark:bg-darkmode-400"
                             >
                                 <img
                                     v-if="p.photo"
@@ -409,29 +507,30 @@ async function confirmVoid() {
                                 />
                                 <span
                                     v-else
-                                    class="text-lg font-medium text-slate-300"
-                                    >{{ p.name.charAt(0).toUpperCase() }}</span
+                                    class="text-sm font-medium text-slate-300"
                                 >
+                                    {{ p.name.charAt(0).toUpperCase() }}
+                                </span>
                             </span>
 
                             <span class="min-w-0 flex-1">
                                 <span class="flex items-center gap-1.5">
-                                    <span class="truncate font-medium">{{
-                                        p.name
-                                    }}</span>
+                                    <span class="truncate text-sm font-medium">
+                                        {{ p.name }}
+                                    </span>
                                     <Lucide
                                         v-if="p.type === 'composite'"
                                         icon="ChefHat"
                                         title="Compuesto (receta)"
-                                        class="h-4 w-4 shrink-0 text-pending"
+                                        class="h-3.5 w-3.5 shrink-0 text-pending"
                                     />
                                 </span>
                                 <span
                                     class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-400"
                                 >
-                                    <span v-if="p.category">{{
-                                        p.category
-                                    }}</span>
+                                    <span v-if="p.category">
+                                        {{ p.category }}
+                                    </span>
                                     <span
                                         v-if="
                                             p.type === 'simple' && p.track_stock
@@ -453,11 +552,12 @@ async function confirmVoid() {
                             </span>
 
                             <span
-                                class="shrink-0 text-base font-medium text-primary sm:text-lg"
-                                >{{ money(Number(p.price)) }}</span
+                                class="shrink-0 text-sm font-semibold text-primary"
                             >
+                                {{ money(Number(p.price)) }}
+                            </span>
                             <span
-                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                             >
                                 <Lucide icon="Plus" class="h-4 w-4" />
                             </span>
@@ -465,260 +565,197 @@ async function confirmVoid() {
                     </div>
                     <div
                         v-else
-                        class="box box--stacked mt-4 flex flex-col items-center gap-3 py-12 text-center"
+                        class="box box--stacked mt-4 flex flex-col items-center gap-3 px-5 py-12 text-center"
                     >
                         <div
-                            class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            class="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary"
                         >
-                            <Lucide icon="Package" class="h-6 w-6" />
+                            <Lucide icon="Package" class="h-7 w-7" />
                         </div>
-                        <p class="text-sm text-slate-500">
-                            {{
-                                search || categoryFilter
-                                    ? 'Sin productos que coincidan.'
-                                    : 'Sin productos activos.'
-                            }}
-                        </p>
+                        <div>
+                            <p class="text-sm font-medium">
+                                {{
+                                    catalogFiltered
+                                        ? 'Ningún producto coincide'
+                                        : 'Sin productos activos'
+                                }}
+                            </p>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                {{
+                                    catalogFiltered
+                                        ? 'Cambia la búsqueda o vuelve a la categoría Todo.'
+                                        : 'Da de alta productos en Inventario para poder venderlos.'
+                                }}
+                            </p>
+                        </div>
                         <Button
-                            v-if="!search && !categoryFilter"
-                            as="a"
+                            v-if="catalogFiltered"
+                            variant="outline-secondary"
+                            @click="clearCatalogFilters"
+                        >
+                            <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
+                            Limpiar filtros
+                        </Button>
+                        <Button
+                            v-else
+                            :as="Link"
                             :href="route('tenant.inventory')"
                             variant="outline-primary"
-                            size="sm"
-                            class="rounded-[0.5rem]"
-                            >Ir a Inventario</Button
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
                         >
-                    </div>
-
-                    <!-- Ventas recientes -->
-                    <div class="box box--stacked mt-6">
-                        <div
-                            class="flex items-center gap-2 border-b border-slate-200/60 p-5 text-base font-medium dark:border-darkmode-400"
-                        >
-                            <Lucide
-                                icon="Receipt"
-                                class="h-4 w-4 text-slate-400"
-                            />
-                            Ventas recientes
-                        </div>
-                        <div
-                            class="divide-y divide-slate-100 dark:divide-darkmode-400"
-                        >
-                            <div
-                                v-for="o in recentOrders"
-                                :key="o.id"
-                                class="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 px-5 py-3 text-sm"
-                                :class="o.is_void ? 'opacity-60' : ''"
-                            >
-                                <div class="min-w-0 flex-1">
-                                    <span class="text-slate-400"
-                                        >#{{ o.id }}</span
-                                    >
-                                    <span
-                                        class="ml-1"
-                                        :class="o.is_void ? 'line-through' : ''"
-                                        >{{ o.summary }}</span
-                                    >
-                                    <span
-                                        v-if="o.room"
-                                        class="ml-1.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-xs text-primary"
-                                        >Hab. {{ o.room }}</span
-                                    >
-                                    <span
-                                        v-if="o.is_void"
-                                        class="ml-1.5 rounded-full bg-danger/10 px-1.5 py-0.5 text-xs text-danger"
-                                        >Cancelada</span
-                                    >
-                                    <p
-                                        v-if="o.is_void && o.void_reason"
-                                        class="mt-0.5 text-xs text-slate-400"
-                                    >
-                                        {{ o.void_reason }}
-                                    </p>
-                                </div>
-                                <div class="flex shrink-0 items-center gap-3">
-                                    <span
-                                        class="font-medium"
-                                        :class="o.is_void ? 'line-through' : ''"
-                                        >{{ money(o.total) }}</span
-                                    >
-                                    <span class="text-xs text-slate-400">{{
-                                        o.created_at
-                                    }}</span>
-                                    <button
-                                        type="button"
-                                        class="text-slate-400 transition hover:text-primary"
-                                        title="Imprimir ticket"
-                                        @click="openTicket(o.id)"
-                                    >
-                                        <Lucide
-                                            icon="Printer"
-                                            class="h-4 w-4"
-                                        />
-                                    </button>
-                                    <button
-                                        v-if="!o.is_void && !o.is_settled"
-                                        type="button"
-                                        class="text-slate-400 transition hover:text-danger"
-                                        title="Cancelar venta"
-                                        @click="askVoid(o.id)"
-                                    >
-                                        <Lucide icon="Ban" class="h-4 w-4" />
-                                    </button>
-                                </div>
-                            </div>
-                            <div
-                                v-if="!recentOrders.length"
-                                class="px-5 py-8 text-center text-sm text-slate-500"
-                            >
-                                Sin ventas aún.
-                            </div>
-                        </div>
+                            Ir a Inventario
+                        </Button>
                     </div>
                 </div>
 
-                <!-- Carrito -->
+                <!-- Cuenta -->
                 <div ref="cartSection" class="col-span-12 xl:col-span-5">
                     <div class="box box--stacked sticky top-24 flex flex-col">
                         <div
-                            class="flex items-center justify-between border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                            class="flex items-center gap-3 border-b border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
                         >
-                            <h2
-                                class="flex items-center gap-2 text-base font-medium"
+                            <div
+                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                             >
-                                <div
-                                    class="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-primary"
-                                >
-                                    <Lucide
-                                        icon="ShoppingCart"
-                                        class="h-4 w-4"
-                                    />
+                                <Lucide icon="ShoppingCart" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span class="font-medium">Cuenta</span>
+                                    <span
+                                        v-if="itemCount"
+                                        class="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
+                                    >
+                                        {{ itemCount }}
+                                    </span>
                                 </div>
-                                Cuenta
-                                <span
-                                    v-if="itemCount"
-                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
-                                    >{{ itemCount }}</span
-                                >
-                            </h2>
+                                <div class="text-xs text-slate-500">
+                                    Toca un producto para agregarlo.
+                                </div>
+                            </div>
                             <button
                                 v-if="cart.length"
                                 type="button"
-                                class="text-xs text-slate-400 hover:text-danger"
+                                class="ml-auto text-xs font-medium text-slate-400 transition hover:text-danger"
                                 @click="clearCart"
                             >
                                 Vaciar
                             </button>
                         </div>
 
-                        <div class="p-5">
+                        <!-- Renglones: con su propio scroll para que el total
+                             y el botón de cobrar nunca queden fuera de la
+                             pantalla en una cuenta larga. -->
+                        <div
+                            v-if="cart.length"
+                            class="max-h-[38vh] divide-y divide-slate-200/60 overflow-y-auto dark:divide-darkmode-400"
+                        >
                             <div
-                                v-if="cart.length"
-                                class="divide-y divide-slate-100 dark:divide-darkmode-400"
+                                v-for="line in cart"
+                                :key="line.product.id"
+                                class="flex items-center gap-2 px-4 py-2.5"
                             >
-                                <div
-                                    v-for="line in cart"
-                                    :key="line.product.id"
-                                    class="flex items-center justify-between gap-2 py-3"
-                                >
-                                    <div class="min-w-0 flex-1">
-                                        <div class="truncate font-medium">
-                                            {{ line.product.name }}
-                                        </div>
-                                        <div class="text-xs text-slate-400">
-                                            {{
-                                                money(
-                                                    Number(line.product.price),
-                                                )
-                                            }}
-                                            c/u
-                                        </div>
+                                <div class="min-w-0 flex-1">
+                                    <div class="truncate text-sm font-medium">
+                                        {{ line.product.name }}
                                     </div>
-                                    <div class="flex items-center gap-2">
-                                        <button
-                                            type="button"
-                                            title="Quitar uno"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
-                                            @click="decrease(line)"
-                                        >
-                                            <Lucide
-                                                icon="Minus"
-                                                class="h-3.5 w-3.5"
-                                            />
-                                        </button>
-                                        <span
-                                            class="w-6 text-center font-medium"
-                                            >{{ line.qty }}</span
-                                        >
-                                        <button
-                                            type="button"
-                                            title="Agregar uno"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-300 text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
-                                            @click="line.qty += 1"
-                                        >
-                                            <Lucide
-                                                icon="Plus"
-                                                class="h-3.5 w-3.5"
-                                            />
-                                        </button>
-                                        <span
-                                            class="w-20 text-right font-medium"
-                                            >{{
-                                                money(
-                                                    line.qty *
-                                                        Number(
-                                                            line.product.price,
-                                                        ),
-                                                )
-                                            }}</span
-                                        >
-                                        <!-- Quitar el renglón de un golpe: sin
-                                             esto había que picarle al menos
-                                             hasta bajarlo a cero. -->
-                                        <button
-                                            type="button"
-                                            title="Quitar de la cuenta"
-                                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                            @click="removeLine(line)"
-                                        >
-                                            <Lucide
-                                                icon="Trash2"
-                                                class="h-4 w-4"
-                                            />
-                                        </button>
+                                    <div class="text-xs text-slate-400">
+                                        {{ money(Number(line.product.price)) }}
+                                        c/u
                                     </div>
                                 </div>
+                                <div class="flex shrink-0 items-center gap-1.5">
+                                    <button
+                                        type="button"
+                                        title="Quitar uno"
+                                        class="flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
+                                        @click="decrease(line)"
+                                    >
+                                        <Lucide
+                                            icon="Minus"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                    </button>
+                                    <span
+                                        class="w-5 text-center text-sm font-medium"
+                                    >
+                                        {{ line.qty }}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        title="Agregar uno"
+                                        class="flex h-7 w-7 items-center justify-center rounded-full border border-slate-300 text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
+                                        @click="line.qty += 1"
+                                    >
+                                        <Lucide
+                                            icon="Plus"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                    </button>
+                                    <span
+                                        class="w-16 text-right text-sm font-semibold"
+                                    >
+                                        {{
+                                            money(
+                                                line.qty *
+                                                    Number(line.product.price),
+                                            )
+                                        }}
+                                    </span>
+                                    <!-- Quitar el renglón de un golpe: sin
+                                         esto había que picarle al menos hasta
+                                         bajarlo a cero. -->
+                                    <button
+                                        type="button"
+                                        title="Quitar de la cuenta"
+                                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                        @click="removeLine(line)"
+                                    >
+                                        <Lucide
+                                            icon="Trash2"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                    </button>
+                                </div>
                             </div>
+                        </div>
+                        <div
+                            v-else
+                            class="flex flex-col items-center gap-2 px-5 py-10 text-center"
+                        >
                             <div
-                                v-else
-                                class="flex flex-col items-center gap-2 py-10 text-center text-slate-400"
+                                class="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
                             >
-                                <Lucide icon="ShoppingCart" class="h-8 w-8" />
-                                <p class="text-sm">
-                                    Toca productos para agregarlos a la cuenta.
-                                </p>
+                                <Lucide icon="ShoppingCart" class="h-7 w-7" />
                             </div>
+                            <div class="text-sm font-medium">
+                                La cuenta está vacía
+                            </div>
+                            <div class="text-xs text-slate-500">
+                                Toca productos del catálogo para agregarlos.
+                            </div>
+                        </div>
 
-                            <div
-                                class="mt-3 border-t border-slate-200/60 pt-4 dark:border-darkmode-400"
-                            >
-                                <label
-                                    class="mb-1.5 block text-sm text-slate-500"
-                                    >Cargar a habitación (opcional)</label
-                                >
+                        <!-- A quién se le cobra y cómo -->
+                        <div
+                            class="space-y-3 border-t border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                        >
+                            <div>
+                                <FormLabel htmlFor="pos-stay">
+                                    Cargar a habitación
+                                </FormLabel>
                                 <div class="relative">
                                     <Lucide
                                         icon="BedDouble"
-                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
                                     />
                                     <FormSelect
                                         id="pos-stay"
                                         v-model="stayId"
-                                        class="pl-9"
+                                        class="h-9 pl-9 text-xs"
                                     >
                                         <option value="">
-                                            Venta directa (sin cargar a
-                                            habitación)
+                                            Venta directa (se cobra ahora)
                                         </option>
                                         <option
                                             v-for="s in activeStays"
@@ -732,158 +769,155 @@ async function confirmVoid() {
                             </div>
 
                             <!-- Método de pago (solo venta directa) -->
-                            <div v-if="!stayId" class="mt-3">
-                                <label
-                                    class="mb-1.5 block text-sm text-slate-500"
-                                    >Método de pago</label
+                            <div v-if="!stayId">
+                                <FormLabel htmlFor="pos-method">
+                                    Método de pago
+                                </FormLabel>
+                                <div
+                                    id="pos-method"
+                                    class="grid gap-1.5"
+                                    :class="
+                                        methods.length > 2
+                                            ? 'grid-cols-3'
+                                            : 'grid-cols-2'
+                                    "
                                 >
-                                <div class="grid grid-cols-3 gap-2">
                                     <button
                                         v-for="m in methods"
                                         :key="m.key"
                                         type="button"
-                                        class="flex flex-col items-center gap-1 rounded-lg border py-2.5 text-xs font-medium transition"
+                                        class="flex h-9 items-center justify-center gap-1.5 rounded-lg border text-xs font-medium transition"
                                         :class="
                                             paymentMethod === m.key
                                                 ? 'border-primary bg-primary/10 text-primary'
-                                                : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
+                                                : 'border-slate-200/70 bg-white text-slate-500 hover:bg-slate-50 dark:border-darkmode-400 dark:bg-darkmode-600'
                                         "
                                         @click="paymentMethod = m.key"
                                     >
                                         <Lucide
                                             :icon="m.icon"
-                                            class="h-4 w-4"
+                                            class="h-3.5 w-3.5"
                                         />
-                                        {{ m.label }}
+                                        {{ m.short }}
                                     </button>
                                 </div>
                             </div>
                             <p
                                 v-else
-                                class="mt-3 flex items-center gap-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
+                                class="flex items-center gap-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
                             >
                                 <Lucide icon="Info" class="h-4 w-4 shrink-0" />
-                                Se cargará a la habitación y se cobrará en el
+                                Se carga a la habitación y se cobra en el
                                 check-out.
                             </p>
 
                             <!-- Referencia del cobro (autorización de tarjeta
                                  o folio de transferencia) -->
-                            <div
-                                v-if="!stayId && paymentMethod !== 'cash'"
-                                class="mt-3"
-                            >
-                                <label
-                                    for="pos-reference"
-                                    class="mb-1.5 block text-sm text-slate-500"
-                                    >Referencia (opcional)</label
-                                >
+                            <div v-if="!stayId && paymentMethod !== 'cash'">
+                                <FormLabel htmlFor="pos-reference">
+                                    Referencia del cobro
+                                </FormLabel>
                                 <FormInput
                                     id="pos-reference"
                                     v-model="paymentReference"
                                     type="text"
                                     maxlength="100"
+                                    class="h-9 text-xs"
                                     placeholder="Autorización o folio"
                                 />
                             </div>
 
                             <!-- Descuento y propina -->
-                            <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                            <div class="grid gap-3 sm:grid-cols-2">
                                 <div>
-                                    <label
-                                        for="pos-discount"
-                                        class="mb-1.5 block text-sm text-slate-500"
-                                        >Descuento</label
-                                    >
+                                    <FormLabel htmlFor="pos-discount">
+                                        Descuento
+                                    </FormLabel>
                                     <FormInput
                                         id="pos-discount"
                                         v-model="discount"
                                         type="number"
                                         min="0"
                                         step="0.01"
+                                        class="h-9 text-xs"
                                         placeholder="0.00"
                                     />
                                 </div>
                                 <div>
-                                    <label
-                                        for="pos-tip"
-                                        class="mb-1.5 block text-sm text-slate-500"
-                                        >Propina</label
-                                    >
+                                    <FormLabel htmlFor="pos-tip">
+                                        Propina
+                                    </FormLabel>
                                     <FormInput
                                         id="pos-tip"
                                         v-model="tip"
                                         type="number"
                                         min="0"
                                         step="0.01"
+                                        class="h-9 text-xs"
                                         placeholder="0.00"
                                     />
                                 </div>
                             </div>
-                            <div v-if="discountAmount > 0" class="mt-3">
-                                <label
-                                    for="pos-discount-reason"
-                                    class="mb-1.5 block text-sm text-slate-500"
-                                    >Motivo del descuento</label
-                                >
+                            <div v-if="discountAmount > 0">
+                                <FormLabel htmlFor="pos-discount-reason">
+                                    Motivo del descuento
+                                </FormLabel>
                                 <FormInput
                                     id="pos-discount-reason"
                                     v-model="discountReason"
                                     type="text"
                                     maxlength="100"
-                                    placeholder="Cortesía, promoción, ajuste…"
+                                    class="h-9 text-xs"
+                                    placeholder="Cortesía, promoción, ajuste"
                                 />
                             </div>
+                        </div>
 
+                        <!-- Total y cobro: pegado abajo de la tarjeta -->
+                        <div
+                            class="border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                        >
                             <div
-                                class="mt-4 rounded-lg bg-slate-50 px-4 py-3 dark:bg-darkmode-700"
+                                v-if="discountAmount > 0 || tipAmount > 0"
+                                class="mb-2 space-y-1 border-b border-dashed border-slate-300/70 pb-2 text-xs dark:border-darkmode-400"
                             >
+                                <div class="flex justify-between">
+                                    <span class="text-slate-500">Subtotal</span>
+                                    <span>{{ money(subtotal) }}</span>
+                                </div>
                                 <div
-                                    v-if="discountAmount > 0 || tipAmount > 0"
-                                    class="mb-2 space-y-1 border-b border-slate-200/70 pb-2 text-sm dark:border-darkmode-400"
+                                    v-if="discountAmount > 0"
+                                    class="flex justify-between text-success"
                                 >
-                                    <div class="flex justify-between">
-                                        <span class="text-slate-500"
-                                            >Subtotal</span
-                                        >
-                                        <span>{{ money(subtotal) }}</span>
-                                    </div>
-                                    <div
-                                        v-if="discountAmount > 0"
-                                        class="flex justify-between text-success"
-                                    >
-                                        <span>Descuento</span>
-                                        <span
-                                            >-{{ money(discountAmount) }}</span
-                                        >
-                                    </div>
-                                    <div
-                                        v-if="tipAmount > 0"
-                                        class="flex justify-between"
-                                    >
-                                        <span class="text-slate-500"
-                                            >Propina</span
-                                        >
-                                        <span>{{ money(tipAmount) }}</span>
-                                    </div>
+                                    <span>Descuento</span>
+                                    <span>-{{ money(discountAmount) }}</span>
                                 </div>
-                                <div class="flex items-center justify-between">
-                                    <span class="text-slate-500">Total</span>
-                                    <span class="text-xl font-medium">{{
-                                        money(total)
-                                    }}</span>
+                                <div
+                                    v-if="tipAmount > 0"
+                                    class="flex justify-between"
+                                >
+                                    <span class="text-slate-500">Propina</span>
+                                    <span>{{ money(tipAmount) }}</span>
                                 </div>
+                            </div>
+                            <div class="flex items-center justify-between">
+                                <span class="text-xs text-slate-500">
+                                    Total a cobrar
+                                </span>
+                                <span class="text-lg font-semibold">
+                                    {{ money(total) }}
+                                </span>
                             </div>
 
                             <p
                                 v-if="error"
-                                class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                                class="mt-2 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
                             >
                                 {{ error }}
                             </p>
                             <div
                                 v-if="success"
-                                class="mt-3 rounded-lg bg-success/10 px-3 py-2 text-sm text-success"
+                                class="mt-2 rounded-lg bg-success/10 px-3 py-2 text-xs text-success"
                             >
                                 <p class="flex items-center gap-2">
                                     <Lucide
@@ -898,28 +932,186 @@ async function confirmVoid() {
                                     class="mt-1.5 ml-6 inline-flex items-center gap-1.5 font-medium underline underline-offset-2"
                                     @click="openTicket(lastOrderId)"
                                 >
-                                    <Lucide icon="Printer" class="h-4 w-4" />
+                                    <Lucide
+                                        icon="Printer"
+                                        class="h-3.5 w-3.5"
+                                    />
                                     Imprimir ticket
                                 </button>
                             </div>
 
                             <Button
-                                class="mt-4 w-full rounded-[0.5rem] shadow-md shadow-primary/20"
+                                class="mt-3 h-10 w-full rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                                 variant="primary"
                                 :disabled="saving || !cart.length"
                                 @click="submit"
                             >
                                 <Lucide
                                     icon="CreditCard"
-                                    class="mr-2 h-4 w-4"
+                                    class="mr-1.5 h-3.5 w-3.5"
                                 />
                                 {{
                                     saving
-                                        ? 'Registrando…'
+                                        ? 'Registrando...'
                                         : `Cobrar ${money(total)}`
                                 }}
                             </Button>
                         </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ventas recientes: a lo ancho y DEBAJO de las dos columnas.
+                 Antes vivían al final del catálogo, así que había que
+                 recorrerlo entero para ver la última venta. -->
+            <div class="box box--stacked mt-4">
+                <div
+                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                >
+                    <div class="flex items-center gap-2 text-sm font-medium">
+                        <Lucide icon="Receipt" class="h-4 w-4 text-slate-400" />
+                        Ventas recientes
+                        <span
+                            class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
+                        >
+                            {{ recentOrders.length }}
+                        </span>
+                    </div>
+                    <Link
+                        :href="route('tenant.pos.history')"
+                        class="ml-auto text-xs font-medium text-primary hover:underline"
+                    >
+                        Ver el historial completo
+                    </Link>
+                </div>
+
+                <div v-if="recentOrders.length" class="overflow-auto">
+                    <Table sm hover class="text-xs">
+                        <Table.Thead>
+                            <Table.Tr>
+                                <Table.Th class="whitespace-nowrap">
+                                    Venta
+                                </Table.Th>
+                                <Table.Th>Detalle</Table.Th>
+                                <Table.Th class="whitespace-nowrap">
+                                    Cargo
+                                </Table.Th>
+                                <Table.Th class="text-right whitespace-nowrap">
+                                    Total
+                                </Table.Th>
+                                <Table.Th class="text-right whitespace-nowrap">
+                                    Acciones
+                                </Table.Th>
+                            </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                            <Table.Tr
+                                v-for="o in recentOrders"
+                                :key="o.id"
+                                :class="o.is_void ? 'opacity-60' : ''"
+                            >
+                                <Table.Td class="whitespace-nowrap">
+                                    <div class="text-sm font-medium">
+                                        #{{ o.id }}
+                                    </div>
+                                    <div class="text-slate-500">
+                                        {{ o.created_at }}
+                                    </div>
+                                </Table.Td>
+                                <Table.Td>
+                                    <p
+                                        class="line-clamp-2 max-w-96 text-slate-600 dark:text-slate-300"
+                                        :class="o.is_void ? 'line-through' : ''"
+                                        :title="o.summary"
+                                    >
+                                        {{ o.summary }}
+                                    </p>
+                                    <p
+                                        v-if="o.is_void && o.void_reason"
+                                        class="mt-0.5 text-slate-400"
+                                    >
+                                        {{ o.void_reason }}
+                                    </p>
+                                </Table.Td>
+                                <Table.Td class="whitespace-nowrap">
+                                    <span
+                                        v-if="o.is_void"
+                                        class="inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
+                                    >
+                                        <Lucide
+                                            icon="Ban"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        Cancelada
+                                    </span>
+                                    <span
+                                        v-else-if="o.room"
+                                        class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                                    >
+                                        <Lucide
+                                            icon="BedDouble"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        Hab. {{ o.room }}
+                                    </span>
+                                    <span v-else class="text-slate-400">
+                                        Venta directa
+                                    </span>
+                                </Table.Td>
+                                <Table.Td
+                                    class="text-right font-semibold whitespace-nowrap"
+                                    :class="o.is_void ? 'line-through' : ''"
+                                >
+                                    {{ money(o.total) }}
+                                </Table.Td>
+                                <Table.Td class="text-right whitespace-nowrap">
+                                    <div
+                                        class="flex items-center justify-end gap-1.5"
+                                    >
+                                        <button
+                                            type="button"
+                                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                            title="Imprimir ticket"
+                                            @click="openTicket(o.id)"
+                                        >
+                                            <Lucide
+                                                icon="Printer"
+                                                class="h-3.5 w-3.5"
+                                            />
+                                        </button>
+                                        <button
+                                            v-if="!o.is_void && !o.is_settled"
+                                            type="button"
+                                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 hover:text-danger dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                            title="Cancelar venta"
+                                            @click="askVoid(o.id)"
+                                        >
+                                            <Lucide
+                                                icon="Ban"
+                                                class="h-3.5 w-3.5"
+                                            />
+                                        </button>
+                                    </div>
+                                </Table.Td>
+                            </Table.Tr>
+                        </Table.Tbody>
+                    </Table>
+                </div>
+
+                <div
+                    v-else
+                    class="flex flex-col items-center gap-3 px-5 py-12 text-center"
+                >
+                    <div
+                        class="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
+                    >
+                        <Lucide icon="Receipt" class="h-7 w-7" />
+                    </div>
+                    <div>
+                        <p class="text-sm font-medium">Sin ventas todavía</p>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Las últimas diez aparecen aquí en cuanto cobres.
+                        </p>
                     </div>
                 </div>
             </div>
@@ -931,36 +1123,35 @@ async function confirmVoid() {
                     <div class="text-center">
                         <Lucide
                             icon="Ban"
-                            class="mx-auto mb-3 h-12 w-12 text-danger"
+                            class="mx-auto mb-3 h-10 w-10 text-danger"
                         />
                         <h2 class="text-base font-medium">
                             ¿Cancelar la venta #{{ voidingId }}?
                         </h2>
-                        <p class="mt-2 text-sm text-slate-500">
+                        <p class="mt-2 text-xs text-slate-500">
                             Lo vendido regresa al inventario y la venta deja de
                             contar en el corte de caja. Queda registrada como
                             cancelada, no se borra.
                         </p>
                     </div>
 
-                    <div class="mt-4">
-                        <label
-                            for="pos-void-reason"
-                            class="mb-1.5 block text-sm text-slate-500"
-                            >Motivo (opcional)</label
-                        >
+                    <div class="mt-4 text-left">
+                        <FormLabel htmlFor="pos-void-reason">
+                            Motivo (opcional)
+                        </FormLabel>
                         <FormInput
                             id="pos-void-reason"
                             v-model="voidReason"
                             type="text"
                             maxlength="255"
-                            placeholder="Se cobró de más, el cliente devolvió…"
+                            class="h-9 text-xs"
+                            placeholder="Se cobró de más, el cliente devolvió"
                         />
                     </div>
 
                     <p
                         v-if="voidError"
-                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
                     >
                         {{ voidError }}
                     </p>
@@ -968,19 +1159,19 @@ async function confirmVoid() {
                     <div class="mt-5 flex justify-center gap-2">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11"
+                            class="h-9 rounded-[0.5rem] px-4 text-xs"
                             @click="voidingId = null"
-                            >Volver</Button
                         >
+                            Volver
+                        </Button>
                         <Button
                             variant="danger"
-                            class="min-h-11"
+                            class="h-9 rounded-[0.5rem] px-4 text-xs"
                             :disabled="voidBusy"
                             @click="confirmVoid"
-                            >{{
-                                voidBusy ? 'Cancelando…' : 'Sí, cancelar'
-                            }}</Button
                         >
+                            {{ voidBusy ? 'Cancelando...' : 'Sí, cancelar' }}
+                        </Button>
                     </div>
                 </div>
             </Dialog.Panel>

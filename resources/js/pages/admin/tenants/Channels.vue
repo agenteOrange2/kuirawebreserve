@@ -55,6 +55,14 @@ interface TiktokRow {
     active: boolean;
     last_event_at: string | null;
 }
+interface MetaAppInfo {
+    app_id: string;
+    name: string | null;
+    masked_app_secret: string;
+    masked_ig_app_secret: string;
+    login_config_id: string | null;
+    updated_at: string | null;
+}
 const props = defineProps<{
     tenant: TenantShell;
     plans: PlanOption[];
@@ -68,10 +76,122 @@ const props = defineProps<{
         verify_token: string;
         app_configured: boolean;
     };
+    metaApp: MetaAppInfo | null;
+    platformAppId: string;
+    /** Catálogo de canales que la plataforma puede habilitar por hotel. */
+    channelCatalog: { key: string; label: string }[];
+    channelsAllowed: string[];
 }>();
 
 const toast = useToasts();
 const saving = ref(false);
+
+// ── Qué canales puede conectar el hotel desde SU panel ──
+// El panel del hotel (/asistente) ofrecía los cuatro a todos; aquí se
+// decide cuáles ve. Un canal ya conectado sigue visible aunque se apague.
+const allowedChannels = ref<string[]>([...props.channelsAllowed]);
+const savingChannels = ref(false);
+
+async function toggleAllowedChannel(key: string) {
+    const next = allowedChannels.value.includes(key)
+        ? allowedChannels.value.filter((c) => c !== key)
+        : [...allowedChannels.value, key];
+
+    const previous = allowedChannels.value;
+    allowedChannels.value = next;
+    savingChannels.value = true;
+
+    try {
+        await axios.patch(route('admin.ai.tenants.update', props.tenant.id), {
+            channels_allowed: next,
+        });
+        toast.success(
+            'Canales actualizados',
+            'El hotel verá en su panel solo los canales habilitados.',
+        );
+    } catch {
+        allowedChannels.value = previous;
+        toast.error('Error', 'No se pudo guardar la lista de canales.');
+    } finally {
+        savingChannels.value = false;
+    }
+}
+
+// ── App de Meta propia del hotel (separación de apps por tenant) ──
+const showAppForm = ref(false);
+const savingApp = ref(false);
+const confirmAppRemoval = ref(false);
+const appError = ref<string | null>(null);
+const appForm = reactive({
+    app_id: '',
+    app_secret: '',
+    ig_app_secret: '',
+    login_config_id: '',
+    name: '',
+});
+
+function openAppForm() {
+    appForm.app_id = props.metaApp?.app_id ?? '';
+    appForm.app_secret = '';
+    appForm.ig_app_secret = '';
+    appForm.login_config_id = props.metaApp?.login_config_id ?? '';
+    appForm.name = props.metaApp?.name ?? '';
+    appError.value = null;
+    showAppForm.value = true;
+}
+
+async function submitApp() {
+    savingApp.value = true;
+    appError.value = null;
+    try {
+        await axios.put(
+            route('admin.tenants.meta-app.update', props.tenant.id),
+            {
+                app_id: appForm.app_id,
+                app_secret: appForm.app_secret || null,
+                ig_app_secret: appForm.ig_app_secret || null,
+                login_config_id: appForm.login_config_id || null,
+                name: appForm.name || null,
+            },
+        );
+        toast.success(
+            'App de Meta guardada',
+            'Este hotel ahora firma y canjea con su propia app.',
+        );
+        showAppForm.value = false;
+        router.reload({ only: ['metaApp'] });
+    } catch (e: any) {
+        const data = e.response?.data;
+        const firstError = data?.errors
+            ? (Object.values(data.errors)[0] as string[])?.[0]
+            : null;
+        appError.value = data?.message ?? firstError ?? 'No se pudo guardar.';
+    } finally {
+        savingApp.value = false;
+    }
+}
+
+async function removeApp() {
+    savingApp.value = true;
+    try {
+        await axios.delete(
+            route('admin.tenants.meta-app.destroy', props.tenant.id),
+        );
+        toast.success(
+            'App propia desconectada',
+            'El hotel vuelve a usar la app de la plataforma.',
+        );
+        confirmAppRemoval.value = false;
+        router.reload({ only: ['metaApp'] });
+    } catch (e: any) {
+        toast.error(
+            'No se pudo desconectar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        savingApp.value = false;
+    }
+}
 
 const metaTypeMeta: Record<
     string,
@@ -527,6 +647,126 @@ async function testTiktok(link: TiktokRow) {
 <template>
     <RazeLayout :title="`${tenant.name} · Canales`">
         <TenantHeader :tenant="tenant" :plans="plans" active="channels" />
+
+        <!-- App de Meta del hotel: propia (separada) o la de la plataforma -->
+        <div class="mt-5">
+            <div class="box box--stacked p-5">
+                <div class="flex flex-wrap items-center gap-4">
+                    <div
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="AppWindow" class="h-5 w-5" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h2 class="text-base font-medium">
+                            App de Meta del hotel
+                        </h2>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            <template v-if="metaApp">
+                                App propia
+                                <span
+                                    class="font-medium text-slate-600 dark:text-slate-300"
+                                    >{{ metaApp.name || metaApp.app_id }}</span
+                                >
+                                · ID {{ metaApp.app_id }} · clave
+                                {{ metaApp.masked_app_secret }}
+                                <template v-if="metaApp.login_config_id">
+                                    · registro incrustado
+                                    {{ metaApp.login_config_id }}
+                                </template>
+                                — los webhooks y tokens de este hotel usan esta
+                                app.
+                            </template>
+                            <template v-else>
+                                Usa la app de la plataforma ({{
+                                    platformAppId || 'sin configurar'
+                                }}). Conecta una app propia para separar a este
+                                hotel — el webhook sigue siendo la misma URL con
+                                el mismo verify token.
+                            </template>
+                        </p>
+                    </div>
+                    <div class="flex shrink-0 items-center gap-2">
+                        <Button
+                            v-if="metaApp"
+                            variant="outline-secondary"
+                            size="sm"
+                            class="rounded-[0.5rem]"
+                            @click="confirmAppRemoval = true"
+                        >
+                            Usar app de la plataforma
+                        </Button>
+                        <Button
+                            variant="primary"
+                            size="sm"
+                            class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                            @click="openAppForm"
+                        >
+                            <Lucide
+                                :icon="metaApp ? 'Pencil' : 'Plus'"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            {{ metaApp ? 'Editar app' : 'Conectar app propia' }}
+                        </Button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Qué canales puede conectar el hotel desde su panel -->
+        <div class="box box--stacked mt-4">
+            <div
+                class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+            >
+                <div
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                >
+                    <Lucide icon="ToggleRight" class="h-4 w-4" />
+                </div>
+                <div class="min-w-0">
+                    <h2 class="text-sm font-medium">
+                        Qué puede conectar el hotel
+                    </h2>
+                    <p class="text-xs text-slate-500">
+                        Solo estos canales aparecen en su panel de Asistente.
+                    </p>
+                </div>
+                <span
+                    v-if="savingChannels"
+                    class="ml-auto text-[11px] text-slate-400"
+                >
+                    Guardando...
+                </span>
+            </div>
+            <div class="grid grid-cols-1 gap-2.5 p-4 sm:grid-cols-2">
+                <label
+                    v-for="channel in channelCatalog"
+                    :key="channel.key"
+                    class="flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5 transition"
+                    :class="
+                        allowedChannels.includes(channel.key)
+                            ? 'border-primary/30 bg-primary/5'
+                            : 'border-slate-200/70 dark:border-darkmode-400'
+                    "
+                >
+                    <span class="text-xs font-medium">{{ channel.label }}</span>
+                    <FormSwitch>
+                        <FormSwitch.Input
+                            :checked="allowedChannels.includes(channel.key)"
+                            type="checkbox"
+                            :disabled="savingChannels"
+                            @change="toggleAllowedChannel(channel.key)"
+                        />
+                    </FormSwitch>
+                </label>
+            </div>
+            <p
+                class="border-t border-dashed border-slate-300/70 px-4 py-2.5 text-[11px] text-slate-400 dark:border-darkmode-400"
+            >
+                Apagar un canal no desconecta lo que el hotel ya tenga
+                funcionando: eso se sigue viendo en su panel y aquí abajo.
+            </p>
+        </div>
 
         <div class="mt-5">
             <div class="flex flex-wrap items-center justify-between gap-3">
@@ -2124,6 +2364,195 @@ async function testTiktok(link: TiktokRow) {
                                 resubscribing !== null
                                     ? 'Reparando…'
                                     : 'Reparar suscripción'
+                            }}
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Modal app de Meta propia del hotel -->
+        <Dialog :open="showAppForm" @close="showAppForm = false">
+            <Dialog.Panel>
+                <form class="p-6" @submit.prevent="submitApp">
+                    <div class="mb-4 flex items-center gap-3.5">
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="AppWindow" class="h-5 w-5" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                {{
+                                    metaApp
+                                        ? 'Editar app de Meta del hotel'
+                                        : 'Conectar app de Meta propia'
+                                }}
+                            </h2>
+                            <!-- El hotel en grande: las claves se han pegado
+                                 en la ficha equivocada por no verlo. -->
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Para
+                                <span
+                                    class="font-medium text-slate-600 dark:text-slate-300"
+                                    >{{ tenant.name }}</span
+                                >
+                                — confirma que es el hotel correcto antes de
+                                pegar claves.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="space-y-4">
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Nombre (opcional)</label
+                            >
+                            <FormInput
+                                v-model="appForm.name"
+                                type="text"
+                                placeholder="App Real de la Sierra"
+                            />
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Identificador de la aplicacion (app_id)</label
+                            >
+                            <FormInput
+                                v-model="appForm.app_id"
+                                type="text"
+                                placeholder="2350925339051747"
+                                required
+                            />
+                            <FormHelp>
+                                El numero de arriba del panel de la app en
+                                developers.facebook.com.
+                            </FormHelp>
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Clave secreta de la aplicacion</label
+                            >
+                            <FormInput
+                                v-model="appForm.app_secret"
+                                type="text"
+                                :placeholder="
+                                    metaApp
+                                        ? 'Dejar vacio para conservar la actual'
+                                        : 'Configuracion de la app → Basico → Mostrar'
+                                "
+                            />
+                            <FormHelp>
+                                Firma los webhooks del hotel. Se guarda cifrada.
+                                <template v-if="metaApp?.masked_app_secret">
+                                    Ya hay una guardada ({{
+                                        metaApp.masked_app_secret
+                                    }}): déjala vacía para conservarla.
+                                </template>
+                            </FormHelp>
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Clave secreta de Instagram (opcional)</label
+                            >
+                            <FormInput
+                                v-model="appForm.ig_app_secret"
+                                type="text"
+                                :placeholder="
+                                    metaApp
+                                        ? 'Dejar vacio para conservar la actual'
+                                        : 'Producto Instagram → cabecera → Mostrar'
+                                "
+                            />
+                            <FormHelp>
+                                Es OTRA clave: la del producto Instagram (tokens
+                                IGAA). Sin ella, los DMs de Instagram de este
+                                hotel se rechazan.
+                                <template v-if="metaApp">
+                                    {{
+                                        metaApp.masked_ig_app_secret
+                                            ? `Ya hay una guardada (${metaApp.masked_ig_app_secret}): déjala vacía para conservarla.`
+                                            : 'Aún no hay una guardada para este hotel.'
+                                    }}
+                                </template>
+                            </FormHelp>
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Configuracion de registro incrustado
+                                (opcional)</label
+                            >
+                            <FormInput
+                                v-model="appForm.login_config_id"
+                                type="text"
+                                placeholder="ID de la configuracion de Embedded Signup"
+                            />
+                            <FormHelp>
+                                Del producto "Inicio de sesion con Facebook para
+                                empresas". Habilita el boton Conectar con
+                                Facebook en el panel del hotel.
+                            </FormHelp>
+                        </div>
+                        <p v-if="appError" class="text-sm text-danger">
+                            {{ appError }}
+                        </p>
+                    </div>
+                    <div class="mt-6 flex justify-end gap-3">
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            :disabled="savingApp"
+                            @click="showAppForm = false"
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            :disabled="savingApp"
+                        >
+                            {{ savingApp ? 'Guardando...' : 'Guardar app' }}
+                        </Button>
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Confirmar volver a la app de la plataforma -->
+        <Dialog :open="confirmAppRemoval" @close="confirmAppRemoval = false">
+            <Dialog.Panel>
+                <div class="p-6">
+                    <div class="mb-4 flex items-center gap-3.5">
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning"
+                        >
+                            <Lucide icon="TriangleAlert" class="h-5 w-5" />
+                        </div>
+                        <h2 class="text-base font-medium">
+                            Volver a la app de la plataforma
+                        </h2>
+                    </div>
+                    <p class="text-sm text-slate-500">
+                        Se elimina la app propia de este hotel. Sus canales
+                        seguiran funcionando SOLO si sus tokens y suscripciones
+                        pertenecen a la app de la plataforma — si fueron
+                        emitidos por la app propia, dejaran de validar. Confirma
+                        solo si sabes lo que haces.
+                    </p>
+                    <div class="mt-6 flex justify-end gap-3">
+                        <Button
+                            variant="outline-secondary"
+                            :disabled="savingApp"
+                            @click="confirmAppRemoval = false"
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            variant="danger"
+                            :disabled="savingApp"
+                            @click="removeApp"
+                        >
+                            {{
+                                savingApp ? 'Quitando...' : 'Quitar app propia'
                             }}
                         </Button>
                     </div>

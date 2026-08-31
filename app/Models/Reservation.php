@@ -106,6 +106,31 @@ class Reservation extends Model
         return $this->belongsTo(ReservationGroup::class, 'reservation_group_id');
     }
 
+    /**
+     * Cuántas habitaciones trae la misma partida: las vivas del grupo
+     * (folio GRP-) o 1 si la reserva va sola. Lo usa la fianza escalonada
+     * — hay hoteles que la bajan por habitación cuando el mismo grupo
+     * aparta varias. Las canceladas y los no-show no cuentan: el grupo que
+     * llega es el que paga.
+     *
+     * OJO: solo mira el grupo, no "reservas del mismo huésped en las mismas
+     * fechas". Tres reservas sueltas hechas por separado son tres partidas
+     * hasta que recepción las agrupe — adivinarlo cobraría de menos sin que
+     * nadie lo pidiera. Para ese caso el modal de llegada deja ajustar el
+     * monto a mano, con motivo.
+     */
+    public function partyRoomCount(): int
+    {
+        if ($this->reservation_group_id === null) {
+            return 1;
+        }
+
+        return max(1, static::query()
+            ->where('reservation_group_id', $this->reservation_group_id)
+            ->whereNotIn('status', [ReservationStatus::Cancelled, ReservationStatus::NoShow])
+            ->count());
+    }
+
     public function ratePlan(): BelongsTo
     {
         return $this->belongsTo(RatePlan::class);
@@ -181,6 +206,13 @@ class Reservation extends Model
 
     public function paidTotal(): float
     {
+        // Con la suma precargada (withSum('payments', 'amount')) no se hace
+        // un SELECT por fila: las listas del panel pintan decenas de
+        // reservas y cada una preguntaba por su dinero dos veces.
+        if (array_key_exists('payments_sum_amount', $this->attributes)) {
+            return round((float) $this->attributes['payments_sum_amount'], 2);
+        }
+
         return round((float) $this->payments()->sum('amount'), 2);
     }
 

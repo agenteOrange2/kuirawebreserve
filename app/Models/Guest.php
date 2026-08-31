@@ -91,6 +91,12 @@ class Guest extends Model implements HasMedia
         return $this->hasMany(Stay::class);
     }
 
+    /** Fichas del registro de vehículos (las escribe VehicleRegistry). */
+    public function vehicles(): HasMany
+    {
+        return $this->hasMany(Vehicle::class);
+    }
+
     public function scopeSearch(Builder $query, string $term): Builder
     {
         return $query->where(function (Builder $q) use ($term) {
@@ -104,6 +110,14 @@ class Guest extends Model implements HasMedia
     /**
      * Métricas para el perfil: visitas, gasto total (hospedaje + consumos),
      * cancelaciones y no-shows.
+     *
+     * Una visita es una estancia completada O una reserva completada sin
+     * estancia registrada. Ese segundo caso no es raro: así llegó todo el
+     * historial migrado del sitio anterior (nadie capturó horas de entrada
+     * y salida) y así queda cualquier reserva que el hotel cierra sin
+     * registrar la llegada. Contando solo estancias, un huésped con ocho
+     * noches encima se veía como nuevo — y los cupones de frecuente y el
+     * asistente leen justo este número.
      *
      * @return array<string, mixed>
      */
@@ -119,11 +133,26 @@ class Guest extends Model implements HasMedia
         $lodging = $completed->sum(fn (Stay $stay) => (float) $stay->amount)
             + $stays->where('status', Stay::STATUS_ACTIVE)->sum(fn (Stay $stay) => (float) $stay->amount);
 
+        // whereDoesntHave('stay'): si la reserva sí tiene estancia, su
+        // dinero ya viaja arriba — sumarlo otra vez inflaría el gasto.
+        $pastReservations = $this->reservations()
+            ->where('status', \App\Enums\ReservationStatus::Completed)
+            ->whereDoesntHave('stay')
+            ->get(['id', 'starts_at', 'total_amount']);
+
+        $lastVisit = collect([
+            $stays->max('check_in_at'),
+            $pastReservations->max('starts_at'),
+        ])->filter()->max();
+
         return [
-            'visits' => $completed->count(),
+            'visits' => $completed->count() + $pastReservations->count(),
             'active_stay' => $stays->firstWhere('status', Stay::STATUS_ACTIVE) !== null,
-            'total_spent' => round($lodging + (float) $consumos, 2),
-            'last_visit' => $stays->max('check_in_at')?->format('d/m/Y'),
+            'total_spent' => round(
+                $lodging + (float) $consumos + $pastReservations->sum(fn ($r) => (float) $r->total_amount),
+                2,
+            ),
+            'last_visit' => $lastVisit?->format('d/m/Y'),
             'cancellations' => $this->reservations()->where('status', 'cancelled')->count(),
             'no_shows' => $this->reservations()->where('status', 'no_show')->count(),
         ];

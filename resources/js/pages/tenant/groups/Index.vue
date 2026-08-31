@@ -4,6 +4,8 @@ import axios from 'axios';
 import { computed, nextTick, reactive, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import {
+    FormDate,
+    FormDateTime,
     FormHelp,
     FormInput,
     FormLabel,
@@ -79,8 +81,30 @@ type GroupStatus =
 type FormStep = 'stay' | 'rooms' | 'contact';
 type PhoneCountry = 'mx' | 'us' | 'other';
 
+interface PaginationLink {
+    url: string | null;
+    label: string;
+    active: boolean;
+}
+
 const props = defineProps<{
-    groups: GroupRow[];
+    groups: {
+        data: GroupRow[];
+        links: PaginationLink[];
+        total: number;
+        from: number | null;
+        to: number | null;
+    };
+    filters: { q: string; status: string; from: string; to: string };
+    // Contadores sobre TODOS los grupos: la página que se ve es solo una
+    // rebanada, así que no se pueden sacar de la lista.
+    stats: {
+        total: number;
+        active: number;
+        pending: number;
+        rooms: number;
+        value: number;
+    };
     roomTypes: RoomTypeOption[];
     canManage: boolean;
 }>();
@@ -103,12 +127,6 @@ const formatDateTime = (iso: string) =>
         hour: '2-digit',
         minute: '2-digit',
     });
-
-const normalizeSearch = (value: string | null | undefined) =>
-    (value ?? '')
-        .toLocaleLowerCase('es')
-        .normalize('NFD')
-        .replace(/\p{Diacritic}/gu, '');
 
 const statusMeta: Record<
     GroupStatus,
@@ -208,11 +226,13 @@ function toggleDetails(groupId: number): void {
     expanded.value = next;
 }
 
+// Los filtros se resuelven en el servidor (la página trae quince grupos,
+// no todos): se mandan con un respiro para no pedir en cada tecla.
 const listFilters = reactive({
-    query: '',
-    status: '' as '' | GroupStatus,
-    from: '',
-    to: '',
+    query: props.filters.q,
+    status: props.filters.status as '' | GroupStatus,
+    from: props.filters.from,
+    to: props.filters.to,
 });
 
 const listFiltersActive = computed(
@@ -223,75 +243,34 @@ const listFiltersActive = computed(
         listFilters.to !== '',
 );
 
-const filteredGroups = computed(() =>
-    props.groups.filter((group) => {
-        const query = normalizeSearch(listFilters.query.trim());
-        const searchableGroup = normalizeSearch(
-            [
-                group.code,
-                group.guest_name,
-                group.notes,
-                ...group.reservations.flatMap((reservation) => [
-                    reservation.code,
-                    reservation.room,
-                    reservation.room_type,
-                ]),
-                ...group.experiences.flatMap((experience) => [
-                    experience.code,
-                    experience.name,
-                ]),
-            ]
-                .filter(Boolean)
-                .join(' '),
+let filterTimer: ReturnType<typeof setTimeout> | null = null;
+
+watch(listFilters, () => {
+    if (filterTimer) clearTimeout(filterTimer);
+    filterTimer = setTimeout(() => {
+        router.get(
+            route('tenant.groups'),
+            {
+                q: listFilters.query || undefined,
+                status: listFilters.status || undefined,
+                from: listFilters.from || undefined,
+                to: listFilters.to || undefined,
+            },
+            {
+                preserveState: true,
+                replace: true,
+                only: ['groups', 'filters', 'stats'],
+            },
         );
+    }, 350);
+});
 
-        if (query && !searchableGroup.includes(query)) {
-            return false;
-        }
+const filteredGroups = computed(() => props.groups.data);
 
-        if (listFilters.status && groupStatus(group) !== listFilters.status) {
-            return false;
-        }
-
-        const arrivalDate = group.starts_at?.slice(0, 10) ?? '';
-
-        if (
-            listFilters.from &&
-            (!arrivalDate || arrivalDate < listFilters.from)
-        ) {
-            return false;
-        }
-
-        if (listFilters.to && (!arrivalDate || arrivalDate > listFilters.to)) {
-            return false;
-        }
-
-        return true;
-    }),
-);
-
-const activeGroupsCount = computed(
-    () => props.groups.filter((group) => groupIsLive(group)).length,
-);
-const pendingGroupsCount = computed(
-    () =>
-        props.groups.filter((group) => groupStatus(group) === 'pending').length,
-);
-const activeRoomsCount = computed(() =>
-    props.groups.reduce(
-        (total, group) =>
-            total +
-            group.reservations.filter((reservation) =>
-                liveReservationStatuses.includes(reservation.status),
-            ).length,
-        0,
-    ),
-);
-const activeGroupsValue = computed(() =>
-    props.groups
-        .filter((group) => groupIsLive(group))
-        .reduce((total, group) => total + group.total, 0),
-);
+const activeGroupsCount = computed(() => props.stats.active);
+const pendingGroupsCount = computed(() => props.stats.pending);
+const activeRoomsCount = computed(() => props.stats.rooms);
+const activeGroupsValue = computed(() => props.stats.value);
 
 function clearListFilters(): void {
     listFilters.query = '';
@@ -573,7 +552,7 @@ async function submit(): Promise<void> {
             'Grupo creado',
             `${data.code}: ${data.rooms} habitaciones por ${money(data.total)}.`,
         );
-        router.reload({ only: ['groups'] });
+        router.reload({ only: ['groups', 'stats'] });
     } catch (error: any) {
         const responseData = error.response?.data;
 
@@ -638,7 +617,7 @@ async function cancelGroup(): Promise<void> {
             `${data.cancelled} reserva(s) canceladas. Las habitaciones quedaron libres.`,
         );
         cancelling.value = null;
-        router.reload({ only: ['groups'] });
+        router.reload({ only: ['groups', 'stats'] });
     } catch (error: any) {
         toast.error(
             'No se pudo cancelar',
@@ -677,7 +656,7 @@ async function submitEdit(): Promise<void> {
 
         toast.success('Datos del grupo actualizados');
         editingGroup.value = null;
-        router.reload({ only: ['groups'] });
+        router.reload({ only: ['groups', 'stats'] });
     } catch (error: any) {
         toast.error(
             'No se pudo actualizar',
@@ -708,7 +687,7 @@ async function deleteGroup(): Promise<void> {
             'Las reservas canceladas siguen visibles en Reservas.',
         );
         deletingGroup.value = null;
-        router.reload({ only: ['groups'] });
+        router.reload({ only: ['groups', 'stats'] });
     } catch (error: any) {
         toast.error(
             'No se pudo eliminar',
@@ -724,22 +703,17 @@ async function deleteGroup(): Promise<void> {
     <RazeLayout title="Reservas grupales">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide
-                            icon="UsersRound"
-                            class="h-5 w-5 sm:h-7 sm:w-7"
-                        />
+                        <Lucide icon="UsersRound" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">
-                            Reservas grupales
-                        </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Reservas grupales</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Administra varias habitaciones bajo un mismo folio y
                             responsable.
                         </p>
@@ -753,22 +727,22 @@ async function deleteGroup(): Promise<void> {
                         :href="route('tenant.booking.groups')"
                         target="_blank"
                         variant="outline-secondary"
-                        class="min-h-11 rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
                         <Lucide
                             icon="ExternalLink"
-                            class="mr-2 h-5 w-5 stroke-[1.5]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
                         />
                         Abrir reserva pública
                     </Button>
                     <Button
                         v-if="canManage"
                         variant="primary"
-                        class="min-h-11 rounded-[0.5rem] shadow-md shadow-primary/20"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                         :disabled="!roomTypes.length"
                         @click="openForm"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-5 w-5" />
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                         Nuevo grupo
                     </Button>
                 </div>
@@ -776,7 +750,7 @@ async function deleteGroup(): Promise<void> {
 
             <div
                 v-if="!roomTypes.length"
-                class="box mt-5 border-l-4 border-l-warning p-5"
+                class="box mt-4 border-l-4 border-l-warning p-4"
             >
                 <div class="flex items-start gap-3">
                     <Lucide
@@ -795,17 +769,17 @@ async function deleteGroup(): Promise<void> {
                 </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 gap-5">
+            <div class="mt-4 grid grid-cols-12 gap-4">
                 <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
                 >
                     <div
-                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="UsersRound" class="h-6 w-6" />
+                        <Lucide icon="UsersRound" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <div class="text-xl font-medium">
+                        <div class="text-sm font-medium">
                             {{ activeGroupsCount }}
                         </div>
                         <div class="truncate text-xs text-slate-500">
@@ -814,15 +788,15 @@ async function deleteGroup(): Promise<void> {
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
                 >
                     <div
-                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
                     >
-                        <Lucide icon="AlarmClock" class="h-6 w-6" />
+                        <Lucide icon="AlarmClock" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <div class="text-xl font-medium">
+                        <div class="text-sm font-medium">
                             {{ pendingGroupsCount }}
                         </div>
                         <div class="truncate text-xs text-slate-500">
@@ -831,15 +805,15 @@ async function deleteGroup(): Promise<void> {
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
                 >
                     <div
-                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
                     >
-                        <Lucide icon="BedDouble" class="h-6 w-6" />
+                        <Lucide icon="BedDouble" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <div class="text-xl font-medium">
+                        <div class="text-sm font-medium">
                             {{ activeRoomsCount }}
                         </div>
                         <div class="truncate text-xs text-slate-500">
@@ -848,15 +822,15 @@ async function deleteGroup(): Promise<void> {
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-12 flex items-center gap-3.5 p-5 sm:col-span-6 xl:col-span-3"
+                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
                 >
                     <div
-                        class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
                     >
-                        <Lucide icon="Wallet" class="h-6 w-6" />
+                        <Lucide icon="Wallet" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <div class="truncate text-xl font-medium">
+                        <div class="truncate text-sm font-medium">
                             {{ money(activeGroupsValue) }}
                         </div>
                         <div class="truncate text-xs text-slate-500">
@@ -866,29 +840,31 @@ async function deleteGroup(): Promise<void> {
                 </div>
             </div>
 
-            <div class="box box--stacked mt-5">
+            <div class="box box--stacked mt-4">
                 <div
-                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
-                    <div class="flex items-center gap-2 font-medium">
+                    <div class="flex items-center gap-2 text-sm font-medium">
                         <Lucide
                             icon="CalendarRange"
-                            class="h-5 w-5 text-slate-400"
+                            class="h-4 w-4 text-slate-400"
                         />
                         Reservas de grupo
                         <span
                             class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
                         >
-                            {{ groups.length }}
+                            {{ groups.total }}
                         </span>
                     </div>
                     <div
-                        v-if="listFiltersActive"
                         class="ml-auto flex items-center gap-2 text-xs text-slate-500"
                     >
-                        Mostrando {{ filteredGroups.length }} de
-                        {{ groups.length }}
+                        <span v-if="groups.data.length">
+                            Mostrando {{ groups.from }}-{{ groups.to }} de
+                            {{ groups.total }}
+                        </span>
                         <button
+                            v-if="listFiltersActive"
                             type="button"
                             class="font-medium text-primary hover:underline"
                             @click="clearListFilters"
@@ -899,14 +875,14 @@ async function deleteGroup(): Promise<void> {
                 </div>
 
                 <div
-                    v-if="groups.length"
-                    class="border-b border-slate-200/60 bg-slate-50/70 px-5 py-4 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                    v-if="stats.total"
+                    class="border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                 >
-                    <div class="mb-3 flex items-center gap-3">
+                    <div class="mb-3 flex items-center gap-2.5">
                         <div
-                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <Lucide icon="Filter" class="h-5 w-5" />
+                            <Lucide icon="Filter" class="h-4 w-4" />
                         </div>
                         <div>
                             <div class="text-sm font-medium">
@@ -927,13 +903,13 @@ async function deleteGroup(): Promise<void> {
                             <div class="relative">
                                 <Lucide
                                     icon="Search"
-                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3.5 h-5 w-5 text-slate-400"
+                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
                                 />
                                 <FormInput
                                     id="group-search"
                                     v-model="listFilters.query"
                                     type="search"
-                                    class="h-11 pl-11 text-sm"
+                                    class="h-9 pl-9 text-xs"
                                     placeholder="Responsable, folio o habitación"
                                 />
                             </div>
@@ -943,7 +919,7 @@ async function deleteGroup(): Promise<void> {
                             <FormSelect
                                 id="group-status"
                                 v-model="listFilters.status"
-                                class="h-11"
+                                class="h-9 text-xs"
                             >
                                 <option value="">Todos los estados</option>
                                 <option value="pending">Por confirmar</option>
@@ -957,22 +933,20 @@ async function deleteGroup(): Promise<void> {
                             <FormLabel htmlFor="group-from">
                                 Llegada desde
                             </FormLabel>
-                            <FormInput
+                            <FormDate
                                 id="group-from"
                                 v-model="listFilters.from"
-                                type="date"
-                                class="h-11"
+                                input-class="h-9 text-xs"
                             />
                         </div>
                         <div>
                             <FormLabel htmlFor="group-to">
                                 Llegada hasta
                             </FormLabel>
-                            <FormInput
+                            <FormDate
                                 id="group-to"
                                 v-model="listFilters.to"
-                                type="date"
-                                class="h-11"
+                                input-class="h-9 text-xs"
                             />
                         </div>
                         <div class="flex items-end">
@@ -980,412 +954,479 @@ async function deleteGroup(): Promise<void> {
                                 v-if="listFiltersActive"
                                 type="button"
                                 variant="outline-secondary"
-                                class="h-11 w-full whitespace-nowrap xl:w-auto"
+                                class="h-9 w-full text-xs whitespace-nowrap xl:w-auto"
                                 @click="clearListFilters"
                             >
-                                <Lucide icon="X" class="mr-2 h-5 w-5" />
+                                <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
                                 Limpiar
                             </Button>
                         </div>
                     </div>
                 </div>
 
-                <div v-if="filteredGroups.length" class="space-y-3 p-5">
-                    <article
-                        v-for="group in filteredGroups"
-                        :key="group.id"
-                        class="rounded-xl border border-slate-200/80 bg-white shadow-sm dark:border-darkmode-400 dark:bg-darkmode-600"
+                <div v-if="filteredGroups.length">
+                    <div
+                        class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
                     >
-                        <div
-                            class="grid gap-4 px-4 py-4 sm:px-5 lg:grid-cols-[minmax(15rem,1.4fr)_minmax(13rem,1.1fr)_minmax(10rem,0.8fr)_minmax(8rem,0.65fr)_auto] lg:items-center"
-                        >
-                            <div class="flex min-w-0 items-center gap-3">
-                                <div
-                                    class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                                >
-                                    <Lucide icon="UsersRound" class="h-6 w-6" />
-                                </div>
-                                <div class="min-w-0">
-                                    <div
-                                        class="flex flex-wrap items-center gap-2"
-                                    >
-                                        <span
-                                            class="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600 dark:bg-darkmode-400"
-                                        >
-                                            {{ group.code }}
-                                        </span>
-                                        <span
-                                            class="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium"
-                                            :class="
-                                                statusMeta[groupStatus(group)]
-                                                    .class
-                                            "
-                                        >
-                                            <Lucide
-                                                :icon="
-                                                    statusMeta[
-                                                        groupStatus(group)
-                                                    ].icon
-                                                "
-                                                class="h-4 w-4"
-                                            />
-                                            {{
-                                                statusMeta[groupStatus(group)]
-                                                    .label
-                                            }}
-                                        </span>
-                                    </div>
-                                    <div class="mt-1.5 truncate font-medium">
-                                        {{
-                                            group.guest_name ??
-                                            'Sin responsable'
-                                        }}
-                                    </div>
-                                    <div
-                                        v-if="group.notes"
-                                        class="mt-0.5 truncate text-xs text-slate-500"
-                                        :title="group.notes"
-                                    >
-                                        {{ group.notes }}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div class="min-w-0">
-                                <div
-                                    class="flex items-center gap-2 text-xs font-medium text-slate-400"
-                                >
-                                    <Lucide
-                                        icon="CalendarDays"
-                                        class="h-4 w-4"
-                                    />
-                                    ESTANCIA
-                                </div>
-                                <div
-                                    v-if="group.starts_at"
-                                    class="mt-1 text-sm font-medium"
-                                >
-                                    {{ formatDateTime(group.starts_at) }}
-                                </div>
-                                <div
-                                    v-if="group.ends_at"
-                                    class="mt-0.5 text-xs text-slate-500"
-                                >
-                                    Sale {{ formatDateTime(group.ends_at) }}
-                                </div>
-                                <div
-                                    v-else-if="!group.starts_at"
-                                    class="mt-1 text-sm text-slate-400"
-                                >
-                                    Sin fecha registrada
-                                </div>
-                            </div>
-
-                            <div>
-                                <div
-                                    class="flex items-center gap-2 text-xs font-medium text-slate-400"
-                                >
-                                    <Lucide icon="BedDouble" class="h-4 w-4" />
-                                    OCUPACIÓN
-                                </div>
-                                <div class="mt-1 text-sm font-medium">
-                                    {{ group.rooms }}
-                                    {{
-                                        group.rooms === 1
-                                            ? 'habitación'
-                                            : 'habitaciones'
-                                    }}
-                                </div>
-                                <div class="mt-0.5 text-xs text-slate-500">
-                                    {{ peopleInGroup(group) }}
-                                    {{
-                                        peopleInGroup(group) === 1
-                                            ? 'persona'
-                                            : 'personas'
-                                    }}
-                                </div>
-                            </div>
-
-                            <div>
-                                <div class="text-xs font-medium text-slate-400">
-                                    TOTAL
-                                </div>
-                                <div class="mt-1 text-base font-semibold">
-                                    {{ money(group.total) }}
-                                </div>
-                                <div
-                                    v-if="group.experiences.length"
-                                    class="mt-0.5 text-xs text-slate-500"
-                                >
-                                    Incluye
-                                    {{ group.experiences.length }}
-                                    {{
-                                        group.experiences.length === 1
-                                            ? 'experiencia'
-                                            : 'experiencias'
-                                    }}
-                                </div>
-                            </div>
-
-                            <div class="flex items-center gap-2 lg:justify-end">
-                                <Button
-                                    :as="Link"
-                                    :href="
-                                        route('tenant.groups.show', group.id)
-                                    "
-                                    variant="outline-primary"
-                                    class="min-h-10 flex-1 whitespace-nowrap lg:flex-none"
-                                >
-                                    <Lucide icon="Eye" class="mr-2 h-5 w-5" />
-                                    Ver grupo
-                                </Button>
-                                <Menu>
-                                    <Menu.Button
-                                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
-                                        title="Más acciones"
-                                    >
-                                        <Lucide
-                                            icon="EllipsisVertical"
-                                            class="h-5 w-5"
-                                        />
-                                    </Menu.Button>
-                                    <Menu.Items class="w-56">
-                                        <Menu.Item
-                                            as="button"
-                                            type="button"
-                                            @click="toggleDetails(group.id)"
-                                        >
-                                            <Lucide
-                                                :icon="
-                                                    expanded.has(group.id)
-                                                        ? 'ChevronUp'
-                                                        : 'ChevronDown'
-                                                "
-                                                class="mr-2 h-4 w-4"
-                                            />
-                                            {{
-                                                expanded.has(group.id)
-                                                    ? 'Ocultar habitaciones'
-                                                    : 'Ver habitaciones aquí'
-                                            }}
-                                        </Menu.Item>
-                                        <template v-if="canManage">
-                                            <Menu.Item
-                                                as="button"
-                                                type="button"
-                                                @click="openEdit(group)"
-                                            >
-                                                <Lucide
-                                                    icon="Pencil"
-                                                    class="mr-2 h-4 w-4"
-                                                />
-                                                Editar responsable
-                                            </Menu.Item>
-                                            <Menu.Divider
-                                                v-if="
-                                                    groupCanCancel(group) ||
-                                                    !groupIsLive(group)
-                                                "
-                                            />
-                                            <Menu.Item
-                                                v-if="groupCanCancel(group)"
-                                                as="button"
-                                                type="button"
-                                                class="text-danger"
-                                                @click="cancelling = group"
-                                            >
-                                                <Lucide
-                                                    icon="Ban"
-                                                    class="mr-2 h-4 w-4"
-                                                />
-                                                Cancelar grupo completo
-                                            </Menu.Item>
-                                            <Menu.Item
-                                                v-else-if="!groupIsLive(group)"
-                                                as="button"
-                                                type="button"
-                                                class="text-danger"
-                                                @click="deletingGroup = group"
-                                            >
-                                                <Lucide
-                                                    icon="Trash2"
-                                                    class="mr-2 h-4 w-4"
-                                                />
-                                                Eliminar folio
-                                            </Menu.Item>
-                                        </template>
-                                    </Menu.Items>
-                                </Menu>
-                            </div>
-                        </div>
-
-                        <!-- rounded-b propio: la card ya NO usa overflow-hidden
-                             (recortaba el dropdown de tres puntos). -->
-                        <div
-                            v-if="expanded.has(group.id)"
-                            class="rounded-b-xl border-t border-dashed border-slate-300/70 bg-slate-50/60 px-4 py-4 sm:px-5 dark:border-darkmode-400 dark:bg-darkmode-700/40"
+                        <article
+                            v-for="group in filteredGroups"
+                            :key="group.id"
                         >
                             <div
-                                class="mb-3 flex flex-wrap items-center justify-between gap-2"
+                                class="grid gap-3 px-4 py-3 sm:px-5 lg:grid-cols-[minmax(14rem,1.4fr)_minmax(11rem,1fr)_minmax(9rem,0.7fr)_minmax(7rem,0.6fr)_auto] lg:items-center"
                             >
-                                <div>
-                                    <div class="text-sm font-medium">
-                                        Habitaciones del grupo
+                                <div class="flex min-w-0 items-center gap-2.5">
+                                    <div
+                                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                                    >
+                                        <Lucide
+                                            icon="UsersRound"
+                                            class="h-4 w-4"
+                                        />
                                     </div>
+                                    <div class="min-w-0">
+                                        <div
+                                            class="flex flex-wrap items-center gap-1.5"
+                                        >
+                                            <span
+                                                class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400"
+                                            >
+                                                {{ group.code }}
+                                            </span>
+                                            <span
+                                                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                :class="
+                                                    statusMeta[
+                                                        groupStatus(group)
+                                                    ].class
+                                                "
+                                            >
+                                                <Lucide
+                                                    :icon="
+                                                        statusMeta[
+                                                            groupStatus(group)
+                                                        ].icon
+                                                    "
+                                                    class="h-3.5 w-3.5"
+                                                />
+                                                {{
+                                                    statusMeta[
+                                                        groupStatus(group)
+                                                    ].label
+                                                }}
+                                            </span>
+                                        </div>
+                                        <div
+                                            class="mt-0.5 truncate text-sm font-medium"
+                                        >
+                                            {{
+                                                group.guest_name ??
+                                                'Sin responsable'
+                                            }}
+                                        </div>
+                                        <div
+                                            v-if="group.notes"
+                                            class="truncate text-xs text-slate-500"
+                                            :title="group.notes"
+                                        >
+                                            {{ group.notes }}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="min-w-0">
+                                    <div
+                                        class="flex items-center gap-1.5 text-[11px] font-medium text-slate-400"
+                                    >
+                                        <Lucide
+                                            icon="CalendarDays"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        ESTANCIA
+                                    </div>
+                                    <div
+                                        v-if="group.starts_at"
+                                        class="mt-0.5 truncate text-xs font-medium"
+                                    >
+                                        {{ formatDateTime(group.starts_at) }}
+                                    </div>
+                                    <div
+                                        v-if="group.ends_at"
+                                        class="truncate text-xs text-slate-500"
+                                    >
+                                        Sale {{ formatDateTime(group.ends_at) }}
+                                    </div>
+                                    <div
+                                        v-else-if="!group.starts_at"
+                                        class="mt-0.5 text-xs text-slate-400"
+                                    >
+                                        Sin fecha registrada
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div
+                                        class="flex items-center gap-1.5 text-[11px] font-medium text-slate-400"
+                                    >
+                                        <Lucide
+                                            icon="BedDouble"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        OCUPACIÓN
+                                    </div>
+                                    <div class="mt-0.5 text-xs font-medium">
+                                        {{ group.rooms }}
+                                        {{
+                                            group.rooms === 1
+                                                ? 'habitación'
+                                                : 'habitaciones'
+                                        }}
+                                    </div>
+                                    <div class="text-xs text-slate-500">
+                                        {{ peopleInGroup(group) }}
+                                        {{
+                                            peopleInGroup(group) === 1
+                                                ? 'persona'
+                                                : 'personas'
+                                        }}
+                                    </div>
+                                </div>
+
+                                <div>
+                                    <div
+                                        class="text-[11px] font-medium text-slate-400"
+                                    >
+                                        TOTAL
+                                    </div>
+                                    <div class="mt-0.5 text-sm font-semibold">
+                                        {{ money(group.total) }}
+                                    </div>
+                                    <div
+                                        v-if="group.experiences.length"
+                                        class="text-xs text-slate-500"
+                                    >
+                                        Incluye
+                                        {{ group.experiences.length }}
+                                        {{
+                                            group.experiences.length === 1
+                                                ? 'experiencia'
+                                                : 'experiencias'
+                                        }}
+                                    </div>
+                                </div>
+
+                                <div
+                                    class="flex items-center gap-1.5 lg:justify-end"
+                                >
+                                    <Button
+                                        :as="Link"
+                                        :href="
+                                            route(
+                                                'tenant.groups.show',
+                                                group.id,
+                                            )
+                                        "
+                                        variant="outline-primary"
+                                        class="h-9 flex-1 rounded-[0.5rem] text-xs whitespace-nowrap lg:flex-none"
+                                    >
+                                        <Lucide
+                                            icon="Eye"
+                                            class="mr-1.5 h-3.5 w-3.5"
+                                        />
+                                        Ver grupo
+                                    </Button>
+                                    <Menu>
+                                        <Menu.Button
+                                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                            title="Más acciones"
+                                        >
+                                            <Lucide
+                                                icon="EllipsisVertical"
+                                                class="h-4 w-4"
+                                            />
+                                        </Menu.Button>
+                                        <Menu.Items class="w-56">
+                                            <Menu.Item
+                                                as="button"
+                                                type="button"
+                                                @click="toggleDetails(group.id)"
+                                            >
+                                                <Lucide
+                                                    :icon="
+                                                        expanded.has(group.id)
+                                                            ? 'ChevronUp'
+                                                            : 'ChevronDown'
+                                                    "
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                />
+                                                {{
+                                                    expanded.has(group.id)
+                                                        ? 'Ocultar habitaciones'
+                                                        : 'Ver habitaciones aquí'
+                                                }}
+                                            </Menu.Item>
+                                            <template v-if="canManage">
+                                                <Menu.Item
+                                                    as="button"
+                                                    type="button"
+                                                    @click="openEdit(group)"
+                                                >
+                                                    <Lucide
+                                                        icon="Pencil"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Editar responsable
+                                                </Menu.Item>
+                                                <Menu.Divider
+                                                    v-if="
+                                                        groupCanCancel(group) ||
+                                                        !groupIsLive(group)
+                                                    "
+                                                />
+                                                <Menu.Item
+                                                    v-if="groupCanCancel(group)"
+                                                    as="button"
+                                                    type="button"
+                                                    class="text-danger"
+                                                    @click="cancelling = group"
+                                                >
+                                                    <Lucide
+                                                        icon="Ban"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Cancelar grupo completo
+                                                </Menu.Item>
+                                                <Menu.Item
+                                                    v-else-if="
+                                                        !groupIsLive(group)
+                                                    "
+                                                    as="button"
+                                                    type="button"
+                                                    class="text-danger"
+                                                    @click="
+                                                        deletingGroup = group
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        icon="Trash2"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Eliminar folio
+                                                </Menu.Item>
+                                            </template>
+                                        </Menu.Items>
+                                    </Menu>
+                                </div>
+                            </div>
+
+                            <!-- Detalle desplegable: mismo renglón compacto,
+                                 sin tarjetas dentro de tarjetas. -->
+                            <div
+                                v-if="expanded.has(group.id)"
+                                class="border-t border-dashed border-slate-300/70 bg-slate-50/60 px-4 py-3 sm:px-5 dark:border-darkmode-400 dark:bg-darkmode-700/40"
+                            >
+                                <div
+                                    class="mb-2 flex flex-wrap items-center justify-between gap-2"
+                                >
                                     <div class="text-xs text-slate-500">
                                         Consulta rápida; abre el grupo para
                                         editar personas, cobros o habitaciones.
                                     </div>
-                                </div>
-                                <Button
-                                    :as="Link"
-                                    :href="
-                                        route('tenant.groups.show', group.id)
-                                    "
-                                    variant="outline-secondary"
-                                    size="sm"
-                                    class="bg-white"
-                                >
-                                    Administrar grupo
-                                    <Lucide
-                                        icon="ArrowRight"
-                                        class="ml-2 h-4 w-4"
-                                    />
-                                </Button>
-                            </div>
-                            <div class="grid grid-cols-1 gap-2 lg:grid-cols-2">
-                                <div
-                                    v-for="reservation in group.reservations"
-                                    :key="reservation.id"
-                                    class="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white px-3.5 py-3 dark:border-darkmode-400 dark:bg-darkmode-600"
-                                >
-                                    <div
-                                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
+                                    <Button
+                                        :as="Link"
+                                        :href="
+                                            route(
+                                                'tenant.groups.show',
+                                                group.id,
+                                            )
+                                        "
+                                        variant="outline-secondary"
+                                        class="h-8 rounded-[0.5rem] bg-white text-xs"
                                     >
+                                        Administrar grupo
                                         <Lucide
-                                            icon="BedDouble"
-                                            class="h-5 w-5"
+                                            icon="ArrowRight"
+                                            class="ml-1.5 h-3.5 w-3.5"
                                         />
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <div
-                                            class="flex flex-wrap items-center gap-2"
-                                        >
-                                            <span class="text-sm font-medium">
-                                                {{
-                                                    reservation.room ??
-                                                    reservation.code
-                                                }}
-                                            </span>
-                                            <span
-                                                class="rounded-full px-2 py-0.5 text-xs font-medium"
-                                                :class="
-                                                    reservationStatusClass[
-                                                        reservation.status
-                                                    ] ??
-                                                    'bg-slate-100 text-slate-500'
-                                                "
-                                            >
-                                                {{ reservation.status_label }}
-                                            </span>
-                                        </div>
-                                        <div
-                                            class="mt-0.5 truncate text-xs text-slate-500"
-                                        >
-                                            {{ reservation.room_type }} ·
-                                            {{ reservation.adults }}
-                                            {{
-                                                reservation.adults === 1
-                                                    ? 'adulto'
-                                                    : 'adultos'
-                                            }}
-                                            <template
-                                                v-if="reservation.children"
-                                            >
-                                                +
-                                                {{ reservation.children }}
-                                                {{
-                                                    reservation.children === 1
-                                                        ? 'niño'
-                                                        : 'niños'
-                                                }}
-                                            </template>
-                                        </div>
-                                    </div>
-                                    <div class="shrink-0 text-sm font-medium">
-                                        {{ money(reservation.total) }}
-                                    </div>
-                                </div>
-                            </div>
-
-                            <div v-if="group.experiences.length" class="mt-4">
-                                <div class="mb-2 text-sm font-medium">
-                                    Experiencias incluidas
+                                    </Button>
                                 </div>
                                 <div
-                                    class="grid grid-cols-1 gap-2 lg:grid-cols-2"
+                                    class="grid grid-cols-1 gap-1.5 lg:grid-cols-2"
                                 >
                                     <div
-                                        v-for="experience in group.experiences"
-                                        :key="experience.id"
-                                        class="flex items-center gap-3 rounded-lg border border-slate-200/80 bg-white px-3.5 py-3 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                        v-for="reservation in group.reservations"
+                                        :key="reservation.id"
+                                        class="flex items-center gap-2.5 rounded-lg border border-slate-200/80 bg-white px-3 py-2 dark:border-darkmode-400 dark:bg-darkmode-600"
                                     >
                                         <div
-                                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
                                         >
                                             <Lucide
-                                                icon="Compass"
-                                                class="h-5 w-5"
+                                                icon="BedDouble"
+                                                class="h-4 w-4"
                                             />
                                         </div>
                                         <div class="min-w-0 flex-1">
                                             <div
-                                                class="truncate text-sm font-medium"
+                                                class="flex flex-wrap items-center gap-1.5"
                                             >
-                                                {{
-                                                    experience.name ??
-                                                    experience.code
-                                                }}
+                                                <span
+                                                    class="text-xs font-medium"
+                                                >
+                                                    {{
+                                                        reservation.room ??
+                                                        reservation.code
+                                                    }}
+                                                </span>
+                                                <span
+                                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                    :class="
+                                                        reservationStatusClass[
+                                                            reservation.status
+                                                        ] ??
+                                                        'bg-slate-100 text-slate-500'
+                                                    "
+                                                >
+                                                    {{
+                                                        reservation.status_label
+                                                    }}
+                                                </span>
                                             </div>
                                             <div
-                                                class="mt-0.5 text-xs text-slate-500"
+                                                class="truncate text-xs text-slate-500"
                                             >
-                                                {{ experience.people }}
+                                                {{ reservation.room_type }} ·
+                                                {{ reservation.adults }}
                                                 {{
-                                                    experience.people === 1
-                                                        ? 'persona'
-                                                        : 'personas'
+                                                    reservation.adults === 1
+                                                        ? 'adulto'
+                                                        : 'adultos'
                                                 }}
                                                 <template
-                                                    v-if="experience.starts_at"
+                                                    v-if="reservation.children"
                                                 >
-                                                    ·
+                                                    +
+                                                    {{ reservation.children }}
                                                     {{
-                                                        formatDateTime(
-                                                            experience.starts_at,
-                                                        )
+                                                        reservation.children ===
+                                                        1
+                                                            ? 'niño'
+                                                            : 'niños'
                                                     }}
                                                 </template>
                                             </div>
                                         </div>
                                         <div
-                                            class="shrink-0 text-sm font-medium"
+                                            class="shrink-0 text-xs font-medium"
                                         >
-                                            {{ money(experience.total) }}
+                                            {{ money(reservation.total) }}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div
+                                    v-if="group.experiences.length"
+                                    class="mt-3"
+                                >
+                                    <div
+                                        class="mb-1.5 text-xs font-medium text-slate-500"
+                                    >
+                                        Experiencias incluidas
+                                    </div>
+                                    <div
+                                        class="grid grid-cols-1 gap-1.5 lg:grid-cols-2"
+                                    >
+                                        <div
+                                            v-for="experience in group.experiences"
+                                            :key="experience.id"
+                                            class="flex items-center gap-2.5 rounded-lg border border-slate-200/80 bg-white px-3 py-2 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                        >
+                                            <div
+                                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                                            >
+                                                <Lucide
+                                                    icon="Compass"
+                                                    class="h-4 w-4"
+                                                />
+                                            </div>
+                                            <div class="min-w-0 flex-1">
+                                                <div
+                                                    class="truncate text-xs font-medium"
+                                                >
+                                                    {{
+                                                        experience.name ??
+                                                        experience.code
+                                                    }}
+                                                </div>
+                                                <div
+                                                    class="truncate text-xs text-slate-500"
+                                                >
+                                                    {{ experience.people }}
+                                                    {{
+                                                        experience.people === 1
+                                                            ? 'persona'
+                                                            : 'personas'
+                                                    }}
+                                                    <template
+                                                        v-if="
+                                                            experience.starts_at
+                                                        "
+                                                    >
+                                                        ·
+                                                        {{
+                                                            formatDateTime(
+                                                                experience.starts_at,
+                                                            )
+                                                        }}
+                                                    </template>
+                                                </div>
+                                            </div>
+                                            <div
+                                                class="shrink-0 text-xs font-medium"
+                                            >
+                                                {{ money(experience.total) }}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
-                        </div>
-                    </article>
+                        </article>
+                    </div>
+
+                    <!-- Paginación: la lista trae quince grupos por vuelta -->
+                    <div
+                        v-if="groups.links.length > 3"
+                        class="flex flex-wrap justify-center gap-1 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                    >
+                        <template v-for="(link, i) in groups.links" :key="i">
+                            <Link
+                                v-if="link.url"
+                                :href="link.url"
+                                preserve-state
+                                class="rounded-md px-2.5 py-1 text-xs"
+                                :class="
+                                    link.active
+                                        ? 'bg-primary text-white'
+                                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                                "
+                            >
+                                <span v-html="link.label" />
+                            </Link>
+                            <span
+                                v-else
+                                class="px-2.5 py-1 text-xs text-slate-400"
+                                v-html="link.label"
+                            />
+                        </template>
+                    </div>
                 </div>
 
                 <div
-                    v-else-if="groups.length"
+                    v-else-if="stats.total"
                     class="flex flex-col items-center gap-3 px-5 py-12 text-center"
                 >
                     <div
-                        class="flex h-14 w-14 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
+                        class="flex h-9 w-9 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
                     >
                         <Lucide icon="SearchX" class="h-7 w-7" />
                     </div>
@@ -1401,7 +1442,7 @@ async function deleteGroup(): Promise<void> {
                         variant="outline-secondary"
                         @click="clearListFilters"
                     >
-                        <Lucide icon="X" class="mr-2 h-5 w-5" />
+                        <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
                         Limpiar filtros
                     </Button>
                 </div>
@@ -1411,7 +1452,7 @@ async function deleteGroup(): Promise<void> {
                     class="flex flex-col items-center gap-3 px-5 py-12 text-center"
                 >
                     <div
-                        class="flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary"
+                        class="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary"
                     >
                         <Lucide icon="UsersRound" class="h-7 w-7" />
                     </div>
@@ -1430,7 +1471,7 @@ async function deleteGroup(): Promise<void> {
                         :disabled="!roomTypes.length"
                         @click="openForm"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-5 w-5" />
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                         Crear primer grupo
                     </Button>
                 </div>
@@ -1451,10 +1492,7 @@ async function deleteGroup(): Promise<void> {
                         <div
                             class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
                         >
-                            <Lucide
-                                icon="UsersRound"
-                                class="h-5 w-5 sm:h-7 sm:w-7"
-                            />
+                            <Lucide icon="UsersRound" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium sm:text-lg">
@@ -1490,7 +1528,7 @@ async function deleteGroup(): Promise<void> {
                                     ? 'primary'
                                     : 'outline-secondary'
                             "
-                            class="min-h-11 justify-center rounded-[0.65rem] px-1.5 text-center sm:min-h-14 sm:justify-start sm:px-3 sm:text-left"
+                            class="min-h-10 justify-center rounded-[0.65rem] px-1.5 text-center text-xs sm:min-h-12 sm:justify-start sm:px-3 sm:text-left"
                             :disabled="
                                 (step.key === 'rooms' && !stayStepComplete) ||
                                 (step.key === 'contact' &&
@@ -1530,7 +1568,7 @@ async function deleteGroup(): Promise<void> {
 
                     <div
                         ref="formScrollContainer"
-                        class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-4 py-4 [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable] sm:px-7 sm:py-6"
+                        class="min-h-0 flex-1 touch-pan-y overflow-y-auto overscroll-contain px-4 py-4 [-webkit-overflow-scrolling:touch] [scrollbar-gutter:stable] sm:px-7 sm:py-5"
                     >
                         <section
                             v-if="activeFormStep === 'stay'"
@@ -1541,11 +1579,11 @@ async function deleteGroup(): Promise<void> {
                             >
                                 <div class="flex items-start gap-3">
                                     <div
-                                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
+                                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
                                     >
                                         <Lucide
                                             icon="CalendarDays"
-                                            class="h-6 w-6"
+                                            class="h-4 w-4"
                                         />
                                     </div>
                                     <div>
@@ -1573,7 +1611,7 @@ async function deleteGroup(): Promise<void> {
                                     <FormSelect
                                         id="group-mode"
                                         v-model="form.mode"
-                                        class="h-11"
+                                        class="h-9 text-xs"
                                     >
                                         <option value="night">Por noche</option>
                                         <option value="block">
@@ -1591,11 +1629,10 @@ async function deleteGroup(): Promise<void> {
                                         <FormLabel htmlFor="group-arrival">
                                             Fecha de llegada
                                         </FormLabel>
-                                        <FormInput
+                                        <FormDate
                                             id="group-arrival"
                                             v-model="form.arrive_date"
-                                            type="date"
-                                            class="h-11"
+                                            input-class="h-9 text-xs"
                                         />
                                     </div>
                                     <div
@@ -1607,11 +1644,10 @@ async function deleteGroup(): Promise<void> {
                                         <FormLabel htmlFor="group-departure">
                                             Fecha de salida
                                         </FormLabel>
-                                        <FormInput
+                                        <FormDate
                                             id="group-departure"
                                             v-model="form.depart_date"
-                                            type="date"
-                                            class="h-11"
+                                            input-class="h-9 text-xs"
                                             :min="form.arrive_date"
                                         />
                                     </div>
@@ -1626,11 +1662,10 @@ async function deleteGroup(): Promise<void> {
                                     <FormLabel htmlFor="group-arrival-time">
                                         Fecha y hora de llegada
                                     </FormLabel>
-                                    <FormInput
+                                    <FormDateTime
                                         id="group-arrival-time"
                                         v-model="form.arrive_at"
-                                        type="datetime-local"
-                                        class="h-11"
+                                        input-class="h-9 text-xs"
                                     />
                                 </div>
                             </div>
@@ -1751,7 +1786,7 @@ async function deleteGroup(): Promise<void> {
                                             <FormSelect
                                                 :id="`group-room-type-${index}`"
                                                 v-model="line.room_type_id"
-                                                class="h-11"
+                                                class="h-9 text-xs"
                                             >
                                                 <option value="" disabled>
                                                     Elige un tipo
@@ -1941,7 +1976,10 @@ async function deleteGroup(): Promise<void> {
                                     :disabled="form.lines.length >= 10"
                                     @click="addLine"
                                 >
-                                    <Lucide icon="Plus" class="mr-2 h-5 w-5" />
+                                    <Lucide
+                                        icon="Plus"
+                                        class="mr-1.5 h-3.5 w-3.5"
+                                    />
                                     Agregar otro tipo
                                 </Button>
                                 <p class="text-xs text-slate-500">
@@ -1975,11 +2013,11 @@ async function deleteGroup(): Promise<void> {
                             >
                                 <div class="flex items-start gap-3">
                                     <div
-                                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                                     >
                                         <Lucide
                                             icon="UserRound"
-                                            class="h-6 w-6"
+                                            class="h-4 w-4"
                                         />
                                     </div>
                                     <div>
@@ -2062,7 +2100,7 @@ async function deleteGroup(): Promise<void> {
                                         <FormSelect
                                             id="group-phone-country"
                                             v-model="phoneCountry"
-                                            class="h-11"
+                                            class="h-9 text-xs"
                                             aria-label="País de la lada"
                                             @change="changePhoneCountry"
                                         >
@@ -2081,7 +2119,7 @@ async function deleteGroup(): Promise<void> {
                                             v-model="phoneDialCode"
                                             type="tel"
                                             inputmode="numeric"
-                                            class="h-11"
+                                            class="h-9 text-xs"
                                             placeholder="+34"
                                             aria-label="Lada internacional"
                                             @input="syncGuestPhone"
@@ -2135,7 +2173,7 @@ async function deleteGroup(): Promise<void> {
                             >
                                 <div class="flex items-start gap-3">
                                     <div
-                                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
                                         :class="
                                             form.confirmed
                                                 ? 'bg-success/10 text-success'
@@ -2148,7 +2186,7 @@ async function deleteGroup(): Promise<void> {
                                                     ? 'CircleCheck'
                                                     : 'AlarmClock'
                                             "
-                                            class="h-6 w-6"
+                                            class="h-4 w-4"
                                         />
                                     </div>
                                     <div>
@@ -2203,7 +2241,7 @@ async function deleteGroup(): Promise<void> {
                                 v-if="activeFormStepIndex > 0"
                                 type="button"
                                 variant="outline-secondary"
-                                class="min-h-10 w-full px-3 sm:min-h-11 sm:px-5"
+                                class="h-10 w-full px-3 text-xs sm:h-10 sm:px-5"
                                 @click="previousFormStep"
                             >
                                 <Lucide
@@ -2216,7 +2254,7 @@ async function deleteGroup(): Promise<void> {
                                 v-if="activeFormStep !== 'contact'"
                                 type="button"
                                 variant="primary"
-                                class="min-h-10 w-full px-3 sm:min-h-11 sm:px-5"
+                                class="h-10 w-full px-3 text-xs sm:h-10 sm:px-5"
                                 :disabled="
                                     activeFormStep === 'stay'
                                         ? !stayStepComplete
@@ -2234,7 +2272,7 @@ async function deleteGroup(): Promise<void> {
                                 v-else
                                 type="submit"
                                 variant="primary"
-                                class="min-h-10 w-full px-3 sm:min-h-11 sm:px-5"
+                                class="h-10 w-full px-3 text-xs sm:h-10 sm:px-5"
                                 :disabled="
                                     saving ||
                                     !stayStepComplete ||
@@ -2244,7 +2282,7 @@ async function deleteGroup(): Promise<void> {
                             >
                                 <Lucide
                                     icon="CircleCheck"
-                                    class="mr-2 h-5 w-5"
+                                    class="mr-1.5 h-3.5 w-3.5"
                                 />
                                 {{
                                     saving
@@ -2265,14 +2303,14 @@ async function deleteGroup(): Promise<void> {
         >
             <Dialog.Panel>
                 <form @submit.prevent="submitEdit">
-                    <div class="flex items-start gap-4 px-6 py-5">
+                    <div class="flex items-start gap-4 px-5 py-4">
                         <div
-                            class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                         >
                             <Lucide icon="UserPen" class="h-7 w-7" />
                         </div>
                         <div>
-                            <h2 class="text-lg font-medium">
+                            <h2 class="text-base font-medium">
                                 Editar responsable
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">
@@ -2282,7 +2320,7 @@ async function deleteGroup(): Promise<void> {
                         </div>
                     </div>
                     <div
-                        class="space-y-5 border-y border-slate-200/70 px-6 py-5 dark:border-darkmode-400"
+                        class="space-y-5 border-y border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
                     >
                         <div>
                             <FormLabel htmlFor="edit-group-guest">
@@ -2292,7 +2330,7 @@ async function deleteGroup(): Promise<void> {
                                 id="edit-group-guest"
                                 v-model="editForm.guest_name"
                                 type="text"
-                                class="h-11"
+                                class="h-9 text-xs"
                                 placeholder="Nombre completo"
                             />
                         </div>
@@ -2308,11 +2346,11 @@ async function deleteGroup(): Promise<void> {
                             />
                         </div>
                     </div>
-                    <div class="flex justify-end gap-3 px-6 py-4">
+                    <div class="flex justify-end gap-3 px-5 py-3.5">
                         <Button
                             type="button"
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="editingGroup = null"
                         >
                             Cancelar
@@ -2320,10 +2358,10 @@ async function deleteGroup(): Promise<void> {
                         <Button
                             type="submit"
                             variant="primary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="editBusy || !editForm.guest_name.trim()"
                         >
-                            <Lucide icon="Check" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                             {{ editBusy ? 'Guardando...' : 'Guardar cambios' }}
                         </Button>
                     </div>
@@ -2337,13 +2375,13 @@ async function deleteGroup(): Promise<void> {
             @close="cancelling = null"
         >
             <Dialog.Panel>
-                <div class="px-6 py-6 text-center">
+                <div class="px-5 py-5 text-center">
                     <div
                         class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-danger/10 text-danger"
                     >
                         <Lucide icon="TriangleAlert" class="h-8 w-8" />
                     </div>
-                    <h2 class="mt-4 text-lg font-medium">
+                    <h2 class="mt-4 text-base font-medium">
                         ¿Cancelar todo el grupo {{ cancelling?.code }}?
                     </h2>
                     <p class="mx-auto mt-2 max-w-lg text-sm text-slate-500">
@@ -2371,18 +2409,18 @@ async function deleteGroup(): Promise<void> {
                     <div class="mt-6 flex justify-center gap-3">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="cancelling = null"
                         >
                             Conservar grupo
                         </Button>
                         <Button
                             variant="danger"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="cancelBusy"
                             @click="cancelGroup"
                         >
-                            <Lucide icon="Ban" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Ban" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 cancelBusy
                                     ? 'Cancelando...'
@@ -2400,13 +2438,13 @@ async function deleteGroup(): Promise<void> {
             @close="deletingGroup = null"
         >
             <Dialog.Panel>
-                <div class="px-6 py-6 text-center">
+                <div class="px-5 py-5 text-center">
                     <div
                         class="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-danger/10 text-danger"
                     >
                         <Lucide icon="Trash2" class="h-8 w-8" />
                     </div>
-                    <h2 class="mt-4 text-lg font-medium">
+                    <h2 class="mt-4 text-base font-medium">
                         ¿Eliminar el folio {{ deletingGroup?.code }}?
                     </h2>
                     <p class="mx-auto mt-2 max-w-lg text-sm text-slate-500">
@@ -2417,18 +2455,18 @@ async function deleteGroup(): Promise<void> {
                     <div class="mt-6 flex justify-center gap-3">
                         <Button
                             variant="outline-secondary"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             @click="deletingGroup = null"
                         >
                             Conservar folio
                         </Button>
                         <Button
                             variant="danger"
-                            class="min-h-11 px-5"
+                            class="h-10 px-5 text-xs"
                             :disabled="deleteBusy"
                             @click="deleteGroup"
                         >
-                            <Lucide icon="Trash2" class="mr-2 h-5 w-5" />
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 deleteBusy ? 'Eliminando...' : 'Eliminar folio'
                             }}

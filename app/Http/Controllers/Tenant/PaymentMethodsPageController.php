@@ -50,8 +50,9 @@ class PaymentMethodsPageController extends Controller
             // aunque haya pasarela conectada — la causa #1 de "no se ven".
             'ratePlansWithDeposit' => RatePlan::query()
                 ->where('active', true)
-                ->whereNotNull('deposit_percent')
-                ->where('deposit_percent', '>', 0)
+                ->where(fn ($q) => $q
+                    ->where('deposit_percent', '>', 0)
+                    ->orWhere('deposit_amount', '>', 0))
                 ->count(),
             'activeRatePlans' => RatePlan::query()->where('active', true)->count(),
             // Mini-resúmenes para que cada tarjeta diga qué hay adentro sin
@@ -166,10 +167,25 @@ class PaymentMethodsPageController extends Controller
                 'cancel_policy_text' => $settings['cancel_policy_text'] ?? '',
                 // Walk-ins: cuenta final al salir (default) o cobro al llegar.
                 'walkin_charge' => $settings['walkin_charge'] ?? 'checkout',
+                // Formas de cobro que acepta la recepción. Es lo que ofrecen
+                // el plano, el POS, la salida y los abonos — NO lo mismo que
+                // los métodos en línea de /admin (esos son del wizard).
+                'counter_methods' => app(\App\Services\ReservationPolicy::class)->counterMethods(),
                 // Fianza (depósito en garantía): se cobra al registrar la
-                // llegada y se devuelve al registrar la salida.
+                // llegada y se devuelve al registrar la salida. Los escalones
+                // bajan el monto POR HABITACIÓN cuando el mismo grupo aparta
+                // varias — se normalizan al guardar (PropertyController).
                 'guarantee_enabled' => (bool) ($settings['guarantee_enabled'] ?? false),
                 'guarantee_amount' => round((float) ($settings['guarantee_amount'] ?? 0), 2),
+                'guarantee_tiers' => app(\App\Services\ReservationPolicy::class)->guaranteeTiers(),
+            ],
+            // Catálogo de formas de cobro del mostrador, con su explicación:
+            // la confusión que esto resuelve es "apagué tarjeta en línea y el
+            // panel sigue ofreciéndome tarjeta", así que cada una dice qué es.
+            'counterMethodCatalog' => [
+                ['key' => 'cash', 'label' => 'Efectivo', 'hint' => 'Billete en la caja de recepción.'],
+                ['key' => 'card', 'label' => 'Tarjeta', 'hint' => 'Terminal bancaria física en el mostrador. No es el cobro con tarjeta por internet: ese depende de las pasarelas.'],
+                ['key' => 'transfer', 'label' => 'Transferencia', 'hint' => 'Depósito o transferencia con el comprobante a la vista al momento de atender.'],
             ],
             // Tarifas con política de cancelación propia: mandan sobre la
             // default del hotel — la UI lo avisa para evitar sorpresas.

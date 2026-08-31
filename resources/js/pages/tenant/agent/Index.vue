@@ -1,9 +1,17 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
 import axios from 'axios';
-import { computed, reactive, ref, watch } from 'vue';
+import {
+    computed,
+    onBeforeUnmount,
+    onMounted,
+    reactive,
+    ref,
+    watch,
+} from 'vue';
 import Button from '@/components/Base/Button';
 import {
+    FormDateTime,
     FormHelp,
     FormInput,
     FormLabel,
@@ -133,11 +141,22 @@ const props = defineProps<{
         webhook_url: string;
         verify_token: string;
         app_configured: boolean;
+        app_id: string | null;
+        login_config_id: string | null;
+        graph_version: string;
     };
     channelLimit: { max: number | null; used: number };
+    /** Canales que la plataforma habilitó para este hotel. */
+    channelsAllowed: string[];
     contextEditable: boolean;
     guidelinesEditable: boolean;
 }>();
+
+/**
+ * El panel solo ofrece los canales habilitados desde /admin: antes se veían
+ * los cuatro aunque el hotel tuviera contratado uno.
+ */
+const showsChannel = (key: string) => props.channelsAllowed.includes(key);
 
 const toast = useToasts();
 const saving = ref(false);
@@ -1007,6 +1026,151 @@ const metaTests = reactive<Record<number, MetaDiagnose>>({});
 const testingMeta = ref<number | null>(null);
 const deletingMeta = ref<MetaChannelRow | null>(null);
 
+// ── Registro incrustado (Embedded Signup): popup oficial de Facebook, con
+// coexistencia opcional (el número sigue en la app WhatsApp Business del
+// celular). Disponible solo si la plataforma configuró META_LOGIN_CONFIG_ID.
+const showMetaSignup = ref(false);
+const metaSignupKeepApp = ref(true);
+const metaSignupRunning = ref(false);
+const metaSignupIds = reactive({ phone_number_id: '', waba_id: '' });
+const metaSignupAvailable = computed(
+    () => !!(props.metaConfig.app_id && props.metaConfig.login_config_id),
+);
+
+let fbSdkPromise: Promise<void> | null = null;
+
+function ensureFbSdk(): Promise<void> {
+    if (fbSdkPromise) return fbSdkPromise;
+    fbSdkPromise = new Promise((resolve, reject) => {
+        (window as any).fbAsyncInit = () => {
+            (window as any).FB.init({
+                appId: props.metaConfig.app_id,
+                autoLogAppEvents: false,
+                xfbml: false,
+                version: props.metaConfig.graph_version,
+            });
+            resolve();
+        };
+        const script = document.createElement('script');
+        script.src = 'https://connect.facebook.net/es_LA/sdk.js';
+        script.async = true;
+        script.onerror = () =>
+            reject(new Error('No se pudo cargar el SDK de Facebook.'));
+        document.head.appendChild(script);
+    });
+    return fbSdkPromise;
+}
+
+// El popup del registro avisa el número conectado por postMessage; el code
+// del login llega por otro lado (callback de FB.login) — se juntan aquí.
+function onMetaSignupMessage(event: MessageEvent) {
+    if (!event.origin.endsWith('facebook.com')) return;
+    try {
+        const data = JSON.parse(event.data);
+        // Depuración del registro incrustado: deja rastro en consola de todo
+        // lo que Facebook postea (para diagnosticar flujos que no avisan).
+        if (data.type === 'WA_EMBEDDED_SIGNUP') {
+            console.debug('[kuira signup]', JSON.stringify(data));
+        }
+        if (data.type === 'WA_EMBEDDED_SIGNUP' && data.data) {
+            metaSignupIds.phone_number_id =
+                data.data.phone_number_id ?? metaSignupIds.phone_number_id;
+            metaSignupIds.waba_id = data.data.waba_id ?? metaSignupIds.waba_id;
+        }
+    } catch {
+        // postMessage ajenos con payload no-JSON: ignorar
+    }
+}
+
+onMounted(() => window.addEventListener('message', onMetaSignupMessage));
+onBeforeUnmount(() =>
+    window.removeEventListener('message', onMetaSignupMessage),
+);
+
+async function startMetaSignup() {
+    metaSignupRunning.value = true;
+    metaSignupIds.phone_number_id = '';
+    metaSignupIds.waba_id = '';
+    try {
+        await ensureFbSdk();
+        (window as any).FB.login(
+            (response: any) => {
+                const code = response?.authResponse?.code;
+                if (!code) {
+                    metaSignupRunning.value = false;
+                    toast.error(
+                        'Registro cancelado',
+                        'No se completó el flujo de Facebook.',
+                    );
+                    return;
+                }
+                void finishMetaSignup(code);
+            },
+            {
+                config_id: props.metaConfig.login_config_id,
+                response_type: 'code',
+                override_default_response_type: true,
+                extras: {
+                    setup: {},
+                    sessionInfoVersion: '3',
+                    // Coexistencia: mantiene la app del celular y conecta el
+                    // mismo número a la API (el popup pide escanear un QR).
+                    ...(metaSignupKeepApp.value
+                        ? { featureType: 'whatsapp_business_app_onboarding' }
+                        : {}),
+                },
+            },
+        );
+    } catch (e: any) {
+        metaSignupRunning.value = false;
+        toast.error(
+            'No se pudo abrir el registro',
+            e?.message ?? 'Error del SDK de Facebook.',
+        );
+    }
+}
+
+async function finishMetaSignup(code: string) {
+    try {
+        // El postMessage con los ids puede llegar varios segundos después
+        // del callback del login: esperar en rondas antes de rendirse.
+        for (
+            let i = 0;
+            i < 12 &&
+            (!metaSignupIds.phone_number_id || !metaSignupIds.waba_id);
+            i++
+        ) {
+            await new Promise((resolve) => setTimeout(resolve, 500));
+        }
+        if (!metaSignupIds.phone_number_id || !metaSignupIds.waba_id) {
+            toast.error(
+                'Registro incompleto',
+                'Facebook no reportó el número conectado. Vuelve a intentarlo.',
+            );
+            return;
+        }
+        await axios.post(route('tenant.meta-channels.embedded-signup'), {
+            code,
+            phone_number_id: metaSignupIds.phone_number_id,
+            waba_id: metaSignupIds.waba_id,
+        });
+        toast.success(
+            'WhatsApp conectado',
+            'El número quedó vinculado con el flujo oficial de Meta.',
+        );
+        showMetaSignup.value = false;
+        router.reload({ only: ['metaChannels', 'channelLimit'] });
+    } catch (e: any) {
+        const data = e.response?.data;
+        toast.error(
+            'No se pudo conectar',
+            data?.message ?? 'Meta rechazó el registro.',
+        );
+    } finally {
+        metaSignupRunning.value = false;
+    }
+}
+
 function openMetaCreate() {
     if (channelLimitReached.value) return;
     editingMeta.value = null;
@@ -1134,23 +1298,25 @@ async function copyMeta(key: string, value: string) {
 
 <template>
     <RazeLayout title="Asistente IA">
-        <div class="grid grid-cols-12 gap-x-6 gap-y-8">
+        <div class="mt-2 grid grid-cols-12 gap-5">
             <!-- Encabezado -->
             <div class="col-span-12">
-                <div class="flex flex-wrap items-center justify-between gap-3">
-                    <div class="flex items-center gap-3.5">
+                <div
+                    class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
+                >
+                    <div class="flex min-w-0 items-center gap-3">
                         <div
-                            class="flex h-12 w-12 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-white"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-white"
                         >
-                            <Lucide icon="Bot" class="h-6 w-6" />
+                            <Lucide icon="Bot" class="h-4 w-4" />
                         </div>
                         <div>
                             <div class="flex items-center gap-2">
-                                <h1 class="text-lg font-medium">
+                                <h1 class="text-base font-medium">
                                     Asistente IA
                                 </h1>
                                 <span
-                                    class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
+                                    class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium"
                                     :class="
                                         stats.active
                                             ? 'bg-success/10 text-success'
@@ -1172,22 +1338,24 @@ async function copyMeta(key: string, value: string) {
                                     }}
                                 </span>
                             </div>
-                            <p class="text-sm text-slate-500">
-                                {{ property.name }} · herramientas, accesos y
-                                pruebas del bot
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                {{ property.name }} · canales, herramientas y
+                                pruebas del bot.
                             </p>
                         </div>
                     </div>
-                    <div class="flex flex-wrap gap-2">
+                    <div
+                        class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
+                    >
                         <Button
                             as="a"
                             :href="route('tenant.hotel-settings')"
                             variant="outline-secondary"
-                            class="rounded-[0.5rem] bg-white"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
                         >
                             <Lucide
                                 icon="ScrollText"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-1.5 h-3.5 w-3.5"
                             />
                             Políticas
                         </Button>
@@ -1196,11 +1364,11 @@ async function copyMeta(key: string, value: string) {
                             as="a"
                             :href="route('tenant.agent-learnings')"
                             variant="outline-primary"
-                            class="rounded-[0.5rem] bg-white"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
                         >
                             <Lucide
                                 icon="GraduationCap"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-1.5 h-3.5 w-3.5"
                             />
                             Aprendizajes
                         </Button>
@@ -1209,23 +1377,23 @@ async function copyMeta(key: string, value: string) {
                             as="a"
                             :href="route('tenant.agent-context')"
                             variant="outline-primary"
-                            class="rounded-[0.5rem] bg-white"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
                         >
                             <Lucide
                                 icon="BookOpenText"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-1.5 h-3.5 w-3.5"
                             />
                             Contexto del bot
                         </Button>
                         <Button
                             v-if="aiPlan.api_allowed"
                             variant="primary"
-                            class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                             @click="showCreateToken = true"
                         >
                             <Lucide
                                 icon="KeyRound"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-1.5 h-3.5 w-3.5"
                             />
                             Nuevo token
                         </Button>
@@ -1235,7 +1403,7 @@ async function copyMeta(key: string, value: string) {
                 <!-- Aviso de prerequisito -->
                 <div
                     v-if="!stats.policies_set"
-                    class="mt-4 flex items-center gap-2 rounded-lg border-l-4 border-l-warning bg-warning/5 px-4 py-3 text-sm"
+                    class="box box--stacked mt-4 flex items-center gap-2 border-l-4 border-l-warning px-4 py-3 text-xs"
                 >
                     <Lucide
                         icon="TriangleAlert"
@@ -1255,126 +1423,121 @@ async function copyMeta(key: string, value: string) {
                 </div>
 
                 <!-- Stats -->
-                <div class="mt-5 grid grid-cols-12 gap-5">
+                <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
                     <div
                         v-if="aiPlan.api_allowed"
-                        class="box box--stacked col-span-6 p-5 xl:col-span-3"
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
                     >
-                        <div class="flex items-center justify-between">
-                            <div
-                                class="flex h-11 w-11 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
-                            >
-                                <Lucide
-                                    icon="KeyRound"
-                                    class="h-5 w-5 text-primary"
-                                />
-                            </div>
-                            <div class="text-2xl font-medium">
+                        <div
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="KeyRound" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
                                 {{ tokens.length }}
                             </div>
-                        </div>
-                        <div class="mt-4 text-sm font-medium">
-                            Tokens activos
-                        </div>
-                        <div class="mt-1 text-xs text-slate-500">
-                            {{
-                                stats.last_activity
-                                    ? `Última actividad ${stats.last_activity}`
-                                    : 'Sin actividad aún'
-                            }}
+                            <div class="truncate text-xs text-slate-500">
+                                Tokens activos
+                            </div>
+                            <div class="truncate text-[11px] text-slate-400">
+                                {{
+                                    stats.last_activity
+                                        ? `Última actividad ${stats.last_activity}`
+                                        : 'Sin actividad aún'
+                                }}
+                            </div>
                         </div>
                     </div>
                     <div
                         v-else
-                        class="box box--stacked col-span-6 p-5 xl:col-span-3"
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
                     >
-                        <div class="flex items-center justify-between">
-                            <div
-                                class="flex h-11 w-11 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
-                            >
-                                <Lucide
-                                    icon="Globe"
-                                    class="h-5 w-5 text-primary"
-                                />
+                        <div
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="Globe" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
+                                {{ channelLimit.used }}
                             </div>
-                            <div class="text-2xl font-medium">1</div>
-                        </div>
-                        <div class="mt-4 text-sm font-medium">
-                            Canales activos
-                        </div>
-                        <div class="mt-1 text-xs text-slate-500">
-                            Webchat · WhatsApp próximamente
+                            <div class="truncate text-xs text-slate-500">
+                                Canales conectados
+                            </div>
+                            <div class="truncate text-[11px] text-slate-400">
+                                <template v-if="channelLimit.max">
+                                    de {{ channelLimit.max }} que da el plan
+                                </template>
+                                <template v-else
+                                    >Webchat siempre activo</template
+                                >
+                            </div>
                         </div>
                     </div>
-                    <div class="box box--stacked col-span-6 p-5 xl:col-span-3">
-                        <div class="flex items-center justify-between">
-                            <div
-                                class="flex h-11 w-11 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
-                            >
-                                <Lucide
-                                    icon="CalendarPlus"
-                                    class="h-5 w-5 text-warning"
-                                />
-                            </div>
-                            <div class="text-2xl font-medium">
+                    <div
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                    >
+                        <div
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10 text-warning"
+                        >
+                            <Lucide icon="CalendarPlus" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
                                 {{ stats.holds_total }}
                             </div>
-                        </div>
-                        <div class="mt-4 text-sm font-medium">
-                            Apartados creados
-                        </div>
-                        <div class="mt-1 text-xs text-slate-500">
-                            Reservas iniciadas por el bot
+                            <div class="truncate text-xs text-slate-500">
+                                Apartados creados
+                            </div>
+                            <div class="truncate text-[11px] text-slate-400">
+                                Reservas iniciadas por el bot
+                            </div>
                         </div>
                     </div>
-                    <div class="box box--stacked col-span-6 p-5 xl:col-span-3">
-                        <div class="flex items-center justify-between">
-                            <div
-                                class="flex h-11 w-11 items-center justify-center rounded-full border border-success/10 bg-success/10"
-                            >
-                                <Lucide
-                                    icon="CircleCheck"
-                                    class="h-5 w-5 text-success"
-                                />
-                            </div>
-                            <div class="text-2xl font-medium">
+                    <div
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                    >
+                        <div
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                        >
+                            <Lucide icon="CircleCheck" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
                                 {{ stats.holds_confirmed }}
                             </div>
-                        </div>
-                        <div class="mt-4 text-sm font-medium">Convertidos</div>
-                        <div class="mt-1 text-xs text-slate-500">
-                            Apartados que el hotel confirmó
+                            <div class="truncate text-xs text-slate-500">
+                                Convertidos
+                            </div>
+                            <div class="truncate text-[11px] text-slate-400">
+                                Apartados que el hotel confirmó
+                            </div>
                         </div>
                     </div>
-                    <div class="box box--stacked col-span-6 p-5 xl:col-span-3">
-                        <div class="flex items-center justify-between">
-                            <div
-                                class="flex h-11 w-11 items-center justify-center rounded-full border"
-                                :class="
-                                    stats.policies_set
-                                        ? 'border-success/10 bg-success/10'
-                                        : 'border-danger/10 bg-danger/10'
-                                "
-                            >
-                                <Lucide
-                                    icon="ScrollText"
-                                    class="h-5 w-5"
-                                    :class="
-                                        stats.policies_set
-                                            ? 'text-success'
-                                            : 'text-danger'
-                                    "
-                                />
-                            </div>
-                            <div class="text-2xl font-medium">
+                    <div
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                    >
+                        <div
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
+                            :class="
+                                stats.policies_set
+                                    ? 'border-success/10 bg-success/10 text-success'
+                                    : 'border-danger/10 bg-danger/10 text-danger'
+                            "
+                        >
+                            <Lucide icon="ScrollText" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
                                 {{ stats.policies_set ? 'Sí' : 'No' }}
                             </div>
-                        </div>
-                        <div class="mt-4 text-sm font-medium">
-                            Políticas escritas
-                        </div>
-                        <div class="mt-1 text-xs text-slate-500">
-                            {{ ratePlansCount }} tarifa(s) para cotizar
+                            <div class="truncate text-xs text-slate-500">
+                                Políticas escritas
+                            </div>
+                            <div class="truncate text-[11px] text-slate-400">
+                                {{ ratePlansCount }} tarifa(s) para cotizar
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1532,7 +1695,7 @@ async function copyMeta(key: string, value: string) {
                                     'bg-slate-100 text-slate-500'
                                 "
                             >
-                                <Lucide icon="Sparkles" class="h-5 w-5" />
+                                <Lucide icon="Sparkles" class="h-4 w-4" />
                             </div>
                             <div class="min-w-0 flex-1">
                                 <div class="flex items-center gap-2">
@@ -1697,19 +1860,20 @@ async function copyMeta(key: string, value: string) {
                 </div>
             </div>
 
-            <!-- WhatsApp (Evolution API) -->
-            <div class="col-span-12">
+            <!-- WhatsApp (Evolution API). Los canales se muestran solo si
+                 la plataforma los habilitó para este hotel. -->
+            <div v-if="showsChannel('evolution')" class="col-span-12">
                 <div class="box box--stacked">
                     <div
-                        class="flex flex-wrap items-center gap-4 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                        class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
                         >
-                            <Lucide icon="MessageCircle" class="h-5 w-5" />
+                            <Lucide icon="MessageCircle" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 WhatsApp (Evolution API)
                             </h2>
                             <p class="mt-0.5 text-xs text-slate-500">
@@ -1983,18 +2147,18 @@ async function copyMeta(key: string, value: string) {
             </div>
 
             <!-- WhatsApp (Cloud API oficial de Meta) -->
-            <div class="col-span-12">
+            <div v-if="showsChannel('meta')" class="col-span-12">
                 <div class="box box--stacked">
                     <div
-                        class="flex flex-wrap items-center gap-4 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                        class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
                         >
                             <Lucide icon="BadgeCheck" class="h-5 w-5" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 WhatsApp (Cloud API de Meta)
                             </h2>
                             <p class="mt-0.5 text-xs text-slate-500">
@@ -2009,9 +2173,37 @@ async function copyMeta(key: string, value: string) {
                                 >{{ channelCountLabel }}</span
                             >
                             <Button
+                                v-if="metaSignupAvailable"
                                 variant="primary"
                                 size="sm"
                                 class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                                :disabled="channelLimitReached"
+                                :title="
+                                    channelLimitReached
+                                        ? 'Alcanzaste el límite de canales de mensajería de tu plan.'
+                                        : undefined
+                                "
+                                @click="showMetaSignup = true"
+                            >
+                                <Lucide
+                                    icon="Facebook"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Conectar con Facebook
+                            </Button>
+                            <Button
+                                :variant="
+                                    metaSignupAvailable
+                                        ? 'outline-secondary'
+                                        : 'primary'
+                                "
+                                size="sm"
+                                class="rounded-[0.5rem]"
+                                :class="
+                                    metaSignupAvailable
+                                        ? ''
+                                        : 'shadow-md shadow-primary/20'
+                                "
                                 :disabled="channelLimitReached"
                                 :title="
                                     channelLimitReached
@@ -2228,18 +2420,21 @@ async function copyMeta(key: string, value: string) {
             </div>
 
             <!-- Telegram (Bot API) -->
-            <div class="col-span-12 xl:col-span-6">
+            <div
+                v-if="showsChannel('telegram')"
+                class="col-span-12 xl:col-span-6"
+            >
                 <div class="box box--stacked flex h-full flex-col">
                     <div
-                        class="flex flex-wrap items-center gap-4 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                        class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
                         >
-                            <Lucide icon="Send" class="h-5 w-5" />
+                            <Lucide icon="Send" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">Telegram</h2>
+                            <h2 class="text-sm font-medium">Telegram</h2>
                             <p class="mt-0.5 text-xs text-slate-500">
                                 Crea un bot con BotFather, pega su token y el
                                 asistente atiende Telegram desde la bandeja.
@@ -2293,9 +2488,7 @@ async function copyMeta(key: string, value: string) {
                                                     : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
                                             "
                                             >{{
-                                                ch.active
-                                                    ? 'Activo'
-                                                    : 'Pausado'
+                                                ch.active ? 'Activo' : 'Pausado'
                                             }}</span
                                         >
                                     </div>
@@ -2369,18 +2562,21 @@ async function copyMeta(key: string, value: string) {
             </div>
 
             <!-- TikTok (Business Messaging API) -->
-            <div class="col-span-12 xl:col-span-6">
+            <div
+                v-if="showsChannel('tiktok')"
+                class="col-span-12 xl:col-span-6"
+            >
                 <div class="box box--stacked flex h-full flex-col">
                     <div
-                        class="flex flex-wrap items-center gap-4 border-b border-slate-200/60 p-5 dark:border-darkmode-400"
+                        class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-dark/10 bg-dark/10 text-dark dark:text-slate-300"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-dark/10 bg-dark/10 text-dark dark:text-slate-300"
                         >
-                            <Lucide icon="Music2" class="h-5 w-5" />
+                            <Lucide icon="Music2" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">TikTok</h2>
+                            <h2 class="text-sm font-medium">TikTok</h2>
                             <p class="mt-0.5 text-xs text-slate-500">
                                 Mensajes directos de tu cuenta business vía la
                                 Business Messaging API; el webhook se pega en tu
@@ -2430,9 +2626,7 @@ async function copyMeta(key: string, value: string) {
                                                     : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
                                             "
                                             >{{
-                                                ch.active
-                                                    ? 'Activo'
-                                                    : 'Pausado'
+                                                ch.active ? 'Activo' : 'Pausado'
                                             }}</span
                                         >
                                     </div>
@@ -2809,9 +3003,8 @@ async function copyMeta(key: string, value: string) {
                                     <label class="mb-1 block text-sm"
                                         >Llegada</label
                                     >
-                                    <FormInput
+                                    <FormDateTime
                                         v-model="playParams.starts_at"
-                                        type="datetime-local"
                                     />
                                 </div>
                                 <div>
@@ -2821,9 +3014,8 @@ async function copyMeta(key: string, value: string) {
                                             >(auto)</span
                                         ></label
                                     >
-                                    <FormInput
+                                    <FormDateTime
                                         v-model="playParams.ends_at"
-                                        type="datetime-local"
                                     />
                                 </div>
                             </div>
@@ -2930,10 +3122,10 @@ async function copyMeta(key: string, value: string) {
                         <div
                             class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                         >
-                            <Lucide icon="KeyRound" class="h-5 w-5" />
+                            <Lucide icon="KeyRound" class="h-4 w-4" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 {{
                                     newToken
                                         ? 'Token creado'
@@ -3036,10 +3228,10 @@ async function copyMeta(key: string, value: string) {
                                 'bg-primary/10 text-primary'
                             "
                         >
-                            <Lucide icon="Sparkles" class="h-5 w-5" />
+                            <Lucide icon="Sparkles" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 {{
                                     editingProvider
                                         ? `Editar ${editingProvider.label}`
@@ -3223,7 +3415,7 @@ async function copyMeta(key: string, value: string) {
                             <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 ¿Eliminar {{ deletingProvider.label }}?
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">
@@ -3264,10 +3456,10 @@ async function copyMeta(key: string, value: string) {
                         <div
                             class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
                         >
-                            <Lucide icon="MessageCircle" class="h-5 w-5" />
+                            <Lucide icon="MessageCircle" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 {{
                                     editingChannel
                                         ? `Editar ${channelName(editingChannel)}`
@@ -3427,7 +3619,7 @@ async function copyMeta(key: string, value: string) {
                             <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 ¿Desconectar {{ channelName(deletingChannel) }}?
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">
@@ -3455,6 +3647,89 @@ async function copyMeta(key: string, value: string) {
             </Dialog.Panel>
         </Dialog>
 
+        <!-- Modal registro incrustado (popup oficial de Facebook) -->
+        <Dialog
+            :open="showMetaSignup"
+            @close="metaSignupRunning ? null : (showMetaSignup = false)"
+        >
+            <Dialog.Panel>
+                <div class="p-6">
+                    <div class="mb-4 flex items-center gap-3.5">
+                        <div
+                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="Facebook" class="h-5 w-5" />
+                        </div>
+                        <h2 class="text-sm font-medium">
+                            Conectar WhatsApp con Facebook
+                        </h2>
+                    </div>
+                    <div class="space-y-4">
+                        <p class="text-sm text-slate-500">
+                            Se abre una ventana de Facebook donde eliges tu
+                            negocio y verificas tu número. Al terminar, el canal
+                            queda conectado aquí solo — sin copiar tokens ni
+                            identificadores.
+                        </p>
+                        <div
+                            class="flex items-start justify-between gap-4 rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
+                        >
+                            <div class="min-w-0">
+                                <div class="text-sm font-medium">
+                                    El número ya se usa en la app del celular
+                                </div>
+                                <p class="mt-0.5 text-xs text-slate-500">
+                                    Coexistencia: el negocio conserva su app
+                                    WhatsApp Business y el asistente responde
+                                    por el mismo número. Facebook pedirá
+                                    escanear un QR desde ese celular.
+                                </p>
+                            </div>
+                            <FormSwitch class="shrink-0">
+                                <FormSwitch.Input
+                                    v-model="metaSignupKeepApp"
+                                    type="checkbox"
+                                />
+                            </FormSwitch>
+                        </div>
+                        <p
+                            v-if="!metaSignupKeepApp"
+                            class="text-xs text-slate-500"
+                        >
+                            Para un número nuevo o libre (sin WhatsApp activo):
+                            si es un teléfono fijo, en el flujo de Facebook
+                            elige verificarlo por llamada.
+                        </p>
+                    </div>
+                    <div class="mt-6 flex justify-end gap-3">
+                        <Button
+                            variant="outline-secondary"
+                            :disabled="metaSignupRunning"
+                            @click="showMetaSignup = false"
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            variant="primary"
+                            :disabled="metaSignupRunning"
+                            @click="startMetaSignup"
+                        >
+                            <Lucide
+                                v-if="metaSignupRunning"
+                                icon="LoaderCircle"
+                                class="mr-1.5 h-4 w-4 animate-spin"
+                            />
+                            {{
+                                metaSignupRunning
+                                    ? 'Esperando a Facebook...'
+                                    : 'Continuar con Facebook'
+                            }}
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
         <!-- Modal conectar/editar WhatsApp Meta -->
         <Dialog :open="showMetaForm" @close="showMetaForm = false">
             <Dialog.Panel>
@@ -3465,7 +3740,7 @@ async function copyMeta(key: string, value: string) {
                         >
                             <Lucide icon="BadgeCheck" class="h-5 w-5" />
                         </div>
-                        <h2 class="text-base font-medium">
+                        <h2 class="text-sm font-medium">
                             {{
                                 editingMeta
                                     ? 'Editar número de WhatsApp'
@@ -3590,7 +3865,7 @@ async function copyMeta(key: string, value: string) {
                             <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 ¿Desconectar
                                 {{ deletingMeta.name || 'este WhatsApp' }}?
                             </h2>
@@ -3633,10 +3908,10 @@ async function copyMeta(key: string, value: string) {
                         <div
                             class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
                         >
-                            <Lucide icon="Send" class="h-5 w-5" />
+                            <Lucide icon="Send" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 {{
                                     editingTelegram
                                         ? 'Editar bot de Telegram'
@@ -3757,7 +4032,7 @@ async function copyMeta(key: string, value: string) {
                             <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 ¿Desconectar
                                 {{
                                     deletingTelegram.name ||
@@ -3802,10 +4077,10 @@ async function copyMeta(key: string, value: string) {
                         <div
                             class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-dark/10 text-dark dark:text-slate-300"
                         >
-                            <Lucide icon="Music2" class="h-5 w-5" />
+                            <Lucide icon="Music2" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 {{
                                     editingTiktok
                                         ? 'Editar cuenta de TikTok'
@@ -3932,7 +4207,7 @@ async function copyMeta(key: string, value: string) {
                             <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 ¿Desconectar
                                 {{ deletingTiktok.name || 'esta cuenta' }}?
                             </h2>
@@ -3973,7 +4248,7 @@ async function copyMeta(key: string, value: string) {
                             <Lucide icon="Trash2" class="h-5 w-5" />
                         </div>
                         <div>
-                            <h2 class="text-base font-medium">
+                            <h2 class="text-sm font-medium">
                                 ¿Revocar "{{ revoking.name }}"?
                             </h2>
                             <p class="mt-0.5 text-sm text-slate-500">

@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Support\Facades\Storage;
 
 /**
  * Publicación de la página (Facebook, Instagram o TikTok) registrada para
@@ -53,6 +54,30 @@ class SocialPost extends Model
             'last_synced_at' => 'datetime',
             'stats' => 'array',
         ];
+    }
+
+    protected static function booted(): void
+    {
+        // La copia local de la imagen corresponde a la media_url guardada:
+        // si cambia (escaneo, webhook o refresco), la copia vieja no vale.
+        static::updated(function (self $post) {
+            if ($post->wasChanged('media_url')) {
+                Storage::disk('local')->delete($post->mediaCachePath());
+                cache()->forget($post->mediaFailCacheKey());
+            }
+        });
+    }
+
+    /** Ruta (en el disco local del tenant) de la copia cacheada de la imagen. */
+    public function mediaCachePath(): string
+    {
+        return 'social-media/post-'.$this->id.'.img';
+    }
+
+    /** Marcador de "esta imagen no se pudo descargar", para no reintentar en cada carga. */
+    public function mediaFailCacheKey(): string
+    {
+        return 'social:img-caida:'.$this->id;
     }
 
     public function comments(): HasMany

@@ -56,13 +56,14 @@ class ShiftsPageController extends Controller
             'is_today' => $weekStart->copy()->addDays($offset)->isToday(),
         ]);
 
-        // Asignaciones de la semana agrupadas por "user|fecha".
+        // Asignaciones de la semana agrupadas por "area:id|fecha": el rol
+        // ya no es solo del panel, también programa camaristas y técnicos.
         $assignments = ShiftAssignment::query()
             ->with('shiftType:id,name,starts_at,ends_at,color')
             ->whereBetween('date', [$weekStart, $weekEnd])
             ->get();
 
-        $schedule = $assignments->groupBy(fn (ShiftAssignment $a) => $a->user_id.'|'.$a->date->toDateString())
+        $schedule = $assignments->groupBy(fn (ShiftAssignment $a) => $a->slot().'|'.$a->date->toDateString())
             ->map(fn ($group) => $group->map(fn (ShiftAssignment $a) => [
                 'id' => $a->id,
                 'shift_type_id' => $a->shift_type_id,
@@ -71,24 +72,30 @@ class ShiftsPageController extends Controller
                 'color' => $a->shiftType?->color ?? 'primary',
             ])->values());
 
-        // Días de la semana en que cada usuario sí abrió turno (asistencia).
+        // Días de la semana en que cada usuario sí abrió turno (asistencia
+        // con caja). Solo aplica al personal del panel: camaristas y
+        // técnicos tienen rol, no fondo de caja.
         $worked = Shift::query()
             ->whereBetween('started_at', [$weekStart, $weekEnd->copy()->endOfDay()])
             ->get(['user_id', 'started_at'])
-            ->map(fn (Shift $s) => $s->user_id.'|'.$s->started_at->toDateString())
+            ->map(fn (Shift $s) => 'user:'.$s->user_id.'|'.$s->started_at->toDateString())
             ->unique()
             ->values();
 
         // Programados hoy (para la pestaña Hoy).
         $today = Carbon::today()->toDateString();
         $scheduledToday = ShiftAssignment::query()
-            ->with(['user:id,name', 'shiftType:id,name,starts_at,ends_at,color'])
+            ->with(['assignable', 'shiftType:id,name,starts_at,ends_at,color'])
             ->whereDate('date', $today)
             ->get()
             ->map(fn (ShiftAssignment $a) => [
                 'id' => $a->id,
-                'user_id' => $a->user_id,
-                'user' => $a->user?->name,
+                'slot' => $a->slot(),
+                'kind' => $a->kind(),
+                // Solo el personal del panel abre turno con caja; para
+                // camaristas y técnicos esto va nulo a propósito.
+                'user_id' => $a->kind() === 'user' ? $a->assignable_id : null,
+                'user' => $a->assigneeName(),
                 'type' => $a->shiftType?->name,
                 'time' => $a->shiftType?->timeLabel(),
                 'color' => $a->shiftType?->color ?? 'primary',
@@ -97,6 +104,9 @@ class ShiftsPageController extends Controller
         return Inertia::render('tenant/shifts/Index', [
             'property' => $property->only(['id', 'name']),
             'staff' => User::query()->orderBy('name')->get(['id', 'name']),
+            // Las tres áreas que se programan, en un solo listado con su
+            // clave de área: el rol es de personas, tengan cuenta o no.
+            'roster' => $this->rosterPeople(),
             'shiftTypes' => ShiftType::query()->orderBy('starts_at')->get()->map(fn (ShiftType $t) => [
                 'id' => $t->id,
                 'name' => $t->name,
@@ -132,5 +142,46 @@ class ShiftsPageController extends Controller
                 ->map($serialize),
             'canSchedule' => $request->user()->can('shifts.manage'),
         ]);
+    }
+
+    /**
+     * Todas las personas que pueden entrar al rol, agrupadas por área.
+     * Camaristas y técnicos solo aparecen si su módulo está encendido: sin
+     * el módulo esas tablas están vacías y el rol se ve igual que antes.
+     *
+     * @return array<int, array{slot: string, kind: string, kind_label: string, id: int, name: string}>
+     */
+    protected function rosterPeople(): array
+    {
+        $people = User::query()->orderBy('name')->get(['id', 'name'])
+            ->map(fn (User $u) => [
+                'slot' => 'user:'.$u->id,
+                'kind' => 'user',
+                'kind_label' => 'Panel',
+                'id' => $u->id,
+                'name' => $u->name,
+            ])->all();
+
+        foreach (\App\Models\Housekeeper::query()->where('active', true)->orderBy('name')->get(['id', 'name']) as $person) {
+            $people[] = [
+                'slot' => 'housekeeper:'.$person->id,
+                'kind' => 'housekeeper',
+                'kind_label' => 'Limpieza',
+                'id' => $person->id,
+                'name' => $person->name,
+            ];
+        }
+
+        foreach (\App\Models\Technician::query()->where('active', true)->orderBy('name')->get(['id', 'name']) as $person) {
+            $people[] = [
+                'slot' => 'technician:'.$person->id,
+                'kind' => 'technician',
+                'kind_label' => 'Mantenimiento',
+                'id' => $person->id,
+                'name' => $person->name,
+            ];
+        }
+
+        return $people;
     }
 }

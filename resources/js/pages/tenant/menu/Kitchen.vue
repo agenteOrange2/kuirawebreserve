@@ -6,6 +6,7 @@ import Button from '@/components/Base/Button';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import { durationLabel } from '@/lib/utils';
 
 interface RequestItem {
     product_id: number;
@@ -56,7 +57,9 @@ const now = ref(Date.now());
 const minutesWaiting = (request: KitchenRequest) =>
     Math.max(
         0,
-        Math.floor((now.value - new Date(request.created_at).getTime()) / 60000),
+        Math.floor(
+            (now.value - new Date(request.created_at).getTime()) / 60000,
+        ),
     );
 
 const waitTone = (request: KitchenRequest) => {
@@ -79,7 +82,9 @@ let clockTimer: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
     pollTimer = setInterval(() => {
-        router.reload({ only: ['pending', 'preparing', 'dispatched', 'stats'] });
+        router.reload({
+            only: ['pending', 'preparing', 'dispatched', 'stats'],
+        });
     }, 15000);
     clockTimer = setInterval(() => (now.value = Date.now()), 30000);
 });
@@ -153,7 +158,9 @@ async function setStatus(
             toast.success('Pedido despachado', data.warning ?? undefined);
         }
         delete saleFailed[request.id];
-        router.reload({ only: ['pending', 'preparing', 'dispatched', 'stats'] });
+        router.reload({
+            only: ['pending', 'preparing', 'dispatched', 'stats'],
+        });
     } catch (e: any) {
         const message = e.response?.data?.message ?? 'Ocurrió un error.';
         if (status === 'attended' && withSale && e.response?.status === 422) {
@@ -171,66 +178,67 @@ async function setStatus(
         <!-- Header hero -->
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="ChefHat" class="h-5 w-5 sm:h-7 sm:w-7" />
+                        <Lucide icon="ChefHat" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">Cocina</h1>
-                        <p class="mt-1 text-sm text-slate-500">
-                            Se actualiza sola cada 15 segundos y suena al
-                            entrar un pedido
+                        <h1 class="text-base font-medium">
+                            Solicitudes de cocina
+                        </h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Se actualiza sola cada 15 segundos y suena al entrar
+                            un pedido.
                         </p>
                     </div>
                 </div>
                 <div
-                    class="grid w-full grid-cols-1 gap-2 md:flex md:w-auto md:gap-2.5"
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
                 >
-                    <Button
-                        :as="Link"
+                    <!-- El volver vive con las acciones, no flotando encima
+                         de la tarjeta. -->
+                    <Link
                         :href="route('tenant.menu-digital')"
-                        variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
                     >
-                        <Lucide
-                            icon="UtensilsCrossed"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
-                        />
-                        Administrar menú
-                    </Button>
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                        Volver al menú digital
+                    </Link>
                 </div>
             </div>
         </div>
 
         <!-- KPIs de cocina -->
-        <div class="mt-5 grid auto-rows-fr grid-cols-12 gap-4 sm:gap-5">
+        <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
             <div
-                class="box box--stacked col-span-6 flex items-center gap-3.5 p-4 sm:p-5 xl:col-span-3"
+                class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
                 >
-                    <Lucide icon="Soup" class="h-5 w-5 text-warning" />
+                    <Lucide icon="Soup" class="h-4 w-4 text-warning" />
                 </div>
                 <div class="min-w-0">
-                    <div class="text-xl font-medium">{{ pending.length }}</div>
+                    <div class="truncate text-sm font-medium">
+                        {{ pending.length }}
+                    </div>
                     <div class="truncate text-xs text-slate-500">Nuevos</div>
                 </div>
             </div>
             <div
-                class="box box--stacked col-span-6 flex items-center gap-3.5 p-4 sm:p-5 xl:col-span-3"
+                class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10"
                 >
-                    <Lucide icon="ChefHat" class="h-5 w-5 text-info" />
+                    <Lucide icon="ChefHat" class="h-4 w-4 text-info" />
                 </div>
                 <div class="min-w-0">
-                    <div class="text-xl font-medium">
+                    <div class="truncate text-sm font-medium">
                         {{ preparing.length }}
                     </div>
                     <div class="truncate text-xs text-slate-500">
@@ -239,15 +247,15 @@ async function setStatus(
                 </div>
             </div>
             <div
-                class="box box--stacked col-span-6 flex items-center gap-3.5 p-4 sm:p-5 xl:col-span-3"
+                class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10"
                 >
-                    <Lucide icon="CheckCheck" class="h-5 w-5 text-success" />
+                    <Lucide icon="CheckCheck" class="h-4 w-4 text-success" />
                 </div>
                 <div class="min-w-0">
-                    <div class="text-xl font-medium">
+                    <div class="truncate text-sm font-medium">
                         {{ dispatched.length }}
                     </div>
                     <div class="truncate text-xs text-slate-500">
@@ -256,20 +264,16 @@ async function setStatus(
                 </div>
             </div>
             <div
-                class="box box--stacked col-span-6 flex items-center gap-3.5 p-4 sm:p-5 xl:col-span-3"
+                class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
             >
                 <div
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                 >
-                    <Lucide icon="Timer" class="h-5 w-5 text-primary" />
+                    <Lucide icon="Timer" class="h-4 w-4 text-primary" />
                 </div>
                 <div class="min-w-0">
-                    <div class="text-xl font-medium">
-                        {{
-                            stats.avg_dispatch_minutes === null
-                                ? 'Sin datos'
-                                : `${stats.avg_dispatch_minutes} min`
-                        }}
+                    <div class="truncate text-sm font-medium">
+                        {{ durationLabel(stats.avg_dispatch_minutes) }}
                     </div>
                     <div class="truncate text-xs text-slate-500">
                         Promedio de despacho
@@ -279,17 +283,17 @@ async function setStatus(
         </div>
 
         <!-- Todo tranquilo -->
-        <div v-if="!pending.length && !preparing.length" class="mt-5">
+        <div v-if="!pending.length && !preparing.length" class="mt-4">
             <div
-                class="box box--stacked flex flex-col items-center justify-center gap-3 px-5 py-16 text-center"
+                class="box box--stacked flex flex-col items-center justify-center gap-2.5 px-4 py-12 text-center"
             >
                 <div
-                    class="flex h-14 w-14 items-center justify-center rounded-full bg-success/10 text-success"
+                    class="flex h-10 w-10 items-center justify-center rounded-full bg-success/10 text-success"
                 >
-                    <Lucide icon="ChefHat" class="h-7 w-7" />
+                    <Lucide icon="ChefHat" class="h-5 w-5" />
                 </div>
-                <div class="text-base font-medium">Todo despachado</div>
-                <p class="max-w-md text-sm text-slate-500">
+                <div class="text-sm font-medium">Todo despachado</div>
+                <p class="max-w-md text-xs text-slate-500">
                     No hay pedidos en espera. Cuando un huésped ordene desde el
                     menú, aparecerá aquí solo y sonará un aviso.
                 </p>
@@ -297,35 +301,35 @@ async function setStatus(
         </div>
 
         <!-- Tablero: Nuevos | En preparación -->
-        <div v-else class="mt-5 grid grid-cols-12 gap-5">
+        <div v-else class="mt-4 grid grid-cols-12 gap-5">
             <!-- Columna: nuevos -->
             <div class="col-span-12 xl:col-span-6">
                 <div
-                    class="flex flex-col gap-y-3 md:h-10 md:flex-row md:items-center"
+                    class="flex flex-col gap-y-2 md:h-8 md:flex-row md:items-center"
                 >
                     <div
-                        class="flex items-center gap-2 text-base font-medium group-[.mode--light]:text-white"
+                        class="flex items-center gap-2 text-sm font-medium group-[.mode--light]:text-white"
                     >
                         <Lucide icon="Soup" class="h-4 w-4 text-warning" />
                         Nuevos
                         <span
-                            class="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium text-warning"
+                            class="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
                             >{{ pending.length }}</span
                         >
                     </div>
                 </div>
-                <div class="mt-3.5 space-y-5">
+                <div class="mt-2.5 space-y-3">
                     <div
                         v-for="request in pending"
                         :key="request.id"
                         class="box box--stacked flex flex-col"
                     >
                         <div
-                            class="flex items-center justify-between gap-3 border-b border-dashed border-slate-300/70 px-5 py-4"
+                            class="flex items-center justify-between gap-3 border-b border-dashed border-slate-300/70 px-4 py-3"
                         >
-                            <div class="flex items-center gap-3">
+                            <div class="flex items-center gap-2.5">
                                 <div
-                                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10 text-warning"
+                                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10 text-warning"
                                 >
                                     <Lucide
                                         :icon="
@@ -333,11 +337,11 @@ async function setStatus(
                                                 ? 'BedDouble'
                                                 : 'ChefHat'
                                         "
-                                        class="h-5 w-5"
+                                        class="h-4 w-4"
                                     />
                                 </div>
                                 <div>
-                                    <div class="text-lg font-medium">
+                                    <div class="text-base font-medium">
                                         {{
                                             request.room_label
                                                 ? `Hab. ${request.room_label}`
@@ -351,7 +355,7 @@ async function setStatus(
                                 </div>
                             </div>
                             <span
-                                class="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+                                class="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
                                 :class="waitTone(request)"
                             >
                                 <Lucide icon="Timer" class="h-3 w-3" />
@@ -359,33 +363,31 @@ async function setStatus(
                             </span>
                         </div>
 
-                        <div class="flex flex-col gap-3 p-5">
-                            <div class="space-y-2">
+                        <div class="flex flex-col gap-2.5 px-4 py-3">
+                            <div class="space-y-1.5">
                                 <div
                                     v-for="item in request.items"
                                     :key="item.product_id"
                                     class="flex items-center gap-3"
                                 >
                                     <span
-                                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-sm font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
                                         >{{ item.qty }}</span
                                     >
-                                    <span class="text-base">{{
-                                        item.name
-                                    }}</span>
+                                    <span class="text-sm">{{ item.name }}</span>
                                 </div>
                             </div>
                             <div
                                 v-if="request.notes"
-                                class="rounded-lg bg-pending/10 px-3 py-2 text-sm text-pending"
+                                class="rounded-lg bg-pending/10 px-3 py-2 text-xs text-pending"
                             >
                                 "{{ request.notes }}"
                             </div>
                             <div
-                                class="flex items-center justify-between border-t border-dashed border-slate-300/70 pt-3 text-sm"
+                                class="flex items-center justify-between border-t border-dashed border-slate-300/70 pt-2.5 text-xs"
                             >
                                 <span
-                                    class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                     :class="
                                         request.payment_mode === 'room_charge'
                                             ? 'bg-info/10 text-info'
@@ -399,14 +401,17 @@ async function setStatus(
                             </div>
                         </div>
 
-                        <div class="flex items-center gap-2 px-5 pb-5">
+                        <div class="flex items-center gap-2 px-4 pb-3">
                             <Button
                                 variant="primary"
-                                class="flex-1 shadow-md shadow-primary/20"
+                                class="h-9 flex-1 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                                 :disabled="busyId === request.id"
                                 @click="setStatus(request, 'preparing')"
                             >
-                                <Lucide icon="ChefHat" class="mr-2 h-4 w-4" />
+                                <Lucide
+                                    icon="ChefHat"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
                                 Tomar pedido
                             </Button>
                             <a
@@ -414,7 +419,7 @@ async function setStatus(
                                 target="_blank"
                                 rel="noopener"
                                 title="Imprimir comanda"
-                                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300/70 text-slate-500 transition hover:bg-primary/10 hover:text-primary dark:border-darkmode-400"
+                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300/70 text-slate-500 transition hover:bg-primary/10 hover:text-primary dark:border-darkmode-400"
                             >
                                 <Lucide icon="Printer" class="h-4 w-4" />
                             </a>
@@ -422,10 +427,10 @@ async function setStatus(
                     </div>
                     <div
                         v-if="!pending.length"
-                        class="box box--stacked flex flex-col items-center gap-2 px-5 py-10 text-center text-slate-400"
+                        class="box box--stacked flex flex-col items-center gap-2 px-4 py-8 text-center text-slate-400"
                     >
                         <Lucide icon="Soup" class="h-8 w-8" />
-                        <p class="text-sm">Sin pedidos nuevos.</p>
+                        <p class="text-xs">Sin pedidos nuevos.</p>
                     </div>
                 </div>
             </div>
@@ -433,31 +438,31 @@ async function setStatus(
             <!-- Columna: en preparación -->
             <div class="col-span-12 xl:col-span-6">
                 <div
-                    class="flex flex-col gap-y-3 md:h-10 md:flex-row md:items-center"
+                    class="flex flex-col gap-y-2 md:h-8 md:flex-row md:items-center"
                 >
                     <div
-                        class="flex items-center gap-2 text-base font-medium group-[.mode--light]:text-white"
+                        class="flex items-center gap-2 text-sm font-medium group-[.mode--light]:text-white"
                     >
                         <Lucide icon="ChefHat" class="h-4 w-4 text-info" />
                         En preparación
                         <span
-                            class="rounded-full bg-info/10 px-2 py-0.5 text-xs font-medium text-info"
+                            class="rounded-full bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info"
                             >{{ preparing.length }}</span
                         >
                     </div>
                 </div>
-                <div class="mt-3.5 space-y-5">
+                <div class="mt-2.5 space-y-3">
                     <div
                         v-for="request in preparing"
                         :key="request.id"
                         class="box box--stacked flex flex-col"
                     >
                         <div
-                            class="flex items-center justify-between gap-3 border-b border-dashed border-slate-300/70 px-5 py-4"
+                            class="flex items-center justify-between gap-3 border-b border-dashed border-slate-300/70 px-4 py-3"
                         >
-                            <div class="flex items-center gap-3">
+                            <div class="flex items-center gap-2.5">
                                 <div
-                                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
                                 >
                                     <Lucide
                                         :icon="
@@ -465,11 +470,11 @@ async function setStatus(
                                                 ? 'BedDouble'
                                                 : 'ChefHat'
                                         "
-                                        class="h-5 w-5"
+                                        class="h-4 w-4"
                                     />
                                 </div>
                                 <div>
-                                    <div class="text-lg font-medium">
+                                    <div class="text-base font-medium">
                                         {{
                                             request.room_label
                                                 ? `Hab. ${request.room_label}`
@@ -487,7 +492,7 @@ async function setStatus(
                                 </div>
                             </div>
                             <span
-                                class="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium"
+                                class="flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
                                 :class="waitTone(request)"
                             >
                                 <Lucide icon="Timer" class="h-3 w-3" />
@@ -495,33 +500,31 @@ async function setStatus(
                             </span>
                         </div>
 
-                        <div class="flex flex-col gap-3 p-5">
-                            <div class="space-y-2">
+                        <div class="flex flex-col gap-2.5 px-4 py-3">
+                            <div class="space-y-1.5">
                                 <div
                                     v-for="item in request.items"
                                     :key="item.product_id"
                                     class="flex items-center gap-3"
                                 >
                                     <span
-                                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-sm font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xs font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
                                         >{{ item.qty }}</span
                                     >
-                                    <span class="text-base">{{
-                                        item.name
-                                    }}</span>
+                                    <span class="text-sm">{{ item.name }}</span>
                                 </div>
                             </div>
                             <div
                                 v-if="request.notes"
-                                class="rounded-lg bg-pending/10 px-3 py-2 text-sm text-pending"
+                                class="rounded-lg bg-pending/10 px-3 py-2 text-xs text-pending"
                             >
                                 "{{ request.notes }}"
                             </div>
                             <div
-                                class="flex items-center justify-between border-t border-dashed border-slate-300/70 pt-3 text-sm"
+                                class="flex items-center justify-between border-t border-dashed border-slate-300/70 pt-2.5 text-xs"
                             >
                                 <span
-                                    class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                     :class="
                                         request.payment_mode === 'room_charge'
                                             ? 'bg-info/10 text-info'
@@ -535,11 +538,11 @@ async function setStatus(
                             </div>
                         </div>
 
-                        <div class="flex flex-col gap-2 px-5 pb-5">
+                        <div class="flex flex-col gap-2 px-4 pb-3">
                             <div class="flex items-center gap-2">
                                 <Button
                                     variant="primary"
-                                    class="flex-1 shadow-md shadow-primary/20"
+                                    class="h-9 flex-1 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                                     :disabled="busyId === request.id"
                                     @click="
                                         setStatus(
@@ -551,7 +554,7 @@ async function setStatus(
                                 >
                                     <Lucide
                                         icon="CheckCheck"
-                                        class="mr-2 h-4 w-4"
+                                        class="mr-1.5 h-3.5 w-3.5"
                                     />
                                     {{
                                         saleFailed[request.id]
@@ -566,7 +569,7 @@ async function setStatus(
                                     target="_blank"
                                     rel="noopener"
                                     title="Imprimir comanda"
-                                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-slate-300/70 text-slate-500 transition hover:bg-primary/10 hover:text-primary dark:border-darkmode-400"
+                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-300/70 text-slate-500 transition hover:bg-primary/10 hover:text-primary dark:border-darkmode-400"
                                 >
                                     <Lucide icon="Printer" class="h-4 w-4" />
                                 </a>
@@ -582,12 +585,11 @@ async function setStatus(
                     </div>
                     <div
                         v-if="!preparing.length"
-                        class="box box--stacked flex flex-col items-center gap-2 px-5 py-10 text-center text-slate-400"
+                        class="box box--stacked flex flex-col items-center gap-2 px-4 py-8 text-center text-slate-400"
                     >
                         <Lucide icon="ChefHat" class="h-8 w-8" />
-                        <p class="text-sm">
-                            Toma un pedido de la columna de nuevos para
-                            empezar.
+                        <p class="text-xs">
+                            Toma un pedido de la columna de nuevos para empezar.
                         </p>
                     </div>
                 </div>
@@ -595,24 +597,35 @@ async function setStatus(
         </div>
 
         <!-- Despachados hoy -->
-        <div v-if="dispatched.length" class="mt-5">
+        <div v-if="dispatched.length" class="mt-4">
             <div class="box box--stacked">
                 <div
-                    class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
-                    <Lucide
-                        icon="History"
-                        class="h-4 w-4 stroke-[1.5] text-primary"
-                    />
-                    <h2 class="text-base font-medium">Despachados hoy</h2>
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                    >
+                        <Lucide icon="History" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <h2 class="text-sm font-medium">Despachados hoy</h2>
+                        <p class="text-xs text-slate-500">
+                            Lo que ya salió de la cocina.
+                        </p>
+                    </div>
+                    <span
+                        class="ml-auto rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                    >
+                        {{ dispatched.length }}
+                    </span>
                 </div>
                 <div
-                    class="flex flex-col divide-y divide-dashed divide-slate-300/70 px-5"
+                    class="flex flex-col divide-y divide-slate-200/60 dark:divide-darkmode-400"
                 >
                     <div
                         v-for="request in dispatched"
                         :key="request.id"
-                        class="flex flex-col gap-1 py-3 text-sm sm:flex-row sm:items-center sm:gap-3"
+                        class="flex flex-col gap-1 px-4 py-2.5 text-xs sm:flex-row sm:items-center sm:gap-3"
                     >
                         <span class="font-medium sm:w-24 sm:shrink-0">
                             {{
@@ -630,7 +643,7 @@ async function setStatus(
                         </span>
                         <span
                             v-if="request.order_id"
-                            class="shrink-0 rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success"
+                            class="shrink-0 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"
                             title="Venta POS generada al despachar"
                             >Venta
                             {{
@@ -638,7 +651,7 @@ async function setStatus(
                             }}</span
                         >
                         <span
-                            class="shrink-0 text-xs text-slate-400 sm:text-right"
+                            class="shrink-0 text-[11px] text-slate-400 sm:text-right"
                         >
                             {{ request.guest_name }} · despachado
                             {{ request.attended_time }}

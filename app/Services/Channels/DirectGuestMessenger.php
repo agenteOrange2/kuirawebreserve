@@ -70,9 +70,22 @@ class DirectGuestMessenger
      */
     public function sendToContact(?string $phone, ?string $email, string $subject, string $body): bool
     {
-        $sent = $this->whatsAppTo((string) $phone, $body);
+        return in_array(true, $this->sendToContactDetailed($phone, $email, $subject, $body), true);
+    }
 
-        return $this->noticeEmailTo($email ?: null, $subject, $body, '', []) || $sent;
+    /**
+     * Igual que sendToContact pero dice QUÉ canal salió. Lo usa la lista de
+     * espera: sellar "Avisado" sin saber si el mensaje salió convierte un
+     * prospecto perdido en uno que la pantalla da por atendido.
+     *
+     * @return array{whatsapp: bool, email: bool}
+     */
+    public function sendToContactDetailed(?string $phone, ?string $email, string $subject, string $body): array
+    {
+        return [
+            'whatsapp' => $this->whatsAppTo((string) $phone, $body),
+            'email' => $this->noticeEmailTo($email ?: null, $subject, $body, '', []),
+        ];
     }
 
     protected function noticeEmailTo(?string $email, string $subject, string $body, string $code, array $details): bool
