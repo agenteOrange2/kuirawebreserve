@@ -4,6 +4,8 @@ import { computed, ref, watch, watchEffect } from 'vue';
 import Breadcrumb from '@/components/Base/Breadcrumb';
 import { Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
+import QuickSearch from '@/components/QuickSearch.vue';
 import StaffBell from '@/components/StaffBell.vue';
 import ToastHost from '@/components/ToastHost.vue';
 import { useAppearance } from '@/composables/useAppearance';
@@ -65,6 +67,62 @@ const userInitials = computed(() => {
 const homeRoute = computed(() =>
     isTenantPanel.value ? route('tenant.dashboard') : route('admin.dashboard'),
 );
+const avatarUrl = computed(() => auth.value?.avatar_url ?? null);
+
+/**
+ * Opciones del menú de usuario. Son DOS menús distintos a propósito: el
+ * super-admin administra la plataforma (correo de salida, apariencia de la
+ * marca) y el staff del hotel administra lo suyo. Cada uno solo ve rutas
+ * que existen en su panel.
+ */
+const userMenu = computed<Array<{ label: string; icon: Icon; href: string }>>(
+    () =>
+        isTenantPanel.value
+            ? [
+                  {
+                      label: 'Mi perfil',
+                      icon: 'User',
+                      href: route('tenant.profile.edit'),
+                  },
+                  {
+                      label: 'Contraseña',
+                      icon: 'KeyRound',
+                      href: route('tenant.profile.password'),
+                  },
+                  {
+                      label: 'Verificación en dos pasos',
+                      icon: 'ShieldCheck',
+                      href: route('tenant.profile.two-factor'),
+                  },
+              ]
+            : [
+                  {
+                      label: 'Mi perfil',
+                      icon: 'User',
+                      href: route('admin.settings.profile.edit'),
+                  },
+                  {
+                      label: 'Contraseña',
+                      icon: 'KeyRound',
+                      href: route('admin.settings.password.edit'),
+                  },
+                  {
+                      label: 'Verificación en dos pasos',
+                      icon: 'ShieldCheck',
+                      href: route('admin.settings.two-factor.show'),
+                  },
+                  {
+                      label: 'Apariencia',
+                      icon: 'Palette',
+                      href: route('admin.settings.appearance.edit'),
+                  },
+                  {
+                      label: 'Correo de plataforma',
+                      icon: 'Mail',
+                      href: route('admin.settings.email.edit'),
+                  },
+              ],
+);
 const { appearance, updateAppearance } = useAppearance();
 
 const toggleDarkMode = () => {
@@ -75,7 +133,6 @@ const { compactMenu, setCompactMenu } = useCompactMenu();
 const compactMenuOnHover = ref(false);
 const activeMobileMenu = ref(false);
 const showSearch = ref(false);
-const searchQuery = ref('');
 
 const toggleCompactMenu = (event: MouseEvent) => {
     event.preventDefault();
@@ -538,52 +595,85 @@ const requestFullscreen = () => {
                                     />
                                 </a>
                             </div>
-                            <Menu class="ml-4">
+                            <Menu class="ml-3">
                                 <Menu.Button
                                     class="flex h-[38px] w-[38px] items-center justify-center overflow-hidden rounded-full border-2 border-white bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white shadow-sm"
                                 >
-                                    {{ userInitials }}
+                                    <img
+                                        v-if="avatarUrl"
+                                        :src="avatarUrl"
+                                        :alt="auth.user?.name"
+                                        class="h-full w-full object-cover"
+                                    />
+                                    <template v-else>{{
+                                        userInitials
+                                    }}</template>
                                 </Menu.Button>
-                                <Menu.Items class="mt-1 w-56">
-                                    <Menu.Item>
-                                        <div class="px-4 py-2">
-                                            <div class="font-medium">
-                                                {{ auth.user?.name }}
+                                <Menu.Items class="mt-1 w-64">
+                                    <!-- Identidad: Menu.Header y no Menu.Item
+                                         (que es un <a> con flex y hover): así
+                                         el bloque deja de verse fuera de eje
+                                         respecto a las opciones de abajo. -->
+                                    <Menu.Header class="p-0">
+                                        <div
+                                            class="flex items-center gap-3 px-3 py-3"
+                                        >
+                                            <div
+                                                class="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
+                                            >
+                                                <img
+                                                    v-if="avatarUrl"
+                                                    :src="avatarUrl"
+                                                    :alt="auth.user?.name"
+                                                    class="h-full w-full object-cover"
+                                                />
+                                                <template v-else>{{
+                                                    userInitials
+                                                }}</template>
                                             </div>
-                                            <div class="text-xs text-slate-500">
-                                                {{ auth.user?.email }}
+                                            <div class="min-w-0">
+                                                <div
+                                                    class="truncate text-sm font-medium"
+                                                >
+                                                    {{ auth.user?.name }}
+                                                </div>
+                                                <div
+                                                    class="truncate text-xs font-normal text-slate-500"
+                                                    :title="auth.user?.email"
+                                                >
+                                                    {{ auth.user?.email }}
+                                                </div>
                                             </div>
                                         </div>
+                                    </Menu.Header>
+                                    <Menu.Divider />
+                                    <Menu.Item
+                                        v-for="option in userMenu"
+                                        :key="option.label"
+                                        :as="Link"
+                                        :href="option.href"
+                                        class="gap-2 px-3 py-2 text-sm"
+                                    >
+                                        <Lucide
+                                            :icon="option.icon"
+                                            class="h-4 w-4 shrink-0 text-slate-500"
+                                        />
+                                        <span class="truncate">{{
+                                            option.label
+                                        }}</span>
                                     </Menu.Item>
                                     <Menu.Divider />
-                                    <Menu.Item v-if="!isTenantPanel">
-                                        <Link
-                                            :href="
-                                                route(
-                                                    'admin.settings.profile.edit',
-                                                )
-                                            "
-                                        >
-                                            <Lucide
-                                                icon="User"
-                                                class="mr-2 h-4 w-4"
-                                            />
-                                            Perfil
-                                        </Link>
-                                    </Menu.Item>
-                                    <Menu.Item>
-                                        <Link
-                                            :href="route('logout')"
-                                            method="post"
-                                            as="button"
-                                            class="w-full text-left"
-                                        >
-                                            <Lucide
-                                                icon="Power"
-                                                class="mr-2 h-4 w-4"
-                                            />
-                                            Cerrar Sesión
-                                        </Link>
+                                    <Menu.Item
+                                        :as="Link"
+                                        :href="route('logout')"
+                                        method="post"
+                                        class="gap-2 px-3 py-2 text-sm text-danger"
+                                    >
+                                        <Lucide
+                                            icon="Power"
+                                            class="h-4 w-4 shrink-0"
+                                        />
+                                        <span>Cerrar sesión</span>
                                     </Menu.Item>
                                 </Menu.Items>
                             </Menu>
@@ -594,97 +684,7 @@ const requestFullscreen = () => {
         </div>
         <!-- END: Side Menu -->
 
-        <!-- BEGIN: Quick Search -->
-        <Transition
-            enter-active-class="transition-all duration-300 ease-out"
-            enter-from-class="opacity-0"
-            enter-to-class="opacity-100"
-            leave-active-class="transition-all duration-200 ease-in"
-            leave-from-class="opacity-100"
-            leave-to-class="opacity-0"
-        >
-            <div
-                v-if="showSearch"
-                class="fixed inset-0 z-[60] flex items-start justify-center pt-[15vh]"
-                @click.self="showSearch = false"
-                @keydown.escape="showSearch = false"
-            >
-                <div
-                    class="fixed inset-0 bg-black/60 backdrop-blur-sm"
-                    @click="showSearch = false"
-                ></div>
-                <div
-                    class="relative z-10 w-[90%] max-w-[600px] rounded-xl bg-white shadow-2xl dark:bg-darkmode-600"
-                >
-                    <div
-                        class="flex items-center border-b px-5 py-4 dark:border-darkmode-400"
-                    >
-                        <Lucide
-                            icon="Search"
-                            class="mr-3 h-5 w-5 text-slate-400"
-                        />
-                        <input
-                            ref="searchInputRef"
-                            v-model="searchQuery"
-                            type="text"
-                            class="flex-1 border-0 bg-transparent p-0 text-base outline-none placeholder:text-slate-400 focus:ring-0 dark:text-slate-200"
-                            placeholder="Buscar páginas, configuración..."
-                            @keydown.escape="showSearch = false"
-                        />
-                        <div
-                            class="ml-3 rounded border px-1.5 py-0.5 text-xs text-slate-400 dark:border-darkmode-400"
-                        >
-                            ESC
-                        </div>
-                    </div>
-                    <div class="max-h-[50vh] overflow-y-auto p-3">
-                        <div
-                            class="px-2 py-1.5 text-xs font-medium text-slate-400 uppercase"
-                        >
-                            Páginas
-                        </div>
-                        <Link
-                            :href="homeRoute"
-                            class="flex cursor-pointer items-center rounded-lg px-3 py-2.5 hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                            @click="showSearch = false"
-                        >
-                            <Lucide
-                                icon="LayoutDashboard"
-                                class="mr-3 h-4 w-4 text-slate-500"
-                            />
-                            <span class="dark:text-slate-300">Dashboard</span>
-                        </Link>
-                        <Link
-                            v-if="isTenantPanel"
-                            :href="route('tenant.plano')"
-                            class="flex cursor-pointer items-center rounded-lg px-3 py-2.5 hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                            @click="showSearch = false"
-                        >
-                            <Lucide
-                                icon="Map"
-                                class="mr-3 h-4 w-4 text-slate-500"
-                            />
-                            <span class="dark:text-slate-300">Plano</span>
-                        </Link>
-                        <Link
-                            v-if="!isTenantPanel"
-                            :href="route('admin.settings.profile.edit')"
-                            class="flex cursor-pointer items-center rounded-lg px-3 py-2.5 hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                            @click="showSearch = false"
-                        >
-                            <Lucide
-                                icon="Settings"
-                                class="mr-3 h-4 w-4 text-slate-500"
-                            />
-                            <span class="dark:text-slate-300"
-                                >Configuración</span
-                            >
-                        </Link>
-                    </div>
-                </div>
-            </div>
-        </Transition>
-        <!-- END: Quick Search -->
+        <QuickSearch v-model="showSearch" />
 
         <!-- BEGIN: Content -->
         <div

@@ -73,6 +73,14 @@ class HandleInertiaRequests extends Middleware
                 // Módulos activos del hotel (plan + overrides): el menú
                 // lateral oculta los items de módulos apagados.
                 'modules' => tenant()->enabledModules(),
+                // Formas de cobro que acepta la recepción (/ajustes/metodos-
+                // pago → Políticas). Viaja en el share y no como prop porque
+                // lo consultan una docena de pantallas —plano, POS, salida,
+                // abonos, reservas—: una copia por controlador era justo la
+                // divergencia que hace que una pantalla ofrezca lo que otra
+                // ya no acepta. NO confundir con los métodos EN LÍNEA de
+                // /admin (PaymentMethodGate), que son del wizard público.
+                'counter_methods' => app(\App\Services\ReservationPolicy::class)->counterMethods(),
                 // Llave pública VAPID para suscribirse a las notificaciones
                 // push. Null = función apagada y el panel no la ofrece.
                 'vapid_key' => config('webpush.public_key') ?: null,
@@ -90,7 +98,11 @@ class HandleInertiaRequests extends Middleware
                 'login_background_url' => ($b = \App\Models\Central\PlatformSetting::get('login_background_path')) ? '/storage/'.$b : null,
             ],
             'auth' => [
+                // La foto va aparte y solo la del usuario en sesión: el
+                // accessor consulta media, y en $appends sería una consulta
+                // por renglón en cualquier listado de usuarios.
                 'user' => $request->user(),
+                'avatar_url' => $request->user()?->avatarUrl(),
             ],
             // Mensajes flash de sesión (back()->with('success'|'error', ...)):
             // las páginas los convierten en toasts tras cada acción.

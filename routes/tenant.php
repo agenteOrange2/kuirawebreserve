@@ -121,6 +121,10 @@ Route::middleware([
 
     // Logo del hotel para el wizard (público, sin login): solo entrega la
     // colección wizard_logo de Property.
+    // Foto de perfil del staff: mismo path que en el panel central.
+    Route::get('/avatar/{user}', [\App\Http\Controllers\AvatarController::class, 'show'])
+        ->middleware('auth')
+        ->name('avatar.show');
     Route::get('/fotos/logo', [\App\Http\Controllers\Tenant\PropertyLogoController::class, 'show'])
         ->name('property-logo');
 
@@ -205,11 +209,22 @@ Route::middleware([
             ->name('reservations.calendar');
         Route::redirect('/reservas/calendar', '/reservas/calendario');
 
-        // Historial COMPLETO de reservas: /reservas solo muestra las
-        // últimas 20; aquí vive todo con buscador, filtro y paginación.
+        // Historial COMPLETO de reservas: /reservas solo muestra un asomo;
+        // aquí vive todo con buscador, filtro y paginación.
         Route::get('/reservas/historial', \App\Http\Controllers\Tenant\ReservationHistoryPageController::class)
             ->middleware('can:reservations.view')
             ->name('reservations.history');
+
+        // Próximas COMPLETAS: /reservas pinta las 30 llegadas más cercanas,
+        // aquí está todo lo apartado a futuro, paginado y con buscador.
+        Route::get('/reservas/proximas', \App\Http\Controllers\Tenant\ReservationUpcomingPageController::class)
+            ->middleware('can:reservations.view')
+            ->name('reservations.upcoming');
+
+        // Huéspedes alojados ahora, completo y paginado.
+        Route::get('/reservas/alojados', \App\Http\Controllers\Tenant\InHouseStaysPageController::class)
+            ->middleware('can:reservations.view')
+            ->name('reservations.in-house');
 
         // Apariencia del wizard público (logo, colores, modo oscuro de
         // /reservar) — se entra desde /ajustes/wizard (botón Apariencia);
@@ -383,6 +398,13 @@ Route::middleware([
             ->middleware('can:users.manage')
             ->name('users');
 
+        // Ficha de un usuario: sus datos, sus turnos y todo lo que ha hecho
+        // (la bitácora global vive en /actividad; esta es por persona).
+        Route::get('/usuarios/{user}', [\App\Http\Controllers\Tenant\UserShowController::class, 'show'])
+            ->middleware('can:users.manage')
+            ->whereNumber('user')
+            ->name('users.show');
+
         Route::get('/ajustes', HotelSettingsPageController::class)
             ->middleware('can:properties.manage')
             ->name('hotel-settings');
@@ -403,6 +425,20 @@ Route::middleware([
                 ->name('general-settings.policies');
             Route::get('/ajustes/general/preguntas-frecuentes', [\App\Http\Controllers\Tenant\GeneralSettingsPageController::class, 'faqs'])
                 ->name('general-settings.faqs');
+        });
+
+        // Cuenta de quien usa el panel del hotel: hasta ahora el staff no
+        // tenía dónde cambiar ni su propia contraseña (solo el admin de
+        // plataforma). Mismos controladores y mismas pantallas que el
+        // central; cambian los nombres de ruta.
+        Route::prefix('perfil')->name('profile.')->group(function () {
+            Route::get('/', [\App\Http\Controllers\Settings\ProfileController::class, 'edit'])->name('edit');
+            Route::patch('/', [\App\Http\Controllers\Settings\ProfileController::class, 'update'])->name('update');
+            Route::get('contrasena', [\App\Http\Controllers\Settings\PasswordController::class, 'edit'])->name('password');
+            Route::put('contrasena', [\App\Http\Controllers\Settings\PasswordController::class, 'update'])
+                ->middleware('throttle:6,1')
+                ->name('password.update');
+            Route::get('dos-pasos', [\App\Http\Controllers\Settings\TwoFactorAuthenticationController::class, 'show'])->name('two-factor');
         });
 
         // Apariencia del PANEL del hotel: acento y colores del menú lateral
@@ -539,6 +575,11 @@ Route::middleware([
             ->middleware(['can:reservations.view', 'module:redes-sociales'])
             ->name('social.post');
 
+        // Copia local de la imagen: las URLs del CDN de Meta caducan.
+        Route::get('/redes/publicaciones/{post}/imagen', \App\Http\Controllers\Tenant\SocialPostImageController::class)
+            ->middleware(['can:reservations.view', 'module:redes-sociales'])
+            ->name('social.post.image');
+
         Route::get('/redes/ajustes', \App\Http\Controllers\Tenant\SocialSettingsPageController::class)
             ->middleware(['can:properties.manage', 'module:redes-sociales'])
             ->name('social-settings');
@@ -573,6 +614,11 @@ Route::middleware([
     Route::middleware('auth')->prefix('api')->group(function () {
         // Campana del panel: sin gate de permiso, todo el staff la ve (el
         // contenido ya viene acotado a lo que le toca a cada quien).
+        // Búsqueda rápida del header (⌘K): reservas, huéspedes y
+        // habitaciones. Sin gate de ruta: cada bloque revisa su permiso.
+        Route::get('quick-search', \App\Http\Controllers\Tenant\QuickSearchController::class)->name('quick-search');
+        Route::post('avatar', [\App\Http\Controllers\AvatarController::class, 'store'])->name('avatar.store');
+        Route::delete('avatar', [\App\Http\Controllers\AvatarController::class, 'destroy'])->name('avatar.destroy');
         Route::get('staff-notifications', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'index'])->name('staff-notifications.index');
         Route::post('staff-notifications/read-all', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'readAll'])->name('staff-notifications.read-all');
         Route::post('staff-notifications/{notification}/read', [\App\Http\Controllers\Tenant\StaffNotificationController::class, 'read'])->name('staff-notifications.read');
@@ -677,11 +723,24 @@ Route::middleware([
             });
         });
 
-        // Módulo Lista de espera: seguimiento desde el panel (convertida /
-        // eliminar). El alta viene del wizard público.
+        // Módulo Lista de espera: seguimiento desde el panel (avisar a
+        // mano, ligar la reserva convertida, eliminar). El alta viene del
+        // wizard público y el aviso automático de la cancelación.
         Route::middleware(['can:reservations.manage', 'module:lista-espera'])->group(function () {
+            Route::post('waitlist-entries/{entry}/notify', [\App\Http\Controllers\Tenant\WaitlistEntryController::class, 'notify'])->name('waitlist-entries.notify');
+            Route::get('waitlist-entries/{entry}/candidates', [\App\Http\Controllers\Tenant\WaitlistEntryController::class, 'candidates'])->name('waitlist-entries.candidates');
             Route::patch('waitlist-entries/{entry}/convert', [\App\Http\Controllers\Tenant\WaitlistEntryController::class, 'convert'])->name('waitlist-entries.convert');
             Route::delete('waitlist-entries/{entry}', [\App\Http\Controllers\Tenant\WaitlistEntryController::class, 'destroy'])->name('waitlist-entries.destroy');
+        });
+
+        // Seguimiento de las respuestas del cuestionario: cerrar el caso,
+        // levantar la incidencia que destapó la queja, responderle al
+        // huésped o borrar una respuesta de prueba.
+        Route::middleware(['can:properties.manage', 'module:encuestas'])->group(function () {
+            Route::patch('stay-surveys/{survey}/handle', [\App\Http\Controllers\Tenant\StaySurveyController::class, 'handle'])->name('stay-surveys.handle');
+            Route::post('stay-surveys/{survey}/incident', [\App\Http\Controllers\Tenant\StaySurveyController::class, 'raiseIncident'])->name('stay-surveys.incident');
+            Route::post('stay-surveys/{survey}/reply', [\App\Http\Controllers\Tenant\StaySurveyController::class, 'reply'])->name('stay-surveys.reply');
+            Route::delete('stay-surveys/{survey}', [\App\Http\Controllers\Tenant\StaySurveyController::class, 'destroy'])->name('stay-surveys.destroy');
         });
 
         // Módulo Cupones: CRUD del catálogo de códigos de descuento.
@@ -744,6 +803,10 @@ Route::middleware([
         Route::middleware(['can:rooms.update-status', 'module:incidencias'])->group(function () {
             Route::post('incidents', [\App\Http\Controllers\Tenant\IncidentController::class, 'store'])->name('incidents.store');
             Route::patch('incidents/{incident}', [\App\Http\Controllers\Tenant\IncidentController::class, 'update'])->name('incidents.update');
+            // Bitácora de seguimiento: dejar constancia ("pedí la
+            // refacción", "el técnico vuelve el jueves") sin tener que
+            // mover el estado del ticket.
+            Route::post('incidents/{incident}/notes', [\App\Http\Controllers\Tenant\IncidentController::class, 'addNote'])->name('incidents.notes.store');
             Route::post('incidents/{incident}/photos', [\App\Http\Controllers\Tenant\IncidentController::class, 'storePhoto'])->name('incidents.photos.store');
             Route::delete('incidents/{incident}/photos/{media}', [\App\Http\Controllers\Tenant\IncidentController::class, 'destroyPhoto'])->name('incidents.photos.destroy');
             // Tiempos objetivo por prioridad (ajuste del hotel, no del ticket).
@@ -943,6 +1006,8 @@ Route::middleware([
 
             // WhatsApp vía Cloud API oficial de Meta (número propio del hotel).
             Route::post('meta-channels', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'store'])->name('meta-channels.store');
+            // Registro incrustado (popup oficial de Facebook, con coexistencia).
+            Route::post('meta-channels/embedded-signup', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'embeddedSignup'])->name('meta-channels.embedded-signup');
             Route::patch('meta-channels/{linkId}', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'update'])->name('meta-channels.update');
             Route::delete('meta-channels/{linkId}', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'destroy'])->name('meta-channels.destroy');
             Route::post('meta-channels/{linkId}/test', [\App\Http\Controllers\Tenant\MetaChannelController::class, 'test'])->name('meta-channels.test');
@@ -1062,8 +1127,12 @@ Route::middleware([
     Route::get('policies', [AgentToolsController::class, 'policies'])->name('policies');
     Route::get('rate-plans', [AgentToolsController::class, 'ratePlans'])->name('rate-plans');
     Route::get('availability', [AgentToolsController::class, 'availability'])->name('availability');
+    Route::get('availability-overview', [AgentToolsController::class, 'availabilityOverview'])->name('availability-overview');
     Route::get('reservations/{code}', [AgentToolsController::class, 'showReservation'])->name('reservations.show');
     Route::post('holds', [AgentToolsController::class, 'storeHold'])->name('holds.store');
+    // El propio controlador exige el módulo `grupos` (mismo criterio que el
+    // toolset del bot), para que la Agent API responda igual que el asistente.
+    Route::post('group-holds', [AgentToolsController::class, 'storeGroupHold'])->name('group-holds.store');
     Route::post('payment-requests', [AgentToolsController::class, 'requestPayment'])->name('payment-requests.store');
 });
 

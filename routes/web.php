@@ -26,5 +26,14 @@ Route::get('/documentos/{prospectDocument}', ProspectDocumentFileController::cla
 // routes/tenant.php hacia el plano.
 Route::redirect('/dashboard', '/admin')->name('dashboard');
 
+// Foto de perfil de quien usa el panel. Mismo path que en el panel del
+// hotel (routes/tenant.php): la URL que arma User::avatarUrl() no depende
+// del dominio.
+Route::middleware('auth')->group(function () {
+    Route::get('/avatar/{user}', [\App\Http\Controllers\AvatarController::class, 'show'])->name('avatar.show');
+    Route::post('/avatar', [\App\Http\Controllers\AvatarController::class, 'store'])->name('avatar.store');
+    Route::delete('/avatar', [\App\Http\Controllers\AvatarController::class, 'destroy'])->name('avatar.destroy');
+});
+
 require __DIR__.'/admin.php';
 require __DIR__.'/settings.php';

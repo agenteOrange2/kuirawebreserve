@@ -2,6 +2,7 @@
 import { Head, Link } from '@inertiajs/vue3';
 import Lucide from '@/components/Base/Lucide';
 import { useAppearance } from '@/composables/useAppearance';
+import SettingsNav from '@/components/SettingsNav.vue';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
 const { appearance, updateAppearance } = useAppearance();
@@ -43,57 +44,7 @@ const themes = [
 
             <div class="col-span-12">
                 <div class="flex flex-col gap-6 lg:flex-row">
-                    <!-- Sidebar Nav -->
-                    <div class="w-full shrink-0 lg:w-52">
-                        <div class="box box--stacked p-1.5">
-                            <nav class="flex flex-col">
-                                <Link
-                                    :href="route('admin.settings.profile.edit')"
-                                    class="flex items-center rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400"
-                                >
-                                    <Lucide
-                                        icon="User"
-                                        class="mr-2.5 h-4 w-4"
-                                    />
-                                    Perfil
-                                </Link>
-                                <Link
-                                    :href="
-                                        route('admin.settings.password.edit')
-                                    "
-                                    class="flex items-center rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400"
-                                >
-                                    <Lucide
-                                        icon="Lock"
-                                        class="mr-2.5 h-4 w-4"
-                                    />
-                                    Contraseña
-                                </Link>
-                                <Link
-                                    :href="
-                                        route('admin.settings.appearance.edit')
-                                    "
-                                    :class="[
-                                        'flex items-center rounded-lg px-3 py-2.5 text-sm font-medium transition-colors',
-                                        'bg-primary/10 text-primary',
-                                    ]"
-                                >
-                                    <Lucide icon="Sun" class="mr-2.5 h-4 w-4" />
-                                    Apariencia
-                                </Link>
-                                <Link
-                                    :href="route('admin.settings.email.edit')"
-                                    class="flex items-center rounded-lg px-3 py-2.5 text-sm font-medium text-slate-600 transition-colors hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400"
-                                >
-                                    <Lucide
-                                        icon="Mail"
-                                        class="mr-2.5 h-4 w-4"
-                                    />
-                                    Correo
-                                </Link>
-                            </nav>
-                        </div>
-                    </div>
+                    <SettingsNav />
 
                     <!-- Content -->
                     <div class="flex-1">

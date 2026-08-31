@@ -23,6 +23,9 @@ use Illuminate\Support\Facades\Route;
 Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/', DashboardController::class)->name('dashboard');
 
+    // Búsqueda rápida del header (⌘K): hoteles y personas.
+    Route::get('api/quick-search', \App\Http\Controllers\Admin\QuickSearchController::class)->name('quick-search');
+
     Route::resource('tenants', TenantController::class)
         ->only(['index', 'store', 'update', 'destroy']);
     // Ficha del hotel: portada + un área por sub-vista. Las sub-vistas
@@ -116,6 +119,11 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
     Route::get('payments', [\App\Http\Controllers\Admin\PaymentSettingsController::class, 'index'])->name('payments');
     Route::patch('payments/methods', [\App\Http\Controllers\Admin\PaymentSettingsController::class, 'updateMethod'])->name('payments.methods');
     Route::patch('tenants/{tenant}/payment-methods', [\App\Http\Controllers\Admin\PaymentSettingsController::class, 'updateTenant'])->name('payments.tenant');
+
+    // App de Meta propia por hotel (separación de apps; sin ella se usa la
+    // app de la plataforma).
+    Route::put('tenants/{tenant}/meta-app', [\App\Http\Controllers\Admin\TenantMetaAppController::class, 'update'])->name('tenants.meta-app.update');
+    Route::delete('tenants/{tenant}/meta-app', [\App\Http\Controllers\Admin\TenantMetaAppController::class, 'destroy'])->name('tenants.meta-app.destroy');
 
     // Canales Meta (WhatsApp/Messenger/Instagram) vinculados por hotel.
     Route::post('meta-channels', [\App\Http\Controllers\Admin\MetaChannelController::class, 'store'])->name('meta.store');

@@ -19,9 +19,20 @@ class ProfileController extends Controller
      */
     public function edit(Request $request): Response
     {
+        $user = $request->user();
+
         return Inertia::render('settings/Profile', [
-            'mustVerifyEmail' => $request->user() instanceof MustVerifyEmail,
+            'mustVerifyEmail' => $user instanceof MustVerifyEmail,
             'status' => $request->session()->get('status'),
+            // Con qué se arma la ficha: quién es esta persona dentro del
+            // panel, no solo su nombre y correo.
+            'profile' => [
+                'phone' => $user->phone,
+                'roles' => $user->getRoleNames()->values()->all(),
+                'member_since' => $user->created_at?->locale('es')->isoFormat('MMMM [de] YYYY'),
+                'two_factor_enabled' => $user->hasEnabledTwoFactorAuthentication(),
+                'workspace' => tenant() ? (\App\Models\Property::first()?->name ?? tenant('id')) : 'Plataforma',
+            ],
         ]);
     }
 
@@ -38,7 +49,9 @@ class ProfileController extends Controller
 
         $request->user()->save();
 
-        return to_route('admin.settings.profile.edit');
+        // Las mismas pantallas sirven a los dos paneles: se vuelve al perfil
+        // del panel donde está la persona, no siempre al del admin.
+        return to_route(tenant() ? 'tenant.profile.edit' : 'admin.settings.profile.edit');
     }
 
     /**
