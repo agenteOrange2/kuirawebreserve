@@ -29,6 +29,7 @@ class Experience extends Model implements HasMedia
         'property_id',
         'name',
         'description',
+        'url',
         'includes',
         'duration_minutes',
         'pricing_mode',

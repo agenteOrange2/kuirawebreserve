@@ -325,17 +325,26 @@ DATOS DEL HOTEL (única fuente de verdad — si algo no está aquí ni en tus he
 REGLAS ESTRICTAS:
 - Si la duda del huésped coincide con una pregunta de "faqs", responde con esa respuesta tal cual (puedes adaptarla al tono de la conversación, sin cambiar los datos).
 - Si el huésped comparte su teléfono, usa identificar_huesped para reconocerlo; si ya nos visitó, salúdalo por su nombre como cliente frecuente (sin recitar sus datos).
-- Usa las herramientas para tarifas, disponibilidad y reservas; NUNCA inventes precios, fechas ni políticas.
+- Usa las herramientas para tarifas, disponibilidad y reservas; NUNCA inventes precios, fechas, políticas ni cantidades de habitaciones.
+- INVENTARIO: cada tipo tiene un número FIJO de habitaciones, el campo "units" de room_types. Ese es el tope absoluto: si units es 1, JAMÁS ofrezcas dos ("2 Cabañas Reales" cuando solo existe una es el peor error que puedes cometer). Para ofrecer varias, usa consultar_disponibilidad_general y no pases de "units_available" por tipo.
+- NO AFIRMES DISPONIBILIDAD SIN VERIFICARLA: nunca digas que una habitación está libre —ni la ofrezcas como alternativa— sin haberla consultado con consultar_disponibilidad o consultar_disponibilidad_general para ESAS fechas exactas. Si un tipo salió ocupado, consulta el resto con consultar_disponibilidad_general ANTES de nombrar alternativas; si no queda nada libre, dilo tal cual y ofrece las fechas de alternative_dates (ya vienen verificadas, con su etiqueta en español) para no perder al huésped.
+- GRUPOS: si el grupo no cabe en una sola habitación, llama consultar_disponibilidad_general con las fechas y "personas", y ofrece TAL CUAL lo que devuelva suggested_combination (qué tipos, cuántas de cada uno y el total). Si combination_covers_guests viene en false, dilo con claridad y ofrece otras fechas o usa transferir_a_humano; nunca completes el grupo con habitaciones que no aparecen libres. No le pidas al huésped que él arme la combinación: propónsela tú.
+- No inventes política comercial: nunca afirmes descuentos, mínimos de noches, ni que "el precio es fijo todo el año" si no está en los datos del hotel. Si una tarifa trae seasonal en true, el precio cambia por fechas y solo consultar_disponibilidad te da el correcto.
+- FECHAS: al repetir la llegada y la salida usa exactamente las que devolvió la herramienta (starts_at/ends_at); no cambies día, mes ni año al redactarlas, y confirma el año solo si el huésped lo dio.
 - Cada tarifa pertenece a UN tipo de habitación (room_type en consultar_tarifas). Si el huésped pidió un tipo, cotiza y aparta SOLO con tarifas de ese tipo — jamás uses la tarifa de otro tipo.
 - El precio de una tarifa es POR UNIDAD (por noche o por bloque); el TOTAL del rango lo calcula consultar_disponibilidad. Nunca presentes el total del rango como si fuera el precio por unidad ("$1,750 por 3 horas" está MAL si es el total de varias unidades). Para estancias con fechas usa tarifas por noche; las tarifas por bloque (ratos/horas) solo si el huésped pide horas.
 - Antes de crear un apartado repite al huésped: tipo de habitación, nombre de la tarifa, TOTAL exacto, fecha de llegada y nombre completo — y espera su confirmación.
 - Al entregar el código de un apartado creado, menciona una sola vez que el día de la llegada se pide una identificación oficial en recepción para el registro.
 - PAGOS: si el apartado requiere prepago (requires_prepayment), PRIMERO ofrece al huésped las formas de pago disponibles según payment_options del apartado (pasarelas por su nombre, transferencia, efectivo al llegar) y pregunta cuál prefiere — solo menciona las que existan. Con su elección llama solicitar_pago (metodo y proveedor) y comparte lo que devuelva tal cual: link de pago (paga ahí y el sistema confirma solo), cuentas para transferencia (pide el comprobante por este chat; el hotel lo verifica), o efectivo (dile hasta cuándo queda apartada su habitación y que paga al llegar). Si solo hay UNA opción, no preguntes: úsala directo. NUNCA digas que un pago fue recibido o verificado: eso solo lo confirma el sistema (consultar_reserva) o el personal. Si el huésped insiste en que ya pagó y el sistema no lo refleja, usa transferir_a_humano.
+- Si NO tienes la herramienta solicitar_pago, este hotel no tiene cobros configurados: no prometas NINGUNA forma de pago (ni efectivo al llegar, ni transferencia, ni link) — di que recepción se comunica para cerrar el pago.
 - NUNCA pidas ni aceptes números de tarjeta por el chat; si el huésped los envía, dile que por seguridad los borre y no los uses.
 - Cita montos exactamente como los devuelven las herramientas (usa *_label).
 - CAPACIDAD Y PERSONAS EXTRA: responde SOLO con "occupancy" de room_types: la tarifa incluye included_guests personas, el máximo es max_guests, y cada persona adicional cuesta extra_guest_fee_label. Si extra_guest_fee existe, NUNCA digas que no hay cobro por persona extra. Si el grupo supera max_guests, sugiere una habitación con más capacidad o transfiere a recepción.
+- FIANZA: si get_policies o el resultado de crear_apartado traen "guarantee", al confirmar un apartado avisa UNA vez que al llegar se cobra ese depósito en garantía (usa su "label" tal cual) y que se devuelve al registrar la salida. NO lo sumes al total de la estancia: es un depósito aparte que regresa. Si el huésped aparta varias habitaciones y hay "tiers_label", menciónalo; nunca inventes descuentos de fianza que no estén ahí.
 - FOTOS: si piden fotos de una habitación y su tipo tiene photos_url, comparte ese link tal cual diciendo que ahí están las fotos. Sin photos_url, describe la habitación y ofrece que el personal envíe fotos por este chat.
-- Si el huésped pide VARIAS habitaciones, haz UNA llamada de crear_apartado por cada una y reporta el resultado real de CADA llamada (código de reserva o el error exacto). Nunca resumas dos apartados en uno ni des por hecho uno que no confirmaste con la herramienta.
+- ENLACES: comparte una liga SOLO cuando venga al caso (piden fotos, preguntan por una habitación en concreto, por cómo llegar o por qué hacer). Una sola liga, una sola vez en la conversación: nunca la pegues de firma en cada mensaje ni recites la lista completa. Usa únicamente las URLs que vienen en estos datos (website, maps_url, links, photos_url, url de un recorrido) — JAMÁS inventes ni completes una dirección web.
+- RECORRIDOS: si preguntan por actividades, tours, qué hacer o qué hay en la zona, ofrece lo que traiga "experiences" con su duración y precio (y su liga si la tiene); para apartarlos comparte experiences_booking_url. Si no hay bloque "experiences", el hotel NO tiene recorridos: no los inventes ni prometas que alguien los organiza.
+- VARIAS HABITACIONES: si tienes crear_apartado_grupo, úsala — aparta todas bajo un folio GRP- y es todo o nada, así nadie se queda sin cuarto a medio grupo. Su cobro es UNO consolidado: llama solicitar_pago con el folio GRP-, nunca uno por habitación. Si NO tienes esa herramienta, haz UNA llamada de crear_apartado por cada habitación y reporta el resultado real de CADA una (código o el error exacto). En cualquier caso, nunca resumas dos apartados en uno ni des por hecho uno que no confirmaste con la herramienta.
 - Si una herramienta devuelve un error, comunica al huésped el mensaje EXACTO que devolvió — nunca inventes la causa ni digas "no hay disponibilidad" si la herramienta dijo otra cosa.
 - ADJUNTOS: tú no puedes ver imágenes ni archivos. Cuando un mensaje diga "[adjuntó una imagen o documento]", el archivo SÍ llegó y el personal puede verlo — NUNCA digas que no se recibió ni pidas que lo reenvíe. Si es un comprobante de pago, agradece y di que el personal lo verificará; recuerda que tú no confirmas pagos.
 - Si el huésped pide hablar con una persona, se queja, o pide algo fuera de tu alcance, usa la herramienta transferir_a_humano.
@@ -673,7 +682,12 @@ BLOCK;
                 'policies' => $respond($this->tools->policies()),
                 'rate_plans' => $respond($this->tools->ratePlans()),
                 'availability' => $respond($this->tools->availability($request, app(\App\Services\AvailabilityService::class))),
+                'availability_overview' => $respond($this->tools->availabilityOverview($request, app(\App\Services\AvailabilityService::class))),
                 'reservation' => $respond($this->tools->showReservation((string) ($params['code'] ?? ''))),
+                'group_hold' => $respond($this->tools->storeGroupHold(
+                    tap($request, fn ($r) => $r->setUserResolver(fn () => \App\Http\Controllers\Tenant\AgentTokenController::ensureAgentUser())),
+                    app(\App\Actions\Reservations\CreateGroupReservation::class),
+                )),
                 'hold' => $respond($this->tools->storeHold(
                     tap($request, fn ($r) => $r->setUserResolver(fn () => \App\Http\Controllers\Tenant\AgentTokenController::ensureAgentUser())),
                     app(\App\Actions\Reservations\CreateReservation::class),
@@ -710,6 +724,21 @@ BLOCK;
                     ]));
                 }),
 
+            Tool::as('consultar_disponibilidad_general')
+                ->for('Panorama del hotel completo en un rango: cuántas habitaciones existen de cada tipo, cuántas quedan LIBRES, precio por unidad y total. Con "personas" devuelve además una combinación real para el grupo, y si no alcanza devuelve fechas cercanas verificadas (alternative_dates). Úsala SIEMPRE que el huésped pregunte "qué tienen disponible", venga en grupo, o antes de ofrecerle alternativas a un tipo que no está libre.')
+                ->withStringParameter('starts_at', 'Fecha/hora de llegada, formato YYYY-MM-DD HH:MM')
+                ->withStringParameter('ends_at', 'Fecha/hora de salida (opcional)', false)
+                ->withNumberParameter('personas', 'Cuántas personas son (opcional; con esto se arma la combinación de habitaciones)', false)
+                ->using(function (string $starts_at, ?string $ends_at = null, int|float|null $personas = null) use ($call, $conversation): string {
+                    $conversation?->markLead(Conversation::LEAD_QUOTING);
+
+                    return $call('availability_overview', array_filter([
+                        'starts_at' => $starts_at,
+                        'ends_at' => $ends_at,
+                        'guests' => $personas !== null ? (int) $personas : null,
+                    ]));
+                }),
+
             Tool::as('crear_apartado')
                 ->for('Crea un apartado (hold) de habitación como reserva PENDIENTE que el hotel confirmará. Úsalo solo tras confirmar con el huésped: tipo de habitación, tarifa, TOTAL exacto, fecha y nombre. La tarifa DEBE pertenecer al tipo de habitación que el huésped pidió (verifica room_type en consultar_tarifas).')
                 ->withNumberParameter('rate_plan_id', 'ID de la tarifa (su room_type debe coincidir con la habitación solicitada)')
@@ -738,7 +767,62 @@ BLOCK;
                                 'reservation_id' => $reservation->id,
                                 'guest_id' => $reservation->guest_id,
                                 'contact_name' => $guest_name,
-                                'contact_phone' => $guest_phone,
+                                // En Messenger/IG el contact_phone es el id
+                                // del hilo: pisarlo con el teléfono real lo
+                                // parte en dos (bot amnésico). Solo WhatsApp.
+                                'contact_phone' => $conversation->phoneIsIdentity() ? $guest_phone : null,
+                            ]));
+                            $conversation->markLead(Conversation::LEAD_HOLD);
+                        }
+                    }
+
+                    return $result;
+                }),
+
+            Tool::as('crear_apartado_grupo')
+                ->for('Aparta VARIAS habitaciones bajo un solo folio de grupo (GRP-), todo o nada: si una no alcanza, no se crea ninguna. Úsala cuando el huésped necesite 2 o más habitaciones para las mismas fechas, con la combinación que devolvió consultar_disponibilidad_general. Antes confirma con él: qué habitaciones, cuántas, fechas, TOTAL y nombre.')
+                ->withStringParameter('starts_at', 'Llegada, YYYY-MM-DD HH:MM')
+                ->withStringParameter('guest_name', 'Nombre completo del responsable del grupo')
+                ->withArrayParameter(
+                    'habitaciones',
+                    'Qué apartar: una entrada por tipo de habitación, con cuántas de ese tipo (room_type_id sale de consultar_disponibilidad_general).',
+                    new \Prism\Prism\Schema\ObjectSchema(
+                        'linea',
+                        'Tipo de habitación y cuántas apartar de ese tipo',
+                        [
+                            new \Prism\Prism\Schema\NumberSchema('room_type_id', 'ID del tipo de habitación'),
+                            new \Prism\Prism\Schema\NumberSchema('rooms', 'Cuántas habitaciones de ese tipo (nunca más que units_available)'),
+                        ],
+                        ['room_type_id', 'rooms'],
+                    ),
+                )
+                ->withStringParameter('ends_at', 'Salida, YYYY-MM-DD HH:MM (opcional)', false)
+                ->withStringParameter('guest_phone', 'Teléfono del responsable (opcional)', false)
+                ->using(function (string $starts_at, string $guest_name, array $habitaciones, ?string $ends_at = null, ?string $guest_phone = null) use ($call, $conversation): string {
+                    $result = $call('group_hold', array_filter([
+                        'starts_at' => $starts_at,
+                        'ends_at' => $ends_at,
+                        'guest_name' => $guest_name,
+                        'guest_phone' => $guest_phone,
+                        'lines' => array_values(array_map(fn ($line) => [
+                            'room_type_id' => (int) ($line['room_type_id'] ?? 0),
+                            'rooms' => (int) ($line['rooms'] ?? 0),
+                        ], $habitaciones)),
+                    ]));
+
+                    // Memoria: el grupo queda ligado a la conversación por su
+                    // primera reserva, igual que un apartado suelto.
+                    $code = json_decode($result, true)['code'] ?? null;
+                    if ($conversation && $code) {
+                        $group = \App\Models\ReservationGroup::query()->where('code', strtoupper($code))->first();
+                        $first = $group?->reservations()->orderBy('id')->first();
+
+                        if ($first) {
+                            $conversation->update(array_filter([
+                                'reservation_id' => $first->id,
+                                'guest_id' => $first->guest_id,
+                                'contact_name' => $guest_name,
+                                'contact_phone' => $conversation->phoneIsIdentity() ? $guest_phone : null,
                             ]));
                             $conversation->markLead(Conversation::LEAD_HOLD);
                         }
@@ -770,6 +854,22 @@ BLOCK;
                         $conversation->markLead(Conversation::LEAD_HOLD);
                     }
 
+                    // Liga la reserva cobrada a la conversación: sin esto, el
+                    // comprobante que mande por ESTE chat no encuentra a qué
+                    // solicitud pegarse (caso real: hilo nuevo que retomó su
+                    // reserva por código).
+                    if ($conversation && ! $conversation->reservation_id && ($decoded['code'] ?? null)) {
+                        $reservation = \App\Models\Reservation::query()
+                            ->where('code', strtoupper((string) $decoded['code']))->first();
+
+                        if ($reservation) {
+                            $conversation->update(array_filter([
+                                'reservation_id' => $reservation->id,
+                                'guest_id' => $reservation->guest_id,
+                            ]));
+                        }
+                    }
+
                     return $result;
                 }),
 
@@ -783,7 +883,9 @@ BLOCK;
                     if (! $guest) {
                         $conversation?->update(array_filter([
                             'contact_name' => $nombre,
-                            'contact_phone' => $telefono,
+                            // Solo WhatsApp: en las demás redes contact_phone
+                            // es el id del hilo y pisarlo lo parte en dos.
+                            'contact_phone' => $conversation?->phoneIsIdentity() ? $telefono : null,
                         ]));
 
                         return json_encode([
@@ -792,11 +894,11 @@ BLOCK;
                         ], JSON_UNESCAPED_UNICODE);
                     }
 
-                    $conversation?->update([
+                    $conversation?->update(array_filter([
                         'guest_id' => $guest->id,
                         'contact_name' => $nombre ?: $guest->full_name,
-                        'contact_phone' => $telefono,
-                    ]);
+                        'contact_phone' => $conversation?->phoneIsIdentity() ? $telefono : null,
+                    ]));
 
                     if ($guest->is_blacklisted) {
                         return json_encode([
@@ -831,10 +933,26 @@ BLOCK;
         if ($readOnly) {
             $tools = array_values(array_filter(
                 $tools,
-                fn ($tool) => ! in_array($tool->name(), ['crear_apartado', 'solicitar_pago', 'transferir_a_humano'], true),
+                fn ($tool) => ! in_array($tool->name(), ['crear_apartado', 'crear_apartado_grupo', 'solicitar_pago', 'transferir_a_humano'], true),
             ));
         }
 
-        return $tools;
+        // Herramientas OPCIONALES: solo existen si el hotel tiene con qué
+        // cumplirlas. Que el modelo ni siquiera las vea es mejor que una
+        // regla pidiéndole que no las use — y de paso el prompt de cada
+        // hotel carga solo lo suyo. Toda herramienta nueva que dependa de un
+        // módulo o de una configuración se registra aquí.
+        $available = [
+            // Reservas de grupo: módulo `grupos`.
+            'crear_apartado_grupo' => $this->tools->groupsPublic(),
+            // Cobrar exige tener CON QUÉ: pasarela (módulo cobros),
+            // transferencia con cuentas activas, o efectivo al llegar.
+            'solicitar_pago' => $this->tools->paymentMethodsPublic(),
+        ];
+
+        return array_values(array_filter(
+            $tools,
+            fn ($tool) => $available[$tool->name()] ?? true,
+        ));
     }
 }

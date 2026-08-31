@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -17,6 +18,7 @@ const props = defineProps<{
         website: string;
         maps_url: string;
         socials: { type: string; url: string }[];
+        links: { label: string; url: string }[];
     };
 }>();
 
@@ -32,6 +34,7 @@ const form = reactive({
     phones: props.settings.phones.map((x) => ({ ...x })),
     emails: [...props.settings.emails],
     socials: props.settings.socials.map((x) => ({ ...x })),
+    links: props.settings.links.map((x) => ({ ...x })),
 });
 
 const iconInput =
@@ -206,6 +209,9 @@ async function submit() {
                 website: form.website || null,
                 maps_url: form.maps_url || null,
                 socials: form.socials.filter((x) => x.url.trim() !== ''),
+                links: form.links.filter(
+                    (x) => x.url.trim() !== '' && x.label.trim() !== '',
+                ),
             },
         });
         toast.success('Guardado', 'Los datos de contacto se actualizaron.');
@@ -232,51 +238,52 @@ async function submit() {
     <RazeLayout title="Identidad y contacto">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-4 p-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-14 w-14 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Building2" class="h-7 w-7" />
+                        <Lucide icon="Building2" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-xl font-medium">
+                        <h1 class="text-base font-medium">
                             Identidad y contacto
                         </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Quién eres, dónde estás y por dónde te escriben.
                             Todo esto alimenta al asistente y a las páginas
                             públicas.
                         </p>
                     </div>
                 </div>
-                <Button
-                    as="a"
-                    :href="route('tenant.general-settings')"
-                    variant="outline-secondary"
-                    class="rounded-[0.5rem] bg-white"
+                <div
+                    class="flex w-full flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end"
                 >
-                    <Lucide
-                        icon="ArrowLeft"
-                        class="mr-2 h-4 w-4 stroke-[1.3]"
-                    />
-                    Volver a Datos generales
-                </Button>
+                    <!-- El volver vive con las acciones, no flotando
+                         encima de la tarjeta. -->
+                    <Link
+                        :href="route('tenant.general-settings')"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium whitespace-nowrap text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
+                    >
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                        Datos generales
+                    </Link>
+                </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 items-start gap-6">
+            <div class="mt-4 grid grid-cols-12 items-start gap-5">
                 <div class="col-span-12 xl:col-span-6">
                     <div class="box box--stacked">
                         <div
-                            class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                            class="border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                         >
                             <div class="flex items-center gap-2">
                                 <Lucide
                                     icon="Building2"
                                     class="h-4 w-4 stroke-[1.5] text-primary"
                                 />
-                                <h2 class="text-base font-medium">Identidad</h2>
+                                <h2 class="text-sm font-medium">Identidad</h2>
                             </div>
                             <p class="mt-1 text-xs text-slate-500">
                                 El nombre y el logo con los que te ve el huésped
@@ -285,7 +292,7 @@ async function submit() {
                         </div>
                         <div class="space-y-4 p-5">
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Logo del hotel</label
                                 >
                                 <div class="flex flex-wrap items-center gap-3">
@@ -352,7 +359,7 @@ async function submit() {
                                 >
                             </div>
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Nombre del hotel</label
                                 >
                                 <div class="relative">
@@ -377,14 +384,14 @@ async function submit() {
 
                     <div class="box box--stacked mt-6">
                         <div
-                            class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                            class="border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                         >
                             <div class="flex items-center gap-2">
                                 <Lucide
                                     icon="MapPin"
                                     class="h-4 w-4 stroke-[1.5] text-primary"
                                 />
-                                <h2 class="text-base font-medium">Ubicación</h2>
+                                <h2 class="text-sm font-medium">Ubicación</h2>
                             </div>
                             <p class="mt-1 text-xs text-slate-500">
                                 Dónde estás y cómo llegar.
@@ -392,7 +399,7 @@ async function submit() {
                         </div>
                         <div class="space-y-4 p-5">
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Dirección</label
                                 >
                                 <div class="relative">
@@ -406,7 +413,7 @@ async function submit() {
                                 </div>
                             </div>
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Link de Google Maps</label
                                 >
                                 <div class="relative">
@@ -429,7 +436,7 @@ async function submit() {
                                 >
                             </div>
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Sitio web</label
                                 >
                                 <div class="relative">
@@ -459,14 +466,14 @@ async function submit() {
                 <div class="col-span-12 xl:col-span-6">
                     <div class="box box--stacked">
                         <div
-                            class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                            class="border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                         >
                             <div class="flex items-center gap-2">
                                 <Lucide
                                     icon="Phone"
                                     class="h-4 w-4 stroke-[1.5] text-primary"
                                 />
-                                <h2 class="text-base font-medium">Contacto</h2>
+                                <h2 class="text-sm font-medium">Contacto</h2>
                             </div>
                             <p class="mt-1 text-xs text-slate-500">
                                 Por dónde te escriben los huéspedes.
@@ -474,7 +481,7 @@ async function submit() {
                         </div>
                         <div class="space-y-4 p-5">
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Teléfonos</label
                                 >
                                 <div
@@ -528,7 +535,6 @@ async function submit() {
                                     v-if="form.phones.length < 5"
                                     type="button"
                                     variant="outline-secondary"
-                                    size="sm"
                                     class="mt-2 rounded-[0.5rem] bg-white"
                                     @click="openContact('phone', null)"
                                 >
@@ -540,7 +546,7 @@ async function submit() {
                                 </Button>
                             </div>
                             <div>
-                                <label class="mb-1 block text-sm"
+                                <label class="mb-1 block text-xs"
                                     >Emails de contacto</label
                                 >
                                 <div
@@ -589,7 +595,6 @@ async function submit() {
                                     v-if="form.emails.length < 5"
                                     type="button"
                                     variant="outline-secondary"
-                                    size="sm"
                                     class="mt-2 rounded-[0.5rem] bg-white"
                                     @click="openContact('email', null)"
                                 >
@@ -605,14 +610,14 @@ async function submit() {
 
                     <div class="box box--stacked mt-6">
                         <div
-                            class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                            class="border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                         >
                             <div class="flex items-center gap-2">
                                 <Lucide
                                     icon="Share2"
                                     class="h-4 w-4 stroke-[1.5] text-primary"
                                 />
-                                <h2 class="text-base font-medium">
+                                <h2 class="text-sm font-medium">
                                     Redes sociales
                                 </h2>
                             </div>
@@ -672,7 +677,6 @@ async function submit() {
                                 v-if="form.socials.length < 10"
                                 type="button"
                                 variant="outline-secondary"
-                                size="sm"
                                 class="mt-2 rounded-[0.5rem] bg-white"
                                 @click="openContact('social', null)"
                             >
@@ -684,16 +688,90 @@ async function submit() {
                             </Button>
                         </div>
                     </div>
+
+                    <div class="box box--stacked mt-6">
+                        <div
+                            class="border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                        >
+                            <div class="flex items-center gap-2">
+                                <Lucide
+                                    icon="Link"
+                                    class="h-4 w-4 stroke-[1.5] text-primary"
+                                />
+                                <h2 class="text-sm font-medium">
+                                    Enlaces útiles
+                                </h2>
+                            </div>
+                            <p class="mt-1 text-xs text-slate-500">
+                                Páginas de tu sitio que el asistente puede
+                                compartir cuando vienen al caso: recorridos,
+                                galería, cómo llegar.
+                            </p>
+                        </div>
+                        <div class="space-y-4 p-5">
+                            <div
+                                v-if="form.links.length"
+                                class="flex flex-col gap-3"
+                            >
+                                <div
+                                    v-for="(link, i) in form.links"
+                                    :key="i"
+                                    class="flex flex-col gap-2 rounded-lg border border-slate-200/70 p-3 sm:flex-row sm:items-center dark:border-darkmode-400"
+                                >
+                                    <FormInput
+                                        v-model="link.label"
+                                        type="text"
+                                        class="rounded-[0.5rem] sm:w-44"
+                                        placeholder="Recorridos"
+                                        maxlength="60"
+                                    />
+                                    <FormInput
+                                        v-model="link.url"
+                                        type="url"
+                                        class="min-w-0 flex-1 rounded-[0.5rem]"
+                                        placeholder="https://tusitio.com/recorridos/"
+                                    />
+                                    <button
+                                        type="button"
+                                        class="shrink-0 self-end rounded p-1.5 text-slate-400 transition hover:bg-danger/10 hover:text-danger sm:self-auto"
+                                        title="Quitar enlace"
+                                        @click="form.links.splice(i, 1)"
+                                    >
+                                        <Lucide icon="Trash2" class="h-4 w-4" />
+                                    </button>
+                                </div>
+                            </div>
+                            <p v-else class="text-xs text-slate-500">
+                                Sin enlaces capturados.
+                            </p>
+                            <FormHelp v-if="errors['links']">
+                                {{ errors['links'] }}
+                            </FormHelp>
+                            <Button
+                                v-if="form.links.length < 6"
+                                type="button"
+                                variant="outline-secondary"
+                                class="mt-2 rounded-[0.5rem] bg-white"
+                                @click="form.links.push({ label: '', url: '' })"
+                            >
+                                <Lucide
+                                    icon="Plus"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Agregar enlace
+                            </Button>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="col-span-12 flex justify-end">
                     <Button
                         variant="primary"
-                        class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                         :disabled="saving"
                         @click="submit"
                     >
-                        <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                        <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                         {{ saving ? 'Guardando…' : 'Guardar' }}
                     </Button>
                 </div>
@@ -726,37 +804,45 @@ async function submit() {
                 <Dialog.Description>
                     <div v-if="contactKind === 'phone'" class="space-y-3">
                         <div>
-                            <label class="mb-1 block text-sm">País</label>
-                            <FormSelect v-model="contactDraft.code">
+                            <label class="mb-1 block text-xs">País</label>
+                            <FormSelect
+                                v-model="contactDraft.code"
+                                class="h-9 text-xs"
+                            >
                                 <option value="52">+52 México</option>
                                 <option value="1">+1 EE. UU./Canadá</option>
                             </FormSelect>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm">Teléfono</label>
+                            <label class="mb-1 block text-xs">Teléfono</label>
                             <FormInput
                                 v-model="contactDraft.number"
                                 type="tel"
                                 placeholder="10 dígitos"
                                 @keyup.enter="saveContact"
+                                class="h-9 text-xs"
                             />
                         </div>
                     </div>
 
                     <div v-else-if="contactKind === 'email'">
-                        <label class="mb-1 block text-sm">Correo</label>
+                        <label class="mb-1 block text-xs">Correo</label>
                         <FormInput
                             v-model="contactDraft.email"
                             type="email"
                             placeholder="contacto@hotel.com"
                             @keyup.enter="saveContact"
+                            class="h-9 text-xs"
                         />
                     </div>
 
                     <div v-else class="space-y-3">
                         <div>
-                            <label class="mb-1 block text-sm">Red</label>
-                            <FormSelect v-model="contactDraft.type">
+                            <label class="mb-1 block text-xs">Red</label>
+                            <FormSelect
+                                v-model="contactDraft.type"
+                                class="h-9 text-xs"
+                            >
                                 <option
                                     v-for="(label, key) in socialTypes"
                                     :key="key"
@@ -767,12 +853,13 @@ async function submit() {
                             </FormSelect>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm">Liga</label>
+                            <label class="mb-1 block text-xs">Liga</label>
                             <FormInput
                                 v-model="contactDraft.url"
                                 type="url"
                                 placeholder="https://..."
                                 @keyup.enter="saveContact"
+                                class="h-9 text-xs"
                             />
                         </div>
                     </div>

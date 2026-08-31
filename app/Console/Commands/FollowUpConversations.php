@@ -150,13 +150,58 @@ class FollowUpConversations extends Command
                 continue;
             }
 
-            $this->send($conversation, 'quote_nudge',
-                '¿Sigues por ahí? Quedé pendiente de ayudarte con tu reserva. Si quieres, te aparto la habitación unos minutos sin compromiso; solo dime la fecha y la tarifa que te interesó.',
+            // Y solo si el huésped llegó a escribir: hay hilos que abre el
+            // bot (respuesta privada a un comentario de redes) donde nadie
+            // contestó nunca — ahí el "¿sigues por ahí?" es spam puro
+            // (caso real cabañas, conversación 15 del 2026-08-28).
+            $lastIn = $conversation->messages()->where('direction', 'in')->latest('id')->first();
+            if (! $lastIn) {
+                continue;
+            }
+
+            // Se despidió o dijo que él avisa cuando tenga fechas: no se
+            // persigue a quien ya cerró la conversación por su cuenta.
+            if ($this->closedTheChat($lastIn->body)) {
+                continue;
+            }
+
+            // Si lo último que le dijimos fue que NO hay disponibilidad,
+            // ofrecerle apartar "la habitación" es contradictorio: se
+            // reengancha por la puerta correcta, que son otras fechas.
+            $noVacancy = (bool) preg_match(
+                '/no (hay|tenemos|contamos con|queda|quedan)[^.]{0,40}disponib|sin disponibilidad|todas[^.]{0,40}(reservadas|ocupadas)/iu',
+                $last->body,
+            );
+
+            $this->send($conversation, 'quote_nudge', $noVacancy
+                ? '¿Sigues por ahí? Para esas fechas no me quedó nada libre, pero con gusto reviso otras: dime qué días te acomodan y te digo lo que hay disponible.'
+                : '¿Sigues por ahí? Quedé pendiente de ayudarte con tu reserva. Si me dices la fecha y la habitación que te interesó, reviso la disponibilidad y te ayudo a apartarla.',
             );
             $sent++;
         }
 
         return $sent;
+    }
+
+    /**
+     * ¿El huésped ya cerró la conversación? ("gracias", "sería todo", "yo
+     * le aviso cuando tenga la fecha"). Se mide sobre mensajes cortos para
+     * no confundir un "buen día, ¿me da precios?" con una despedida.
+     */
+    protected function closedTheChat(string $body): bool
+    {
+        $body = trim($body);
+
+        if (mb_strlen($body) > 140) {
+            return false;
+        }
+
+        return (bool) preg_match(
+            '/(gracias|ser[ií]a todo|es todo por (el momento|ahora|hoy)|hasta luego|nos vemos|'
+            .'(te|le|les) aviso|(se )?l[oe] hago saber|luego (te|le) (aviso|escribo|marco)|'
+            .'ah[ií] (te|le) (aviso|escribo)|quedamos as[ií])/iu',
+            $body,
+        );
     }
 
     protected function send(Conversation $conversation, string $key, string $body): void

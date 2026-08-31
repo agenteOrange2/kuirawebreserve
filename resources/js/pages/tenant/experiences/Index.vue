@@ -5,11 +5,13 @@ import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormCheck,
+    FormDateTime,
     FormHelp,
     FormInput,
     FormSelect,
     FormSwitch,
     FormTextarea,
+    FormTime,
 } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
@@ -55,6 +57,7 @@ interface ExperienceRow {
     id: number;
     name: string;
     description: string | null;
+    url: string | null;
     includes: string[];
     duration_minutes: number | null;
     duration_label: string | null;
@@ -126,6 +129,7 @@ const errors = reactive<Record<string, string>>({});
 const form = reactive({
     name: '',
     description: '',
+    url: '',
     includes: [] as string[],
     duration_minutes: '' as string | number,
     pricing_mode: 'per_person',
@@ -141,6 +145,7 @@ function openForm(experience: ExperienceRow | null = null) {
     editing.value = experience;
     form.name = experience?.name ?? '';
     form.description = experience?.description ?? '';
+    form.url = experience?.url ?? '';
     form.includes = [...(experience?.includes ?? [])];
     form.duration_minutes = experience?.duration_minutes ?? '';
     form.pricing_mode = experience?.pricing_mode ?? 'per_person';
@@ -167,6 +172,7 @@ async function submit() {
     const payload = {
         name: form.name,
         description: form.description.trim() === '' ? null : form.description,
+        url: form.url.trim() === '' ? null : form.url.trim(),
         includes: form.includes,
         duration_minutes:
             form.duration_minutes === '' ? null : Number(form.duration_minutes),
@@ -208,6 +214,32 @@ async function submit() {
 }
 
 const deleting = ref<ExperienceRow | null>(null);
+
+// Cómo se ve el catálogo: lista (default) o tarjetas. La elección se recuerda
+// por navegador, igual que en Redes sociales.
+const view = ref<'list' | 'grid'>('list');
+
+try {
+    if (localStorage.getItem('experiencias-vista') === 'grid') {
+        view.value = 'grid';
+    }
+} catch {
+    // Navegación privada o storage bloqueado: se queda la lista.
+}
+
+function setView(value: 'list' | 'grid') {
+    view.value = value;
+
+    try {
+        localStorage.setItem('experiencias-vista', value);
+    } catch {
+        // Sin storage, el cambio vive solo esta visita.
+    }
+}
+
+/** Sesiones aún programadas: el número que decide si hay algo que vender. */
+const scheduledCount = (experience: ExperienceRow) =>
+    experience.sessions.filter((s) => s.status === 'scheduled').length;
 
 async function destroy() {
     if (!deleting.value) return;
@@ -833,19 +865,17 @@ async function bulkDelete() {
     <RazeLayout title="Experiencias">
         <div class="mt-2">
             <div
-                class="box box--stacked flex flex-col gap-4 p-5 md:flex-row md:items-center md:justify-between"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="flex min-w-0 items-center gap-3.5 sm:gap-4">
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary sm:h-14 sm:w-14"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="Compass" class="h-5 w-5 sm:h-7 sm:w-7" />
+                        <Lucide icon="Compass" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <h1 class="text-lg font-medium sm:text-xl">
-                            Experiencias
-                        </h1>
-                        <p class="mt-1 text-sm text-slate-500">
+                        <h1 class="text-base font-medium">Experiencias</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Tours y recorridos con horario y cupo propios. Se
                             reservan solos, con o sin habitación.
                         </p>
@@ -859,40 +889,201 @@ async function bulkDelete() {
                         :href="publicUrl"
                         target="_blank"
                         variant="outline-primary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
                         <Lucide
                             icon="ExternalLink"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.3]"
                         />
                         Ver página pública
                     </Button>
                     <Button
                         v-if="canManage"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                         @click="showVehicles = true"
                     >
                         <Lucide
                             icon="Truck"
-                            class="mr-2 h-4 w-4 stroke-[1.3]"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.3]"
                         />
                         Vehículos
                     </Button>
                     <Button
                         v-if="canManage"
                         variant="primary"
-                        class="col-span-2 rounded-[0.5rem] shadow-md shadow-primary/20 md:col-auto"
+                        class="col-span-2 h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20 md:col-auto"
                         @click="openForm()"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Nueva
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" /> Nueva
                         experiencia
                     </Button>
                 </div>
             </div>
 
-            <!-- Catálogo -->
-            <div v-if="experiences.length" class="mt-5 grid grid-cols-12 gap-5">
+            <!-- Catálogo: encabezado con el conmutador lista / tarjetas -->
+            <div
+                v-if="experiences.length"
+                class="box box--stacked mt-5 flex flex-wrap items-center justify-between gap-3 p-4 sm:px-5"
+            >
+                <div class="flex items-center gap-2">
+                    <h2 class="text-sm font-medium">Recorridos</h2>
+                    <span
+                        class="rounded-full border border-slate-200/70 px-2 py-0.5 text-xs text-slate-500 dark:border-darkmode-400"
+                    >
+                        {{ experiences.length }}
+                    </span>
+                </div>
+                <div
+                    class="flex items-center rounded-full border border-slate-200/70 p-0.5 dark:border-darkmode-400"
+                >
+                    <button
+                        type="button"
+                        class="flex h-7 w-8 items-center justify-center rounded-full transition"
+                        :class="
+                            view === 'list'
+                                ? 'bg-primary/10 text-primary'
+                                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                        "
+                        title="Ver como lista"
+                        @click="setView('list')"
+                    >
+                        <Lucide icon="List" class="h-4 w-4" />
+                    </button>
+                    <button
+                        type="button"
+                        class="flex h-7 w-8 items-center justify-center rounded-full transition"
+                        :class="
+                            view === 'grid'
+                                ? 'bg-primary/10 text-primary'
+                                : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'
+                        "
+                        title="Ver como tarjetas"
+                        @click="setView('grid')"
+                    >
+                        <Lucide icon="LayoutGrid" class="h-4 w-4" />
+                    </button>
+                </div>
+            </div>
+
+            <!-- Vista de lista (default): una experiencia por renglón -->
+            <div
+                v-if="experiences.length && view === 'list'"
+                class="box box--stacked mt-4"
+            >
+                <div
+                    v-for="experience in experiences"
+                    :key="experience.id"
+                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 last:border-b-0 sm:flex-nowrap sm:px-5 dark:border-darkmode-400"
+                >
+                    <img
+                        v-if="experience.photos.length"
+                        :src="experience.photos[0].thumb_url"
+                        :alt="experience.name"
+                        loading="lazy"
+                        decoding="async"
+                        class="h-11 w-11 shrink-0 rounded-[0.5rem] object-cover"
+                    />
+                    <div
+                        v-else
+                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-[0.5rem] bg-slate-100 text-slate-400 dark:bg-darkmode-400"
+                    >
+                        <Lucide icon="Compass" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div
+                            class="flex flex-wrap items-center gap-x-2 gap-y-1"
+                        >
+                            <span class="truncate text-sm font-medium">
+                                {{ experience.name }}
+                            </span>
+                            <span
+                                v-if="!experience.active"
+                                class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                            >
+                                Pausada
+                            </span>
+                        </div>
+                        <div
+                            class="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-slate-500"
+                        >
+                            <span>
+                                {{ experience.price_label
+                                }}<template v-if="experience.duration_label">
+                                    · {{ experience.duration_label }}</template
+                                >
+                            </span>
+                            <span
+                                class="flex items-center gap-1"
+                                :class="
+                                    scheduledCount(experience)
+                                        ? ''
+                                        : 'text-warning'
+                                "
+                                :title="scheduleSummary(experience)"
+                            >
+                                <Lucide
+                                    icon="CalendarClock"
+                                    class="h-3 w-3 shrink-0"
+                                />
+                                {{ scheduledCount(experience) }} sesión(es)
+                            </span>
+                        </div>
+                    </div>
+                    <div class="flex shrink-0 items-center gap-1.5">
+                        <Button
+                            v-if="canManage"
+                            variant="outline-secondary"
+                            size="sm"
+                            class="rounded-[0.5rem] bg-white text-xs"
+                            @click="openSchedule(experience)"
+                        >
+                            <Lucide
+                                icon="CalendarClock"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Programación
+                        </Button>
+                        <Button
+                            variant="outline-secondary"
+                            size="sm"
+                            class="rounded-[0.5rem] bg-white text-xs"
+                            @click="openSessions(experience)"
+                        >
+                            <Lucide
+                                icon="CalendarDays"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Sesiones
+                        </Button>
+                        <Button
+                            v-if="canManage"
+                            variant="outline-secondary"
+                            size="sm"
+                            class="rounded-[0.5rem] bg-white text-xs"
+                            @click="openForm(experience)"
+                        >
+                            <Lucide icon="Pencil" class="mr-1.5 h-3.5 w-3.5" />
+                            Editar
+                        </Button>
+                        <button
+                            v-if="canManage"
+                            type="button"
+                            class="rounded p-1.5 text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                            title="Eliminar experiencia"
+                            @click="deleting = experience"
+                        >
+                            <Lucide icon="Trash2" class="h-3.5 w-3.5" />
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Vista de tarjetas -->
+            <div
+                v-if="experiences.length && view === 'grid'"
+                class="mt-4 grid grid-cols-12 gap-5"
+            >
                 <div
                     v-for="experience in experiences"
                     :key="experience.id"
@@ -953,11 +1144,7 @@ async function bulkDelete() {
                                 {{ experience.description }}
                             </p>
                             <div class="mt-2 text-xs text-slate-400">
-                                {{
-                                    experience.sessions.filter(
-                                        (s) => s.status === 'scheduled',
-                                    ).length
-                                }}
+                                {{ scheduledCount(experience) }}
                                 sesión(es) en los próximos 60 días
                             </div>
                             <div
@@ -974,7 +1161,7 @@ async function bulkDelete() {
                                     v-if="canManage"
                                     variant="outline-secondary"
                                     size="sm"
-                                    class="rounded-[0.5rem] bg-white"
+                                    class="h-9 rounded-[0.5rem] bg-white text-xs"
                                     @click="openSchedule(experience)"
                                 >
                                     <Lucide
@@ -986,7 +1173,7 @@ async function bulkDelete() {
                                 <Button
                                     variant="outline-secondary"
                                     size="sm"
-                                    class="rounded-[0.5rem] bg-white"
+                                    class="h-9 rounded-[0.5rem] bg-white text-xs"
                                     @click="openSessions(experience)"
                                 >
                                     <Lucide
@@ -999,7 +1186,7 @@ async function bulkDelete() {
                                     v-if="canManage"
                                     variant="outline-secondary"
                                     size="sm"
-                                    class="rounded-[0.5rem] bg-white"
+                                    class="h-9 rounded-[0.5rem] bg-white text-xs"
                                     @click="openForm(experience)"
                                 >
                                     <Lucide
@@ -1023,7 +1210,7 @@ async function bulkDelete() {
                 </div>
             </div>
             <div
-                v-else
+                v-if="!experiences.length"
                 class="box box--stacked mt-5 flex flex-col items-center gap-3 px-5 py-12 text-center"
             >
                 <Lucide icon="Compass" class="h-10 w-10 text-slate-300" />
@@ -1042,7 +1229,7 @@ async function bulkDelete() {
                     class="rounded-[0.5rem]"
                     @click="openForm()"
                 >
-                    <Lucide icon="Plus" class="mr-2 h-4 w-4" /> Nueva
+                    <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" /> Nueva
                     experiencia
                 </Button>
             </div>
@@ -1094,7 +1281,7 @@ async function bulkDelete() {
                             class="rounded-[0.5rem]"
                             @click="openBookingForm"
                         >
-                            <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
                             Registrar reserva
                         </Button>
                     </div>
@@ -1378,7 +1565,7 @@ async function bulkDelete() {
                     </div>
 
                     <div
-                        class="max-h-[70vh] space-y-6 overflow-y-auto px-7 py-6"
+                        class="max-h-[70vh] space-y-6 overflow-y-auto px-7 py-5"
                     >
                         <section>
                             <div class="grid grid-cols-12 gap-5">
@@ -1406,6 +1593,24 @@ async function bulkDelete() {
                                         rows="3"
                                         placeholder="Recorrido guiado por la sierra, 12 km entre pinos…"
                                     />
+                                </div>
+                                <div class="col-span-12">
+                                    <label class="mb-1 block text-sm"
+                                        >Página en tu sitio</label
+                                    >
+                                    <FormInput
+                                        v-model="form.url"
+                                        type="url"
+                                        class="rounded-[0.5rem]"
+                                        placeholder="https://tusitio.com/recorridos/paseo-extremo/"
+                                    />
+                                    <FormHelp>
+                                        El asistente comparte esta liga cuando
+                                        el huésped pregunta qué hacer.
+                                    </FormHelp>
+                                    <FormHelp v-if="errors['url']">
+                                        {{ errors['url'] }}
+                                    </FormHelp>
                                 </div>
                                 <div class="col-span-12">
                                     <label class="mb-1 block text-sm"
@@ -1630,7 +1835,7 @@ async function bulkDelete() {
                                     <Button
                                         type="button"
                                         variant="outline-secondary"
-                                        class="rounded-[0.5rem] bg-white"
+                                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                                         :disabled="
                                             photoBusy || photos.length >= 12
                                         "
@@ -1642,7 +1847,7 @@ async function bulkDelete() {
                                                     ? 'RefreshCw'
                                                     : 'ImagePlus'
                                             "
-                                            class="mr-2 h-4 w-4"
+                                            class="mr-1.5 h-3.5 w-3.5"
                                             :class="photoBusy && 'animate-spin'"
                                         />
                                         {{
@@ -1820,10 +2025,7 @@ async function bulkDelete() {
                                 <label class="mb-1 block text-sm"
                                     >Fecha y hora</label
                                 >
-                                <FormInput
-                                    v-model="sessionForm.starts_at"
-                                    type="datetime-local"
-                                />
+                                <FormDateTime v-model="sessionForm.starts_at" />
                                 <FormHelp
                                     v-if="sessionErrors.starts_at"
                                     class="text-danger"
@@ -2158,9 +2360,8 @@ async function bulkDelete() {
                                         <label class="mb-1 block text-sm"
                                             >Hora</label
                                         >
-                                        <FormInput
+                                        <FormTime
                                             v-model="slotForm.start_time"
-                                            type="time"
                                         />
                                     </div>
                                     <div class="col-span-6 sm:col-span-3">
@@ -2417,7 +2618,7 @@ async function bulkDelete() {
                 <div class="p-5 text-center">
                     <Lucide
                         icon="AlertTriangle"
-                        class="mx-auto mb-3 h-12 w-12 text-danger"
+                        class="mx-auto mb-3 h-10 w-10 text-danger"
                     />
                     <h2 class="text-base font-medium">
                         ¿Eliminar "{{ deleting?.name }}"?

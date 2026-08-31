@@ -64,6 +64,9 @@ class ExperienceController extends Controller
         return [
             'name' => [$presence, 'string', 'max:150'],
             'description' => ['nullable', 'string', 'max:2000'],
+            // Página del recorrido en el sitio del hotel: el asistente la
+            // comparte tal cual (nunca inventa URLs).
+            'url' => ['nullable', 'url', 'max:500'],
             'includes' => ['sometimes', 'array', 'max:15'],
             'includes.*' => ['string', 'max:120'],
             'duration_minutes' => ['nullable', 'integer', 'min:5', 'max:10080'],
@@ -87,6 +90,7 @@ class ExperienceController extends Controller
             'id' => $experience->id,
             'name' => $experience->name,
             'description' => $experience->description,
+            'url' => $experience->url,
             'includes' => $experience->includes ?? [],
             'duration_minutes' => $experience->duration_minutes,
             'duration_label' => $experience->durationLabel(),

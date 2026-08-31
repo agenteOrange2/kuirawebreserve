@@ -83,6 +83,11 @@ class PropertyController extends Controller
             'settings.socials' => ['sometimes', 'nullable', 'array', 'max:10'],
             'settings.socials.*.type' => ['required_with:settings.socials', \Illuminate\Validation\Rule::in(['facebook', 'instagram', 'tiktok', 'youtube', 'x', 'whatsapp', 'other'])],
             'settings.socials.*.url' => ['required_with:settings.socials', 'url', 'max:255'],
+            // Enlaces útiles del sitio, con nombre para que el asistente
+            // sepa cuál mandar ("Recorridos", "Galería", "Cómo llegar").
+            'settings.links' => ['sometimes', 'nullable', 'array', 'max:6'],
+            'settings.links.*.label' => ['required_with:settings.links', 'string', 'max:60'],
+            'settings.links.*.url' => ['required_with:settings.links', 'url', 'max:500'],
             // Wizard público (spec-motor-reservas-web E0): hotel vs motel
             // decide si se piden/permiten niños; el nombre de la modalidad
             // por bloque es libre (rato, periodo, horas… cada quien le
@@ -171,11 +176,24 @@ class PropertyController extends Controller
             // Walk-ins de mostrador: cobrar al registrar la llegada o la
             // cuenta final al registrar la salida (default histórico).
             'settings.walkin_charge' => ['sometimes', \Illuminate\Validation\Rule::in(['checkout', 'checkin'])],
+            // Formas de cobro que acepta la recepción (ReservationPolicy::
+            // counterMethods). NO es lo mismo que los métodos en línea de
+            // /admin (PaymentMethodGate): esto es la terminal y la caja del
+            // mostrador. Al menos una, o el mostrador no podría cobrar nada.
+            'settings.counter_methods' => ['sometimes', 'array', 'min:1'],
+            'settings.counter_methods.*' => [\Illuminate\Validation\Rule::in(\App\Models\Payment::METHODS)],
             // Fianza (depósito en garantía): monto fijo por estancia que se
             // cobra al registrar la llegada y se devuelve al registrar la
             // salida — ver ReservationPolicy::guaranteeEnabled().
             'settings.guarantee_enabled' => ['sometimes', 'boolean'],
             'settings.guarantee_amount' => ['sometimes', 'numeric', 'min:0', 'max:999999'],
+            // Escalones por volumen: "desde N habitaciones, $X cada una"
+            // (hay hoteles que bajan la fianza cuando el mismo grupo aparta
+            // varias). `from` arranca en 2 porque desde 1 sería el monto
+            // base con otro nombre.
+            'settings.guarantee_tiers' => ['sometimes', 'array', 'max:5'],
+            'settings.guarantee_tiers.*.from' => ['required', 'integer', 'min:2', 'max:100'],
+            'settings.guarantee_tiers.*.amount' => ['required', 'numeric', 'min:0', 'max:999999'],
             // Operación del día (/ajustes/limpieza): check-in automático a
             // la hora de llegada, cómo avanza el semáforo sucia → limpieza →
             // disponible y qué pasa con una reservada cuya salida venció
@@ -244,6 +262,21 @@ class PropertyController extends Controller
         if (isset($data['settings']) && array_key_exists('emails', $data['settings'])) {
             $data['settings']['email'] = collect($data['settings']['emails'] ?? [])
                 ->filter()->first() ?: null;
+        }
+
+        // Escalones de la fianza: ordenados y sin `from` repetido, para que
+        // ReservationPolicy::guaranteeAmountFor recorra una lista limpia y
+        // el hotel no pueda guardar dos reglas que se contradigan.
+        if (isset($data['settings']) && array_key_exists('guarantee_tiers', $data['settings'])) {
+            $data['settings']['guarantee_tiers'] = collect($data['settings']['guarantee_tiers'] ?? [])
+                ->map(fn (array $tier) => [
+                    'from' => (int) $tier['from'],
+                    'amount' => round((float) $tier['amount'], 2),
+                ])
+                ->unique('from')
+                ->sortBy('from')
+                ->values()
+                ->all();
         }
 
         // Aspectos del cuestionario: la llave es el identificador ESTABLE

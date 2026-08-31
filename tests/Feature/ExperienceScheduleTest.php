@@ -24,6 +24,32 @@ beforeEach(function () {
     $this->property = Property::factory()->create();
 });
 
+// ── Liga pública del recorrido ──
+
+it('guarda y valida la página del recorrido en el sitio del hotel', function () {
+    $experience = Experience::factory()->create(['property_id' => $this->property->id]);
+    $controller = app(\App\Http\Controllers\Tenant\ExperienceController::class);
+
+    $controller->update(
+        \Illuminate\Http\Request::create('/api/experiences', 'PATCH', [
+            'url' => 'https://mihotel.com/tours/paseo-extremo/',
+        ]),
+        $experience,
+        app(GenerateExperienceSessions::class),
+    );
+
+    expect($experience->fresh()->url)->toBe('https://mihotel.com/tours/paseo-extremo/')
+        ->and(\App\Http\Controllers\Tenant\ExperienceController::serialize($experience->fresh())['url'])
+        ->toBe('https://mihotel.com/tours/paseo-extremo/');
+
+    // Una liga a medias no entra: el bot la compartiría rota.
+    expect(fn () => $controller->update(
+        \Illuminate\Http\Request::create('/api/experiences', 'PATCH', ['url' => 'mihotel punto com']),
+        $experience,
+        app(GenerateExperienceSessions::class),
+    ))->toThrow(\Illuminate\Validation\ValidationException::class);
+});
+
 // ── Programación semanal → sesiones materializadas ──
 
 it('materializa sesiones según días de operación, horarios y vehículos', function () {

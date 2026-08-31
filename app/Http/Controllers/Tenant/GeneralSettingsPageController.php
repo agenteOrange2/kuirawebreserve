@@ -59,6 +59,10 @@ class GeneralSettingsPageController extends Controller
                 'website' => $settings['website'] ?? '',
                 'maps_url' => $settings['maps_url'] ?? '',
                 'socials' => $settings['socials'] ?? [],
+                // Enlaces útiles del sitio (recorridos, galería, cómo
+                // llegar...): el asistente los comparte cuando vienen al
+                // caso, sin que haya que tocar código para cada página.
+                'links' => $settings['links'] ?? [],
             ],
         ]);
     }
