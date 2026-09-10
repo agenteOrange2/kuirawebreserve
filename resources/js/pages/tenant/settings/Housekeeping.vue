@@ -7,7 +7,9 @@ import {
     FormCheck,
     FormHelp,
     FormInput,
+    FormLabel,
     FormSelect,
+    FormSwitch,
 } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
@@ -23,9 +25,13 @@ const props = defineProps<{
         hk_cleaning_value: number;
         hk_cleaning_unit: string;
         day_close_no_checkin: 'dirty' | 'available' | 'none';
+        arrival_no_show_enabled: boolean;
+        arrival_no_show_value: number;
+        arrival_no_show_unit: string;
     };
     roomCounts: { reserved: number; dirty: number; cleaning: number };
     arrivalsToday: number;
+    arrivalsPending: number;
 }>();
 
 const toast = useToasts();
@@ -41,6 +47,9 @@ const form = reactive({
     hk_cleaning_value: props.settings.hk_cleaning_value,
     hk_cleaning_unit: props.settings.hk_cleaning_unit,
     day_close_no_checkin: props.settings.day_close_no_checkin,
+    arrival_no_show_enabled: props.settings.arrival_no_show_enabled,
+    arrival_no_show_value: props.settings.arrival_no_show_value,
+    arrival_no_show_unit: props.settings.arrival_no_show_unit,
 });
 
 const checkinOptions: {
@@ -95,7 +104,7 @@ const dayCloseOptions: {
     {
         value: 'dirty',
         label: 'Se asume que se ocupó: dejarla por limpiar',
-        help: 'La reserva se marca completada y la habitación queda por limpiar para que el equipo la revise. Recomendado cuando no se registra check-in en el panel.',
+        help: 'La reserva se marca completada aunque nadie haya registrado la llegada —los reportes de ocupación la van a contar como estancia— y la habitación queda por limpiar para que el equipo la revise. Recomendado cuando no se registra check-in en el panel.',
     },
     {
         value: 'available',
@@ -122,6 +131,9 @@ async function submit() {
                 hk_cleaning_value: form.hk_cleaning_value,
                 hk_cleaning_unit: form.hk_cleaning_unit,
                 day_close_no_checkin: form.day_close_no_checkin,
+                arrival_no_show_enabled: form.arrival_no_show_enabled,
+                arrival_no_show_value: form.arrival_no_show_value,
+                arrival_no_show_unit: form.arrival_no_show_unit,
             },
         });
         toast.success('Guardado', 'La configuración de limpieza se actualizó.');
@@ -471,6 +483,94 @@ async function submit() {
                         >
                             Ahora mismo: {{ roomCounts.reserved }}
                             habitación(es) en reservada.
+                        </p>
+                    </div>
+                </div>
+
+                <!-- Ventana de llegada: el que reservó y nunca apareció -->
+                <div class="col-span-12 xl:col-span-6">
+                    <div class="box box--stacked h-full p-4">
+                        <div
+                            class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            <Lucide icon="UserRoundX" class="h-3.5 w-3.5" />
+                            Cuando el huésped no llega
+                        </div>
+                        <p class="text-xs text-slate-500">
+                            El cierre de día mira la hora de salida, así que
+                            una reserva de tres noches que nadie ocupó aparta
+                            la habitación las tres noches. Esto mira la hora de
+                            entrada: pasado el tiempo que elijas sin registrar
+                            la llegada, la reserva se marca como no llegó y la
+                            habitación vuelve a venderse.
+                        </p>
+
+                        <FormSwitch class="mt-4">
+                            <FormSwitch.Input
+                                id="arrival_no_show_enabled"
+                                v-model="form.arrival_no_show_enabled"
+                                type="checkbox"
+                            />
+                            <FormSwitch.Label
+                                for="arrival_no_show_enabled"
+                                class="text-xs"
+                            >
+                                Dar por perdida la llegada que no aparece
+                            </FormSwitch.Label>
+                        </FormSwitch>
+
+                        <div
+                            v-if="form.arrival_no_show_enabled"
+                            class="mt-4 flex flex-wrap items-end gap-3"
+                        >
+                            <div class="w-28">
+                                <FormLabel
+                                    for="arrival_no_show_value"
+                                    class="text-xs"
+                                    >Esperar</FormLabel
+                                >
+                                <FormInput
+                                    id="arrival_no_show_value"
+                                    v-model.number="form.arrival_no_show_value"
+                                    type="number"
+                                    min="1"
+                                    max="99"
+                                    class="h-9 text-xs"
+                                />
+                            </div>
+                            <p class="pb-2 text-xs text-slate-500">
+                                horas después de la hora de entrada.
+                            </p>
+                        </div>
+                        <FormHelp
+                            v-if="errors.arrival_no_show_value"
+                            class="mt-2 text-danger"
+                            >{{ errors.arrival_no_show_value }}</FormHelp
+                        >
+
+                        <p
+                            class="mt-4 flex items-start gap-1.5 text-xs text-slate-500"
+                        >
+                            <Lucide
+                                icon="Info"
+                                class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                            />
+                            Se marca no llegó y no solo se suelta la
+                            habitación: mientras la reserva siga confirmada
+                            aparta esas fechas, y el plano mostraría un cuarto
+                            libre que no se puede vender. Las reservas con
+                            llegada registrada no pasan por aquí.
+                        </p>
+                        <p
+                            class="mt-2 text-xs"
+                            :class="
+                                arrivalsPending > 0
+                                    ? 'text-pending'
+                                    : 'text-slate-400'
+                            "
+                        >
+                            Ahora mismo: {{ arrivalsPending }} llegada(s) con
+                            la hora de entrada pasada y sin registrar.
                         </p>
                     </div>
                 </div>

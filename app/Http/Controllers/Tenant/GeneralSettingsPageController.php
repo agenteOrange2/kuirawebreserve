@@ -83,6 +83,18 @@ class GeneralSettingsPageController extends Controller
                 // "aprox" en el wizard y las confirmaciones. Null = una sola.
                 'currency_secondary' => $settings['currency_secondary'] ?? null,
                 'exchange_rate' => $settings['exchange_rate'] ?? null,
+                // Horario de ATENCIÓN (no el de la casa): cuándo hay gente
+                // para contestar el chat. Apaga las promesas de "en un
+                // momento te atienden" del asistente y dispara el aviso al
+                // hotel cuando entra una cotización fuera de turno.
+                'support_hours_enabled' => (bool) ($settings['support_hours_enabled'] ?? false),
+                'support_hours_open' => $settings['support_hours_open'] ?? \App\Services\SupportHours::DEFAULT_OPEN,
+                'support_hours_close' => $settings['support_hours_close'] ?? \App\Services\SupportHours::DEFAULT_CLOSE,
+                'support_hours_days' => $settings['support_hours_days'] ?? \App\Services\SupportHours::DEFAULT_DAYS,
+                'support_alert_phone' => $settings['support_alert_phone'] ?? null,
+                // Para el texto de ayuda: a qué número caen los avisos si
+                // no se captura uno aparte.
+                'default_alert_phone' => $this->phones($settings)[0] ?? null,
             ],
         ]);
     }

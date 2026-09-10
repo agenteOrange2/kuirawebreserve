@@ -148,6 +148,61 @@ class MetaApi
     }
 
     /**
+     * Indicador de "escribiendo..." mientras el bot piensa. La respuesta
+     * tarda entre 3 y 8 segundos con herramientas de por medio, y ese
+     * silencio se lee como que nadie contestó.
+     *
+     * Cada red lo pide distinto:
+     * - WhatsApp Cloud: viaja pegado al acuse de lectura y EXIGE el id del
+     *   mensaje entrante; se apaga solo a los 25 s o al enviar la respuesta.
+     * - Messenger e Instagram: sender_action typing_on, 20 s.
+     *
+     * No cuesta ni cuenta como mensaje. Si falla, se sigue de largo: el
+     * huésped prefiere una respuesta sin puntitos que ninguna respuesta.
+     */
+    public function sendTyping(MetaChannelLink $link, string $to, ?string $messageId = null): bool
+    {
+        $graph = rtrim(config('meta.graph_url'), '/');
+
+        if ($link->type === 'whatsapp' && str_starts_with($to, '521') && strlen($to) === 13) {
+            $to = '52'.substr($to, 3);
+        }
+
+        if ($link->type === 'whatsapp' && ! $messageId) {
+            return false;
+        }
+
+        try {
+            // Timeout corto a propósito: esto va ANTES de llamar al modelo,
+            // dentro del webhook que Meta reintenta si tarda demasiado.
+            $http = Http::withToken($link->access_token)->timeout(5);
+
+            $response = match (true) {
+                $link->type === 'whatsapp' => $http->post("{$graph}/{$link->external_id}/messages", [
+                    'messaging_product' => 'whatsapp',
+                    'status' => 'read',
+                    'message_id' => $messageId,
+                    'typing_indicator' => ['type' => 'text'],
+                ]),
+                $this->usesInstagramLogin($link) => $http->post($this->igGraph().'/me/messages', [
+                    'recipient' => ['id' => $to],
+                    'sender_action' => 'typing_on',
+                ]),
+                default => $http->post("{$graph}/me/messages", [
+                    'recipient' => ['id' => $to],
+                    'sender_action' => 'typing_on',
+                ]),
+            };
+
+            return $response->successful();
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
+    }
+
+    /**
      * Radiografía del canal: token vivo, identidad y suscripción de la app.
      * WhatsApp revisa número/calidad/callback/WABA; Messenger e Instagram
      * revisan la PÁGINA (nombre + subscribed_apps) — la causa #1 de "el

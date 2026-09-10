@@ -44,6 +44,21 @@ export interface ActiveStaySummary {
     id_document_photos: string[];
 }
 
+/**
+ * La reserva que tiene apartado el cuarto AHORA. No es la próxima reserva:
+ * esa puede ser de dentro de un mes y no explica el semáforo de hoy. Con el
+ * cuarto en "reservada", un null aquí significa que quedó apartado sin nada
+ * que lo respalde.
+ */
+export interface HoldingReservationSummary {
+    id: number;
+    code: string;
+    guest_name: string;
+    starts_at: string;
+    ends_at: string;
+    starts_today: boolean;
+}
+
 export interface UpcomingReservationSummary {
     id: number;
     code: string;
@@ -145,6 +160,7 @@ export interface RoomData {
     rate_plans: RatePlanSummary[];
     active_stay: ActiveStaySummary | null;
     upcoming_reservation: UpcomingReservationSummary | null;
+    holding_reservation: HoldingReservationSummary | null;
     blocks: RoomBlockEntry[];
     today_history: HistoryEntry[];
 }
@@ -156,6 +172,23 @@ export interface ArrivalAction {
     hint: string;
     icon: import('@/components/Base/Lucide').Icon;
     primary: boolean;
+}
+
+/**
+ * Lo que se puede hacer con un cuarto concreto: entregarlo ahora y/o
+ * apartarlo para otra fecha. Son decisiones distintas — un cuarto sucio o
+ * apartado para el viernes sí puede venderse el martes— y las arma el plano
+ * en un solo lugar para que la ficha y la hoja de acciones no diverjan.
+ */
+export interface RoomSaleOptions {
+    /** Entregarlo ahora; vacío si el cuarto no está para entregarse. */
+    sellNow: ArrivalAction[];
+    /** Apartarlo para otra fecha; null si no puede venderse ni así. */
+    bookAhead: ArrivalAction | null;
+    /** Todas las de arriba, en el orden en que se pintan. */
+    actions: ArrivalAction[];
+    /** Por qué no se puede entregar ahora; null cuando sí se puede. */
+    reason: string | null;
 }
 
 /** Un consumo de la estancia (todo lo completado, cobrado o a la cuenta). */
@@ -202,7 +235,17 @@ export interface CheckoutFolio {
     lodging_pending: number;
     consumption_pending: number;
     grand_pending: number;
+    /**
+     * Daños y cargos capturados después del check-in. Se listan aparte del
+     * hospedaje porque el mostrador tiene que ver QUÉ sumó y poder quitarlo
+     * antes de cobrar.
+     */
+    damages: { id: string; concept: string; amount: number }[];
+    damages_total: number;
     guarantee_refundable: number;
+    /** Con qué se recibió el depósito: por ahí se devuelve. */
+    guarantee_method_label: string | null;
+    guarantee_reference: string | null;
     consumption: FolioConsumption[];
     payments: FolioPayment[];
 }

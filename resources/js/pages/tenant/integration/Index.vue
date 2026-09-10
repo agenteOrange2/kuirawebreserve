@@ -2,7 +2,7 @@
 import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import QRCode from 'qrcode';
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormHelp,
@@ -60,6 +60,18 @@ const durationUnits = [
     { value: 'month', label: 'Meses' },
 ];
 
+// Un embed por habitación: el widget de reservas acotado a un solo tipo
+// (una página por cabaña en el sitio del hotel).
+interface RoomTypeRow {
+    id: number;
+    name: string;
+    rooms_count: number;
+    sellable: boolean;
+    url: string;
+    shortcode: string;
+    embed: string;
+}
+
 interface WidgetRow {
     key: string;
     label: string;
@@ -74,6 +86,7 @@ interface WidgetRow {
 const props = defineProps<{
     propertyId: number;
     widgets: WidgetRow[];
+    roomTypes: RoomTypeRow[];
     widgetScriptUrl: string;
     integrations: IntegrationRow[];
     suggestions: SuggestionRow[];
@@ -89,6 +102,18 @@ const widgetState = reactive<Record<string, boolean>>(
 );
 const widgetBusy = ref<string | null>(null);
 const expandedWidget = ref<string | null>(null);
+// Embeds por habitación: se despliega el código de una a la vez.
+const expandedRoomType = ref<number | null>(null);
+// El widget de reservas manda: si está apagado o el módulo no viene en el
+// plan, un embed por habitación tampoco existiría.
+const roomEmbedsAvailable = computed(() => {
+    const reservas = props.widgets.find((w) => w.key === 'reservas');
+    return Boolean(
+        reservas?.module_enabled &&
+        widgetState.reservas &&
+        props.roomTypes.length,
+    );
+});
 
 async function toggleWidget(widget: WidgetRow) {
     widgetBusy.value = widget.key;
@@ -702,6 +727,165 @@ async function discardSuggestion(row: SuggestionRow) {
                                     target="_blank"
                                     class="font-medium text-primary hover:underline"
                                     >{{ widget.url }}</a
+                                >
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Una página por habitación: el mismo wizard acotado a un
+                 solo tipo, para sitios donde cada cabaña tiene su página -->
+            <div v-if="roomEmbedsAvailable" class="box box--stacked mt-3">
+                <div
+                    class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                >
+                    <div class="flex items-center gap-2">
+                        <Lucide
+                            icon="DoorOpen"
+                            class="h-4 w-4 stroke-[1.5] text-primary"
+                        />
+                        <h2 class="text-base font-medium">
+                            Una página por habitación
+                        </h2>
+                    </div>
+                    <p class="mt-1 text-xs text-slate-500">
+                        Si en tu sitio cada habitación tiene su propia página,
+                        pega ahí el código de esa: el visitante elige fechas y
+                        reserva SOLO esa habitación, sin ver las demás. Si no
+                        está libre en esas fechas se le avisa (y se le ofrece la
+                        lista de espera si la tienes activa), nunca se le
+                        proponen las otras.
+                    </p>
+                </div>
+                <div
+                    class="divide-y divide-dashed divide-slate-200/80 p-5 dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="type in roomTypes"
+                        :key="type.id"
+                        class="py-3 first:pt-0 last:pb-0"
+                    >
+                        <div class="flex flex-wrap items-center gap-3">
+                            <div
+                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                            >
+                                <Lucide
+                                    icon="BedSingle"
+                                    class="h-4 w-4 text-primary"
+                                />
+                            </div>
+                            <div class="min-w-0 flex-1">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="font-medium">{{
+                                        type.name
+                                    }}</span>
+                                    <span
+                                        v-if="!type.sellable"
+                                        class="rounded-full bg-warning/10 px-2 py-0.5 text-[10px] text-warning"
+                                        >Sin tarifa activa: hoy este embed diría
+                                        "sin disponibilidad"</span
+                                    >
+                                </div>
+                                <p class="mt-0.5 text-xs text-slate-500">
+                                    {{ type.rooms_count }}
+                                    {{
+                                        type.rooms_count === 1
+                                            ? 'habitación'
+                                            : 'habitaciones'
+                                    }}
+                                    de este tipo
+                                </p>
+                            </div>
+                            <Button
+                                variant="outline-secondary"
+                                size="sm"
+                                class="rounded-[0.5rem] bg-white"
+                                @click="
+                                    expandedRoomType =
+                                        expandedRoomType === type.id
+                                            ? null
+                                            : type.id
+                                "
+                            >
+                                <Lucide
+                                    icon="Code"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Cómo incrustarla
+                            </Button>
+                        </div>
+
+                        <div
+                            v-if="expandedRoomType === type.id"
+                            class="mt-3 space-y-3 rounded-lg border border-dashed border-slate-300/70 p-4 dark:border-darkmode-400"
+                        >
+                            <div>
+                                <div
+                                    class="mb-1 flex items-center justify-between gap-2"
+                                >
+                                    <span
+                                        class="text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                        >Shortcode (WordPress con el plugin
+                                        KuiraWebReserve Habitaciones)</span
+                                    >
+                                    <button
+                                        type="button"
+                                        class="text-xs font-medium text-primary hover:underline"
+                                        @click="
+                                            copyText(
+                                                type.shortcode,
+                                                'Shortcode copiado',
+                                            )
+                                        "
+                                    >
+                                        Copiar
+                                    </button>
+                                </div>
+                                <code
+                                    class="block rounded bg-slate-100 px-2 py-1.5 font-mono text-xs break-all dark:bg-darkmode-400"
+                                    >{{ type.shortcode }}</code
+                                >
+                            </div>
+                            <div>
+                                <div
+                                    class="mb-1 flex items-center justify-between gap-2"
+                                >
+                                    <span
+                                        class="text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                        >Script (cualquier sitio: WP sin plugin,
+                                        HTML, Wix...)</span
+                                    >
+                                    <button
+                                        type="button"
+                                        class="text-xs font-medium text-primary hover:underline"
+                                        @click="
+                                            copyText(
+                                                type.embed,
+                                                'Script copiado',
+                                            )
+                                        "
+                                    >
+                                        Copiar
+                                    </button>
+                                </div>
+                                <code
+                                    class="block rounded bg-slate-100 px-2 py-1.5 font-mono text-xs break-all whitespace-pre-wrap dark:bg-darkmode-400"
+                                    >{{ type.embed }}</code
+                                >
+                            </div>
+                            <div
+                                class="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500"
+                            >
+                                <span
+                                    >También funciona como link directo (para
+                                    WhatsApp o un botón):</span
+                                >
+                                <a
+                                    :href="type.url"
+                                    target="_blank"
+                                    class="font-medium text-primary hover:underline"
+                                    >{{ type.url }}</a
                                 >
                             </div>
                         </div>

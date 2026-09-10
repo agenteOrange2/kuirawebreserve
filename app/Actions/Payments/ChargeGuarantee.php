@@ -31,8 +31,8 @@ class ChargeGuarantee
     public function __construct(protected ReservationPolicy $policy) {}
 
     /**
-     * @param  string|null  $method  Efectivo o terminal; null = no se cobró
-     *                               fianza (ajuste apagado, check-in
+     * @param  string|null  $method  Forma de cobro del mostrador; null = no
+     *                               se cobró fianza (ajuste apagado, check-in
      *                               automático sin personal, o el hotel
      *                               decidió no pedirla en esta llegada).
      * @param  float|null  $override  Monto capturado a mano; null = el de
@@ -41,6 +41,8 @@ class ChargeGuarantee
      *                               el override difiere de la política.
      * @param  int  $rooms  Habitaciones de la misma partida, para
      *                      elegir el escalón.
+     * @param  string|null  $reference  Folio o referencia del comprobante.
+     *                                  Obligatorio en transferencia.
      *
      * @throws InvalidArgumentException
      */
@@ -51,9 +53,22 @@ class ChargeGuarantee
         ?float $override = null,
         ?string $reason = null,
         int $rooms = 1,
+        ?string $reference = null,
     ): ?Payment {
         if ($method === null || ! $this->policy->guaranteeEnabled()) {
             return null;
+        }
+
+        // El efectivo se devuelve del cajón; una transferencia hay que
+        // regresarla a una cuenta días después, y el único rastro para
+        // hacerlo es el folio del comprobante. Sin él, el depósito queda
+        // cobrado e indevolvible: misma lógica que el motivo del ajuste.
+        $reference = trim((string) $reference);
+
+        if ($method === 'transfer' && $reference === '') {
+            throw new InvalidArgumentException(
+                'Para una fianza por transferencia captura el folio o referencia del comprobante: es lo único con lo que se puede devolver después.',
+            );
         }
 
         $expected = $this->policy->guaranteeAmountFor($rooms);
@@ -78,6 +93,7 @@ class ChargeGuarantee
             'amount' => $amount,
             'method' => $method,
             'kind' => Payment::KIND_GUARANTEE,
+            'reference' => $reference ?: null,
             'notes' => $this->notes($rooms, $expected, $adjusted, $reason),
             'received_by' => $user?->id,
             'paid_at' => now(),

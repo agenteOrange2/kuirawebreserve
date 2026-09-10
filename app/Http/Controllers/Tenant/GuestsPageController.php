@@ -24,15 +24,9 @@ class GuestsPageController extends Controller
             ->when($search !== '', fn ($q) => $q->search($search))
             ->when($request->boolean('blacklisted'), fn ($q) => $q->where('is_blacklisted', true))
             // Visitas = estancias completadas + reservas completadas sin
-            // estancia (mismo criterio que Guest::metrics: así llegó el
-            // historial migrado y así queda lo que se cierra sin registrar
-            // la llegada). Antes el directorio entero decía "0 visitas".
-            ->withCount([
-                'stays as stay_visits' => fn ($q) => $q->where('status', 'completed'),
-                'reservations as reservation_visits' => fn ($q) => $q
-                    ->where('status', ReservationStatus::Completed)
-                    ->whereDoesntHave('stay'),
-            ])
+            // estancia (Guest::withVisits, mismo criterio que metrics()).
+            // Antes el directorio entero decía "0 visitas".
+            ->withVisits()
             // Lo que le importa al mostrador de un huésped: si trae algo
             // próximo. Subconsulta, no una consulta por fila.
             ->addSelect(['next_arrival' => Reservation::query()
@@ -48,7 +42,7 @@ class GuestsPageController extends Controller
                 'full_name' => $guest->full_name ?? 'Sin nombre',
                 'phone' => $guest->phone,
                 'email' => $guest->email,
-                'visits' => (int) $guest->stay_visits + (int) $guest->reservation_visits,
+                'visits' => (int) $guest->visits,
                 'next_arrival' => $guest->next_arrival
                     ? \Carbon\Carbon::parse($guest->next_arrival)->format('d/m/Y')
                     : null,

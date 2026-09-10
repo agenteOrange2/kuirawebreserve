@@ -57,6 +57,7 @@ import type {
     ArrivalAction,
     CheckoutFolio,
     RoomData,
+    RoomSaleOptions,
 } from '@/pages/tenant/floorplan/types';
 
 import '@vue-flow/core/dist/style.css';
@@ -691,56 +692,134 @@ const chargeToRoomByDefault = computed(() => !isMotel.value);
 // ofrecer. En hotel y en "ambos" sí, y ahí decide quien atiende.
 const roomCreditEnabled = computed(() => !isMotel.value);
 
-const arrivalActions = computed<ArrivalAction[]>(() => {
-    const reserve: ArrivalAction = {
-        key: 'reserve',
-        label: 'Crear una reserva',
-        hint: hasMotel.value
-            ? 'Para otra fecha, aquí mismo'
-            : 'Apartarla para otra fecha',
-        icon: 'CalendarPlus',
-        primary: false,
+// Entregar el cuarto AHORA. En modo puro decide la configuración; en "ambos"
+// decide quien atiende, venta por venta, porque nadie más sabe si el que
+// llegó es un cliente de paso o un huésped que se queda.
+const sellNowActions = computed<ArrivalAction[]>(() => {
+    const express: ArrivalAction = {
+        key: 'express',
+        label: isBoth.value ? 'Registro exprés' : 'Registrar llegada',
+        hint: isBoth.value
+            ? 'Placa o identificación y cobro, sin pedir datos'
+            : 'Placa o identificación y cobro, aquí mismo',
+        icon: 'Zap',
+        primary: true,
     };
 
-    if (isBoth.value) {
-        return [
-            {
-                key: 'express',
-                label: 'Registro exprés',
-                hint: 'Placa o identificación y cobro, sin pedir datos',
-                icon: 'Zap',
-                primary: true,
-            },
-            {
-                key: 'walkin',
-                label: 'Llegó sin reserva',
-                hint: 'Con nombre y contacto, registro completo',
-                icon: 'LogIn',
-                primary: false,
-            },
-            reserve,
-        ];
+    const walkIn: ArrivalAction = {
+        key: 'walkin',
+        label: 'Llegó sin reserva',
+        hint: isBoth.value
+            ? 'Con nombre y contacto, registro completo'
+            : 'Registrar su entrada ahora',
+        icon: 'LogIn',
+        primary: !isBoth.value,
+    };
+
+    if (isBoth.value) return [express, walkIn];
+
+    return [hasMotel.value ? express : walkIn];
+});
+
+// Apartar para otra fecha. Existe en los tres modos —hasta un motel puro
+// recibe llamadas de "guárdamela el sábado"— y, a diferencia de la entrega,
+// no le importa cómo está el cuarto hoy: quien decide si las fechas caben es
+// el motor de disponibilidad.
+const bookAheadAction = computed<ArrivalAction>(() => ({
+    key: 'reserve',
+    label: 'Apartar para otra fecha',
+    hint: hasMotel.value ? 'Día y hora, aquí mismo' : 'Elige las noches y quién llega',
+    icon: 'CalendarPlus',
+    primary: false,
+}));
+
+/**
+ * Qué se puede hacer con ESTE cuarto, y por qué no lo demás.
+ *
+ * Antes era un solo `v-if="status === 'available'"` que escondía las tres
+ * acciones de golpe, incluida la de apartar para otra fecha: un cuarto
+ * apartado para el viernes no se podía vender el martes, aunque el motor de
+ * disponibilidad sí lo permitía. Entregar ahora y apartar después son cosas
+ * distintas y se deciden por separado.
+ */
+function saleOptionsFor(room: RoomData | null): RoomSaleOptions {
+    const nada: RoomSaleOptions = {
+        sellNow: [],
+        bookAhead: null,
+        actions: [],
+        reason: null,
+    };
+
+    if (!room || !props.canManageReservations) return nada;
+
+    if (room.usage_locked) {
+        return {
+            ...nada,
+            reason: `Alcanzó su límite de usos (${room.usage_count}${room.usage_limit ? ` de ${room.usage_limit}` : ''}). Resetea el contador para volver a venderla.`,
+        };
     }
 
-    return [
-        hasMotel.value
-            ? {
-                  key: 'express',
-                  label: 'Registrar llegada',
-                  hint: 'Placa o identificación y cobro, aquí mismo',
-                  icon: 'Zap',
-                  primary: true,
-              }
-            : {
-                  key: 'walkin',
-                  label: 'Llegó sin reserva',
-                  hint: 'Registrar su entrada ahora',
-                  icon: 'LogIn',
-                  primary: true,
-              },
-        reserve,
-    ];
-});
+    if (room.status === 'maintenance') {
+        return {
+            ...nada,
+            reason: 'Está fuera de servicio. Sácala de mantenimiento para volver a venderla.',
+        };
+    }
+
+    const bookAhead = bookAheadAction.value;
+    const conFecha = (reason: string): RoomSaleOptions => ({
+        sellNow: [],
+        bookAhead,
+        actions: [bookAhead],
+        reason,
+    });
+
+    if (isBlockedNow(room)) {
+        return conFecha(
+            'Hoy está bloqueada por mantenimiento programado. Apartarla para otras fechas sí se puede.',
+        );
+    }
+
+    if (room.status === 'occupied' || room.active_stay) {
+        const hasta = room.active_stay?.planned_end_at;
+
+        return conFecha(
+            `Ocupada${room.active_stay?.guest_name ? ` por ${room.active_stay.guest_name}` : ''}${hasta ? ` hasta el ${hasta}` : ''}. Puedes apartarla para fechas posteriores.`,
+        );
+    }
+
+    if (room.status === 'reserved') {
+        const held = room.holding_reservation;
+
+        return conFecha(
+            held
+                ? `Apartada por la reserva ${held.code}: llega el ${held.starts_at} y sale el ${held.ends_at}. Puedes apartarla para fechas que no choquen con esa.`
+                : 'El semáforo quedó apartado sin ninguna reserva que lo respalde. Libéralo a Disponible aquí abajo, o apártala para otra fecha.',
+        );
+    }
+
+    if (room.status === 'dirty') {
+        return conFecha(
+            'Falta limpiarla antes de volver a entregarla. Apartarla para otra fecha sí se puede.',
+        );
+    }
+
+    if (room.status === 'cleaning') {
+        return conFecha(
+            'La están limpiando; al terminar vuelve a venderse. Apartarla para otra fecha sí se puede.',
+        );
+    }
+
+    return {
+        sellNow: sellNowActions.value,
+        bookAhead,
+        actions: [...sellNowActions.value, bookAhead],
+        reason: null,
+    };
+}
+
+/** Lo que puede hacerse con el cuarto abierto en el modal o en la hoja. */
+const roomSale = computed(() => saleOptionsFor(selectedRoom.value));
 
 // Recibe string y no la unión: la hoja de acciones es un componente tonto
 // que solo devuelve la llave que le pasamos.
@@ -1674,17 +1753,36 @@ function onPanelSold(message: string) {
 const checkInRoom = ref<RoomData | null>(null);
 
 function checkInReservation(room: RoomData) {
-    if (!room.upcoming_reservation) {
+    const reserva = room.upcoming_reservation;
+
+    if (!reserva) {
         return;
     }
 
-    if ((room.upcoming_reservation.guarantee_amount ?? 0) > 0) {
+    // Llegada anticipada: entrar días antes no es "llegar temprano", es
+    // cambiar la fecha real de entrada. La estancia hereda la salida y el
+    // importe de la reserva, así que las noches de más van sin cobrar — se
+    // dice antes de hacerlo, y el servidor lo rechaza sin esta confirmación.
+    if (
+        !reserva.starts_today &&
+        !window.confirm(
+            `La reserva ${reserva.code} llega el ${reserva.starts_at}. Si el huésped ya está aquí, se registra su llegada hoy: la salida sigue prevista para el ${reserva.ends_at} y el cargo no cambia, así que las noches de más van sin cobrar. ¿Continuar?`,
+        )
+    ) {
+        return;
+    }
+
+    const early: Record<string, number> = reserva.starts_today
+        ? {}
+        : { early: 1 };
+
+    if ((reserva.guarantee_amount ?? 0) > 0) {
         checkInRoom.value = room;
 
         return;
     }
 
-    return runCheckIn(room, {});
+    return runCheckIn(room, early);
 }
 
 function runCheckIn(
@@ -1708,9 +1806,10 @@ function runCheckIn(
 }
 
 async function confirmCheckInWithGuarantee(payload: {
-    method: 'cash' | 'card';
+    method: string;
     amount: number | null;
     reason: string | null;
+    reference: string | null;
 }) {
     const room = checkInRoom.value;
 
@@ -1721,7 +1820,12 @@ async function confirmCheckInWithGuarantee(payload: {
     checkInRoom.value = null;
 
     await runCheckIn(room, {
+        // El aviso de llegada anticipada ya se aceptó al abrir el diálogo.
+        ...(room.upcoming_reservation?.starts_today ? {} : { early: 1 }),
         guarantee_method: payload.method,
+        // Folio del comprobante: obligatorio en transferencia, porque es por
+        // donde se devuelve el depósito.
+        ...(payload.reference ? { guarantee_reference: payload.reference } : {}),
         // Solo viajan cuando el mostrador ajustó el monto: el servidor exige
         // motivo para cualquier cifra distinta a la de la política.
         ...(payload.amount !== null
@@ -1939,27 +2043,41 @@ async function addDamage(payload: { concept: string; amount: number }) {
                 kind: 'damage',
             });
             roomFolio.value = data;
-
-            // Queda en incidencias, que es donde el hotel revisa lo que se
-            // rompe: sin esto el daño solo existiría como una línea de cobro.
-            if (hasModule('incidencias')) {
-                await axios.post('/api/incidents', {
-                    room_id: checkoutRoom.value?.id,
-                    // La estancia que lo causó: sin esto el daño queda como
-                    // ticket suelto y no se sabe a quién se le cobró.
-                    stay_id: stayId,
-                    title: `Daño: ${payload.concept}`,
-                    category: 'mobiliario',
-                    priority: 'medium',
-                    source: 'guest',
-                    description: `Cobrado ${formatMoney(payload.amount)} al registrar la salida.`,
-                });
-            }
         },
         {
             successTitle: 'Daño cargado a la cuenta',
             successMessage: `${payload.concept} · ${formatMoney(payload.amount)}`,
             errorTitle: 'No se pudo cargar el daño',
+        },
+    );
+}
+
+/**
+ * Quitar un daño capturado por error, antes de registrar la salida.
+ *
+ * Las incidencias se levantan al CONFIRMAR la salida y no aquí: creándolas
+ * al vuelo, quitar el cargo dejaba un ticket huérfano en /incidencias que
+ * nadie sabía de dónde salió.
+ */
+async function removeDamage(chargeId: string) {
+    const stayId = checkoutRoom.value?.active_stay?.id;
+
+    if (stayId === undefined) {
+        return;
+    }
+
+    await runRoomAction(
+        'damage',
+        async () => {
+            const { data } = await axios.delete(
+                `/api/stays/${stayId}/charges/${chargeId}`,
+            );
+            roomFolio.value = data;
+        },
+        {
+            successTitle: 'Cargo quitado',
+            successMessage: 'La cuenta volvió a su monto anterior',
+            errorTitle: 'No se pudo quitar el cargo',
         },
     );
 }
@@ -2065,6 +2183,11 @@ async function confirmCheckout(payload: {
         );
     }
 
+    // Las fallas se levantan con la salida ya decidida, no al teclear cada
+    // daño: así un cargo agregado por error y luego quitado no deja un
+    // ticket huérfano en /incidencias.
+    const damages = roomFolio.value?.damages ?? [];
+
     await runRoomAction(
         `stay:${room.active_stay.id}`,
         async () => {
@@ -2072,6 +2195,22 @@ async function confirmCheckout(payload: {
                 `/api/stays/${room.active_stay?.id}/check-out`,
                 payload,
             );
+
+            if (hasModule('incidencias')) {
+                for (const damage of damages) {
+                    await axios.post('/api/incidents', {
+                        room_id: room.id,
+                        // La estancia que lo causó: sin esto el daño queda
+                        // como ticket suelto y no se sabe a quién se cobró.
+                        stay_id: room.active_stay?.id,
+                        title: `Daño: ${damage.concept}`,
+                        category: 'mobiliario',
+                        priority: 'medium',
+                        source: 'guest',
+                        description: `Cobrado ${formatMoney(damage.amount)} al registrar la salida.`,
+                    });
+                }
+            }
         },
         {
             successTitle: 'Salida registrada',
@@ -2303,7 +2442,7 @@ provide(FloorPlanKey, {
     incidentCategories: props.incidentCategories,
     chargeToRoomByDefault,
     roomCreditEnabled,
-    arrivalActions,
+    roomSale,
     transitions: sheetTransitions,
 
     changeStatus: (room, status) => void changeStatus(room, status),
@@ -3100,7 +3239,7 @@ provide(FloorPlanKey, {
                     :room="actionSheetRoom"
                     :can-manage-reservations="canManageReservations"
                     :manual-checkin-allowed="manualCheckinAllowed"
-                    :arrival-actions="arrivalActions"
+                    :sale="roomSale"
                     :busy-action="busyAction"
                     :saving="saving"
                     :transitions="sheetTransitions"
@@ -3161,6 +3300,7 @@ provide(FloorPlanKey, {
                 )
             "
             @damage="addDamage"
+            @remove-damage="removeDamage"
             @close="
                 checkoutRoom = null;
                 backToRoom();

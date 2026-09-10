@@ -114,6 +114,8 @@ interface ReservationRow {
     extras: FrozenLine[];
     experiences: ExperienceLine[];
     starts_today: boolean;
+    /** La hora de entrada ya pasó y nadie registró la llegada. */
+    arrival_pending: boolean;
     source_channel: string;
     notes: string | null;
     guest_notes: string | null;
@@ -203,6 +205,8 @@ const props = defineProps<{
     // Cuántas estancias activas hay en total: la lista solo asoma las
     // primeras (el resto vive en /reservas/alojados).
     staysTotal: number;
+    /** Estancias ya cerradas a las que les quedó dinero sin registrar. */
+    settlementsPending: number;
     focusStayId: number | null;
     ratePlans: RatePlanOption[];
     canManage: boolean;
@@ -541,7 +545,8 @@ const askAction = (
     r: ReservationRow,
 ) => {
     confirmReason.value = '';
-    guaranteeMethod.value = 'cash';
+    guaranteeMethod.value = firstCounterMethod.value;
+    guaranteeReference.value = '';
     guaranteeAmountInput.value = Number(
         r.guarantee_amount ?? props.guaranteeAmount,
     );
@@ -562,6 +567,8 @@ interface FolioData {
     grand_pending: number;
     // Fianza cobrada a la llegada y aún no devuelta (0 = sin fianza viva).
     guarantee_refundable: number;
+    guarantee_method_label: string | null;
+    guarantee_reference: string | null;
     orders: {
         id: number;
         total: number;
@@ -582,11 +589,16 @@ const {
     subset: counterSubset,
 } = useCounterMethods();
 const folioMethods = counterMethods;
-// La fianza se recibe en la mano: efectivo o terminal, nunca transferencia.
-const guaranteeMethods = counterSubset(['cash', 'card']);
+// La fianza se cobra con lo que acepte la recepción de este hotel: estuvo
+// cableada a efectivo y terminal, y eso dejaba fuera al que sí recibe
+// depósitos por transferencia.
+const guaranteeMethods = counterMethods;
 // Fianza al registrar la llegada (método presencial) y su devolución al
 // registrar la salida (marcada por default; desmarcar exige motivo).
-const guaranteeMethod = ref<'cash' | 'card'>('cash');
+const guaranteeMethod = ref<CounterMethod>('cash');
+// Folio del comprobante: obligatorio en transferencia, que es por donde se
+// devuelve el depósito.
+const guaranteeReference = ref('');
 const guaranteeRefund = ref(true);
 const guaranteeRetainReason = ref('');
 // Monto y motivo del ajuste al cobrarla. Arranca en el de la política (con
@@ -689,21 +701,32 @@ async function submitConfirmAction() {
                 : guaranteeDue.value;
             await axios.patch(
                 `/api/reservations/${action.reservation.id}/check-in`,
-                // Fianza activa: se cobra al registrar la llegada con el
-                // método presencial elegido. El monto default lo pone el
-                // servidor; solo se manda si el mostrador lo ajustó, y
-                // entonces va con su motivo (el servidor lo exige).
-                guaranteeDue.value > 0
-                    ? {
-                          guarantee_method: guaranteeMethod.value,
-                          ...(guaranteeAdjusted.value
-                              ? {
-                                    guarantee_amount: guaranteeCharged,
-                                    guarantee_reason: guaranteeReason.value,
-                                }
-                              : {}),
-                      }
-                    : {},
+                {
+                    // Llegada anticipada: el servidor la rechaza sin esta
+                    // bandera, y el modal ya avisó lo que implica.
+                    ...(action.reservation.starts_today ? {} : { early: 1 }),
+                    // Fianza activa: se cobra al registrar la llegada con el
+                    // método presencial elegido. El monto default lo pone el
+                    // servidor; solo se manda si el mostrador lo ajustó, y
+                    // entonces va con su motivo (el servidor lo exige).
+                    ...(guaranteeDue.value > 0
+                        ? {
+                              guarantee_method: guaranteeMethod.value,
+                              ...(guaranteeMethod.value === 'transfer'
+                                  ? {
+                                        guarantee_reference:
+                                            guaranteeReference.value.trim(),
+                                    }
+                                  : {}),
+                              ...(guaranteeAdjusted.value
+                                  ? {
+                                        guarantee_amount: guaranteeCharged,
+                                        guarantee_reason: guaranteeReason.value,
+                                    }
+                                  : {}),
+                          }
+                        : {}),
+                },
             );
             toast.success(
                 'Llegada registrada',
@@ -790,7 +813,7 @@ const form = reactive({
     payment_method: 'cash' as 'cash' | 'card' | 'transfer',
     payment_reference: '',
     // Fianza (depósito en garantía) del walk-in: método presencial.
-    guarantee_method: 'cash' as 'cash' | 'card',
+    guarantee_method: 'cash' as CounterMethod,
 });
 
 // ── Autocompletado de huésped (CRM) ──────────────────────────
@@ -1196,9 +1219,7 @@ function openCreate(
     form.guest_notes = '';
     form.payment_method = firstCounterMethod.value;
     form.payment_reference = '';
-    form.guarantee_method = (guaranteeMethods.value[0]?.key ?? 'cash') as
-        | 'cash'
-        | 'card';
+    form.guarantee_method = firstCounterMethod.value;
     showAdvancedReservationFields.value = false;
     selectedGuest.value = null;
     resetFormErrors();
@@ -2092,6 +2113,16 @@ const modalDescription = computed(() => {
                                         class="ml-1 rounded-full bg-success/10 px-1.5 text-xs text-success"
                                         >hoy</span
                                     >
+                                    <!-- La entrada pasó y nadie la registró:
+                                         antes esto solo se notaba porque la
+                                         habitación seguía apartada en el
+                                         plano, sin decir por qué. -->
+                                    <span
+                                        v-if="r.arrival_pending"
+                                        class="ml-1 rounded-full bg-pending/10 px-1.5 text-xs text-pending"
+                                        title="La hora de entrada ya pasó y nadie registró la llegada"
+                                        >sin llegada</span
+                                    >
                                 </Table.Td>
                                 <Table.Td>
                                     ${{ r.total_amount }}
@@ -2332,6 +2363,42 @@ const modalDescription = computed(() => {
                     @open-reservation="openFromRack"
                     @create="createFromRack"
                 />
+            </div>
+
+            <!-- Cuentas por cerrar: el cierre automático no puede cobrar, y
+                 hasta que existió la bandeja ese saldo no salía en ninguna
+                 pantalla. Se avisa aquí porque es donde se trabaja el día. -->
+            <div
+                v-if="view === 'list' && settlementsPending > 0"
+                class="box box--stacked mt-5 flex flex-wrap items-center gap-3 border-l-2 border-l-pending px-4 py-3"
+            >
+                <Lucide
+                    icon="ReceiptText"
+                    class="h-4 w-4 shrink-0 text-pending"
+                />
+                <div class="min-w-0">
+                    <p class="text-sm font-medium">
+                        {{ settlementsPending }}
+                        {{
+                            settlementsPending === 1
+                                ? 'cuenta quedó sin cobrar'
+                                : 'cuentas quedaron sin cobrar'
+                        }}
+                    </p>
+                    <p class="mt-0.5 text-xs text-slate-500">
+                        Estancias que se cerraron con saldo. Cóbralas, agrega
+                        lo que faltó o ciérralas con un motivo.
+                    </p>
+                </div>
+                <Button
+                    :as="Link"
+                    :href="route('tenant.reservations.settlements')"
+                    variant="outline-primary"
+                    class="ml-auto h-9 rounded-[0.5rem] bg-white text-xs"
+                >
+                    <Lucide icon="ChevronRight" class="mr-1.5 h-3.5 w-3.5" />
+                    Revisarlas
+                </Button>
             </div>
 
             <!-- Huéspedes alojados (estancias activas) -->
@@ -2832,6 +2899,37 @@ const modalDescription = computed(() => {
                         </div>
                     </div>
 
+                    <!-- Llegada anticipada: la entrada es de otro día. Se
+                         permite —los huéspedes llegan antes y los hoteles los
+                         reciben—, pero diciendo lo que cuesta: la estancia
+                         hereda la salida y el importe de la reserva. -->
+                    <div
+                        v-if="
+                            confirmAction.kind === 'check_in' &&
+                            confirmAction.reservation &&
+                            !confirmAction.reservation.starts_today
+                        "
+                        class="mt-3 flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 p-3.5 text-xs text-slate-700 dark:text-slate-200"
+                    >
+                        <Lucide
+                            icon="TriangleAlert"
+                            class="mt-0.5 h-4 w-4 shrink-0 text-warning"
+                        />
+                        <div class="min-w-0">
+                            <p class="font-medium">
+                                Esta reserva llega el
+                                {{ confirmAction.reservation.starts_at }}.
+                            </p>
+                            <p class="mt-1">
+                                Registrar la llegada hoy adelanta la entrada
+                                real: la salida sigue prevista para el
+                                {{ confirmAction.reservation.ends_at }} y el
+                                cargo no cambia, así que las noches de más van
+                                sin cobrar.
+                            </p>
+                        </div>
+                    </div>
+
                     <!-- Fianza al registrar la llegada (solo check-in con
                          fianza activa): método presencial del mostrador -->
                     <div
@@ -2913,20 +3011,16 @@ const modalDescription = computed(() => {
                                 al de la política.
                             </p>
                         </div>
-                        <div class="mt-3 grid grid-cols-2 gap-2">
+                        <div
+                            class="mt-3 grid gap-2"
+                            :class="
+                                guaranteeMethods.length > 2
+                                    ? 'grid-cols-3'
+                                    : 'grid-cols-2'
+                            "
+                        >
                             <button
-                                v-for="m in [
-                                    {
-                                        key: 'cash' as const,
-                                        label: 'Efectivo',
-                                        icon: 'Banknote' as Icon,
-                                    },
-                                    {
-                                        key: 'card' as const,
-                                        label: 'Tarjeta',
-                                        icon: 'CreditCard' as Icon,
-                                    },
-                                ]"
+                                v-for="m in guaranteeMethods"
                                 :key="m.key"
                                 type="button"
                                 class="flex h-10 flex-col items-center justify-center gap-1 rounded-lg border py-2 text-xs font-medium transition"
@@ -2938,9 +3032,19 @@ const modalDescription = computed(() => {
                                 @click="guaranteeMethod = m.key"
                             >
                                 <Lucide :icon="m.icon" class="h-4 w-4" />
-                                {{ m.label }}
+                                {{ m.short }}
                             </button>
                         </div>
+                        <!-- El folio es lo único con lo que se puede devolver
+                             una fianza recibida por transferencia. -->
+                        <FormInput
+                            v-if="guaranteeMethod === 'transfer'"
+                            v-model="guaranteeReference"
+                            type="text"
+                            class="mt-2 h-9 text-xs"
+                            placeholder="Folio o referencia del comprobante"
+                            maxlength="100"
+                        />
                     </div>
 
                     <!-- Cuenta final (solo check-out) -->
@@ -3121,9 +3225,32 @@ const modalDescription = computed(() => {
                                         type="text"
                                         placeholder="Daños en la habitación, faltante de toallas…"
                                     />
+                                    <!-- Retener ya no es quedarse el depósito
+                                         Y cobrar la cuenta completa: cubre lo
+                                         que se deba hasta donde alcance y solo
+                                         el excedente se cobra en mostrador. -->
                                     <p class="mt-1 text-xs text-slate-500">
-                                        La fianza queda retenida y el motivo se
-                                        guarda en el registro del pago.
+                                        <template
+                                            v-if="folio.grand_pending > 0"
+                                        >
+                                            Se aplican
+                                            {{
+                                                money(
+                                                    Math.min(
+                                                        folio.guarantee_refundable,
+                                                        folio.grand_pending,
+                                                    ),
+                                                )
+                                            }}
+                                            a la cuenta y solo se cobra el
+                                            resto; si sobra fianza, se devuelve.
+                                        </template>
+                                        <template v-else>
+                                            La cuenta está en ceros: la fianza
+                                            se queda como penalización.
+                                        </template>
+                                        El motivo se guarda en el registro del
+                                        pago.
                                     </p>
                                 </div>
                             </template>

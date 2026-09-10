@@ -144,12 +144,28 @@ class TransitionReservation
         ?string $guaranteeMethod = null,
         ?float $guaranteeAmount = null,
         ?string $guaranteeReason = null,
+        bool $allowEarly = false,
+        ?string $guaranteeReference = null,
     ): Stay {
         $this->assertStatus($reservation, [ReservationStatus::Pending, ReservationStatus::Confirmed]);
 
+        // Llegar a las 11:00 cuando la entrada es a las 15:00 es operación
+        // normal, no anticipada: solo se pide confirmación cuando la entrada
+        // es de OTRO día. Ojo con lo que no se recalcula: la estancia hereda
+        // planned_end_at y el importe de la reserva, así que adelantar la
+        // entrada regala las noches de más — el panel lo dice antes.
+        if (! $allowEarly
+            && $reservation->starts_at->isFuture()
+            && ! $reservation->starts_at->isToday()) {
+            throw NoAvailabilityException::earlyArrival(
+                $reservation->displayCode(),
+                $reservation->starts_at->format('d/m/Y H:i'),
+            );
+        }
+
         $wasPending = $reservation->status === ReservationStatus::Pending;
 
-        return DB::transaction(function () use ($reservation, $user, $context, $guaranteeMethod, $guaranteeAmount, $guaranteeReason, $wasPending) {
+        return DB::transaction(function () use ($reservation, $user, $context, $guaranteeMethod, $guaranteeAmount, $guaranteeReason, $guaranteeReference, $wasPending) {
             $room = Room::whereKey($reservation->room_id)->lockForUpdate()->firstOrFail();
 
             $roomState = $room->status->getMorphClass();
@@ -203,6 +219,7 @@ class TransitionReservation
                 $guaranteeAmount,
                 $guaranteeReason,
                 $reservation->partyRoomCount(),
+                $guaranteeReference,
             );
 
             // Check-in directo desde pendiente: los tours ligados quedan firmes.

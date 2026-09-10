@@ -90,6 +90,9 @@ class InboxController extends Controller
                 'sender_type' => $m->sender_type,
                 'sender' => $m->sender?->name,
                 'body' => $m->body,
+                // El staff tiene que saber que ese texto salió de un audio:
+                // la transcripción se equivoca con fechas y nombres.
+                'voice_note' => (bool) ($m->meta['voice_note'] ?? false),
                 'attachments' => $m->attachmentsPayload(),
                 'at' => $m->created_at->format('d/m H:i'),
             ]),
@@ -289,8 +292,7 @@ class InboxController extends Controller
                     ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)),
                 // De dónde salió la conversación: saber que nació de un
                 // comentario cambia el tono con el que se contesta.
-                'socialComments as from_social'])
-            ;
+                'socialComments as from_social']);
     }
 
     /**

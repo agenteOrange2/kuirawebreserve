@@ -2,7 +2,9 @@
 
 namespace App\Models;
 
+use App\Enums\ReservationStatus;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
@@ -95,6 +97,33 @@ class Guest extends Model implements HasMedia
     public function vehicles(): HasMany
     {
         return $this->hasMany(Vehicle::class);
+    }
+
+    /**
+     * Visitas para listados y buscadores, sin una consulta por fila: mismo
+     * criterio que metrics() — estancias completadas + reservas completadas
+     * sin estancia. El buscador de recepción contaba solo estancias, y como
+     * el historial migrado del sitio anterior no trae estancias, un huésped
+     * que ya había venido cinco veces salía "0 visitas" justo al volver a
+     * reservar (reclamo de Real de la Sierra, 2026-09-10). Se lee con
+     * $guest->visits.
+     */
+    public function scopeWithVisits(Builder $query): Builder
+    {
+        return $query->withCount([
+            'stays as stay_visits' => fn ($q) => $q->where('status', Stay::STATUS_COMPLETED),
+            'reservations as reservation_visits' => fn ($q) => $q
+                ->where('status', ReservationStatus::Completed)
+                ->whereDoesntHave('stay'),
+        ]);
+    }
+
+    /** Visitas cargadas con withVisits(); null si la consulta no las trajo. */
+    protected function visits(): Attribute
+    {
+        return Attribute::get(fn () => array_key_exists('stay_visits', $this->attributes)
+            ? (int) $this->attributes['stay_visits'] + (int) ($this->attributes['reservation_visits'] ?? 0)
+            : null);
     }
 
     public function scopeSearch(Builder $query, string $term): Builder

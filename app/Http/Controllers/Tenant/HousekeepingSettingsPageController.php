@@ -34,6 +34,9 @@ class HousekeepingSettingsPageController extends Controller
                 'hk_cleaning_value' => (int) ($settings['hk_cleaning_value'] ?? 45),
                 'hk_cleaning_unit' => $settings['hk_cleaning_unit'] ?? 'minute',
                 'day_close_no_checkin' => $settings['day_close_no_checkin'] ?? 'dirty',
+                'arrival_no_show_enabled' => (bool) ($settings['arrival_no_show_enabled'] ?? false),
+                'arrival_no_show_value' => (int) ($settings['arrival_no_show_value'] ?? 6),
+                'arrival_no_show_unit' => $settings['arrival_no_show_unit'] ?? 'hour',
             ],
             // Contexto vivo para que el ajuste no sea abstracto: cuántas
             // habitaciones están ahora mismo en cada tramo del flujo.
@@ -42,6 +45,15 @@ class HousekeepingSettingsPageController extends Controller
                 'dirty' => Room::query()->where('status', RoomStatus::Dirty->value)->count(),
                 'cleaning' => Room::query()->where('status', RoomStatus::Cleaning->value)->count(),
             ],
+            // Llegadas confirmadas cuya hora de entrada ya pasó y siguen sin
+            // registrarse: son las que la ventana de llegada resolvería.
+            'arrivalsPending' => \App\Models\Reservation::query()
+                ->where('status', \App\Enums\ReservationStatus::Confirmed)
+                ->whereNotNull('room_id')
+                ->where('starts_at', '<=', now())
+                ->where('ends_at', '>', now())
+                ->whereDoesntHave('stay')
+                ->count(),
             // Llegadas confirmadas de hoy: las que tocaría el check-in
             // automático cuando les llegue su hora.
             'arrivalsToday' => \App\Models\Reservation::query()

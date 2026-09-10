@@ -41,6 +41,7 @@ interface ThreadMessage {
     sender_type: string;
     sender: string | null;
     body: string;
+    voice_note: boolean;
     attachments: {
         id: number;
         url: string;
@@ -1560,6 +1561,16 @@ onBeforeUnmount(() => {
                                                         : 'rounded-br-md bg-linear-to-r from-theme-1 to-theme-2 text-white'
                                             "
                                         >
+                                            <div
+                                                v-if="m.voice_note"
+                                                class="mb-1 flex items-center gap-1 text-[11px] text-slate-400"
+                                            >
+                                                <Lucide
+                                                    icon="Mic"
+                                                    class="h-3 w-3"
+                                                />
+                                                Nota de voz transcrita
+                                            </div>
                                             {{ m.body }}
                                             <div
                                                 v-if="m.attachments?.length"

@@ -155,7 +155,7 @@ class ReservationsPageController extends Controller
         // Huésped precargado (desde su ficha): "Nueva reserva".
         $prefillGuest = $request->integer('guest')
             ? Guest::query()
-                ->withCount(['stays as visits' => fn ($q) => $q->where('status', 'completed')])
+                ->withVisits()
                 ->find($request->integer('guest'))
             : null;
 
@@ -183,6 +183,11 @@ class ReservationsPageController extends Controller
             // Cuántas quedaron fuera del asomo, para decirlo en vez de
             // ocultarlas en silencio.
             'staysTotal' => $staysTotal,
+            // Cuentas por cerrar: estancias que ya cerraron (casi siempre por
+            // el reloj) y a las que les quedó dinero sin registrar. Se avisa
+            // aquí porque si no, nadie va a ir a buscarlas: antes de la
+            // bandeja ese saldo no aparecía en ninguna pantalla.
+            'settlementsPending' => Stay::query()->pendingSettlement()->count(),
             'focusStayId' => $focusStayId,
             'ratePlans' => RatePlan::query()
                 ->where('active', true)
@@ -354,6 +359,14 @@ class ReservationsPageController extends Controller
             'extras' => $r->extras ?? [],
             'experiences' => $r->experiences ?? [],
             'starts_today' => $r->starts_at->isToday(),
+            // La hora de entrada ya pasó y nadie registró la llegada. Sin
+            // esta marca, una reserva así solo se notaba porque su
+            // habitación seguía apartada en el plano: no aparecía en ningún
+            // lado hasta que el cierre de día la resolvía, y con la ventana
+            // de llegada apagada eso podía tardar noches.
+            'arrival_pending' => $r->status === ReservationStatus::Confirmed
+                && $r->starts_at->isPast()
+                && $r->ends_at->isFuture(),
             'source_channel' => $r->source_channel,
             'notes' => $r->notes,
             'guest_notes' => $r->guest_notes,

@@ -4,7 +4,10 @@ import Button from '@/components/Base/Button';
 import { FormInput } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
-import { useCounterMethods } from '@/composables/useCounterMethods';
+import {
+    type CounterMethod,
+    useCounterMethods,
+} from '@/composables/useCounterMethods';
 import { formatMoney } from './format';
 import type { RoomData } from './types';
 
@@ -31,21 +34,26 @@ const emit = defineEmits<{
     (
         e: 'confirm',
         payload: {
-            method: 'cash' | 'card';
+            method: CounterMethod;
             amount: number | null;
             reason: string | null;
+            reference: string | null;
         },
     ): void;
 }>();
 
-// La fianza se recibe en la mano: efectivo o terminal, nunca transferencia.
-const { subset } = useCounterMethods();
-const methods = subset(['cash', 'card']);
+// Lo que acepte la recepción de este hotel (/ajustes/metodos-pago →
+// Políticas). La fianza estuvo cableada a efectivo y terminal "porque se
+// recibe en la mano", y eso dejaba fuera al hotel que sí cobra depósitos por
+// transferencia. La transferencia pide folio: es lo único con lo que se puede
+// devolver el dinero días después.
+const { methods, first } = useCounterMethods();
 
-const method = ref<'cash' | 'card'>('cash');
+const method = ref<CounterMethod>('cash');
 const editing = ref(false);
 const amountInput = ref<number | string>(0);
 const reason = ref('');
+const reference = ref('');
 
 // Cada apertura empieza limpia: arrastrar el ajuste de la llegada anterior
 // es cómo se le cobra a alguien el monto que negoció el de antes.
@@ -56,10 +64,11 @@ watch(
             return;
         }
 
-        method.value = (methods.value[0]?.key ?? 'cash') as 'cash' | 'card';
+        method.value = first.value;
         editing.value = false;
         amountInput.value = props.amount;
         reason.value = '';
+        reference.value = '';
     },
     { immediate: true },
 );
@@ -71,7 +80,13 @@ const adjusted = computed(
             Math.round(props.amount * 100),
 );
 
-const blocked = computed(() => adjusted.value && !reason.value.trim());
+const needsReference = computed(() => method.value === 'transfer');
+
+const blocked = computed(
+    () =>
+        (adjusted.value && !reason.value.trim()) ||
+        (needsReference.value && !reference.value.trim()),
+);
 
 function confirm() {
     if (blocked.value) {
@@ -82,6 +97,7 @@ function confirm() {
         method: method.value,
         amount: adjusted.value ? Number(amountInput.value || 0) : null,
         reason: adjusted.value ? reason.value.trim() : null,
+        reference: needsReference.value ? reference.value.trim() : null,
     });
 }
 </script>
@@ -176,7 +192,12 @@ function confirm() {
                     <div class="text-xs font-medium text-slate-500">
                         ¿Cómo la recibiste?
                     </div>
-                    <div class="mt-2 grid grid-cols-2 gap-2">
+                    <div
+                        class="mt-2 grid gap-2"
+                        :class="
+                            methods.length > 2 ? 'grid-cols-3' : 'grid-cols-2'
+                        "
+                    >
                         <button
                             v-for="m in methods"
                             :key="m.key"
@@ -187,10 +208,28 @@ function confirm() {
                                     ? 'border-primary bg-primary/10 text-primary'
                                     : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
                             "
-                            @click="method = m.key as 'cash' | 'card'"
+                            @click="method = m.key"
                         >
-                            {{ m.label }}
+                            {{ m.short }}
                         </button>
+                    </div>
+
+                    <!-- El efectivo sale del cajón; una transferencia hay que
+                         regresarla a una cuenta días después, y el folio es
+                         lo único con lo que se puede hacer. -->
+                    <div v-if="needsReference" class="mt-3">
+                        <FormInput
+                            v-model="reference"
+                            type="text"
+                            class="h-9 text-xs"
+                            placeholder="Folio o referencia del comprobante"
+                        />
+                        <p
+                            v-if="!reference.trim()"
+                            class="mt-1 text-xs text-slate-500"
+                        >
+                            Sin el folio, esta fianza no se va a poder devolver.
+                        </p>
                     </div>
                 </div>
             </div>

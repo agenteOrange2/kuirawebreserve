@@ -3,7 +3,7 @@ Contributors: kuirawebreserve
 Tags: hotel, habitaciones, precios, reservas
 Requires at least: 5.8
 Tested up to: 6.7
-Stable tag: 1.2.0
+Stable tag: 1.3.0
 License: GPL-2.0-or-later
 
 Muestra tus tipos de habitacion con foto, precio y amenidades EN VIVO
@@ -41,6 +41,9 @@ KuiraWebReserve y tu sitio se actualiza solo.
    el token. Pulsa **Probar conexion** para corroborar.
 4. Pega el shortcode `[kuirawebreserve_rooms]` donde quieras las
    tarjetas, o `[kuira_reservas]` donde quieras el wizard completo.
+5. Si tienes una pagina por habitacion, usa
+   `[kuira_reservas habitacion="11"]`: ahi solo se reserva esa. El
+   numero de cada habitacion lo da tu panel en **Integracion**.
 
 == Notas importantes ==
 * Solo aparecen los tipos con al menos una **tarifa activa** (los que
@@ -55,6 +58,12 @@ KuiraWebReserve y tu sitio se actualiza solo.
   **Integracion** dentro de tu panel — no requiere este plugin.
 
 == Changelog ==
+
+= 1.3.0 =
+* `[kuira_reservas habitacion="ID"]`: wizard acotado a UNA habitacion,
+  para poner un embed distinto en la pagina de cada cabania. Si esa
+  habitacion no esta libre en las fechas pedidas se avisa (y se ofrece
+  lista de espera si la tienes activa), sin proponer las otras.
 
 = 1.2.0 =
 * Pantalla de ajustes rediseñada: tarjetas, estado de conexion con

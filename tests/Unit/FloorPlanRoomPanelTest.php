@@ -26,15 +26,78 @@ it('mantiene acciones principales grandes y con lenguaje cotidiano', function ()
         // Alturas de dedo: el mostrador opera con tablet.
         ->toContain('min-h-11');
 
-    // Los caminos de venta los arma el plano en un solo lugar (arrivalActions),
+    // Los caminos de venta los arma el plano en un solo lugar (saleOptionsFor),
     // porque de ahí sale la decisión hotel/motel/ambos.
     expect(file_get_contents(
         dirname(__DIR__, 2).'/resources/js/pages/tenant/FloorPlan.vue',
     ))
         ->toContain('Llegó sin reserva')
         ->toContain('Registrar su entrada ahora')
-        ->toContain('Crear una reserva')
-        ->toContain('Apartarla para otra fecha');
+        ->toContain('Apartar para otra fecha');
+});
+
+it('separa entregar ahora de apartar para otra fecha', function () {
+    $plan = file_get_contents(
+        dirname(__DIR__, 2).'/resources/js/pages/tenant/FloorPlan.vue',
+    );
+
+    // Entregar el cuarto exige que esté físicamente listo; apartarlo para
+    // otra fecha no, y esconderlo detrás del semáforo dejaba sin vender
+    // fechas que el motor de disponibilidad sí acepta.
+    expect($plan)
+        ->toContain('sellNowActions')
+        ->toContain('bookAheadAction')
+        ->toContain('saleOptionsFor');
+
+    $summary = floorPlanRoomSource('tabs/SummaryTab.vue');
+
+    expect($summary)
+        // El bloque de venta ya no se esconde por el color del semáforo.
+        ->not->toContain("room.status === 'available' && canManageReservations")
+        ->toContain('roomSale.sellNow.length')
+        ->toContain('Otras fechas');
+
+    // Y el aviso nombra a la reserva que de verdad aparta el cuarto, no a la
+    // próxima, que puede ser de dentro de un mes: cancelarla no liberaba nada.
+    expect(floorPlanRoomSource('tabs/CleaningTab.vue'))
+        ->toContain('room.holding_reservation')
+        ->not->toContain('para liberarla,');
+});
+
+it('limpieza y mantenimiento tienen tab propio, no una sección al fondo', function () {
+    $dialog = floorPlanRoomSource('RoomDialog.vue');
+
+    expect($dialog)
+        ->toContain("key: 'limpieza'")
+        ->toContain("key: 'mantenimiento'")
+        ->toContain('<CleaningTab')
+        ->toContain('<MaintenanceTab');
+
+    // El Resumen se queda con la venta y el huésped: el semáforo era una
+    // sección al fondo, debajo de todo, titulada "Limpieza y mantenimiento".
+    expect(floorPlanRoomSource('tabs/SummaryTab.vue'))
+        ->not->toContain('Limpieza y mantenimiento')
+        ->not->toContain('transitionMeta');
+
+    // Y el tab Cuarto vuelve a ser la ficha del cuarto: las fallas y los
+    // bloqueos de fechas se fueron a Mantenimiento.
+    expect(floorPlanRoomSource('tabs/RoomTab.vue'))
+        ->not->toContain('Reportar una falla')
+        ->not->toContain('Mantenimiento programado');
+
+    // El reporte y el bloqueo de fechas viven en sus diálogos: dentro del tab
+    // eran dos formularios largos que dejaban la tarjeta vacía cuando nadie
+    // estaba capturando.
+    expect(floorPlanRoomSource('tabs/MaintenanceTab.vue'))
+        ->toContain('ReportIncidentDialog')
+        ->toContain('ScheduleBlockDialog')
+        ->toContain('Mantenimiento programado')
+        ->toContain('Fallas sin resolver');
+
+    // La limpieza en curso solo se veía como badge sobre el plano: al abrir
+    // el cuarto no había manera de saber quién estaba adentro.
+    expect(floorPlanRoomSource('tabs/CleaningTab.vue'))
+        ->toContain('room.cleaning');
 });
 
 it('mantiene la información y las amenidades agrupadas', function () {

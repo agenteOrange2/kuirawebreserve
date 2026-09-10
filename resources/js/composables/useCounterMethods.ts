@@ -90,9 +90,12 @@ export function useCounterMethods() {
         has(method) ? method : first.value;
 
     /**
-     * Para selectores con menú propio más corto (la fianza solo admite
-     * efectivo o terminal): intersección de ese menú con lo que acepta el
-     * hotel. Puede quedar vacía, y ahí la pantalla dice por qué.
+     * Para selectores con menú propio más corto: intersección de ese menú
+     * con lo que acepta el hotel. Puede quedar vacía, y ahí la pantalla dice
+     * por qué. Lo usan los ANTICIPOS de reserva, donde la transferencia no
+     * se registra a mano: va por su flujo de cobro en línea y se confirma
+     * con el comprobante en /pagos. La fianza NO lo usa —se recibe en el
+     * mostrador con el comprobante a la vista— y acepta las tres.
      */
     const subset = (keys: CounterMethod[]) =>
         computed(() =>

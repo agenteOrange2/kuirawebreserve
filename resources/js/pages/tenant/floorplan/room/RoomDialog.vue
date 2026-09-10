@@ -6,7 +6,9 @@ import type { Icon } from '@/components/Base/Lucide';
 import { FloorPlanKey } from '../context';
 import { statusStyles } from '../status';
 import ChargesTab from './tabs/ChargesTab.vue';
+import CleaningTab from './tabs/CleaningTab.vue';
 import HistoryTab from './tabs/HistoryTab.vue';
+import MaintenanceTab from './tabs/MaintenanceTab.vue';
 import RoomTab from './tabs/RoomTab.vue';
 import SummaryTab from './tabs/SummaryTab.vue';
 
@@ -17,14 +19,20 @@ import SummaryTab from './tabs/SummaryTab.vue';
  * tarifas y el historial revueltos.
  *
  * Ahora: un modal centrado (llega el pulgar en el mostrador táctil y no tapa el
- * costado del plano) con cuatro tabs. La hoja de acciones sobrevive como primer
- * paso en pantalla completa y este modal es el "ver más".
+ * costado del plano) con un tab por oficio. La hoja de acciones sobrevive como
+ * primer paso en pantalla completa y este modal es el "ver más".
  *
  * Los tabs NO cambian según el estado del cuarto: si aparecieran y
  * desaparecieran, cambiar de habitación reacomodaría la fila bajo el dedo. Un
  * tab que no aplica lo dice en una línea.
  */
-type TabKey = 'resumen' | 'consumos' | 'historial' | 'cuarto';
+type TabKey =
+    | 'resumen'
+    | 'consumos'
+    | 'limpieza'
+    | 'mantenimiento'
+    | 'historial'
+    | 'cuarto';
 
 const ctx = inject(FloorPlanKey)!;
 
@@ -61,6 +69,22 @@ const tabs = computed<TabDefinition[]>(() => [
               },
           ]
         : []),
+    // Limpieza y mantenimiento son dos oficios distintos y los hacen personas
+    // distintas: vivían revueltos en una sección del Resumen titulada
+    // "Limpieza y mantenimiento", y las fallas estaban hasta el fondo del tab
+    // Cuarto, que es la ficha de inventario.
+    {
+        key: 'limpieza',
+        label: 'Limpieza',
+        short: 'Limpieza',
+        icon: 'SprayCan',
+    },
+    {
+        key: 'mantenimiento',
+        label: 'Mantenimiento',
+        short: 'Manten.',
+        icon: 'Wrench',
+    },
     {
         key: 'historial',
         label: 'Historial',
@@ -202,6 +226,8 @@ watch(tabs, (list) => {
                         v-if="ctx.canChargeHere.value"
                         v-show="tab === 'consumos'"
                     />
+                    <CleaningTab v-show="tab === 'limpieza'" />
+                    <MaintenanceTab v-show="tab === 'mantenimiento'" />
                     <HistoryTab v-show="tab === 'historial'" />
                     <RoomTab v-show="tab === 'cuarto'" />
                 </div>

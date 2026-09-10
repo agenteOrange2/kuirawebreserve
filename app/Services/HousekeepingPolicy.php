@@ -115,6 +115,33 @@ class HousekeepingPolicy
         return (int) config('reservations.auto_checkout.grace_minutes', 15);
     }
 
+    /**
+     * ¿El hotel da por perdida la llegada que no aparece? El cierre de día
+     * mira la SALIDA, así que una reserva de tres noches que nadie ocupó
+     * mantenía el cuarto apartado las tres noches. Esto mira la ENTRADA.
+     *
+     * Default apagado: prenderlo cambia la operación (marca no-show solo) y
+     * eso lo decide cada hotel en /ajustes/limpieza, no un deploy.
+     */
+    public function noShowEnabled(): bool
+    {
+        return (bool) ($this->settings()['arrival_no_show_enabled'] ?? false);
+    }
+
+    /**
+     * Minutos tras la hora de entrada antes de dar la llegada por perdida.
+     * 0 = sin ventana: el cuarto queda apartado hasta la salida, como
+     * operaba el panel antes del ajuste.
+     */
+    public function noShowAfterMinutes(): int
+    {
+        if (! $this->noShowEnabled()) {
+            return 0;
+        }
+
+        return $this->minutesFrom('arrival_no_show_value', 'arrival_no_show_unit') ?? 360;
+    }
+
     /** Valor+unidad de settings traducido a minutos; null si no está configurado. */
     protected function minutesFrom(string $valueKey, string $unitKey): ?int
     {

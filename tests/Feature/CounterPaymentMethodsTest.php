@@ -87,15 +87,50 @@ it('apagarlas todas no deja al mostrador sin cobrar: queda el efectivo', functio
     expect(app(ReservationPolicy::class)->counterMethods())->toBe(['cash']);
 });
 
-it('la fianza solo admite lo que se recibe en la mano, y solo si se acepta', function () {
-    acceptOnly(['cash', 'transfer']);
+/** Fianza activa: sin monto, ChargeGuarantee no cobra nada y no hay qué probar. */
+function conFianza(float $amount = 1000): void
+{
+    $property = Property::firstOrFail();
+    $property->update([
+        'settings' => array_merge($property->settings ?? [], [
+            'guarantee_enabled' => true,
+            'guarantee_amount' => $amount,
+        ]),
+    ]);
+    app()->forgetInstance(ReservationPolicy::class);
+}
 
-    // Transferencia sí es método del mostrador, pero la fianza no la admite.
-    expect(fn () => registerWalkIn(['guarantee_method' => 'transfer']))
-        ->toThrow(ValidationException::class)
-        // Y la terminal, que la fianza sí admite, está apagada en este hotel.
-        ->and(fn () => registerWalkIn(['guarantee_method' => 'card']))
+it('la fianza admite lo que el hotel acepta en el mostrador, y nada más', function () {
+    acceptOnly(['cash', 'transfer']);
+    conFianza();
+
+    // La terminal está apagada en este hotel: la fianza tampoco la admite.
+    expect(fn () => registerWalkIn(['guarantee_method' => 'card']))
         ->toThrow(ValidationException::class);
+
+    // La transferencia sí, con el folio del comprobante: estuvo prohibida
+    // "porque la fianza se recibe en la mano", y eso dejaba fuera al hotel
+    // que sí cobra depósitos así.
+    registerWalkIn([
+        'guarantee_method' => 'transfer',
+        'guarantee_reference' => 'SPEI-99887',
+    ]);
+
+    $guarantee = \App\Models\Payment::query()
+        ->where('kind', \App\Models\Payment::KIND_GUARANTEE)
+        ->latest('id')
+        ->firstOrFail();
+
+    expect($guarantee->method)->toBe('transfer')
+        ->and($guarantee->reference)->toBe('SPEI-99887');
+});
+
+it('una fianza por transferencia sin folio no se cobra: no habría cómo devolverla', function () {
+    acceptOnly(['cash', 'transfer']);
+    conFianza();
+
+    expect(fn () => registerWalkIn(['guarantee_method' => 'transfer']))
+        ->toThrow(InvalidArgumentException::class, 'folio o referencia');
 });
 
 it('el panel comparte la lista para que ninguna pantalla ofrezca de más', function () {

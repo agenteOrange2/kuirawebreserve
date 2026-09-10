@@ -333,14 +333,16 @@ class RoomController extends Controller
             ], 422);
         }
 
-        // Liberar una reservada por debajo de su reserva viva la dejaría
-        // vendible dos veces; el camino es cancelar la reserva.
+        // Liberar una reservada por debajo de la reserva que la aparta HOY
+        // la dejaría vendible dos veces; el camino es cancelar esa reserva.
+        // Si ninguna la aparta ahora (semáforo huérfano), soltarla a mano es
+        // legítimo: es exactamente lo que hace el barrido automático.
         if (
             $data['status'] === RoomStatus::Available->value
             && $room->status->getMorphClass() === RoomStatus::Reserved->value
-            && $room->hasLiveReservation()
+            && $room->heldByReservation()
         ) {
-            $reservation = $room->upcomingReservation;
+            $reservation = $room->holdingReservation;
 
             return response()->json([
                 'message' => "La {$room->number} está apartada por la reserva {$reservation->displayCode()}"

@@ -43,8 +43,26 @@ class CreateWalkInStay
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if ($room->status->getMorphClass() !== RoomStatus::Available->value
-                || ! $this->availability->isRoomAvailable($room, $start, $end)) {
+            // Lo FÍSICO lo dice el semáforo: sucia, en limpieza, ocupada o
+            // en mantenimiento no se entregan ahora aunque el calendario
+            // esté libre. "Reservada" NO entra aquí: apartada es una promesa
+            // de FECHAS, y si las de esta estancia no chocan con ella, el
+            // cuarto sí se puede vender —el caso del cuarto apartado para el
+            // viernes que alguien quiere hoy hasta mañana.
+            if (! in_array($room->status->getMorphClass(), [
+                RoomStatus::Available->value,
+                RoomStatus::Reserved->value,
+            ], true)) {
+                throw NoAvailabilityException::forRoomState(
+                    $room->number,
+                    $room->status->label(),
+                    'este registro',
+                );
+            }
+
+            // Y lo TEMPORAL lo dice el motor: solapes con reservas, bloqueos
+            // por fechas, estancias activas, mantenimiento y candado de usos.
+            if (! $this->availability->isRoomAvailable($room, $start, $end)) {
                 throw NoAvailabilityException::forRoom($room->number);
             }
 
@@ -163,6 +181,7 @@ class CreateWalkInStay
                 $user,
                 isset($data['guarantee_amount']) ? (float) $data['guarantee_amount'] : null,
                 $data['guarantee_reason'] ?? null,
+                reference: $data['guarantee_reference'] ?? null,
             );
 
             $this->changeRoomStatus->handle($room, RoomStatus::Occupied->value, $user, [

@@ -94,10 +94,11 @@ const {
     methods: paymentMethods,
     first: firstMethod,
     coerce: coerceMethod,
-    subset,
 } = useCounterMethods();
-// La fianza se cobra en la mano: efectivo o terminal, nunca transferencia.
-const guaranteeMethods = subset(['cash', 'card']);
+// La fianza se cobra con lo que acepte la recepción de este hotel: estuvo
+// cableada a efectivo y terminal "porque se recibe en la mano", y eso dejaba
+// fuera al que cobra depósitos por transferencia.
+const guaranteeMethods = paymentMethods;
 
 const modalRoom = ref<WalkInRoom | null>(null);
 
@@ -125,7 +126,10 @@ const knownVehicle = ref<{
 } | null>(null);
 const paymentMethod = ref<CounterMethod>('cash');
 const paymentReference = ref('');
-const guaranteeMethod = ref<'cash' | 'card'>('cash');
+const guaranteeMethod = ref<CounterMethod>('cash');
+// Folio del comprobante: obligatorio en transferencia, que es por donde se
+// devuelve el depósito días después.
+const guaranteeReference = ref('');
 // Ajuste del monto en el mostrador. El caso real: el grupo que llega por
 // varias habitaciones y negocia el depósito. El motivo es obligatorio —
 // quien devuelva ese dinero días después solo va a tener esta nota.
@@ -139,7 +143,12 @@ const guaranteeAdjusted = computed(
             Math.round(props.guaranteeAmount * 100),
 );
 const guaranteeBlocked = computed(
-    () => guaranteeAdjusted.value && !guaranteeReason.value.trim(),
+    () =>
+        (guaranteeAdjusted.value && !guaranteeReason.value.trim()) ||
+        // Una fianza por transferencia sin folio queda cobrada y sin manera
+        // de devolverse: el servidor la rechaza y el botón lo dice antes.
+        (guaranteeMethod.value === 'transfer' &&
+            !guaranteeReference.value.trim()),
 );
 const availability = ref<AvailabilityData | null>(null);
 const availLoading = ref(false);
@@ -217,9 +226,8 @@ watch(
         guaranteeEditing.value = false;
         guaranteeAmountInput.value = props.guaranteeAmount;
         guaranteeReason.value = '';
-        guaranteeMethod.value = (guaranteeMethods.value[0]?.key ?? 'cash') as
-            | 'cash'
-            | 'card';
+        guaranteeMethod.value = firstMethod.value;
+        guaranteeReference.value = '';
         availability.value = null;
         modalError.value = null;
 
@@ -547,6 +555,10 @@ async function submit() {
             guarantee_method:
                 props.guaranteeAmount > 0 && guaranteeMethods.value.length
                     ? guaranteeMethod.value
+                    : undefined,
+            guarantee_reference:
+                guaranteeMethod.value === 'transfer'
+                    ? guaranteeReference.value.trim() || undefined
                     : undefined,
             guarantee_amount: guaranteeAdjusted.value
                 ? Number(guaranteeAmountInput.value || 0)
@@ -1090,24 +1102,31 @@ onBeforeUnmount(() => {
                         >
                             <Lucide icon="ShieldCheck" class="h-3.5 w-3.5" />
                             Fianza
-                            {{
-                                money(
-                                    guaranteeAdjusted
-                                        ? Number(guaranteeAmountInput || 0)
-                                        : guaranteeAmount,
-                                )
-                            }}
                             <button
                                 v-if="
                                     !guaranteeEditing && guaranteeMethods.length
                                 "
                                 type="button"
-                                class="text-xs font-medium text-primary normal-case hover:underline"
+                                class="ml-auto text-xs font-medium text-primary normal-case hover:underline"
                                 @click="guaranteeEditing = true"
                             >
                                 Cobrar otro monto
                             </button>
                         </div>
+                        <p
+                            v-if="guaranteeMethods.length"
+                            class="mb-3 text-xs text-slate-500 sm:text-sm"
+                        >
+                            Depósito en garantía de
+                            <span class="font-medium text-slate-700 dark:text-slate-200">{{
+                                money(
+                                    guaranteeAdjusted
+                                        ? Number(guaranteeAmountInput || 0)
+                                        : guaranteeAmount,
+                                )
+                            }}</span>: no es venta y se devuelve al registrar la
+                            salida.
+                        </p>
 
                         <div
                             v-if="guaranteeEditing"
@@ -1155,7 +1174,12 @@ onBeforeUnmount(() => {
                         </div>
                         <div
                             v-if="guaranteeMethods.length"
-                            class="grid gap-2.5 sm:max-w-md sm:grid-cols-2"
+                            class="grid gap-2.5"
+                            :class="
+                                guaranteeMethods.length > 2
+                                    ? 'sm:grid-cols-3'
+                                    : 'sm:grid-cols-2'
+                            "
                         >
                             <button
                                 v-for="method in guaranteeMethods"
@@ -1167,28 +1191,45 @@ onBeforeUnmount(() => {
                                         ? 'border-primary bg-primary/5 text-primary'
                                         : 'border-slate-200/70 text-slate-500 dark:border-darkmode-400'
                                 "
-                                @click="
-                                    guaranteeMethod = method.key as
-                                        | 'cash'
-                                        | 'card'
-                                "
+                                @click="guaranteeMethod = method.key"
                             >
                                 <Lucide :icon="method.icon" class="h-4 w-4" />
                                 {{ method.label }}
                             </button>
                         </div>
-                        <!-- La fianza se recibe en la mano: si la recepción no
-                             acepta ni efectivo ni terminal, no hay con qué. -->
+                        <!-- Sin ninguna forma de cobro activa no hay con qué
+                             recibir el depósito. -->
                         <p v-else class="text-sm text-warning">
-                            La fianza se cobra en efectivo o con terminal, y la
-                            recepción no tiene ninguno de los dos activo en
-                            Ajustes → Métodos de pago; esta llegada se registra
-                            sin fianza.
+                            La recepción no tiene ninguna forma de cobro activa
+                            en Ajustes → Métodos de pago; esta llegada se
+                            registra sin fianza.
                         </p>
-                        <FormHelp v-if="guaranteeMethods.length"
-                            >Depósito en garantía: no es venta y se devuelve al
-                            registrar la salida.</FormHelp
+                        <!-- El folio es lo único con lo que se puede devolver
+                             una fianza recibida por transferencia: el efectivo
+                             sale del cajón, esto hay que regresarlo a una
+                             cuenta días después. -->
+                        <div
+                            v-if="guaranteeMethod === 'transfer'"
+                            class="mt-4 sm:max-w-sm"
                         >
+                            <FormLabel htmlFor="walkin-guarantee-reference"
+                                >Folio o referencia del comprobante</FormLabel
+                            >
+                            <FormInput
+                                id="walkin-guarantee-reference"
+                                v-model="guaranteeReference"
+                                placeholder="SPEI 123456"
+                                maxlength="100"
+                            />
+                            <FormHelp
+                                :class="
+                                    guaranteeReference.trim()
+                                        ? ''
+                                        : 'text-warning'
+                                "
+                                >Sin el folio no vas a poder devolverla.</FormHelp
+                            >
+                        </div>
                     </section>
 
                     <p

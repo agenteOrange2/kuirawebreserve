@@ -233,6 +233,10 @@ const props = defineProps<{
     hasWaitlist: boolean;
     // Cupones (módulo cupones): input de código antes de apartar.
     hasCoupons: boolean;
+    // Embed de UNA sola habitación (?habitacion=<id> desde /integracion):
+    // el wizard no ofrece catálogo, solo cotiza y aparta esta. null = el
+    // wizard completo de siempre.
+    lockedRoomType: { id: number; name: string } | null;
     // Contacto público del hotel (redes, mapa, sitio) para el pie: que la
     // página se sienta DEL hotel, no del sistema.
     contact: {
@@ -548,12 +552,27 @@ async function searchAvailability() {
         } else {
             params.arrive_at = arriveAt.value;
         }
+        // Embed de una sola habitación: se cotiza SOLO esa (mismo parámetro
+        // que ya usa el paso "Confirmar habitación").
+        if (props.lockedRoomType) {
+            params.room_type_id = props.lockedRoomType.id;
+        }
         const { data } = await axios.get('/api/booking/availability', {
             params,
         });
         options.value = data.options;
         anyAvailable.value = data.any_available;
         searched.value = true;
+        // Con la habitación fija no hay nada que elegir: si está libre se
+        // pasa derecho a confirmarla. Si no, se cae al bloque de "sin
+        // disponibilidad" de abajo (con lista de espera si está activa) —
+        // nunca se le ofrecen las otras habitaciones, que para eso el
+        // hotel puso este embed en la página de ESTA.
+        const onlyOption = props.lockedRoomType ? data.options[0] : null;
+        if (onlyOption?.available) {
+            chooseOption(onlyOption);
+            return;
+        }
         // Llevar la vista a los resultados: aparecen abajo del botón y sin
         // esto mucha gente no baja a verlos.
         await nextTick();
@@ -599,6 +618,9 @@ async function submitWaitlist() {
             guest_name: waitlistName.value,
             guest_phone: waitlistPhone.value || null,
             guest_email: waitlistEmail.value || null,
+            // Con embed de una habitación, el aviso queda ligado a ESA
+            // (no a "cualquier cosa que se libere").
+            room_type_id: props.lockedRoomType?.id ?? null,
             ...searchedDateRange(),
         });
         waitlistDone.value = true;
@@ -1147,11 +1169,18 @@ async function copyCode() {
                 <!-- ═══ PASO: fechas y personas ═══ -->
                 <div v-if="step === 'dates'" class="p-5 sm:p-7">
                     <h1 class="text-lg font-medium text-slate-800">
-                        ¿Cuándo nos visitas?
+                        {{
+                            lockedRoomType
+                                ? `Reserva ${lockedRoomType.name}`
+                                : '¿Cuándo nos visitas?'
+                        }}
                     </h1>
                     <p class="mt-1 text-sm text-slate-500">
-                        Elige tus fechas y te mostramos lo disponible al
-                        momento, con su precio real.
+                        {{
+                            lockedRoomType
+                                ? 'Elige tus fechas y revisamos al momento si está libre, con su precio real.'
+                                : 'Elige tus fechas y te mostramos lo disponible al momento, con su precio real.'
+                        }}
                     </p>
                     <p
                         v-if="adultsOnly"
@@ -1311,7 +1340,11 @@ async function copyCode() {
                             />
                             <div>
                                 <p class="text-sm font-medium text-slate-600">
-                                    Sin disponibilidad para esas fechas
+                                    {{
+                                        lockedRoomType
+                                            ? `${lockedRoomType.name} no está disponible en esas fechas`
+                                            : 'Sin disponibilidad para esas fechas'
+                                    }}
                                 </p>
                                 <p class="mt-0.5 text-xs text-slate-500">
                                     Prueba con otras fechas, o escríbenos y te
@@ -2340,7 +2373,9 @@ async function copyCode() {
                          condiciones viven solo en ese texto, y con el v-if
                          atado a `label` nunca se veían. -->
                     <div
-                        v-if="cancellationPolicy.label || cancellationPolicy.text"
+                        v-if="
+                            cancellationPolicy.label || cancellationPolicy.text
+                        "
                         class="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500"
                     >
                         <div
@@ -2961,8 +2996,8 @@ async function copyCode() {
                                     Aparte del total, al llegar se cobra un
                                     depósito en garantía de
                                     {{ money(guarantee.amount) }} por
-                                    habitación, que se te devuelve al
-                                    registrar tu salida.
+                                    habitación, que se te devuelve al registrar
+                                    tu salida.
                                 </span>
                             </div>
                         </div>

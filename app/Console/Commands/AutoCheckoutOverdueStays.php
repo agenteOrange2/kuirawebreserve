@@ -12,6 +12,13 @@ use Throwable;
  * pasó, se hace check-out y la habitación cae a "sucia" — housekeeping la ve
  * en el plano (Reverb la pinta en vivo) y sigue el flujo sucia → limpieza →
  * disponible. Correr por tenant: tenants:run.
+ *
+ * OJO con el dinero: la salida MANUAL exige cobrar el saldo o forzarla a
+ * propósito; esta se salta las dos cosas porque no hay nadie a quien
+ * preguntarle. Por eso la estancia queda marcada (auto_closed_at) y, si le
+ * quedó saldo, aparece en /reservas/cuentas para cobrarla o cerrarla con
+ * motivo. Antes se cerraba en silencio y el dinero desaparecía del panel:
+ * no había forma de agregar un cargo ni de registrar un cobro después.
  */
 class AutoCheckoutOverdueStays extends Command
 {
@@ -36,11 +43,20 @@ class AutoCheckoutOverdueStays extends Command
             ->get();
 
         $closed = 0;
+        $withBalance = 0;
 
         foreach ($overdue as $stay) {
             try {
                 $transition->checkOut($stay, null, ['auto' => true]);
+                // Sello de "la cerró el reloj": la bandeja de cuentas lo
+                // muestra, porque cambia a quién hay que preguntarle qué pasó.
+                $stay->forceFill(['auto_closed_at' => now()])->saveQuietly();
                 $closed++;
+
+                if (($pending = $stay->fresh()->folio()['grand_pending']) > 0) {
+                    $withBalance++;
+                    $this->warn("Estancia {$stay->id} (hab. {$stay->room?->number}) cerró con saldo de {$pending}: queda en cuentas por cerrar.");
+                }
             } catch (Throwable $e) {
                 // P. ej. habitación movida a mantenimiento con huésped dentro:
                 // se deja para resolución manual, no debe frenar a las demás.
@@ -49,7 +65,8 @@ class AutoCheckoutOverdueStays extends Command
             }
         }
 
-        $this->info("Estancias vencidas cerradas: {$closed} de {$overdue->count()}.");
+        $this->info("Estancias vencidas cerradas: {$closed} de {$overdue->count()}"
+            .($withBalance > 0 ? " ({$withBalance} con saldo, en cuentas por cerrar)." : '.'));
 
         return self::SUCCESS;
     }

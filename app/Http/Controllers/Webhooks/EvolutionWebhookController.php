@@ -10,6 +10,7 @@ use App\Models\Message;
 use App\Models\Property;
 use App\Models\Tenant;
 use App\Services\Agent\AgentBrain;
+use App\Services\Channels\InboundVoiceService;
 use App\Services\Evolution\EvolutionApi;
 use Illuminate\Http\Request;
 
@@ -22,6 +23,22 @@ use Illuminate\Http\Request;
  */
 class EvolutionWebhookController extends Controller
 {
+    /** Nodo del mensaje de Baileys => clase de contenido nuestra. */
+    public const MEDIA_NODES = [
+        'imageMessage' => 'image',
+        'documentMessage' => 'file',
+        'audioMessage' => InboundVoiceService::KIND_AUDIO,
+        'videoMessage' => InboundVoiceService::KIND_VIDEO,
+        'stickerMessage' => InboundVoiceService::KIND_STICKER,
+    ];
+
+    /** Contenido que el bot no lee tal cual: se transcribe o se pide texto. */
+    public const SPOKEN_KINDS = [
+        InboundVoiceService::KIND_AUDIO,
+        InboundVoiceService::KIND_VIDEO,
+        InboundVoiceService::KIND_STICKER,
+    ];
+
     public function __construct(protected EvolutionApi $api) {}
 
     public function receive(Request $request, string $token)
@@ -48,12 +65,13 @@ class EvolutionWebhookController extends Controller
     /**
      * Normaliza el payload de Evolution (v1/v2, evento suelto o lote) a
      * mensajes entrantes. Ignora ecos propios (fromMe), grupos y estados
-     * de difusión. Imagen y documento viajan en `media`: el base64 si el
-     * webhook lo trae embebido (WEBHOOK_BASE64=true), o el id del mensaje
-     * para pedirlo a la API después.
+     * de difusión. Los adjuntos viajan en `media` con su clase: el base64
+     * si el webhook lo trae embebido (WEBHOOK_BASE64=true), o el id del
+     * mensaje para pedirlo a la API después. La nota de voz entra por ahí
+     * mismo y se transcribe en handleInbound.
      *
      * @param  array<string, mixed>  $payload
-     * @return array<int, array{from: string, name: string|null, body: string, externalId: string|null, media: array{base64: string|null, mime: string|null, filename: string|null}|null}>
+     * @return array<int, array{from: string, name: string|null, body: string, externalId: string|null, media: array{kind: string, base64: string|null, mime: string|null, filename: string|null, seconds: int|null}|null}>
      */
     public static function extractMessages(array $payload): array
     {
@@ -85,19 +103,28 @@ class EvolutionWebhookController extends Controller
                 ?? $content['extendedTextMessage']['text']
                 ?? $content['imageMessage']['caption']
                 ?? $content['documentMessage']['caption']
+                ?? $content['videoMessage']['caption']
                 ?? null;
 
             $media = null;
 
-            if (isset($content['imageMessage']) || isset($content['documentMessage'])) {
-                $descriptor = $content['imageMessage'] ?? $content['documentMessage'];
+            foreach (self::MEDIA_NODES as $node => $kind) {
+                if (! isset($content[$node])) {
+                    continue;
+                }
+
+                $descriptor = $content[$node];
                 $media = [
+                    'kind' => $kind,
                     // Evolution con WEBHOOK_BASE64 embebe el binario aquí.
                     'base64' => $content['base64'] ?? $item['base64'] ?? null,
                     'mime' => $descriptor['mimetype'] ?? null,
                     'filename' => $descriptor['fileName'] ?? null,
+                    // Baileys manda la duración de la nota de voz.
+                    'seconds' => isset($descriptor['seconds']) ? (int) $descriptor['seconds'] : null,
                 ];
-                $body ??= isset($content['imageMessage']) ? '[Imagen]' : '[Documento]';
+                $body ??= InboundVoiceService::label($kind);
+                break;
             }
 
             $messages[] = [
@@ -115,7 +142,7 @@ class EvolutionWebhookController extends Controller
     /**
      * Mismo camino que Meta/webchat, dentro del tenant dueño de la instancia.
      *
-     * @param  array{base64: string|null, mime: string|null, filename: string|null}|null  $media
+     * @param  array{kind: string, base64: string|null, mime: string|null, filename: string|null, seconds: int|null}|null  $media
      */
     protected function handleInbound(EvolutionChannelLink $link, string $from, ?string $name, string $body, ?string $externalId, ?array $media = null): void
     {
@@ -160,11 +187,44 @@ class EvolutionWebhookController extends Controller
             // comprobante), ligar su reserva pendiente por teléfono.
             $conversation->linkReservationByPhone();
 
+            // El binario del adjunto, venga de donde venga: el base64 que
+            // Evolution embebe en el webhook o la descarga por la API.
+            $download = function () use ($link, $media, $externalId): ?array {
+                if (! empty($media['base64'])) {
+                    $decoded = base64_decode((string) $media['base64'], true);
+
+                    return $decoded === false ? null : [
+                        'contents' => $decoded,
+                        'mime' => $media['mime'] ?? 'application/octet-stream',
+                    ];
+                }
+
+                return $externalId ? $this->api->mediaBase64($link, $externalId) : null;
+            };
+
+            // Nota de voz, video o sticker: se resuelve ANTES de guardar,
+            // para que en la bandeja se lea el dictado y no un marcador.
+            $voice = app(InboundVoiceService::class);
+            $kind = $media['kind'] ?? null;
+            // Con pie de foto manda el texto: un video con caption es un
+            // mensaje escrito con adjunto, no un mensaje que no se puede leer.
+            $spoken = in_array($kind, self::SPOKEN_KINDS, true)
+                && $body === InboundVoiceService::label((string) $kind);
+            $transcribed = false;
+            $spokenMeta = [];
+
+            if ($spoken) {
+                $interpreted = $voice->interpret((string) $kind, $download, $media['seconds'] ?? null);
+                $body = $interpreted['body'];
+                $spokenMeta = $interpreted['meta'];
+                $transcribed = $interpreted['transcribed'];
+            }
+
             $message = $conversation->messages()->create([
                 'direction' => 'in',
                 'sender_type' => 'visitor',
                 'body' => $body,
-                'meta' => array_filter(['external_id' => $externalId, 'channel' => Channel::TYPE_WHATSAPP_EVOLUTION]),
+                'meta' => array_filter(['external_id' => $externalId, 'channel' => Channel::TYPE_WHATSAPP_EVOLUTION] + $spokenMeta),
                 'created_at' => now(),
             ]);
             $conversation->update(['last_message_at' => now()]);
@@ -173,15 +233,8 @@ class EvolutionWebhookController extends Controller
             // dejar que el servicio decida su destino (adjunto/comprobante).
             $mediaOutcome = null;
 
-            if ($media !== null) {
-                $binary = null;
-
-                if (! empty($media['base64'])) {
-                    $decoded = base64_decode((string) $media['base64'], true);
-                    $binary = $decoded === false ? null : ['contents' => $decoded, 'mime' => $media['mime'] ?? 'application/octet-stream'];
-                } elseif ($externalId) {
-                    $binary = $this->api->mediaBase64($link, $externalId);
-                }
+            if (! $spoken && $media !== null) {
+                $binary = $download();
 
                 if ($binary) {
                     $mediaOutcome = app(\App\Services\Channels\InboundMediaService::class)->handle(
@@ -200,6 +253,14 @@ class EvolutionWebhookController extends Controller
                 return;
             }
 
+            // Llegó algo que no se pudo leer: se avisa que por aquí solo
+            // texto y a espera humana, en vez de dejarlo en silencio.
+            if ($spoken && ! $transcribed) {
+                $voice->askForText($conversation, (string) $kind);
+
+                return;
+            }
+
             $brain = app(AgentBrain::class);
 
             // El bot no ve imágenes: una foto sin texto espera a un humano
@@ -207,6 +268,10 @@ class EvolutionWebhookController extends Controller
             $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true);
 
             if (! $noCaption && $channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
+                // "escribiendo..." mientras piensa: el delay del envío solo
+                // cubre el tramo de DESPUÉS, no estos 3 a 8 segundos.
+                $this->api->sendPresence($link, $from);
+
                 $reply = $brain->reply($conversation);
 
                 if ($reply?->body) {

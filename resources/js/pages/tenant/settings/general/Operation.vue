@@ -7,6 +7,7 @@ import {
     FormHelp,
     FormInput,
     FormSelect,
+    FormSwitch,
     FormTime,
 } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
@@ -21,6 +22,12 @@ const props = defineProps<{
         currency: string;
         currency_secondary: string | null;
         exchange_rate: number | null;
+        support_hours_enabled: boolean;
+        support_hours_open: string;
+        support_hours_close: string;
+        support_hours_days: number[];
+        support_alert_phone: { code: string; number: string } | null;
+        default_alert_phone: { code: string; number: string } | null;
     };
 }>();
 
@@ -36,6 +43,36 @@ const form = reactive({
     currency_mode: props.settings.currency_secondary ? 'both' : 'single',
     currency_secondary: props.settings.currency_secondary ?? 'USD',
     exchange_rate: props.settings.exchange_rate ?? '',
+    support_hours_enabled: props.settings.support_hours_enabled,
+    support_hours_open: props.settings.support_hours_open,
+    support_hours_close: props.settings.support_hours_close,
+    support_hours_days: [...props.settings.support_hours_days],
+    alert_code: props.settings.support_alert_phone?.code ?? '52',
+    alert_number: props.settings.support_alert_phone?.number ?? '',
+});
+
+const WEEKDAYS = [
+    { iso: 1, label: 'Lun' },
+    { iso: 2, label: 'Mar' },
+    { iso: 3, label: 'Mié' },
+    { iso: 4, label: 'Jue' },
+    { iso: 5, label: 'Vie' },
+    { iso: 6, label: 'Sáb' },
+    { iso: 7, label: 'Dom' },
+];
+
+function toggleDay(iso: number) {
+    const days = form.support_hours_days;
+    const at = days.indexOf(iso);
+    if (at === -1) days.push(iso);
+    // Sin días no hay horario que respetar: siempre queda al menos uno.
+    else if (days.length > 1) days.splice(at, 1);
+}
+
+const alertPhoneLabel = computed(() => {
+    if (form.alert_number) return `+${form.alert_code} ${form.alert_number}`;
+    const fallback = props.settings.default_alert_phone;
+    return fallback ? `+${fallback.code} ${fallback.number}` : null;
 });
 
 const iconInput =
@@ -66,6 +103,15 @@ async function submit() {
                     form.currency_mode === 'both' && form.exchange_rate !== ''
                         ? Number(form.exchange_rate)
                         : null,
+                support_hours_enabled: form.support_hours_enabled,
+                support_hours_open: form.support_hours_open || null,
+                support_hours_close: form.support_hours_close || null,
+                support_hours_days: [...form.support_hours_days].sort(
+                    (a, b) => a - b,
+                ),
+                support_alert_phone: form.alert_number
+                    ? { code: form.alert_code, number: form.alert_number }
+                    : null,
             },
         });
         toast.success('Guardado', 'Horarios y moneda actualizados.');
@@ -294,6 +340,156 @@ async function submit() {
                                     class="text-danger"
                                     >{{ errors.timezone }}</FormHelp
                                 >
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Horario de ATENCIÓN: quién contesta y a qué hora.
+                     Ancho completo porque la fila de días no cabe en media. -->
+                <div class="col-span-12">
+                    <div class="box box--stacked">
+                        <div
+                            class="border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                        >
+                            <div class="flex items-center gap-2">
+                                <Lucide
+                                    icon="Headset"
+                                    class="h-4 w-4 stroke-[1.5] text-primary"
+                                />
+                                <h2 class="text-sm font-medium">
+                                    Horario de atención
+                                </h2>
+                            </div>
+                            <p class="mt-1 text-xs text-slate-500">
+                                Cuándo hay alguien para contestar el chat. No es
+                                el check-in: es tu turno de trabajo.
+                            </p>
+                        </div>
+                        <div class="p-5">
+                            <div
+                                class="flex items-start justify-between gap-4 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                            >
+                                <div class="text-xs">
+                                    <div class="text-sm font-medium">
+                                        Atender solo en un horario
+                                    </div>
+                                    <p class="mt-1 text-xs text-slate-500">
+                                        Apagado, el asistente contesta como
+                                        siempre. Encendido, fuera de esas horas
+                                        sigue cotizando y apartando, pero le
+                                        dice al huésped que el equipo retoma al
+                                        día siguiente en vez de prometer que lo
+                                        atienden en un momento.
+                                    </p>
+                                </div>
+                                <FormSwitch class="mt-1">
+                                    <FormSwitch.Input
+                                        :checked="form.support_hours_enabled"
+                                        type="checkbox"
+                                        @change="
+                                            form.support_hours_enabled =
+                                                !form.support_hours_enabled
+                                        "
+                                    />
+                                </FormSwitch>
+                            </div>
+
+                            <div
+                                v-if="form.support_hours_enabled"
+                                class="mt-4 grid grid-cols-12 gap-4"
+                            >
+                                <div class="col-span-6 sm:col-span-3">
+                                    <label class="mb-1 block text-xs"
+                                        >Abren a las</label
+                                    >
+                                    <FormTime
+                                        v-model="form.support_hours_open"
+                                        input-class="h-9 text-xs"
+                                    />
+                                    <FormHelp
+                                        v-if="errors.support_hours_open"
+                                        class="text-danger"
+                                        >{{
+                                            errors.support_hours_open
+                                        }}</FormHelp
+                                    >
+                                </div>
+                                <div class="col-span-6 sm:col-span-3">
+                                    <label class="mb-1 block text-xs"
+                                        >Cierran a las</label
+                                    >
+                                    <FormTime
+                                        v-model="form.support_hours_close"
+                                        input-class="h-9 text-xs"
+                                    />
+                                    <FormHelp
+                                        v-if="errors.support_hours_close"
+                                        class="text-danger"
+                                        >{{
+                                            errors.support_hours_close
+                                        }}</FormHelp
+                                    >
+                                </div>
+                                <div class="col-span-12 sm:col-span-6">
+                                    <label class="mb-1 block text-xs"
+                                        >Días que atienden</label
+                                    >
+                                    <div class="flex flex-wrap gap-1.5">
+                                        <button
+                                            v-for="day in WEEKDAYS"
+                                            :key="day.iso"
+                                            type="button"
+                                            class="h-9 rounded-full border px-3 text-[11px] font-medium transition"
+                                            :class="
+                                                form.support_hours_days.includes(
+                                                    day.iso,
+                                                )
+                                                    ? 'border-primary/30 bg-primary/10 text-primary'
+                                                    : 'border-slate-200 bg-white text-slate-500 hover:border-primary/30 dark:border-darkmode-400 dark:bg-darkmode-600'
+                                            "
+                                            @click="toggleDay(day.iso)"
+                                        >
+                                            {{ day.label }}
+                                        </button>
+                                    </div>
+                                    <FormHelp
+                                        >Los días que no marques cuentan como
+                                        fuera de horario todo el día.</FormHelp
+                                    >
+                                </div>
+
+                                <div class="col-span-12">
+                                    <label class="mb-1 block text-xs"
+                                        >WhatsApp para avisos del hotel</label
+                                    >
+                                    <div class="flex gap-2">
+                                        <FormInput
+                                            v-model="form.alert_code"
+                                            type="text"
+                                            class="h-9 w-16 text-xs"
+                                            placeholder="52"
+                                        />
+                                        <FormInput
+                                            v-model="form.alert_number"
+                                            type="text"
+                                            class="h-9 flex-1 text-xs"
+                                            placeholder="6568508818"
+                                        />
+                                    </div>
+                                    <FormHelp v-if="alertPhoneLabel"
+                                        >Cuando entre una cotización fuera de
+                                        horario, o el asistente pase una
+                                        conversación a recepción, llega un
+                                        mensaje a {{ alertPhoneLabel }} con el
+                                        enlace a la bandeja.</FormHelp
+                                    >
+                                    <FormHelp v-else class="text-danger"
+                                        >Sin número aquí ni teléfono del hotel
+                                        en Contacto, el aviso solo queda en la
+                                        campana del panel.</FormHelp
+                                    >
+                                </div>
                             </div>
                         </div>
                     </div>

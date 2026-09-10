@@ -123,6 +123,21 @@ class PropertyController extends Controller
             // pagar en línea y pagar al llegar. Solo surte efecto si la
             // plataforma permite el método (PaymentMethodGate).
             'settings.cash_payment_enabled' => ['sometimes', 'boolean'],
+            // Horario de ATENCIÓN del personal (Datos generales → Horarios).
+            // No confundir con check_in_time: esto es cuándo hay gente para
+            // contestar el chat. Con esto el asistente deja de prometer
+            // atención inmediata de madrugada y el hotel recibe el aviso de
+            // las cotizaciones que entran fuera de turno.
+            'settings.support_hours_enabled' => ['sometimes', 'boolean'],
+            'settings.support_hours_open' => ['sometimes', 'nullable', 'date_format:H:i'],
+            'settings.support_hours_close' => ['sometimes', 'nullable', 'date_format:H:i'],
+            'settings.support_hours_days' => ['sometimes', 'nullable', 'array', 'max:7'],
+            'settings.support_hours_days.*' => ['integer', 'between:1,7'],
+            // WhatsApp al que llegan esos avisos; vacío = el teléfono
+            // principal del hotel.
+            'settings.support_alert_phone' => ['sometimes', 'nullable', 'array'],
+            'settings.support_alert_phone.code' => ['nullable', 'string', 'max:4'],
+            'settings.support_alert_phone.number' => ['nullable', 'string', 'max:15'],
             'settings.policies' => ['nullable', 'string', 'max:5000'],
             // Instrucciones libres para el asistente IA (tono, reglas propias,
             // contexto del negocio) — se inyectan en su system prompt.
@@ -205,6 +220,15 @@ class PropertyController extends Controller
             'settings.hk_cleaning_value' => ['sometimes', 'integer', 'min:1', 'max:999'],
             'settings.hk_cleaning_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['minute', 'hour'])],
             'settings.day_close_no_checkin' => ['sometimes', \Illuminate\Validation\Rule::in(['dirty', 'available', 'none'])],
+            // Ventana de llegada: el cierre de día mira la SALIDA, así que
+            // una reserva de tres noches que nadie ocupó tenía el cuarto
+            // apartado las tres. Esto mira la ENTRADA. Mínimo una hora: por
+            // debajo se pelearía con el check-in automático, que corre cada
+            // minuto y necesita margen para ganar cuando el cuarto se libera
+            // tarde.
+            'settings.arrival_no_show_enabled' => ['sometimes', 'boolean'],
+            'settings.arrival_no_show_value' => ['sometimes', 'integer', 'min:1', 'max:99'],
+            'settings.arrival_no_show_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['hour'])],
             'settings.phone_country_code' => ['sometimes', 'string', 'max:4'],
             // Canal para avisos directos al huésped (sin conversación):
             // Meta oficial, Evolution, o automático con respaldo.

@@ -46,6 +46,28 @@ class TelegramApi
     }
 
     /**
+     * "escribiendo..." mientras el bot piensa. Telegram lo apaga solo a los
+     * 5 segundos o cuando llega el mensaje; para respuestas más lentas se
+     * vuelve a mandar, pero con una vez basta para que no parezca muerto.
+     */
+    public function sendChatAction(TelegramChannelLink $link, string $chatId, string $action = 'typing'): bool
+    {
+        try {
+            // Timeout corto: corre ANTES del modelo, dentro del webhook.
+            $response = Http::timeout(5)->acceptJson()->post($this->url($link, 'sendChatAction'), [
+                'chat_id' => $chatId,
+                'action' => $action,
+            ]);
+
+            return $response->successful();
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
+    }
+
+    /**
      * Adjunto saliente (foto o PDF que manda el staff desde la bandeja).
      * La Bot API recibe el archivo en el propio POST (multipart), así que
      * no hace falta exponerlo públicamente.
@@ -99,6 +121,7 @@ class TelegramApi
 
     /**
      * Identidad del bot (getMe): valida el token al conectar y da el
+     *
      * @username que se muestra en el panel.
      *
      * @return array{ok: bool, username: string|null}

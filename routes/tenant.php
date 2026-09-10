@@ -226,6 +226,13 @@ Route::middleware([
             ->middleware('can:reservations.view')
             ->name('reservations.in-house');
 
+        // Cuentas por cerrar: estancias que ya se cerraron (casi siempre por
+        // el reloj) y a las que les quedó dinero sin registrar. Antes esto no
+        // existía y el saldo desaparecía del panel.
+        Route::get('/reservas/cuentas', [\App\Http\Controllers\Tenant\StaySettlementController::class, 'index'])
+            ->middleware('can:reservations.view')
+            ->name('reservations.settlements');
+
         // Apariencia del wizard público (logo, colores, modo oscuro de
         // /reservar) — se entra desde /ajustes/wizard (botón Apariencia);
         // el comportamiento vive en /ajustes/wizard.
@@ -901,9 +908,27 @@ Route::middleware([
             Route::patch('stays/{stay}/arrival', [StayController::class, 'completeArrival'])->name('stays.arrival');
             // Cargo extra sobre la estancia (daños al revisar la habitación).
             Route::post('stays/{stay}/charges', [StayController::class, 'addCharge'])->name('stays.charges');
+            // Quitar un cargo mal capturado antes de registrar la salida: el
+            // botón "Agregar" era de ida y el daño se quedaba en la cuenta.
+            Route::delete('stays/{stay}/charges/{charge}', [StayController::class, 'destroyCharge'])->name('stays.charges.destroy');
             Route::patch('stays/{stay}/extend', [StayController::class, 'extend'])->name('stays.extend');
             Route::patch('stays/{stay}/room', [StayController::class, 'changeRoom'])->name('stays.change-room');
             Route::patch('stays/{stay}/check-out', [StayController::class, 'checkOut'])->name('stays.check-out');
+
+            // Cuentas por cerrar (/reservas/cuentas): lo que se puede hacer
+            // con una estancia YA cerrada a la que le quedó saldo. Todo pasa
+            // por el mismo permiso que registrar una salida, porque es el
+            // mismo dinero, solo que tarde.
+            Route::post('stays/{stay}/settlement/payment', [\App\Http\Controllers\Tenant\StaySettlementController::class, 'pay'])
+                ->name('stays.settlement.payment');
+            Route::post('stays/{stay}/settlement/charge', [\App\Http\Controllers\Tenant\StaySettlementController::class, 'charge'])
+                ->name('stays.settlement.charge');
+            Route::patch('stays/{stay}/settlement/checked-out-at', [\App\Http\Controllers\Tenant\StaySettlementController::class, 'checkedOutAt'])
+                ->name('stays.settlement.checkout-at');
+            Route::patch('stays/{stay}/settlement/close', [\App\Http\Controllers\Tenant\StaySettlementController::class, 'close'])
+                ->name('stays.settlement.close');
+            Route::patch('stays/{stay}/settlement/reopen', [\App\Http\Controllers\Tenant\StaySettlementController::class, 'reopen'])
+                ->name('stays.settlement.reopen');
         });
 
         // Inventario (fase 3): catálogo y stock.

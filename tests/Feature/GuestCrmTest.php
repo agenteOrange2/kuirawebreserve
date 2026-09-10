@@ -167,3 +167,38 @@ it('cuenta como visita la reserva completada sin estancia (historial migrado)', 
         ->and($metrics['total_spent'])->toBe(3000.0)
         ->and($metrics['last_visit'])->toBe(now()->subDays(10)->format('d/m/Y'));
 });
+
+it('el buscador y los listados cuentan las visitas migradas, no solo las estancias', function () {
+    $guest = Guest::create(['first_name' => 'Frecuente', 'phone' => '+52644444']);
+
+    // Tres visitas del sitio anterior: reservas completadas sin estancia.
+    // El buscador de recepción contaba solo estancias y decía "0 visitas"
+    // (reclamo de Real de la Sierra, 2026-09-10).
+    foreach ([30, 20, 10] as $dias) {
+        \App\Models\Reservation::create([
+            'property_id' => $this->property->id,
+            'room_type_id' => $this->roomType->id,
+            'room_id' => $this->room->id,
+            'rate_plan_id' => $this->plan->id,
+            'guest_id' => $guest->id,
+            'guest_name' => 'Frecuente',
+            'num_people' => 2,
+            'starts_at' => now()->subDays($dias)->setTime(14, 0),
+            'ends_at' => now()->subDays($dias - 1)->setTime(11, 0),
+            'status' => \App\Enums\ReservationStatus::Completed,
+            'total_amount' => 3000,
+            'source_channel' => 'web',
+        ]);
+    }
+
+    expect(Guest::query()->withVisits()->find($guest->id)->visits)->toBe(3)
+        ->and($guest->metrics()['visits'])->toBe(3)
+        // Sin withVisits() no se inventa un cero: el dato no se cargó.
+        ->and(Guest::query()->find($guest->id)->visits)->toBeNull();
+
+    $search = app(\App\Http\Controllers\Tenant\GuestController::class)
+        ->search(\Illuminate\Http\Request::create('/huespedes/buscar', 'GET', ['q' => 'Frecuente']))
+        ->getData(true);
+
+    expect($search[0]['visits'])->toBe(3);
+});

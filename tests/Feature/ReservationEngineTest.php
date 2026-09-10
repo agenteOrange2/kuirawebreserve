@@ -131,7 +131,13 @@ it('cancelar libera la disponibilidad', function () {
 });
 
 it('check-in crea la estancia y ocupa; check-out deja sucia', function () {
-    $reservation = makeReservation(['room_id' => $this->rooms[0]->id]);
+    // Llega hoy: registrar la llegada de una reserva de otro día es
+    // "llegada anticipada" y exige confirmarlo a mano.
+    $reservation = makeReservation([
+        'room_id' => $this->rooms[0]->id,
+        'starts_at' => now()->addHours(2),
+        'ends_at' => now()->addDays(2)->setTime(12, 0),
+    ]);
 
     $stay = app(TransitionReservation::class)->checkIn($reservation);
 

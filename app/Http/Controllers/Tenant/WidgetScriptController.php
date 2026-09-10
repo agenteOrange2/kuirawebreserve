@@ -12,6 +12,10 @@ use Illuminate\Http\Response;
  * dominio del hotel. Busca <div data-kuira-widget="reservas|experiencias
  * |grupos"> e inyecta el wizard como iframe con alto autoajustable.
  * Los precios SIEMPRE son en vivo: el iframe habla directo con el motor.
+ *
+ * `data-kuira-room="<id de tipo de habitación>"` (solo en el widget de
+ * reservas) acota el wizard a UNA habitación: el hotel pega un embed
+ * distinto en la página de cada cabaña y ahí solo se reserva esa.
  */
 class WidgetScriptController extends Controller
 {
@@ -32,8 +36,11 @@ class WidgetScriptController extends Controller
             if (el.getAttribute('data-kuira-loaded')) continue;
             el.setAttribute('data-kuira-loaded', '1');
             var kind = el.getAttribute('data-kuira-widget');
+            // Habitacion fija: solo digitos, se ignora cualquier otra cosa.
+            var room = (el.getAttribute('data-kuira-room') || '').replace(/[^0-9]/g, '');
             var iframe = document.createElement('iframe');
-            iframe.src = ORIGIN + (PATHS[kind] || PATHS.reservas) + '?embed=1';
+            iframe.src = ORIGIN + (PATHS[kind] || PATHS.reservas) + '?embed=1'
+                + (room && kind === 'reservas' ? '&habitacion=' + room : '');
             iframe.title = 'Reservas en linea';
             iframe.loading = 'lazy';
             iframe.setAttribute('allow', 'payment');

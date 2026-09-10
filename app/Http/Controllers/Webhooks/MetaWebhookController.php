@@ -11,6 +11,7 @@ use App\Models\Message;
 use App\Models\SocialPost;
 use App\Models\Tenant;
 use App\Services\Agent\AgentBrain;
+use App\Services\Channels\InboundVoiceService;
 use App\Services\Meta\MetaApi;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -24,7 +25,39 @@ use Illuminate\Support\Facades\Log;
  */
 class MetaWebhookController extends Controller
 {
+    /**
+     * Tipo que manda Meta => clase de contenido nuestra. Junta los nombres
+     * de WhatsApp (document, voice, sticker) con los de Messenger e
+     * Instagram (file), que son los mismos adjuntos con otro nombre.
+     */
+    public const MEDIA_KINDS = [
+        'image' => 'image',
+        'document' => 'file',
+        'file' => 'file',
+        'audio' => InboundVoiceService::KIND_AUDIO,
+        'voice' => InboundVoiceService::KIND_AUDIO,
+        'video' => InboundVoiceService::KIND_VIDEO,
+        'sticker' => InboundVoiceService::KIND_STICKER,
+    ];
+
+    /** Contenido que el bot no lee tal cual: se transcribe o se pide texto. */
+    public const SPOKEN_KINDS = [
+        InboundVoiceService::KIND_AUDIO,
+        InboundVoiceService::KIND_VIDEO,
+        InboundVoiceService::KIND_STICKER,
+    ];
+
     public function __construct(protected MetaApi $api) {}
+
+    /**
+     * Etiqueta del mensaje cuando no viene texto. Imagen y documento
+     * conservan la suya de siempre: el flujo de comprobantes se apoya en
+     * esas dos cadenas exactas.
+     */
+    public static function placeholderFor(?string $kind, string $type = ''): string
+    {
+        return InboundVoiceService::label($kind, $type);
+    }
 
     /** Verificación de la suscripción (GET con hub.challenge). */
     public function verify(Request $request)
@@ -67,13 +100,13 @@ class MetaWebhookController extends Controller
                     $contactName = $value['contacts'][0]['profile']['name'] ?? null;
 
                     foreach ($value['messages'] ?? [] as $message) {
-                        // Imagen y documento entran al flujo (media_id se
-                        // baja por la Graph API); otros tipos siguen con
-                        // el placeholder de siempre.
+                        // Imagen y documento se guardan como adjunto; nota
+                        // de voz, video y sticker entran por el camino de
+                        // InboundVoiceService (transcribir o pedir texto).
+                        // Todos bajan su binario por la Graph API.
                         $type = (string) ($message['type'] ?? 'text');
-                        $mediaInfo = in_array($type, ['image', 'document'], true)
-                            ? ($message[$type] ?? null)
-                            : null;
+                        $kind = self::MEDIA_KINDS[$type] ?? null;
+                        $mediaInfo = $kind !== null ? ($message[$type] ?? null) : null;
 
                         $this->handleInbound(
                             $link,
@@ -81,14 +114,16 @@ class MetaWebhookController extends Controller
                             name: $contactName,
                             body: $message['text']['body']
                                 ?? $mediaInfo['caption']
-                                ?? ($mediaInfo !== null
-                                    ? ($type === 'image' ? '[Imagen]' : '[Documento]')
-                                    : '['.$type.' no soportado todavía]'),
+                                ?? self::placeholderFor($mediaInfo !== null ? $kind : null, $type),
                             externalId: $message['id'] ?? null,
                             media: $mediaInfo !== null ? [
+                                'kind' => $kind,
                                 'media_id' => (string) ($mediaInfo['id'] ?? ''),
                                 'mime' => $mediaInfo['mime_type'] ?? null,
                                 'filename' => $mediaInfo['filename'] ?? null,
+                                // La Cloud API manda la duración del audio;
+                                // sirve para no transcribir monólogos.
+                                'seconds' => isset($mediaInfo['duration']) ? (int) $mediaInfo['duration'] : null,
                             ] : null,
                         );
                     }
@@ -185,7 +220,7 @@ class MetaWebhookController extends Controller
                         $link,
                         from: $sender,
                         name: null,
-                        body: $text ?: ($media['kind'] === 'file' ? '[Documento]' : '[Imagen]'),
+                        body: $text ?: self::placeholderFor($media['kind'] ?? null),
                         externalId: $event['message']['mid'] ?? null,
                         media: $media ? $media + ['media_id' => ''] : null,
                     );
@@ -228,34 +263,46 @@ class MetaWebhookController extends Controller
 
         return [
             'from' => $sender,
-            'body' => (string) ($text ?: ($media['kind'] === 'file' ? '[Documento]' : '[Imagen]')),
+            'body' => (string) ($text ?: self::placeholderFor($media['kind'] ?? null)),
             'external_id' => $value['message']['mid'] ?? null,
             'media' => $media,
         ];
     }
 
     /**
-     * Primer adjunto descargable de un mensaje de Messenger/Instagram:
-     * imagen o documento con URL directa del CDN de Meta. Audio, video y
-     * stickers siguen sin soporte (igual que en WhatsApp).
+     * Primer adjunto descargable de un mensaje de Messenger/Instagram, con
+     * URL directa del CDN de Meta. Imagen y documento se guardan como
+     * adjunto; la nota de voz se transcribe y el video queda en aviso de
+     * "solo texto" — antes los dos últimos se tiraban en silencio y el
+     * huésped se quedaba sin respuesta (caso cabañas 2026-09-04).
      *
      * @param  array<int, mixed>  $attachments
      * @return array{url: string, kind: string}|null
      */
     public static function firstDownloadableAttachment(array $attachments): ?array
     {
+        $spoken = null;
+
         foreach ($attachments as $attachment) {
             $type = (string) ($attachment['type'] ?? '');
             $url = (string) ($attachment['payload']['url'] ?? '');
+            $kind = self::MEDIA_KINDS[$type] ?? null;
 
-            if ($url === '' || ! in_array($type, ['image', 'file'], true)) {
+            if ($url === '' || $kind === null) {
                 continue;
             }
 
-            return ['url' => $url, 'kind' => $type];
+            // Imagen y documento mandan sobre lo demás: si el huésped
+            // acompaña su video con el comprobante, el que importa es el
+            // comprobante. Lo hablado se guarda por si no viene ninguno.
+            if (! in_array($kind, self::SPOKEN_KINDS, true)) {
+                return ['url' => $url, 'kind' => $kind];
+            }
+
+            $spoken ??= ['url' => $url, 'kind' => $kind];
         }
 
-        return null;
+        return $spoken;
     }
 
     /**
@@ -390,11 +437,36 @@ class MetaWebhookController extends Controller
                 $conversation->linkReservationByPhone();
             }
 
+            // Nota de voz, video o sticker: se resuelve ANTES de guardar,
+            // para que en la bandeja se lea el dictado y no un marcador.
+            $voice = app(InboundVoiceService::class);
+            $kind = $media['kind'] ?? null;
+            // Con pie de foto manda el texto: un video con caption es un
+            // mensaje escrito con adjunto, no un mensaje que no se puede leer.
+            $spoken = in_array($kind, self::SPOKEN_KINDS, true)
+                && $body === InboundVoiceService::label((string) $kind);
+            $transcribed = false;
+            $spokenMeta = [];
+
+            if ($spoken) {
+                $interpreted = $voice->interpret(
+                    (string) $kind,
+                    fn () => $link->type === 'whatsapp'
+                        ? $this->api->downloadMedia($link, (string) ($media['media_id'] ?? ''))
+                        : $this->api->downloadMediaUrl((string) ($media['url'] ?? '')),
+                    $media['seconds'] ?? null,
+                );
+
+                $body = $interpreted['body'];
+                $spokenMeta = $interpreted['meta'];
+                $transcribed = $interpreted['transcribed'];
+            }
+
             $message = $conversation->messages()->create([
                 'direction' => 'in',
                 'sender_type' => 'visitor',
                 'body' => $body,
-                'meta' => array_filter(['external_id' => $externalId, 'channel' => $link->type]),
+                'meta' => array_filter(['external_id' => $externalId, 'channel' => $link->type] + $spokenMeta),
                 'created_at' => now(),
             ]);
             $conversation->update(['last_message_at' => now()]);
@@ -403,7 +475,7 @@ class MetaWebhookController extends Controller
             // que el servicio decida su destino (adjunto/comprobante).
             $mediaOutcome = null;
 
-            if ($media !== null && ($media['media_id'] ?? '') !== '' && $link->type === 'whatsapp') {
+            if (! $spoken && $media !== null && ($media['media_id'] ?? '') !== '' && $link->type === 'whatsapp') {
                 $binary = $this->api->downloadMedia($link, $media['media_id']);
 
                 if ($binary) {
@@ -419,7 +491,7 @@ class MetaWebhookController extends Controller
 
             // Messenger/Instagram mandan el adjunto como URL directa del CDN
             // de Meta: mismo destino (adjunto del mensaje o comprobante).
-            if ($media !== null && ($media['url'] ?? '') !== '' && in_array($link->type, ['messenger', 'instagram'], true)) {
+            if (! $spoken && $media !== null && ($media['url'] ?? '') !== '' && in_array($link->type, ['messenger', 'instagram'], true)) {
                 $binary = $this->api->downloadMediaUrl($media['url']);
 
                 if ($binary) {
@@ -438,6 +510,16 @@ class MetaWebhookController extends Controller
                 return;
             }
 
+            // Llegó algo que no se pudo leer: se avisa que por aquí solo
+            // texto y a espera humana. El huésped SÍ contestó — dejarlo en
+            // silencio es lo que hacía que el seguimiento le preguntara
+            // "¿sigues por ahí?" a quien acababa de hablar.
+            if ($spoken && ! $transcribed) {
+                $voice->askForText($conversation, (string) $kind);
+
+                return;
+            }
+
             $brain = app(AgentBrain::class);
 
             // El bot no ve imágenes: una foto sin texto espera a un humano
@@ -445,6 +527,10 @@ class MetaWebhookController extends Controller
             $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true);
 
             if (! $noCaption && $channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
+                // "escribiendo..." antes de pensar: la respuesta tarda de 3
+                // a 8 segundos y ese hueco se lee como que nadie contestó.
+                $this->api->sendTyping($link, $from, $externalId);
+
                 $reply = $brain->reply($conversation);
 
                 if ($reply?->body) {

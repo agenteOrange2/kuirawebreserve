@@ -95,13 +95,17 @@ class StayController extends Controller
             'arrival_pending' => ['sometimes', 'boolean'],
             // En carro o a pie: lo elige la caseta y ya no se vuelve a pedir.
             'arrival_mode' => ['nullable', Rule::in(['vehicle', 'foot'])],
-            // Fianza (depósito en garantía): método presencial. Se recibe en
-            // la mano, así que solo efectivo o terminal — y solo si la
-            // recepción los acepta. El monto default lo pone el ajuste del
-            // hotel; ajustarlo exige motivo (ver ChargeGuarantee).
-            'guarantee_method' => ['nullable', \Illuminate\Validation\Rule::in($this->counterMethods(['cash', 'card']))],
+            // Fianza (depósito en garantía): la recibe el mostrador con
+            // cualquiera de las formas que el hotel acepta en /ajustes/
+            // metodos-pago → Políticas. Antes iba cableada a efectivo o
+            // terminal "porque se recibe en la mano", y eso dejaba fuera al
+            // hotel que sí cobra depósitos por transferencia. El monto
+            // default lo pone el ajuste; ajustarlo exige motivo, y la
+            // transferencia exige referencia (ver ChargeGuarantee).
+            'guarantee_method' => ['nullable', \Illuminate\Validation\Rule::in($this->counterMethods())],
             'guarantee_amount' => ['nullable', 'numeric', 'min:0', 'max:999999'],
             'guarantee_reason' => ['nullable', 'string', 'max:255'],
+            'guarantee_reference' => ['nullable', 'string', 'max:100'],
         ]);
 
         try {
@@ -189,7 +193,14 @@ class StayController extends Controller
         ]);
 
         try {
-            $folio = $stay->folio();
+            // La fianza va PRIMERO: si se aplica a la cuenta, baja el saldo y
+            // lo que se cobra en mostrador es solo el excedente. Al revés se
+            // le cobraba al huésped la cuenta completa y además se le
+            // retenía el depósito — la copia decía "puedes cubrirlo con
+            // ella" y el código nunca lo hacía.
+            $this->settleGuarantee($request, $stay, $data);
+
+            $folio = $stay->fresh()->folio();
 
             if ($folio['grand_pending'] > 0) {
                 if (! empty($data['payment_method'])) {
@@ -204,8 +215,6 @@ class StayController extends Controller
                     ], 422);
                 }
             }
-
-            $this->settleGuarantee($request, $stay, $data);
 
             $action->checkOut($stay, $request->user());
         } catch (InvalidArgumentException $e) {
@@ -259,10 +268,53 @@ class StayController extends Controller
             throw new InvalidArgumentException('Para retener la fianza indica el motivo (daños, faltantes...).');
         }
 
+        // Lo que la cuenta puede absorber. El resto se queda retenido a secas
+        // (penalización), que es lo que hacía antes con TODO el depósito.
+        $pending = $stay->folio()['grand_pending'];
+
         foreach ($guarantees as $payment) {
             $payment->update([
                 'notes' => trim(($payment->notes ? $payment->notes.' | ' : '')."Fianza retenida: {$reason}"),
             ]);
+
+            $aplicar = round(min($payment->refundableAmount(), $pending), 2);
+
+            if ($aplicar <= 0) {
+                continue;
+            }
+
+            // Aplicar = el depósito deja de ser pasivo y paga la cuenta. Se
+            // registran las dos patas —devolución del depósito y cobro por el
+            // mismo monto y método— porque es exactamente lo que pasa: el
+            // dinero ya estaba en el cajón y ahora es venta. Así el arqueo no
+            // lo cuenta dos veces (la devolución compensa la fianza en
+            // efectivo) y el corte lo ve como el ingreso que es.
+            app(\App\Actions\Payments\RefundPayment::class)->handle(
+                $payment,
+                $aplicar,
+                "Fianza aplicada a la cuenta: {$reason}",
+                $request->user(),
+                manual: true,
+            );
+
+            $stay->payments()->create([
+                'amount' => $aplicar,
+                'method' => $payment->method,
+                'kind' => Payment::KIND_LODGING,
+                // Con reserva, el hospedaje lo manda ELLA: folio() lee
+                // reservation.paidTotal(), que suma por reservation_id. Sin
+                // esta línea el saldo no bajaría y el cobro se pediría dos
+                // veces (mismo motivo por el que la fianza va sin ella).
+                'reservation_id' => $stay->reservation_id,
+                'notes' => "Cubierto con la fianza: {$reason}",
+                'received_by' => $request->user()?->id,
+                'paid_at' => now(),
+                'created_at' => now(),
+            ]);
+
+            $stay->reservation?->syncPaymentStatus();
+
+            $pending = round($pending - $aplicar, 2);
         }
     }
 
@@ -276,10 +328,19 @@ class StayController extends Controller
         // Fianza viva de la estancia (cobrada y aún no devuelta): el modal
         // de salida ofrece devolverla. Fuera del folio a propósito — no es
         // parte de la cuenta, es un pasivo que regresa.
-        $guaranteeRefundable = round($stay->payments()
+        $guarantees = $stay->payments()
             ->where('kind', Payment::KIND_GUARANTEE)
-            ->get()
-            ->sum(fn (Payment $payment) => $payment->refundableAmount()), 2);
+            ->get();
+
+        $guaranteeRefundable = round(
+            $guarantees->sum(fn (Payment $payment) => $payment->refundableAmount()),
+            2,
+        );
+
+        // Por dónde entró el depósito: el efectivo sale del cajón, pero una
+        // transferencia hay que regresarla a una cuenta, y sin decirlo aquí
+        // quien registra la salida no tiene cómo saberlo.
+        $guaranteeLive = $guarantees->first(fn (Payment $payment) => $payment->refundableAmount() > 0);
 
         return [
             // Quién y dónde: lo necesitan el PDF de la cuenta y el mensaje que
@@ -299,7 +360,16 @@ class StayController extends Controller
             'lodging_pending' => $folio['lodging_pending'],
             'consumption_pending' => $folio['consumption_pending'],
             'grand_pending' => $folio['grand_pending'],
+            // Daños capturados en esta salida: el mostrador tiene que ver
+            // qué sumó y poder quitarlo antes de cobrar. Antes solo existía
+            // un contador ("2 daños cargados") y no había manera de deshacer.
+            'damages' => $folio['damages'],
+            'damages_total' => $folio['damages_total'],
             'guarantee_refundable' => $guaranteeRefundable,
+            'guarantee_method_label' => $guaranteeLive
+                ? Payment::methodLabel((string) $guaranteeLive->method)
+                : null,
+            'guarantee_reference' => $guaranteeLive?->reference,
             'orders' => $folio['orders']->map(fn (Order $order) => [
                 'id' => $order->id,
                 'total' => (float) $order->total,
@@ -463,16 +533,88 @@ class StayController extends Controller
         ]);
 
         $line = [
+            // Id propio para poder quitarlo después: por posición se borraba
+            // el equivocado en cuanto alguien agregaba otro en paralelo.
+            'id' => (string) \Illuminate\Support\Str::uuid(),
             'concept' => trim($data['concept']),
             'amount' => round((float) $data['amount'], 2),
             'kind' => $data['kind'] ?? 'damage',
         ];
 
-        $stay->extra_charges = [...($stay->extra_charges ?? []), $line];
-        $stay->amount = round((float) $stay->amount + $line['amount'], 2);
-        $stay->save();
+        $this->applyCharge($stay, $line, 1);
 
         return response()->json($this->serializeFolio($stay->fresh()));
+    }
+
+    /**
+     * Quitar un cargo capturado por error antes de registrar la salida.
+     *
+     * Sin esto, un daño mal tecleado se quedaba en la cuenta para siempre:
+     * el botón "Agregar" era de ida y el mostrador tenía que cobrarlo o
+     * forzar la salida con saldo.
+     */
+    public function destroyCharge(Stay $stay, string $charge): JsonResponse
+    {
+        if ($stay->status !== Stay::STATUS_ACTIVE) {
+            return response()->json([
+                'message' => 'Esa estancia ya no está activa; su cuenta se corrige en Cuentas por cerrar.',
+            ], 422);
+        }
+
+        $line = collect($stay->extra_charges ?? [])
+            ->first(fn ($item, $i) => (string) ($item['id'] ?? $i) === $charge);
+
+        if ($line === null) {
+            return response()->json(['message' => 'Ese cargo ya no está en la cuenta.'], 404);
+        }
+
+        $this->applyCharge($stay, $line, -1, $charge);
+
+        return response()->json($this->serializeFolio($stay->fresh()));
+    }
+
+    /**
+     * Suma (o resta, con -1) un cargo a la cuenta de la estancia.
+     *
+     * Con reserva, el hospedaje lo manda ELLA: Stay::folio() lee
+     * reservation.total_amount y no stay.amount, así que tocar solo la
+     * estancia dejaba el daño invisible y sin cobrar. Ese era el bug de
+     * "agrego el daño y no aparece en la cuenta".
+     *
+     * @param  array<string, mixed>  $line
+     * @param  string|null  $id  Con qué identificador se encontró la línea.
+     *                           Los cargos viejos no traen `id` y se ubican
+     *                           por posición: derivarlo de la línea daba ''
+     *                           y el cargo se restaba de la cuenta sin
+     *                           borrarse de la lista.
+     */
+    protected function applyCharge(Stay $stay, array $line, int $sign, ?string $id = null): void
+    {
+        $delta = round($sign * (float) $line['amount'], 2);
+        $id ??= (string) ($line['id'] ?? '');
+
+        $lines = collect($stay->extra_charges ?? []);
+        $stay->extra_charges = ($sign > 0
+            ? $lines->push($line)
+            : $lines->reject(fn ($item, $i) => (string) ($item['id'] ?? $i) === $id)
+        )->values()->all();
+
+        $stay->amount = max(0, round((float) $stay->amount + $delta, 2));
+        $stay->save();
+
+        if (! $stay->reservation) {
+            return;
+        }
+
+        $reservationLines = collect($stay->reservation->extra_charges ?? []);
+        $stay->reservation->update([
+            'total_amount' => max(0, round((float) $stay->reservation->total_amount + $delta, 2)),
+            'extra_charges' => ($sign > 0
+                ? $reservationLines->push($line)
+                : $reservationLines->reject(fn ($item, $i) => (string) ($item['id'] ?? $i) === $id)
+            )->values()->all(),
+        ]);
+        $stay->reservation->syncPaymentStatus();
     }
 
     /**

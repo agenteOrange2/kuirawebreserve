@@ -43,7 +43,8 @@ class ImportLegacyWebReservations extends Command
     protected $signature = 'reservas:importar-web-anterior
         {archivo : JSON exportado del respaldo del sitio anterior}
         {--tenant= : Id del tenant destino}
-        {--dry-run : Simula todo y deshace al final}';
+        {--dry-run : Simula todo y deshace al final}
+        {--sincronizar : Actualiza las ya migradas con lo que cambió allá (estado, cabaña, fechas, precio, cobro) y cancela las que se borraron}';
 
     protected $description = 'Migra las reservas (y las grupales) del sitio anterior al panel del hotel';
 
@@ -355,6 +356,10 @@ class ImportLegacyWebReservations extends Command
             if (isset($yaImportadas[$wpId])) {
                 $this->conteo['reservas_ya_estaban'] = ($this->conteo['reservas_ya_estaban'] ?? 0) + 1;
 
+                if ($this->option('sincronizar')) {
+                    $this->sincronizarReserva($r, $yaImportadas[$wpId], $catalogo);
+                }
+
                 continue;
             }
 
@@ -368,6 +373,10 @@ class ImportLegacyWebReservations extends Command
             }
 
             $this->crearReserva($r, $mapa, $propiedad, $gruposCreados[$grupoPorReserva[$wpId] ?? -1] ?? null);
+        }
+
+        if ($this->option('sincronizar')) {
+            $this->cancelarBorradas($reservasWp, $yaImportadas);
         }
 
         // Dinero que solo quedó registrado a nivel del grupo (transferencias
@@ -453,6 +462,231 @@ class ImportLegacyWebReservations extends Command
                 Carbon::parse($r['updated_at'] ?: $r['created_at']),
                 sprintf('Cobro registrado en el sitio anterior (#%d)', $r['id']),
             );
+        }
+    }
+
+    /**
+     * Lo que cambió en el sitio anterior sobre una reserva que ya se había
+     * migrado: estado (cancelada o rechazada allá), cabaña, fechas, precio,
+     * el cobro conocido y el teléfono corregido. El hotel sigue operando en
+     * el sitio anterior, así que manda él — salvo que en el panel ya haya
+     * estancia o un estado que solo pone el panel: eso no se pisa.
+     *
+     * Sin esto, un grupo cancelado allá seguía vivo aquí y quien apartó
+     * después las mismas cabañas quedaba encimado en el rack (Real de la
+     * Sierra 2026-09-10: 4 Sencillas del 3 de octubre).
+     *
+     * @param  array<string, mixed>  $r
+     * @param  array<int, array{room_type: RoomType, room: Room, rate_plan: RatePlan}>  $catalogo
+     */
+    protected function sincronizarReserva(array $r, int $panelId, array $catalogo): void
+    {
+        $reserva = Reservation::query()->with('roomType', 'guest')->find($panelId);
+        $mapa = $catalogo[(int) $r['room_id']] ?? null;
+
+        if ($reserva === null || $mapa === null) {
+            return;
+        }
+
+        $editables = [ReservationStatus::Pending, ReservationStatus::Confirmed, ReservationStatus::Completed, ReservationStatus::Cancelled];
+
+        if ($reserva->stay()->exists() || ! in_array($reserva->status, $editables, true)) {
+            return;
+        }
+
+        [[$horaEntrada, $minEntrada], [$horaSalida, $minSalida]] = $mapa['room_type']->effectiveScheduleTimes();
+        $inicio = Carbon::parse($r['check_in'])->setTime($horaEntrada, $minEntrada);
+        $fin = Carbon::parse($r['check_out'])->setTime($horaSalida, $minSalida);
+        [$estado, $motivo] = $this->estado($r, $fin);
+        $total = round((float) $r['total_price'], 2);
+        $etiqueta = sprintf('Reserva #%d (%s, %s)', $r['id'], $reserva->code, $r['guest_name']);
+        $cambios = [];
+
+        $otraCabana = (int) $reserva->room_id !== (int) $mapa['room']->id;
+        $otrasFechas = $reserva->starts_at->toDateString() !== $r['check_in']
+            || $reserva->ends_at->toDateString() !== $r['check_out'];
+        $activa = in_array($estado, [ReservationStatus::Pending, ReservationStatus::Confirmed], true);
+        $revive = $activa && ! in_array($reserva->status, [ReservationStatus::Pending, ReservationStatus::Confirmed], true);
+
+        // Mover o revivir solo si en el panel no hay otra reserva viva en
+        // esa cabaña esas noches: encimar dos es peor que avisar.
+        if (($otraCabana || $otrasFechas || $revive) && $activa) {
+            $room = $otraCabana ? $mapa['room'] : $reserva->room;
+            $desde = $otrasFechas ? $inicio : $reserva->starts_at;
+            $hasta = $otrasFechas ? $fin : $reserva->ends_at;
+
+            if ($this->chocaEnPanel($reserva, (int) $room->id, $desde, $hasta)) {
+                $this->avisos[] = "{$etiqueta}: allá quedó en {$mapa['room_type']->name} del {$r['check_in']} ({$estado->value}), pero en el panel esa cabaña ya está ocupada esas noches; se dejó como estaba.";
+                $this->conteo['reservas_con_choque'] = ($this->conteo['reservas_con_choque'] ?? 0) + 1;
+
+                return;
+            }
+        }
+
+        if ($otraCabana) {
+            $cambios[] = "cabaña {$reserva->roomType?->name} → {$mapa['room_type']->name}";
+            $reserva->forceFill([
+                'room_type_id' => $mapa['room_type']->id,
+                'room_id' => $mapa['room']->id,
+                'rate_plan_id' => $mapa['rate_plan']->id,
+            ]);
+        }
+
+        if ($otrasFechas) {
+            $cambios[] = "fechas {$reserva->starts_at->format('d/m')}–{$reserva->ends_at->format('d/m')} → {$inicio->format('d/m')}–{$fin->format('d/m')}";
+            $reserva->forceFill(['starts_at' => $inicio, 'ends_at' => $fin]);
+        }
+
+        if ($reserva->status !== $estado) {
+            $cambios[] = "{$reserva->status->value} → {$estado->value}";
+            $reserva->forceFill([
+                'status' => $estado,
+                'cancellation_reason' => $estado === ReservationStatus::Cancelled ? $motivo : null,
+            ]);
+        }
+
+        $pagado = $this->pagoConocido($r);
+
+        if (abs((float) $reserva->total_amount - $total) >= 0.01) {
+            $cambios[] = 'total $'.number_format((float) $reserva->total_amount, 2).' → $'.number_format($total, 2);
+            $reserva->forceFill([
+                'total_amount' => $total,
+                'deposit_amount' => $this->anticipo($r, $reserva->ratePlan ?? $mapa['rate_plan'], $total, $pagado),
+            ]);
+        }
+
+        $this->sincronizarHuesped($reserva, $r, $cambios);
+
+        if ($reserva->isDirty()) {
+            $reserva->saveQuietly();
+        }
+
+        // El cobro que conoce el sitio anterior: se registra el que no estaba
+        // o se sube el abono migrado. NUNCA se baja: allá el "cobrado" se
+        // deduce de total − saldo, y cuando editan el precio sin tocar el
+        // saldo sale menos dinero del que de verdad entró (Real de la Sierra
+        // 2026-09-10: dos cabañas de $3,250 → $3,000 "perdían" $250 cada
+        // una). Bajarlo afirmaría una devolución que nadie hizo.
+        $nota = sprintf('Cobro registrado en el sitio anterior (#%d)', $r['id']);
+        $migrados = Payment::query()->where('reservation_id', $reserva->id)->where('notes', $nota)->get();
+
+        if ($pagado !== null && $pagado > 0) {
+            if ($migrados->isEmpty()) {
+                $cambios[] = 'cobro nuevo $'.number_format($pagado, 2);
+                $this->registrarPago($reserva, $pagado, $this->metodo($r['payment_method'] ?? ''), Carbon::parse($r['updated_at'] ?: $r['created_at']), $nota);
+            } elseif ($migrados->count() === 1 && $pagado - (float) $migrados->first()->amount >= 0.01) {
+                $cambios[] = 'cobro $'.number_format((float) $migrados->first()->amount, 2).' → $'.number_format($pagado, 2);
+                $migrados->first()->forceFill(['amount' => $pagado])->saveQuietly();
+            } elseif ((float) $migrados->sum('amount') - $pagado >= 0.01) {
+                $this->avisos[] = sprintf(
+                    '%s: allá ahora figuran $%s cobrados y aquí hay $%s registrados; no se bajó — revisar si hubo devolución.',
+                    $etiqueta,
+                    number_format($pagado, 2),
+                    number_format((float) $migrados->sum('amount'), 2),
+                );
+            }
+        }
+
+        if ($cambios === []) {
+            return;
+        }
+
+        $cobrado = round((float) $reserva->payments()->sum('amount'), 2);
+        $totalPanel = (float) $reserva->total_amount;
+
+        $reserva->forceFill([
+            'payment_status' => match (true) {
+                $cobrado >= $totalPanel && $totalPanel > 0 => PaymentStatus::Paid,
+                $cobrado > 0 => PaymentStatus::DepositPaid,
+                $r['payment_status'] === 'partial' => PaymentStatus::DepositPaid,
+                default => PaymentStatus::Unpaid,
+            },
+        ])->saveQuietly();
+
+        if ($estado === ReservationStatus::Cancelled && $cobrado > 0) {
+            $cambios[] = 'OJO: quedó cancelada con $'.number_format($cobrado, 2).' cobrados, revisar si se devolvió o pasó a otra reserva';
+        }
+
+        $this->avisos[] = "{$etiqueta}: ".implode('; ', $cambios).'.';
+        $this->conteo['reservas_actualizadas'] = ($this->conteo['reservas_actualizadas'] ?? 0) + 1;
+    }
+
+    /**
+     * Teléfono corregido en el sitio anterior: si ya hay una ficha con el
+     * número nuevo, la reserva pasa a esa (es la misma persona que ya nos
+     * visitó); si no, se corrige en la ficha actual cuando es solo de esta
+     * reserva. Si la ficha tiene más reservas se deja como está: abrir una
+     * ficha nueva partiría en dos a un huésped frecuente, justo lo que hace
+     * que sus visitas no se vean juntas.
+     *
+     * @param  array<string, mixed>  $r
+     * @param  array<int, string>  $cambios
+     */
+    protected function sincronizarHuesped(Reservation $reserva, array $r, array &$cambios): void
+    {
+        $telefono = $this->telefono($r['guest_phone'] ?? null);
+        $actual = $reserva->guest;
+
+        if ($telefono === null || $actual === null || $this->telefono($actual->phone) === $telefono) {
+            return;
+        }
+
+        $otro = Guest::query()->where('phone', $telefono)->first();
+
+        if ($otro) {
+            $reserva->guest_id = $otro->id;
+            $cambios[] = "huésped → ficha #{$otro->id} (teléfono corregido allá)";
+
+            return;
+        }
+
+        if ($actual->reservations()->count() === 1) {
+            $actual->forceFill(['phone' => $telefono])->saveQuietly();
+            $cambios[] = 'teléfono del huésped corregido';
+        }
+    }
+
+    protected function chocaEnPanel(Reservation $reserva, int $roomId, $desde, $hasta): bool
+    {
+        return Reservation::query()
+            ->where('room_id', $roomId)
+            ->whereKeyNot($reserva->id)
+            ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
+            ->where('starts_at', '<', $hasta)
+            ->where('ends_at', '>', $desde)
+            ->exists();
+    }
+
+    /**
+     * Migradas antes y que ya no existen en el sitio anterior (las borraron
+     * allá): si seguían vivas aquí, se cancelan con el motivo a la vista.
+     * Las completadas o con estancia no se tocan: ya ocurrieron.
+     *
+     * @param  \Illuminate\Support\Collection<int, array<string, mixed>>  $reservasWp
+     * @param  array<int, int>  $yaImportadas
+     */
+    protected function cancelarBorradas($reservasWp, array $yaImportadas): void
+    {
+        foreach ($yaImportadas as $wpId => $panelId) {
+            if ($reservasWp->has($wpId)) {
+                continue;
+            }
+
+            $reserva = Reservation::query()->find($panelId);
+
+            if ($reserva === null
+                || in_array($reserva->status, [ReservationStatus::Cancelled, ReservationStatus::Completed], true)
+                || $reserva->stay()->exists()) {
+                continue;
+            }
+
+            $reserva->forceFill([
+                'status' => ReservationStatus::Cancelled,
+                'cancellation_reason' => 'Se eliminó en el sitio anterior',
+            ])->saveQuietly();
+
+            $this->avisos[] = sprintf('Reserva #%d (%s, %s): se borró en el sitio anterior; se canceló.', $wpId, $reserva->code, $reserva->guest_name);
+            $this->conteo['reservas_borradas_alla'] = ($this->conteo['reservas_borradas_alla'] ?? 0) + 1;
         }
     }
 
@@ -673,6 +907,12 @@ class ImportLegacyWebReservations extends Command
      * Huésped del CRM: se busca por teléfono (lo único confiable — muchos
      * correos son el mismo `sincorreo@gmail.com` de mostrador) y si no hay
      * teléfono, por correo.
+     *
+     * Con teléfono pero sin ficha que lo tenga, se intenta además por correo
+     * contra fichas SIN teléfono: quien reservó la primera vez sin dejar su
+     * número y la segunda sí quedaba partido en dos fichas, cada una con una
+     * sola visita (Real de la Sierra 2026-09-10). Nunca con correos de
+     * mostrador.
      */
     protected function resolverHuesped(?string $nombre, ?string $telefono, ?string $correo): ?Guest
     {
@@ -684,10 +924,18 @@ class ImportLegacyWebReservations extends Command
             return null;
         }
 
-        $huesped = Guest::query()
-            ->when($telefono, fn ($q) => $q->where('phone', $telefono))
-            ->when(! $telefono, fn ($q) => $q->where('email', $correo))
-            ->first();
+        $generico = $correo !== null && $this->correoGenerico($correo);
+
+        $huesped = $telefono
+            ? Guest::query()->where('phone', $telefono)->first()
+            : ($generico ? null : Guest::query()->where('email', $correo)->first());
+
+        if ($huesped === null && $telefono && $correo && ! $generico) {
+            $huesped = Guest::query()
+                ->where('email', $correo)
+                ->where(fn ($q) => $q->whereNull('phone')->orWhere('phone', ''))
+                ->first();
+        }
 
         if ($huesped === null) {
             $huesped = Guest::create([
@@ -705,10 +953,32 @@ class ImportLegacyWebReservations extends Command
         // faltaba; nunca pisa lo que ya tenía capturado el hotel.
         $huesped->fill(array_filter([
             'first_name' => $huesped->first_name ? null : $nombre,
+            'phone' => $huesped->phone ? null : $telefono,
             'email' => $huesped->email ? null : $correo,
         ]))->save();
 
         return $huesped;
+    }
+
+    /**
+     * Correo de mostrador que comparten personas distintas: `sincorreo@`,
+     * `x@`... o cualquiera que ya esté en fichas con teléfonos distintos.
+     * Unir por uno de esos mezclaría huéspedes que no tienen nada que ver.
+     */
+    protected function correoGenerico(string $correo): bool
+    {
+        $local = Str::lower(Str::before($correo, '@'));
+
+        if (in_array($local, ['sincorreo', 'sin.correo', 'sin_correo', 'nocorreo', 'noemail', 'sinemail', 'na', 'no', 'x', 'xx', 'xxx', 'correo', 'ninguno', 'test', 'prueba'], true)) {
+            return true;
+        }
+
+        return Guest::query()
+            ->where('email', $correo)
+            ->whereNotNull('phone')
+            ->where('phone', '!=', '')
+            ->distinct()
+            ->count('phone') > 1;
     }
 
     protected function telefono(?string $valor): ?string

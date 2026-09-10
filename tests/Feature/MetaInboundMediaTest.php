@@ -23,7 +23,7 @@ it('normaliza un DM de Instagram que trae solo una imagen (comprobante)', functi
         ->and($normalized['media']['kind'])->toBe('image');
 });
 
-it('audio y video siguen sin soporte: el evento sin texto se descarta', function () {
+it('la nota de voz de Instagram ya no se descarta: entra para transcribirse', function () {
     $entry = ['id' => '17841448419479242'];
     $change = ['field' => 'messages', 'value' => [
         'sender' => ['id' => 'IGSID_HUESPED'],
@@ -32,10 +32,20 @@ it('audio y video siguen sin soporte: el evento sin texto se descarta', function
         ]],
     ]];
 
-    expect(MetaWebhookController::instagramChangeToMessage($entry, $change))->toBeNull();
+    $normalized = MetaWebhookController::instagramChangeToMessage($entry, $change);
+
+    expect($normalized)->not->toBeNull()
+        ->and($normalized['body'])->toBe('[Nota de voz]')
+        ->and($normalized['media']['kind'])->toBe('audio');
+
+    // Lo que sí sigue fuera: un evento sin texto y sin adjunto reconocible.
+    expect(MetaWebhookController::instagramChangeToMessage($entry, [
+        'field' => 'messages',
+        'value' => ['sender' => ['id' => 'IGSID_HUESPED'], 'message' => ['mid' => 'mid.vacio']],
+    ]))->toBeNull();
 });
 
-it('elige el primer adjunto descargable (imagen o documento)', function () {
+it('el comprobante manda sobre el video cuando vienen juntos', function () {
     $media = MetaWebhookController::firstDownloadableAttachment([
         ['type' => 'video', 'payload' => ['url' => 'https://cdn.fb/v.mp4']],
         ['type' => 'file', 'payload' => ['url' => 'https://cdn.fb/comprobante.pdf']],

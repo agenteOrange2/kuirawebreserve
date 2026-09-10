@@ -1,5 +1,5 @@
 import type { ComputedRef, InjectionKey, Ref } from 'vue';
-import type { ArrivalAction, CheckoutFolio, RoomData } from './types';
+import type { CheckoutFolio, RoomData, RoomSaleOptions } from './types';
 
 /**
  * Lo que el plano le ofrece al modal de habitación y a sus tabs.
@@ -68,8 +68,11 @@ export interface FloorPlanContext {
      * quien atiende.
      */
     roomCreditEnabled: ComputedRef<boolean>;
-    /** Caminos de venta de un cuarto libre según el modo de operación. */
-    arrivalActions: ComputedRef<ArrivalAction[]>;
+    /**
+     * Qué se puede vender de este cuarto —entregarlo ahora, apartarlo para
+     * otra fecha— y por qué no lo demás.
+     */
+    roomSale: ComputedRef<RoomSaleOptions>;
     /** Transiciones de limpieza y mantenimiento que autoriza el servidor. */
     transitions: ComputedRef<{ status: string; label: string; icon: string }[]>;
 

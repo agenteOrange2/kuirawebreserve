@@ -132,6 +132,15 @@ class FollowUpConversations extends Command
     {
         $sent = 0;
 
+        // Este es el único seguimiento que NO es transaccional: es empujar
+        // una venta. Mandarlo a las 3 de la mañana molesta al huésped y no
+        // vende nada, así que respeta el horario de atención del hotel (los
+        // avisos de apartado por vencer sí salen a cualquier hora: ahí el
+        // silencio le cuesta la habitación).
+        if (app(\App\Services\SupportHours::class)->isClosed()) {
+            return 0;
+        }
+
         $conversations = Conversation::query()
             ->where('lead_status', Conversation::LEAD_QUOTING)
             ->where('status', Conversation::STATUS_OPEN)
@@ -147,6 +156,14 @@ class FollowUpConversations extends Command
             // Solo si el silencio es del huésped (nuestro mensaje quedó al final).
             $last = $conversation->messages()->latest('id')->first();
             if (! $last || $last->direction !== 'out') {
+                continue;
+            }
+
+            // Salvo que lo último nuestro haya sido el aviso de "por aquí
+            // solo texto": ahí el huésped SÍ contestó (con una nota de voz
+            // o un video) y preguntarle "¿sigues por ahí?" es justo lo que
+            // lo hace sentir ignorado — la pelota es nuestra, no suya.
+            if ($last->meta['unsupported_media_notice'] ?? false) {
                 continue;
             }
 

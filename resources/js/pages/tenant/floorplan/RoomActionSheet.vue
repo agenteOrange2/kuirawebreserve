@@ -38,11 +38,19 @@ interface ArrivalAction {
     primary: boolean;
 }
 
+/** Lo que se puede vender de este cuarto; lo decide el plano. */
+interface SaleOptions {
+    sellNow: ArrivalAction[];
+    bookAhead: ArrivalAction | null;
+    actions: ArrivalAction[];
+    reason: string | null;
+}
+
 const props = defineProps<{
     room: SheetRoom | null;
     canManageReservations: boolean;
     manualCheckinAllowed: boolean;
-    arrivalActions: ArrivalAction[];
+    sale: SaleOptions;
     busyAction: string | null;
     saving: boolean;
     /** Transiciones de limpieza/mantenimiento que autoriza el servidor. */
@@ -139,13 +147,18 @@ const busyReservation = () =>
                     <!-- Cuarto libre: vender es lo único que importa aquí. Los
                          caminos los decide el modo de operación en el plano;
                          esta hoja solo los pinta y avisa cuál se tocó. -->
-                    <template
-                        v-if="
-                            room.status === 'available' && canManageReservations
-                        "
+                    <!-- No basta con que el cuarto esté verde: apartarlo
+                         para otra fecha se puede casi siempre, y esconderlo
+                         detrás del semáforo dejaba sin vender fechas libres. -->
+                    <p
+                        v-if="canManageReservations && sale.reason"
+                        class="col-span-full text-xs text-slate-500"
                     >
+                        {{ sale.reason }}
+                    </p>
+                    <template v-if="canManageReservations">
                         <Button
-                            v-for="action in arrivalActions"
+                            v-for="action in sale.actions"
                             :key="action.key"
                             :variant="
                                 action.primary ? 'primary' : 'outline-primary'

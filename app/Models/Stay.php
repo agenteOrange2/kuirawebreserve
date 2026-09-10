@@ -43,6 +43,9 @@ class Stay extends Model implements HasMedia
         'check_in_at',
         'planned_end_at',
         'check_out_at',
+        'auto_closed_at',
+        'settlement_closed_at',
+        'settlement_note',
         'thanks_sent_at',
         'status',
         'amount',
@@ -58,6 +61,12 @@ class Stay extends Model implements HasMedia
             'check_in_at' => 'datetime',
             'planned_end_at' => 'datetime',
             'check_out_at' => 'datetime',
+            // La cerró el reloj y no una persona: la bandeja de cuentas por
+            // cerrar lo dice, porque cambia a quién hay que preguntarle.
+            'auto_closed_at' => 'datetime',
+            // Cuenta resuelta sin cobrarla (cortesía, incobrable, error de
+            // captura), con el porqué en settlement_note.
+            'settlement_closed_at' => 'datetime',
             'thanks_sent_at' => 'datetime',
             // Caseta en dos momentos: null = falta terminar de capturar la
             // llegada (placa o identificación) y marcar el cobro.
@@ -170,12 +179,27 @@ class Stay extends Model implements HasMedia
 
         $consumptionPending = round((float) $unsettledOrders->sum('total'), 2);
 
+        // Daños y cargos capturados después del check-in. Ya están dentro
+        // del hospedaje (suben el monto de la estancia o el total de su
+        // reserva); se listan aparte porque el mostrador necesita ver QUÉ
+        // sumó y poder quitarlo antes de cobrar.
+        $damages = collect($this->extra_charges ?? [])
+            ->filter(fn ($line) => in_array($line['kind'] ?? '', ['damage', 'late'], true))
+            ->map(fn ($line, $i) => [
+                'id' => (string) ($line['id'] ?? $i),
+                'concept' => (string) ($line['concept'] ?? ''),
+                'amount' => round((float) ($line['amount'] ?? 0), 2),
+            ])
+            ->values();
+
         return [
             'lodging_total' => $lodgingTotal,
             'lodging_paid' => $lodgingPaid,
             'lodging_pending' => $lodgingPending,
             'orders' => $unsettledOrders,
             'consumption_pending' => $consumptionPending,
+            'damages' => $damages,
+            'damages_total' => round((float) $damages->sum('amount'), 2),
             'grand_pending' => round($lodgingPending + $consumptionPending, 2),
         ];
     }
@@ -183,6 +207,67 @@ class Stay extends Model implements HasMedia
     public function scopeActive(Builder $query): Builder
     {
         return $query->where('status', self::STATUS_ACTIVE);
+    }
+
+    /**
+     * Cuentas por cerrar: estancias ya cerradas a las que les quedó dinero
+     * sin registrar y que nadie ha resuelto.
+     *
+     * Todo se calcula en SQL a propósito. folio() responde por estancia y
+     * pinta bien un modal, pero una lista paginada haría dos consultas por
+     * renglón — el panel no puede tener listas que consulten por fila.
+     *
+     * El saldo son dos cosas: el hospedaje que falta (de la reserva si la
+     * hay, o del monto de la estancia en un walk-in) y los consumos cargados
+     * a la habitación que nadie liquidó. La fianza no cuenta: es un pasivo
+     * que se devuelve, y por eso vive con stay_id y sin reservation_id.
+     */
+    public function scopePendingSettlement(Builder $query): Builder
+    {
+        $payments = fn (string $where) => "(select coalesce(sum(p.amount), 0) from payments p where {$where})";
+
+        $conSaldo = static::query()
+            ->where('stays.status', self::STATUS_COMPLETED)
+            ->whereNull('stays.settlement_closed_at')
+            ->leftJoin('reservations', 'reservations.id', '=', 'stays.reservation_id')
+            ->select('stays.*')
+            ->selectRaw('coalesce(reservations.total_amount, stays.amount) as lodging_total_calc')
+            ->selectRaw('case when stays.reservation_id is null then '
+                .$payments("p.stay_id = stays.id and p.kind = 'lodging'")
+                .' else '
+                .$payments('p.reservation_id = stays.reservation_id')
+                .' end as lodging_paid_calc')
+            ->selectRaw('(select coalesce(sum(o.total), 0) from orders o'
+                ." where o.stay_id = stays.id and o.status = 'completed'"
+                ." and o.payment_method = 'room' and o.settled_at is null) as consumption_pending_calc")
+            ->toBase();
+
+        // Subconsulta y no HAVING: sqlite (los tests) rechaza un HAVING sin
+        // GROUP BY, y filtrar por columnas calculadas es justo lo que hay que
+        // hacer aquí. El alias se llama igual que la tabla para que las
+        // relaciones y los `orderBy('stays.x')` sigan resolviendo.
+        return $query
+            ->fromSub($conSaldo, 'stays')
+            ->whereRaw('round(coalesce(lodging_total_calc, 0) - coalesce(lodging_paid_calc, 0), 2)'
+                .' + coalesce(consumption_pending_calc, 0) > 0.009');
+    }
+
+    /**
+     * Saldo de la fila que trajo scopePendingSettlement, sin volver a
+     * consultar. Fuera de ese scope cae a folio(), que sí consulta.
+     */
+    public function pendingSettlementAmount(): float
+    {
+        if (! array_key_exists('lodging_total_calc', $this->attributes)) {
+            return $this->folio()['grand_pending'];
+        }
+
+        $lodging = max(0, round(
+            (float) $this->attributes['lodging_total_calc'] - (float) $this->attributes['lodging_paid_calc'],
+            2,
+        ));
+
+        return round($lodging + (float) $this->attributes['consumption_pending_calc'], 2);
     }
 
     /**

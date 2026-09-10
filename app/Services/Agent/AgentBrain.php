@@ -6,6 +6,8 @@ use App\Http\Controllers\Agent\AgentToolsController;
 use App\Models\AiProvider;
 use App\Models\Conversation;
 use App\Models\Message;
+use App\Services\Channels\StaffAlerter;
+use App\Services\SupportHours;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Prism\Prism\Enums\Provider;
@@ -88,8 +90,10 @@ class AgentBrain
     public function reply(Conversation $conversation): ?Message
     {
         $handoff = false;
+        $handoffReason = '';
         $text = '';
         $meta = [];
+        $used = [];
 
         foreach ($this->providers() as $provider) {
             $started = microtime(true);
@@ -98,7 +102,7 @@ class AgentBrain
                 $response = $this->run($provider, fn ($request) => $request
                     ->withSystemPrompt($this->systemPrompt($conversation))
                     ->withMessages($this->history($conversation))
-                    ->withTools($this->toolset($handoff, $conversation))
+                    ->withTools($this->toolset($handoff, $conversation, false, $used, $handoffReason))
                     ->withMaxSteps(6));
 
                 $text = trim($response->text);
@@ -126,16 +130,46 @@ class AgentBrain
             }
         }
 
+        $hours = app(SupportHours::class);
+
         if ($handoff || $text === '') {
             $conversation->update(['bot_enabled' => false, 'status' => Conversation::STATUS_PENDING]);
+
+            // De noche nadie tiene el panel abierto: el hotel se entera por
+            // WhatsApp de que hay alguien esperando, no al otro día.
+            $this->alertStaff($conversation, StaffAlerter::KIND_HANDOFF, $handoffReason);
 
             return $conversation->messages()->create([
                 'direction' => 'out',
                 'sender_type' => 'system',
-                'body' => 'Te comunicamos con una persona del hotel; en un momento te atienden.',
+                // Prometer "en un momento te atienden" a las 11 de la noche
+                // es mentirle al huésped: fuera de horario se le dice cuándo.
+                'body' => $hours->isOpen()
+                    ? 'Te comunicamos con una persona del hotel; en un momento te atienden.'
+                    : 'Le paso tu mensaje al equipo del hotel. Te contactan '.$hours->nextOpeningLabel().'.',
                 'meta' => $meta ?: null,
                 'created_at' => now(),
             ]);
+        }
+
+        $body = $this->sanitizeChatText($this->sanitizeGatewayLinks($text));
+
+        if ($hours->isClosed()) {
+            // El aviso de "ya no estamos" va pegado a la respuesta y UNA vez
+            // al día: repetirlo en cada mensaje del hilo es peor que callarlo.
+            $noticeKey = 'after_hours_notice:'.now()->toDateString();
+
+            if (! $conversation->followupSent($noticeKey)) {
+                $conversation->markFollowup($noticeKey);
+                $body .= "\n\n".$hours->afterHoursNotice();
+            }
+
+            // Y el hotel se entera SOLO si hubo intención de compra: que
+            // vibre el teléfono del dueño por un "hola" es la mejor forma
+            // de que apague los avisos.
+            if (array_intersect($used, ['rate_plans', 'availability', 'availability_overview', 'hold', 'group_hold', 'payment'])) {
+                $this->alertStaff($conversation, StaffAlerter::KIND_AFTER_HOURS);
+            }
         }
 
         $conversation->update(['last_message_at' => now()]);
@@ -143,10 +177,20 @@ class AgentBrain
         return $conversation->messages()->create([
             'direction' => 'out',
             'sender_type' => 'bot',
-            'body' => $this->sanitizeChatText($this->sanitizeGatewayLinks($text)),
+            'body' => $body,
             'meta' => $meta,
             'created_at' => now(),
         ]);
+    }
+
+    /** Avisar nunca rompe la conversación: es cortesía, no transacción. */
+    protected function alertStaff(Conversation $conversation, string $kind, string $reason = ''): void
+    {
+        try {
+            app(StaffAlerter::class)->alert($conversation, $kind, $reason);
+        } catch (Throwable $e) {
+            report($e);
+        }
     }
 
     /**
@@ -310,6 +354,7 @@ class AgentBrain
         $policiesJson = self::readable($this->tools->policies());
         $policies = json_decode($policiesJson, true);
         $guestBlock = $this->guestBlock($conversation);
+        $hoursBlock = $this->supportHoursBlock();
         $summaryBlock = $this->summaryBlock($conversation);
         $instructionsBlock = $this->instructionsBlock();
         $guidelinesBlock = $this->guidelinesBlock();
@@ -321,7 +366,7 @@ DATOS DEL HOTEL (única fuente de verdad — si algo no está aquí ni en tus he
 ```json
 {$policiesJson}
 ```
-{$guestBlock}{$summaryBlock}{$instructionsBlock}{$guidelinesBlock}
+{$guestBlock}{$hoursBlock}{$summaryBlock}{$instructionsBlock}{$guidelinesBlock}
 REGLAS ESTRICTAS:
 - Si la duda del huésped coincide con una pregunta de "faqs", responde con esa respuesta tal cual (puedes adaptarla al tono de la conversación, sin cambiar los datos).
 - Si el huésped comparte su teléfono, usa identificar_huesped para reconocerlo; si ya nos visitó, salúdalo por su nombre como cliente frecuente (sin recitar sus datos).
@@ -330,24 +375,29 @@ REGLAS ESTRICTAS:
 - NO AFIRMES DISPONIBILIDAD SIN VERIFICARLA: nunca digas que una habitación está libre —ni la ofrezcas como alternativa— sin haberla consultado con consultar_disponibilidad o consultar_disponibilidad_general para ESAS fechas exactas. Si un tipo salió ocupado, consulta el resto con consultar_disponibilidad_general ANTES de nombrar alternativas; si no queda nada libre, dilo tal cual y ofrece las fechas de alternative_dates (ya vienen verificadas, con su etiqueta en español) para no perder al huésped.
 - GRUPOS: si el grupo no cabe en una sola habitación, llama consultar_disponibilidad_general con las fechas y "personas", y ofrece TAL CUAL lo que devuelva suggested_combination (qué tipos, cuántas de cada uno y el total). Si combination_covers_guests viene en false, dilo con claridad y ofrece otras fechas o usa transferir_a_humano; nunca completes el grupo con habitaciones que no aparecen libres. No le pidas al huésped que él arme la combinación: propónsela tú.
 - No inventes política comercial: nunca afirmes descuentos, mínimos de noches, ni que "el precio es fijo todo el año" si no está en los datos del hotel. Si una tarifa trae seasonal en true, el precio cambia por fechas y solo consultar_disponibilidad te da el correcto.
-- FECHAS: al repetir la llegada y la salida usa exactamente las que devolvió la herramienta (starts_at/ends_at); no cambies día, mes ni año al redactarlas, y confirma el año solo si el huésped lo dio.
+- FECHAS: al repetir la llegada y la salida usa exactamente las que devolvió la herramienta (starts_at/ends_at); no cambies día, mes ni año al redactarlas.
+- AÑO — REGLA ABSOLUTA: hoy es {$this->today()}. JAMÁS cotices, ofrezcas, consultes ni menciones fechas que ya pasaron ni años anteriores al actual. Si el huésped da día y mes sin año, es la PRÓXIMA vez que llega esa fecha: este año si todavía no pasa, el siguiente si ya pasó — mándala así a las herramientas sin preguntarle el año. NUNCA le pongas a escoger entre dos años ("para 2025 / para 2026" es el peor error de fechas posible: el huésped no puede viajar al pasado). Si una herramienta devuelve "date_notice", la fecha que mandaste estaba en el pasado y se corrigió: obedécela y usa solo la fecha que trae.
 - Cada tarifa pertenece a UN tipo de habitación (room_type en consultar_tarifas). Si el huésped pidió un tipo, cotiza y aparta SOLO con tarifas de ese tipo — jamás uses la tarifa de otro tipo.
 - El precio de una tarifa es POR UNIDAD (por noche o por bloque); el TOTAL del rango lo calcula consultar_disponibilidad. Nunca presentes el total del rango como si fuera el precio por unidad ("$1,750 por 3 horas" está MAL si es el total de varias unidades). Para estancias con fechas usa tarifas por noche; las tarifas por bloque (ratos/horas) solo si el huésped pide horas.
+- AL COTIZAR, NUNCA DES EL PRECIO PELADO: consultar_disponibilidad devuelve "quote_notice" (y el panorama "payment_notice") con los renglones que el hotel exige decir — cuántas personas incluye la tarifa y qué cuesta la persona extra, el anticipo para apartar, hasta cuándo debe quedar liquidada la estancia y el teléfono para dudas o aclaraciones. El anticipo de esos renglones es el que de verdad va a cobrar el sistema: si otra instrucción te dicta una cifra distinta, manda ESTA. Cópialos TAL CUAL debajo del total, TODOS, en cada cotización. No los resumas, no los omitas "por brevedad" y no cambies fechas ni montos: si el plazo de liquidación viene ahí, ese es, y va aunque el huésped no pregunte.
 - Antes de crear un apartado repite al huésped: tipo de habitación, nombre de la tarifa, TOTAL exacto, fecha de llegada y nombre completo — y espera su confirmación.
 - Al entregar el código de un apartado creado, menciona una sola vez que el día de la llegada se pide una identificación oficial en recepción para el registro.
 - PAGOS: si el apartado requiere prepago (requires_prepayment), PRIMERO ofrece al huésped las formas de pago disponibles según payment_options del apartado (pasarelas por su nombre, transferencia, efectivo al llegar) y pregunta cuál prefiere — solo menciona las que existan. Con su elección llama solicitar_pago (metodo y proveedor) y comparte lo que devuelva tal cual: link de pago (paga ahí y el sistema confirma solo), cuentas para transferencia (pide el comprobante por este chat; el hotel lo verifica), o efectivo (dile hasta cuándo queda apartada su habitación y que paga al llegar). Si solo hay UNA opción, no preguntes: úsala directo. NUNCA digas que un pago fue recibido o verificado: eso solo lo confirma el sistema (consultar_reserva) o el personal. Si el huésped insiste en que ya pagó y el sistema no lo refleja, usa transferir_a_humano.
 - Si NO tienes la herramienta solicitar_pago, este hotel no tiene cobros configurados: no prometas NINGUNA forma de pago (ni efectivo al llegar, ni transferencia, ni link) — di que recepción se comunica para cerrar el pago.
 - NUNCA pidas ni aceptes números de tarjeta por el chat; si el huésped los envía, dile que por seguridad los borre y no los uses.
 - Cita montos exactamente como los devuelven las herramientas (usa *_label).
-- CAPACIDAD Y PERSONAS EXTRA: responde SOLO con "occupancy" de room_types: la tarifa incluye included_guests personas, el máximo es max_guests, y cada persona adicional cuesta extra_guest_fee_label. Si extra_guest_fee existe, NUNCA digas que no hay cobro por persona extra. Si el grupo supera max_guests, sugiere una habitación con más capacidad o transfiere a recepción.
-- FIANZA: si get_policies o el resultado de crear_apartado traen "guarantee", al confirmar un apartado avisa UNA vez que al llegar se cobra ese depósito en garantía (usa su "label" tal cual) y que se devuelve al registrar la salida. NO lo sumes al total de la estancia: es un depósito aparte que regresa. Si el huésped aparta varias habitaciones y hay "tiers_label", menciónalo; nunca inventes descuentos de fianza que no estén ahí.
+- CAPACIDAD Y PERSONAS EXTRA: responde SOLO con "occupancy" de room_types (o el "occupancy_notice" ya redactado): la tarifa incluye included_guests personas, el máximo es max_guests, y cada persona adicional cuesta extra_guest_fee_label. Dilo SIEMPRE que ofrezcas o cotices una habitación, aunque no te lo pregunten — enterarse del cargo por persona extra al llegar es un reclamo en el mostrador. Si extra_guest_fee existe, NUNCA digas que no hay cobro por persona extra. Si el grupo supera max_guests, sugiere una habitación con más capacidad o transfiere a recepción.
+- FIANZA: si get_policies o el resultado de crear_apartado traen "guarantee", al confirmar un apartado avisa UNA vez que al llegar se cobra ese depósito en garantía y que se devuelve al registrar la salida. Si el resultado del apartado trae "guarantee_for_this_booking", usa SU "label" tal cual: ya dice cuántas habitaciones son, cuánto cada una y el total — no hagas tú la cuenta ni cites el monto base. Si no viene, usa el "label" de "guarantee". NO lo sumes al total de la estancia: es un depósito aparte que regresa. Si el huésped aparta varias habitaciones y hay "tiers_label", menciónalo; nunca inventes descuentos de fianza que no estén ahí.
 - FOTOS: si piden fotos de una habitación y su tipo tiene photos_url, comparte ese link tal cual diciendo que ahí están las fotos. Sin photos_url, describe la habitación y ofrece que el personal envíe fotos por este chat.
-- ENLACES: comparte una liga SOLO cuando venga al caso (piden fotos, preguntan por una habitación en concreto, por cómo llegar o por qué hacer). Una sola liga, una sola vez en la conversación: nunca la pegues de firma en cada mensaje ni recites la lista completa. Usa únicamente las URLs que vienen en estos datos (website, maps_url, links, photos_url, url de un recorrido) — JAMÁS inventes ni completes una dirección web.
+- ENLACES: comparte una liga SOLO cuando venga al caso (piden fotos, preguntan por una habitación en concreto, por cómo llegar o por qué hacer). Una sola liga, una sola vez en la conversación: nunca la pegues de firma en cada mensaje ni recites la lista completa. Usa únicamente las URLs que vienen en estos datos (website, maps_url, links, photos_url, url de un recorrido) — JAMÁS inventes ni completes una dirección web. Excepción: si las INSTRUCCIONES DEL EQUIPO DEL HOTEL ordenan mandar una liga en un momento concreto (por ejemplo, el aviso legal al pedir los datos para reservar), mándala SIEMPRE en ese momento, aunque ya hayas compartido otra liga en la conversación.
 - RECORRIDOS: si preguntan por actividades, tours, qué hacer o qué hay en la zona, ofrece lo que traiga "experiences" con su duración y precio (y su liga si la tiene); para apartarlos comparte experiences_booking_url. Si no hay bloque "experiences", el hotel NO tiene recorridos: no los inventes ni prometas que alguien los organiza.
 - VARIAS HABITACIONES: si tienes crear_apartado_grupo, úsala — aparta todas bajo un folio GRP- y es todo o nada, así nadie se queda sin cuarto a medio grupo. Su cobro es UNO consolidado: llama solicitar_pago con el folio GRP-, nunca uno por habitación. Si NO tienes esa herramienta, haz UNA llamada de crear_apartado por cada habitación y reporta el resultado real de CADA una (código o el error exacto). En cualquier caso, nunca resumas dos apartados en uno ni des por hecho uno que no confirmaste con la herramienta.
 - Si una herramienta devuelve un error, comunica al huésped el mensaje EXACTO que devolvió — nunca inventes la causa ni digas "no hay disponibilidad" si la herramienta dijo otra cosa.
 - ADJUNTOS: tú no puedes ver imágenes ni archivos. Cuando un mensaje diga "[adjuntó una imagen o documento]", el archivo SÍ llegó y el personal puede verlo — NUNCA digas que no se recibió ni pidas que lo reenvíe. Si es un comprobante de pago, agradece y di que el personal lo verificará; recuerda que tú no confirmas pagos.
+- SERVICIOS E INSTALACIONES: "amenities" de cada tipo de habitación y "services" del hotel son datos reales del catálogo. Si preguntan por alberca, asador, fogata, estacionamiento, terraza o cualquier cosa que aparezca ahí, la respuesta es SÍ y la das TÚ, en ese mismo turno, diciendo que sí se cuenta con ello. Prohibido transferir, dudar o decir "déjame confirmarlo" sobre algo que ya está en tus datos: es hacerle perder el tiempo al huésped y al hotel (caso real cabañas 2026-09-07: transfirió una pregunta de alberca que el catálogo contestaba).
+- Si una pregunta trae varias cosas y solo una está fuera de tus datos, responde las que sí sabes y transfiere ÚNICAMENTE la que falta, diciendo cuál es.
 - Si el huésped pide hablar con una persona, se queja, o pide algo fuera de tu alcance, usa la herramienta transferir_a_humano.
+- TRANSFERIR ES UNA ACCIÓN, NO UN ANUNCIO: cuando decidas transferir, llama transferir_a_humano en ESE mismo turno. Jamás preguntes "¿deseas que proceda con la transferencia?" ni digas que vas a transferir sin llamar la herramienta — si el huésped no vuelve a escribir, nadie en el hotel se entera y se queda esperando (caso real cabañas 2026-09-07).
 - Hoy es {$this->today()}. Fechas en formato YYYY-MM-DD HH:MM.
 - FORMATO: tus mensajes se muestran como TEXTO PLANO (WhatsApp, Telegram, webchat) — JAMÁS uses tablas, negritas con asteriscos, títulos con #, ni ningún markdown: el huésped vería los símbolos literales. Para listar opciones usa un renglón corto por opción con guion, ej.: "- Habitación Sencilla: $1,300".
 - IDIOMA: escribe TODO el mensaje en el idioma del huésped (español por defecto); JAMÁS mezcles palabras o caracteres de otro idioma o alfabeto (chino, inglés...) a media frase.
@@ -355,6 +405,38 @@ REGLAS ESTRICTAS:
 - Sé breve, cálido y profesional; máximo 2-3 oraciones por respuesta salvo que listes opciones. No uses emojis.
 - No saludes de nuevo si la conversación ya empezó: continúa el hilo donde va.
 PROMPT;
+    }
+
+    /**
+     * Horario de atención del hotel (opt-in en Datos generales). Fuera de
+     * horario el bot sigue trabajando —cotizar de madrugada es justo su
+     * gracia— pero deja de prometer que "en un momento te atienden".
+     *
+     * Público para poder verlo sin armar el prompt completo (que necesita
+     * tenant central) y para mostrarlo en el "ojito" del prompt.
+     */
+    public function supportHoursBlock(): string
+    {
+        $hours = app(SupportHours::class);
+
+        if (! $hours->enabled()) {
+            return '';
+        }
+
+        if ($hours->isOpen()) {
+            return "\nHORARIO DE ATENCIÓN: el personal del hotel atiende {$hours->label()}; ahora mismo SÍ hay quien conteste.\n";
+        }
+
+        $next = $hours->nextOpeningLabel();
+
+        return <<<BLOCK
+
+HORARIO DE ATENCIÓN: el personal atiende {$hours->label()} y AHORA MISMO ESTÁ FUERA DE HORARIO.
+- Sigue atendiendo normal: cotiza, revisa disponibilidad y aparta como siempre.
+- NUNCA digas que alguien lo atiende "en un momento" ni que "ahorita te contactan": el equipo retoma {$next}.
+- Si tienes que transferir, hazlo igual (queda registrado y lo ven al abrir), y dile que le responden {$next}.
+
+BLOCK;
     }
 
     /**
@@ -624,6 +706,13 @@ BLOCK;
                     ? "\n[adjuntó una imagen o documento — el personal puede verlo]"
                     : '');
 
+                // Nota de voz: ese texto lo escribió una máquina oyendo, no
+                // la persona. Un "domingo 6" que en realidad era "16" se
+                // paga con una reserva mal hecha, así que se confirma.
+                if ($message->direction === 'in' && ($message->meta['voice_note'] ?? false)) {
+                    $body .= "\n[llegó como nota de voz transcrita: confirma en una línea las fechas, personas o cantidades que entendiste antes de cotizar o apartar]";
+                }
+
                 return $message->direction === 'in'
                     ? new UserMessage($body)
                     : new AssistantMessage($body);
@@ -660,9 +749,14 @@ BLOCK;
      *
      * @return array<int, \Prism\Prism\Tool>
      */
-    protected function toolset(bool &$handoff, ?Conversation $conversation = null, bool $readOnly = false): array
+    protected function toolset(bool &$handoff, ?Conversation $conversation = null, bool $readOnly = false, array &$used = [], string &$handoffReason = ''): array
     {
-        $call = function (string $method, array $params = []): string {
+        $call = function (string $method, array $params = []) use (&$used): string {
+            // Qué herramientas tocó esta respuesta: con eso se sabe si el
+            // huésped venía cotizando (para avisarle al hotel fuera de
+            // horario) sin tener que adivinarlo leyendo el texto.
+            $used[] = $method;
+
             $request = Request::create('/brain', 'POST', $params);
 
             $respond = fn (\Illuminate\Http\JsonResponse $response) => tap(self::readable($response), function () use ($method, $params, $response) {
@@ -745,13 +839,15 @@ BLOCK;
                 ->withStringParameter('starts_at', 'Llegada, YYYY-MM-DD HH:MM')
                 ->withStringParameter('guest_name', 'Nombre completo del huésped')
                 ->withStringParameter('guest_phone', 'Teléfono del huésped (opcional)', false)
+                ->withStringParameter('guest_email', 'Correo electrónico del huésped (opcional; si el hotel lo pide, pídelo junto con el nombre y mándalo aquí)', false)
                 ->withStringParameter('ends_at', 'Salida (opcional)', false)
-                ->using(function (int|float $rate_plan_id, string $starts_at, string $guest_name, ?string $guest_phone = null, ?string $ends_at = null) use ($call, $conversation): string {
+                ->using(function (int|float $rate_plan_id, string $starts_at, string $guest_name, ?string $guest_phone = null, ?string $guest_email = null, ?string $ends_at = null) use ($call, $conversation): string {
                     $result = $call('hold', array_filter([
                         'rate_plan_id' => (int) $rate_plan_id,
                         'starts_at' => $starts_at,
                         'guest_name' => $guest_name,
                         'guest_phone' => $guest_phone,
+                        'guest_email' => $guest_email,
                         'ends_at' => $ends_at,
                     ]));
 
@@ -923,8 +1019,12 @@ BLOCK;
             Tool::as('transferir_a_humano')
                 ->for('Transfiere la conversación a una persona del hotel. Úsala si el huésped lo pide, se queja, o necesitas algo fuera de tu alcance.')
                 ->withStringParameter('motivo', 'Motivo breve del traspaso')
-                ->using(function (string $motivo) use (&$handoff): string {
+                ->using(function (string $motivo) use (&$handoff, &$handoffReason): string {
                     $handoff = true;
+                    // El motivo viaja al aviso que recibe el hotel: "pidió
+                    // hablar con alguien" y "reclama un pago" no se atienden
+                    // con la misma prisa.
+                    $handoffReason = trim($motivo);
 
                     return json_encode(['ok' => true, 'motivo' => $motivo], JSON_UNESCAPED_UNICODE);
                 }),

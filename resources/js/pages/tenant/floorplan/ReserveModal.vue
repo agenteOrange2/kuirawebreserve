@@ -75,7 +75,7 @@ const saving = ref(false);
 // El anticipo se recibe en el mostrador: efectivo o terminal, según lo que
 // acepte la recepción (/ajustes/metodos-pago → Políticas). La transferencia
 // tiene su propio flujo con comprobante y no se registra a mano desde aquí.
-const { subset } = useCounterMethods();
+const { subset, labelFor } = useCounterMethods();
 const chargeMethods = subset(['cash', 'card']);
 
 const modalRoom = ref<ReserveRoom | null>(null);
@@ -452,7 +452,7 @@ async function submit() {
             toast.success(
                 `Reserva ${data.code} confirmada`,
                 chargeNow.value
-                    ? `Cobrados ${money(Number(chargeAmount.value))} en ${chargeMethod.value === 'cash' ? 'efectivo' : 'tarjeta'}.`
+                    ? `Cobrados ${money(Number(chargeAmount.value))} en ${labelFor(chargeMethod.value).toLowerCase()}.`
                     : 'Se cobra cuando llegue el huésped.',
             );
         } else {

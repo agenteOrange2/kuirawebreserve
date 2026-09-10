@@ -89,6 +89,34 @@ class EvolutionApi
     }
 
     /**
+     * Presencia "escribiendo..." mientras el bot piensa. El `delay` de
+     * sendText ya la muestra, pero solo DESPUÉS de que el modelo respondió;
+     * estos son los 3 a 8 segundos anteriores, que hoy son silencio.
+     *
+     * Si la instancia no expone el endpoint (v1 viejas), se sigue de largo.
+     */
+    public function sendPresence(EvolutionChannelLink $link, string $to, string $presence = 'composing'): bool
+    {
+        try {
+            // Timeout corto: esto corre ANTES del modelo, dentro del webhook.
+            $response = Http::withHeaders(['apikey' => $link->api_key])
+                ->timeout(5)
+                ->acceptJson()
+                ->post($this->url($link, "/chat/sendPresence/{$link->instance}"), [
+                    'number' => $to,
+                    'delay' => 1200,
+                    'presence' => $presence,
+                ]);
+
+            return $response->successful();
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
+    }
+
+    /**
      * Descarga el binario de un mensaje multimedia (imagen/documento) por
      * la API: Evolution lo devuelve en base64 a partir del id del mensaje.
      * El webhook puede traer el base64 embebido (WEBHOOK_BASE64=true);

@@ -281,13 +281,64 @@ class Room extends Model
     }
 
     /**
+     * La reserva que tiene apartado el cuarto AHORA — la que explica el
+     * semáforo en "reservada".
+     *
+     * No confundir con upcomingReservation(), que es "la que sigue": puede
+     * ser de dentro de un mes y no explica nada del estado de hoy. Tomar una
+     * por la otra fue justo el bug que dejó hoteles enteros congelados.
+     *
+     * La llegada que nunca apareció no se filtra aquí: cuando el hotel
+     * activa la ventana de llegada (/ajustes/limpieza), quien la resuelve es
+     * el no-show automático, que deja la reserva fuera de holdsRoomAt() por
+     * la vía normal. Meter el ajuste en esta relación costaría una consulta
+     * de settings por habitación del plano.
+     *
+     * GOTCHA de ofMany: las restricciones van dentro del closure, no
+     * encadenadas afuera, o no se aplican al agregado.
+     */
+    public function holdingReservation(): HasOne
+    {
+        return $this->hasOne(Reservation::class)->ofMany(
+            ['starts_at' => 'min', 'id' => 'min'],
+            fn ($query) => $query->holdsRoomAt(),
+        );
+    }
+
+    /** ¿Hay una reserva que respalde el "reservada" de este cuarto? */
+    public function heldByReservation(): bool
+    {
+        if ($this->relationLoaded('holdingReservation')) {
+            return $this->getRelation('holdingReservation') !== null;
+        }
+
+        return $this->holdingReservation()->exists();
+    }
+
+    /**
+     * Confirmada cuya salida ya pasó y que el cierre de día todavía no
+     * resuelve (modo day_close_no_checkin = "none", gestión manual). Ahí el
+     * semáforo no miente: espera una decisión humana, y el barrido de
+     * reparación no debe adelantarse.
+     */
+    public function hasReservationAwaitingDayClose(): bool
+    {
+        return $this->reservations()
+            ->where('status', ReservationStatus::Confirmed->value)
+            ->where('ends_at', '<=', now())
+            ->exists();
+    }
+
+    /**
      * Transiciones que el panel sí permite a mano. "Reservada" y "ocupada"
      * nacen de reservas reales (Reservar / Walk-in / Check-in), nunca de un
      * botón — marcarlas sin reserva deja el semáforo mintiendo sobre quién
-     * viene o quién está adentro. Y una reservada con reserva viva solo se
-     * libera cancelando esa reserva, no soltando el semáforo por debajo.
-     * (Una reservada VENCIDA — sin reserva viva — sí se puede soltar a mano
-     * a disponible o sucia; el cierre de día automático hace lo mismo.)
+     * viene o quién está adentro. Y una reservada que HOY aparta una reserva
+     * solo se libera cancelando esa reserva, no soltando el semáforo por
+     * debajo. (Una reservada huérfana —sin reserva que la aparte ahora— sí
+     * se puede soltar a mano a disponible o sucia; el barrido automático
+     * hace lo mismo. Ojo: "huérfana" se mide con holdingReservation(), no
+     * con la próxima reserva del cuarto, que puede ser de dentro de un mes.)
      *
      * En modo de limpieza "automático" puro (/ajustes/limpieza) los pasos
      * sucia → limpieza y limpieza → disponible los da el reloj, no un botón.
@@ -299,7 +350,7 @@ class Room extends Model
         $blocked = [RoomStatus::Reserved->value, RoomStatus::Occupied->value];
         $current = $this->status->getMorphClass();
 
-        if ($current === RoomStatus::Reserved->value && $this->hasLiveReservation()) {
+        if ($current === RoomStatus::Reserved->value && $this->heldByReservation()) {
             $blocked[] = RoomStatus::Available->value;
             $blocked[] = RoomStatus::Dirty->value;
         }
@@ -316,15 +367,6 @@ class Room extends Model
         }
 
         return array_values(array_diff($this->status->transitionableStates(), $blocked));
-    }
-
-    public function hasLiveReservation(): bool
-    {
-        if ($this->relationLoaded('upcomingReservation')) {
-            return $this->getRelation('upcomingReservation') !== null;
-        }
-
-        return $this->upcomingReservation()->exists();
     }
 
     /**
@@ -387,6 +429,8 @@ class Room extends Model
         $activeStay = $this->getRelationValue('activeStay');
         /** @var Reservation|null $upcomingReservation */
         $upcomingReservation = $this->getRelationValue('upcomingReservation');
+        /** @var Reservation|null $holdingReservation */
+        $holdingReservation = $this->getRelationValue('holdingReservation');
         $todayHistory = $this->relationLoaded('statusLogs')
             ? $this->getRelation('statusLogs')
             : collect();
@@ -565,6 +609,18 @@ class Room extends Model
                 // llegada y necesita decir la cifra correcta antes.
                 'guarantee_amount' => app(\App\Services\ReservationPolicy::class)
                     ->guaranteeAmountForReservation($upcomingReservation),
+            ] : null,
+            // Quién tiene apartado el cuarto AHORA, que no siempre es la
+            // próxima reserva: la de arriba puede ser de dentro de un mes.
+            // Con el semáforo en "reservada", un null aquí ES el aviso de que
+            // quedó apartado sin nada que lo respalde.
+            'holding_reservation' => $holdingReservation ? [
+                'id' => $holdingReservation->id,
+                'code' => $holdingReservation->displayCode(),
+                'guest_name' => $holdingReservation->guest?->full_name ?? $holdingReservation->guest_name ?? 'Anónimo',
+                'starts_at' => $holdingReservation->starts_at->format('d/m/Y H:i'),
+                'ends_at' => $holdingReservation->ends_at->format('d/m/Y H:i'),
+                'starts_today' => $holdingReservation->starts_at->isToday(),
             ] : null,
             // Bloqueos por fechas vigentes o futuros. El semáforo NO los
             // refleja (un cuarto bloqueado la semana que entra hoy sigue

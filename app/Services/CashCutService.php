@@ -330,7 +330,7 @@ class CashCutService
             }
 
             $refunds = \App\Models\Refund::query()
-                ->with(['reservation:id,code,guest_name,created_at'])
+                ->with(['reservation:id,code,guest_name,created_at', 'payment:id,method'])
                 ->where('created_by', $user->id)
                 ->where('status', \App\Models\Refund::STATUS_COMPLETED)
                 ->where('refunded_at', '>', $from)
@@ -343,7 +343,12 @@ class CashCutService
                     'at' => $refund->refunded_at,
                     'concept' => 'Devolución de fianza'.($refund->reservation !== null ? ' '.$refund->reservation->displayCode() : ''),
                     'detail' => $refund->reservation?->guest_name,
-                    'method' => $refund->gateway === null ? 'Efectivo' : 'Pasarela',
+                    // Con qué se recibió la fianza, que es por donde se
+                    // devuelve: rotularlo todo "Efectivo" mentía en cuanto un
+                    // hotel cobró un depósito con terminal o transferencia.
+                    'method' => $refund->gateway !== null
+                        ? 'Pasarela'
+                        : Payment::methodLabel($refund->payment?->method ?? 'cash'),
                     'amount' => -(float) $refund->amount,
                     'collected' => false,
                 ]);

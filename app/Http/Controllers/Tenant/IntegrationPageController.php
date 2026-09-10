@@ -43,9 +43,37 @@ class IntegrationPageController extends Controller
             'embed' => '<div data-kuira-widget="'.$widget['key'].'"></div>'."\n".'<script src="https://'.$domain.'/widget.js" defer></script>',
         ])->values();
 
+        // Un embed POR HABITACIÓN: el mismo widget de reservas acotado con
+        // ?habitacion=<id>. Sirve para sitios con una página por cabaña —
+        // ahí solo se reserva esa, no el catálogo entero. Se listan los
+        // tipos activos con su tarifa: uno sin tarifa activa no se puede
+        // vender y el embed saldría siempre "sin disponibilidad".
+        $roomTypes = \App\Models\RoomType::query()
+            ->where('active', true)
+            ->withCount([
+                'rooms',
+                'ratePlans as active_rate_plans_count' => fn ($q) => $q->where('active', true),
+            ])
+            ->orderBy('sort_order')
+            ->orderBy('name')
+            ->get()
+            ->map(fn (\App\Models\RoomType $type) => [
+                'id' => $type->id,
+                'name' => $type->name,
+                'rooms_count' => (int) $type->rooms_count,
+                'sellable' => (int) $type->active_rate_plans_count > 0,
+                'url' => "https://{$domain}/reservar?habitacion={$type->id}",
+                'shortcode' => '[kuira_reservas habitacion="'.$type->id.'"]',
+                'embed' => '<div data-kuira-widget="reservas" data-kuira-room="'.$type->id.'"></div>'."\n".'<script src="https://'.$domain.'/widget.js" defer></script>',
+            ])
+            ->values();
+
         return Inertia::render('tenant/integration/Index', [
             'propertyId' => $property->id,
             'widgets' => $widgets,
+            // Embeds por habitación (solo tienen sentido con el widget de
+            // reservas encendido; la vista los oculta si no).
+            'roomTypes' => $roomTypes,
             'widgetScriptUrl' => "https://{$domain}/widget.js",
             'integrations' => SiteIntegration::query()
                 ->where('tenant_id', tenant('id'))

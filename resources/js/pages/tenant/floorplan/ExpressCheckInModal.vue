@@ -77,10 +77,11 @@ const {
     methods: paymentMethods,
     first: firstMethod,
     coerce: coerceMethod,
-    subset,
 } = useCounterMethods();
-// La fianza se recibe en la mano: efectivo o terminal, nunca transferencia.
-const guaranteeMethods = subset(['cash', 'card']);
+// La fianza se cobra con lo que acepte la recepción: estuvo cableada a
+// efectivo y terminal, y eso dejaba fuera al hotel que recibe depósitos por
+// transferencia.
+const guaranteeMethods = paymentMethods;
 
 // Snapshot del cuarto: inmune a que el slideover se cierre por debajo.
 const modalRoom = ref<ExpressRoom | null>(null);
@@ -116,7 +117,10 @@ const paymentMethod = ref<CounterMethod>('cash');
 // capturan cuando el encargado regrese con el papel.
 const collector = ref<'caseta' | 'encargado'>('caseta');
 const paymentReference = ref('');
-const guaranteeMethod = ref<'cash' | 'card'>('cash');
+const guaranteeMethod = ref<CounterMethod>('cash');
+// Folio del comprobante: obligatorio cuando la fianza llega por
+// transferencia, que es por donde se devuelve.
+const guaranteeReference = ref('');
 
 const documentTypes: Record<string, string> = {
     ine: 'INE',
@@ -158,9 +162,8 @@ watch(
         extraConcepts.value = [];
         paymentMethod.value = firstMethod.value;
         paymentReference.value = '';
-        guaranteeMethod.value = (guaranteeMethods.value[0]?.key ?? 'cash') as
-            | 'cash'
-            | 'card';
+        guaranteeMethod.value = firstMethod.value;
+        guaranteeReference.value = '';
         collector.value = props.collectorDefault;
     },
 );
@@ -257,7 +260,14 @@ const canSubmit = computed(
         !!ratePlanId.value &&
         // Con captura diferida no se exige el nombre: justo eso es lo que se
         // va a anotar en la habitación.
-        (laterCapture.value || !footNameMissing.value),
+        (laterCapture.value || !footNameMissing.value) &&
+        // Una fianza por transferencia sin folio queda cobrada y sin manera
+        // de devolverse: el servidor la rechaza y el botón lo dice antes.
+        !(
+            props.guaranteeAmount > 0 &&
+            guaranteeMethod.value === 'transfer' &&
+            !guaranteeReference.value.trim()
+        ),
 );
 
 const money = (n: number) =>
@@ -358,6 +368,10 @@ async function submit() {
             guarantee_method:
                 props.guaranteeAmount > 0 && guaranteeMethods.value.length
                     ? guaranteeMethod.value
+                    : undefined,
+            guarantee_reference:
+                guaranteeMethod.value === 'transfer'
+                    ? guaranteeReference.value.trim() || undefined
                     : undefined,
         });
 
@@ -965,14 +979,30 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                                             ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
                                             : 'text-slate-500'
                                     "
-                                    @click="
-                                        guaranteeMethod = method.key as
-                                            | 'cash'
-                                            | 'card'
-                                    "
+                                    @click="guaranteeMethod = method.key"
                                 >
-                                    {{ method.label }}
+                                    {{ method.short }}
                                 </button>
+                            </div>
+                            <!-- Renglón propio (w-full en un contenedor flex):
+                                 metido entre las pastillas quedaba de tres
+                                 centímetros. Sin folio no hay cómo devolver
+                                 una fianza recibida por transferencia. -->
+                            <div
+                                v-if="guaranteeMethod === 'transfer'"
+                                class="w-full"
+                            >
+                                <FormInput
+                                    v-model="guaranteeReference"
+                                    placeholder="Folio o referencia del comprobante"
+                                    maxlength="100"
+                                />
+                                <p
+                                    v-if="!guaranteeReference.trim()"
+                                    class="mt-1 text-xs text-warning"
+                                >
+                                    Sin el folio no vas a poder devolverla.
+                                </p>
                             </div>
                         </div>
                     </div>

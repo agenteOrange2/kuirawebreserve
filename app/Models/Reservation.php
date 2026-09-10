@@ -285,4 +285,56 @@ class Reservation extends Model
     {
         return $query->where('starts_at', '<', $end)->where('ends_at', '>', $start);
     }
+
+    /**
+     * Reservas que JUSTIFICAN el semáforo "reservada" en este instante.
+     *
+     * Único punto de verdad: lo usan rooms:reserve-arrivals para ENCENDERLO,
+     * rooms:advance-housekeeping para APAGARLO y el panel para decidir si el
+     * cuarto se puede soltar a mano. Cuando esos tres divergían, el semáforo
+     * parpadeaba cada cinco minutos o se congelaba para siempre — que es lo
+     * que pasó en septiembre de 2026: quien lo apagaba preguntaba "¿tiene
+     * alguna reserva futura?" (cualquiera, aunque fuera de otro mes) en vez
+     * de "¿hay una reserva que la aparte HOY?", así que un hotel con agenda
+     * cargada dejaba sus cuartos apartados indefinidamente.
+     *
+     * Solo confirmadas. Una pendiente con hold aparta FECHAS en el motor de
+     * disponibilidad, no el cuarto físico: el mostrador no tiene por qué ver
+     * "apartada" por un carrito que expira en veinte minutos. Y una
+     * pendiente SIN hold (hold_expires_at nulo) no aparta ni fechas —
+     * scopeBlocking() la ignora—, así que menos aún el semáforo.
+     *
+     * La ventana abre a las 00:00 del día de entrada y no a la hora exacta:
+     * es la misma asimetría con la que se enciende (starts_at <= endOfDay),
+     * y por eso encender y apagar no pelean entre corridas.
+     */
+    public function scopeHoldsRoomAt(Builder $query, ?\DateTimeInterface $at = null): Builder
+    {
+        $at = $at ? \Illuminate\Support\Carbon::instance($at) : now();
+
+        // Columnas calificadas: dentro del ofMany de Room::holdingReservation
+        // la consulta se une consigo misma y un `room_id` pelado es ambiguo.
+        return $query
+            ->where($query->qualifyColumn('status'), ReservationStatus::Confirmed)
+            ->whereNotNull($query->qualifyColumn('room_id'))
+            ->where($query->qualifyColumn('starts_at'), '<=', $at->copy()->endOfDay())
+            ->where($query->qualifyColumn('ends_at'), '>', $at);
+    }
+
+    /**
+     * Llegadas dadas por perdidas: pasados N minutos de la hora de entrada
+     * sin que nadie registrara la llegada (ajuste arrival_no_show_* de
+     * /ajustes/limpieza). Su salida todavía no llega — las vencidas son del
+     * cierre de día, no de aquí.
+     */
+    public function scopeArrivalWindowClosed(Builder $query, int $minutes, ?\DateTimeInterface $at = null): Builder
+    {
+        $at = $at ? \Illuminate\Support\Carbon::instance($at) : now();
+
+        return $query
+            ->where('status', ReservationStatus::Confirmed)
+            ->whereNotNull('room_id')
+            ->where('starts_at', '<=', $at->copy()->subMinutes(max(1, $minutes)))
+            ->where('ends_at', '>', $at);
+    }
 }

@@ -29,7 +29,7 @@ class GuestController extends Controller
 
         $guests = Guest::query()
             ->search($term)
-            ->withCount(['stays as visits' => fn ($q) => $q->where('status', 'completed')])
+            ->withVisits()
             ->orderByDesc('updated_at')
             ->take(8)
             ->get()

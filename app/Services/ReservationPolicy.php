@@ -88,6 +88,56 @@ class ReservationPolicy
     }
 
     /**
+     * Cuánta antelación exige el hotel para liquidar ("una semana antes de
+     * llegar"), en palabras. Sale de /ajustes/metodos-pago/plazos-y-saldo.
+     * null = el hotel no exige pago total anticipado.
+     */
+    public function balanceDueLabel(): ?string
+    {
+        if (! $this->balanceDueEnabled()) {
+            return null;
+        }
+
+        $value = (int) ($this->settings()['balance_due_value'] ?? 5);
+        $unit = RateDurationUnit::tryFrom((string) ($this->settings()['balance_due_unit'] ?? 'day')) ?? RateDurationUnit::Day;
+
+        return $value < 1 ? null : $unit->label($value).' antes de la llegada';
+    }
+
+    /**
+     * Aviso de liquidación listo para decírselo al huésped, con la FECHA
+     * concreta cuando la hay. Lo usa el asistente al cotizar: el plazo vivía
+     * solo en una FAQ y el bot cotizaba sin mencionarlo, así que la gente se
+     * enteraba tarde de que el saldo vence antes de llegar.
+     *
+     * Sin fecha calculable (llegada demasiado próxima para abrir un plazo)
+     * el compromiso sigue en pie, pero se enuncia sin fecha.
+     */
+    public function balanceDueNotice(RatePlan $ratePlan, CarbonInterface $start): ?string
+    {
+        $label = $this->balanceDueLabel();
+
+        if ($label === null) {
+            return null;
+        }
+
+        $due = $this->paymentDueAt($ratePlan, $start);
+
+        // Sin fecha, o con una que YA pasó (llegada más próxima que la
+        // ventana: la tarifa fija su propio plazo sin mirar el calendario),
+        // el compromiso sigue pero no se puede citar un día — anunciar "a
+        // más tardar el martes" cuando el martes fue ayer es peor que no
+        // decir fecha.
+        if ($due === null || $due->isPast()) {
+            return 'El pago total debe quedar liquidado antes de tu llegada.';
+        }
+
+        return 'El pago total debe quedar liquidado a más tardar el '
+            .$due->translatedFormat('l j \d\e F')
+            ." ({$label}).";
+    }
+
+    /**
      * Fecha límite de pago total para una reserva: la tarifa manda si
      * define su propia anticipación (comportamiento de siempre); si no, el
      * default del hotel (5 días). El default solo aplica cuando queda al

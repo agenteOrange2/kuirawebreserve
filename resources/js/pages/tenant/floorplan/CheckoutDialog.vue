@@ -17,11 +17,23 @@ import Lucide from '@/components/Base/Lucide';
  * "Salir sin cobrar" existe pero es explícito (`force`): un huésped que se
  * va debiendo es una decisión de quien atiende, nunca el camino fácil.
  */
+interface DamageLine {
+    id: string;
+    concept: string;
+    amount: number;
+}
+
 interface Folio {
     lodging_pending: number;
     consumption_pending: number;
     grand_pending: number;
+    /** Lo capturado en esta salida, para poder quitarlo antes de cobrar. */
+    damages: DamageLine[];
+    damages_total: number;
     guarantee_refundable: number;
+    /** Con qué se recibió el depósito: por ahí se devuelve. */
+    guarantee_method_label: string | null;
+    guarantee_reference: string | null;
 }
 
 const props = defineProps<{
@@ -39,6 +51,7 @@ const props = defineProps<{
 const emit = defineEmits<{
     (e: 'close'): void;
     (e: 'damage', payload: { concept: string; amount: number }): void;
+    (e: 'remove-damage', id: string): void;
     (
         e: 'confirm',
         payload: {
@@ -76,16 +89,32 @@ const retainReason = ref('');
  */
 const damageConcept = ref('');
 const damageAmount = ref<string>('');
+/** Buscador del catálogo: con catorce conceptos la pared de pastillas
+ *  tapaba el formulario y había que leerlos todos para hallar uno. */
+const damageSearch = ref('');
 const blacklist = ref(false);
 const blacklistReason = ref('');
 const reviewed = ref(false);
-const damagesAdded = ref(0);
 
 /** Elegir del catálogo llena las dos casillas; el precio se puede ajustar. */
 function pickDamage(concept: string, amount: number) {
     damageConcept.value = concept;
     damageAmount.value = String(amount);
+    damageSearch.value = '';
 }
+
+/**
+ * El catálogo filtrado por el buscador. Va completo porque la lista tiene
+ * su propio scroll: el problema no era cuántos, era que se pintaban como una
+ * pared de pastillas que empujaba el formulario fuera de la vista.
+ */
+const damageMatches = computed(() => {
+    const q = damageSearch.value.trim().toLowerCase();
+
+    return q
+        ? props.damageCatalog.filter((d) => d.concept.toLowerCase().includes(q))
+        : props.damageCatalog;
+});
 
 function addDamage() {
     const concept = damageConcept.value.trim();
@@ -96,15 +125,41 @@ function addDamage() {
     }
 
     emit('damage', { concept, amount });
-    damagesAdded.value += 1;
     damageConcept.value = '';
     damageAmount.value = '';
+    damageSearch.value = '';
 }
 
 const pending = computed(() => Number(props.folio?.grand_pending ?? 0));
 const guarantee = computed(() =>
     Number(props.folio?.guarantee_refundable ?? 0),
 );
+
+/** Lo que se cargó en esta salida; el servidor manda la lista, no un contador. */
+const damages = computed<DamageLine[]>(() => props.folio?.damages ?? []);
+const damagesTotal = computed(() => Number(props.folio?.damages_total ?? 0));
+
+/**
+ * Con la fianza aplicada a la cuenta, cubre hasta donde alcanza y lo demás
+ * se cobra en mostrador. Antes no se decía en ninguna parte: el huésped
+ * pagaba la cuenta completa Y perdía el depósito.
+ */
+const guaranteeApplied = computed(() =>
+    refundGuarantee.value ? 0 : Math.min(guarantee.value, pending.value),
+);
+
+const toCollect = computed(() =>
+    Math.max(0, round2(pending.value - guaranteeApplied.value)),
+);
+
+/** Fianza que sobra después de cubrir la cuenta: se le devuelve al huésped. */
+const guaranteeLeftover = computed(() =>
+    refundGuarantee.value ? 0 : round2(guarantee.value - guaranteeApplied.value),
+);
+
+function round2(value: number): number {
+    return Math.round(value * 100) / 100;
+}
 
 function money(value: number): string {
     return Number(value).toLocaleString('es-MX', {
@@ -129,15 +184,17 @@ watch(
             blacklist.value = false;
             blacklistReason.value = '';
             reviewed.value = false;
-            damagesAdded.value = 0;
+            damageSearch.value = '';
         }
     },
 );
 
 function confirm(force = false) {
     emit('confirm', {
+        // Con la fianza cubriendo la cuenta puede no quedar nada que cobrar:
+        // mandar método entonces crearía un pago de cero.
         payment_method:
-            force || pending.value <= 0 ? null : coerceMethod(method.value),
+            force || toCollect.value <= 0 ? null : coerceMethod(method.value),
         reference: reference.value || null,
         force,
         guarantee_refund: refundGuarantee.value,
@@ -156,15 +213,18 @@ function confirm(force = false) {
 </script>
 
 <template>
-    <Dialog :open="open" @close="$emit('close')">
+    <!-- Ancho grande y a dos columnas: en una sola, la revisión de la
+         habitación —que es donde de verdad se trabaja— quedaba debajo del
+         pliegue, con el catálogo de daños y los campos apretados en 380px. -->
+    <Dialog :open="open" size="xl" @close="$emit('close')">
         <Dialog.Panel>
             <div
                 class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
             >
                 <div
-                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                    class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                 >
-                    <Lucide icon="LogOut" class="h-5 w-5 text-primary" />
+                    <Lucide icon="LogOut" class="h-4 w-4 text-primary" />
                 </div>
                 <div class="min-w-0 flex-1">
                     <h2 class="text-base font-medium">
@@ -174,276 +234,466 @@ function confirm(force = false) {
                         {{ guestName ?? 'Sin nombre' }}
                     </p>
                 </div>
-            </div>
-
-            <div class="space-y-4 px-5 py-4">
-                <div
-                    v-if="folio"
-                    class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
-                >
-                    <div class="flex items-center justify-between text-sm">
-                        <span class="text-slate-500">Hospedaje</span>
-                        <span>{{ money(folio.lodging_pending) }}</span>
-                    </div>
-                    <div class="mt-1 flex items-center justify-between text-sm">
-                        <span class="text-slate-500">Consumos</span>
-                        <span>{{ money(folio.consumption_pending) }}</span>
-                    </div>
-                    <div
-                        class="mt-2 flex items-center justify-between border-t border-slate-200/70 pt-2 font-semibold dark:border-darkmode-400"
-                    >
-                        <span>Por cobrar</span>
-                        <span>{{ money(pending) }}</span>
-                    </div>
-                </div>
-
-                <template v-if="pending > 0">
-                    <div>
-                        <label
-                            class="text-xs text-slate-500"
-                            for="checkout-method"
-                            >Cómo paga</label
-                        >
-                        <FormSelect
-                            id="checkout-method"
-                            v-model="method"
-                            class="mt-1"
-                        >
-                            <option
-                                v-for="m in counterMethods"
-                                :key="m.key"
-                                :value="m.key"
-                            >
-                                {{ m.label }}
-                            </option>
-                        </FormSelect>
-                    </div>
-                    <div v-if="method !== 'cash'">
-                        <label
-                            class="text-xs text-slate-500"
-                            for="checkout-reference"
-                            >Referencia (opcional)</label
-                        >
-                        <FormInput
-                            id="checkout-reference"
-                            v-model="reference"
-                            type="text"
-                            maxlength="100"
-                            class="mt-1"
-                        />
-                    </div>
-                </template>
-
-                <p v-else class="text-xs text-slate-500">
-                    No queda nada por cobrar: la salida se registra directo.
-                </p>
-
-                <!-- Revisión de la habitación: el paso obligado antes de
-                     dejar salir al huésped. Cada daño sube la cuenta o se
-                     cubre con la fianza, y queda como incidencia. -->
-                <div
-                    class="rounded-xl border p-4"
+                <span
+                    class="hidden shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium sm:inline-block"
                     :class="
-                        reviewed
-                            ? 'border-slate-200/70 dark:border-darkmode-400'
-                            : 'border-warning/40 bg-warning/5'
+                        toCollect > 0
+                            ? 'bg-pending/10 text-pending'
+                            : 'bg-success/10 text-success'
                     "
                 >
-                    <div class="flex items-center gap-2">
-                        <Lucide
-                            icon="Hammer"
-                            class="h-4 w-4 shrink-0"
-                            :class="
-                                reviewed ? 'text-slate-400' : 'text-warning'
-                            "
-                        />
-                        <span class="text-sm font-medium">
-                            Revisión de la habitación
-                        </span>
-                    </div>
-                    <p class="mt-1 text-xs text-slate-500">
-                        Antes de dejar salir al huésped, revisa que no falte ni
-                        esté dañado nada. Lo que agregues sube a la cuenta y
-                        queda como incidencia; si hay fianza, puedes cubrirlo
-                        con ella.
-                    </p>
+                    {{
+                        toCollect > 0
+                            ? `Por cobrar ${money(toCollect)}`
+                            : 'Sin saldo'
+                    }}
+                </span>
+            </div>
 
-                    <div
-                        v-if="damageCatalog.length"
-                        class="mt-3 flex flex-wrap gap-1.5"
-                    >
-                        <button
-                            v-for="damage in damageCatalog"
-                            :key="damage.concept"
-                            type="button"
-                            class="rounded-full border border-slate-200 px-3 py-1 text-xs text-slate-600 transition hover:border-primary/40 hover:text-primary dark:border-darkmode-400 dark:text-slate-300"
-                            @click="pickDamage(damage.concept, damage.amount)"
+            <div
+                class="max-h-[calc(100dvh-16rem)] overflow-y-auto px-5 py-4 sm:py-5"
+            >
+                <div class="grid gap-4 lg:grid-cols-5">
+                    <!-- El dinero a la izquierda: la cuenta, cómo se cobra y
+                         qué pasa con la fianza. Se lee de arriba abajo. -->
+                    <div class="space-y-4 lg:col-span-2">
+                        <div
+                            v-if="folio"
+                            class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
                         >
-                            {{ damage.concept }} · {{ money(damage.amount) }}
-                        </button>
-                    </div>
-
-                    <p
-                        v-else
-                        class="mt-3 rounded-lg border border-dashed border-slate-300/70 px-3 py-2 text-[11px] text-slate-500 dark:border-darkmode-400"
-                    >
-                        Todavía no tienes lista de daños con precio.
-                        <a
-                            :href="route('tenant.damage-catalog')"
-                            class="font-medium text-primary hover:underline"
-                            >Ármala en Ajustes</a
-                        >
-                        para que todos los turnos cobren lo mismo.
-                    </p>
-
-                    <div class="mt-3 flex flex-wrap items-end gap-2">
-                        <div class="min-w-0 flex-1">
-                            <label
-                                class="text-xs text-slate-500"
-                                for="damage-concept"
-                                >Qué se dañó</label
+                            <div
+                                class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                             >
+                                La cuenta
+                            </div>
+                            <div
+                                class="mt-2.5 flex items-center justify-between text-xs"
+                            >
+                                <span class="text-slate-500">Hospedaje</span>
+                                <span class="font-medium">{{
+                                    money(folio.lodging_pending)
+                                }}</span>
+                            </div>
+                            <div
+                                class="mt-1.5 flex items-center justify-between text-xs"
+                            >
+                                <span class="text-slate-500">Consumos</span>
+                                <span class="font-medium">{{
+                                    money(folio.consumption_pending)
+                                }}</span>
+                            </div>
+                            <div
+                                v-if="damagesTotal > 0"
+                                class="mt-1.5 flex items-center justify-between text-xs"
+                            >
+                                <span class="text-slate-500"
+                                    >Daños de esta salida</span
+                                >
+                                <span class="font-medium">{{
+                                    money(damagesTotal)
+                                }}</span>
+                            </div>
+                            <div
+                                class="mt-2.5 flex items-center justify-between border-t border-slate-200/70 pt-2.5 text-xs dark:border-darkmode-400"
+                            >
+                                <span class="text-slate-500">Suma</span>
+                                <span class="font-medium">{{
+                                    money(pending)
+                                }}</span>
+                            </div>
+                            <!-- La fianza aplicada baja lo que se cobra en
+                                 mostrador; el excedente es lo que de verdad
+                                 hay que pedirle al huésped. -->
+                            <div
+                                v-if="guaranteeApplied > 0"
+                                class="mt-1.5 flex items-center justify-between text-xs"
+                            >
+                                <span class="text-slate-500"
+                                    >Cubierto con la fianza</span
+                                >
+                                <span class="font-medium text-success"
+                                    >−{{ money(guaranteeApplied) }}</span
+                                >
+                            </div>
+                            <div
+                                class="mt-2 flex items-center justify-between border-t border-slate-200/70 pt-2 text-sm font-semibold dark:border-darkmode-400"
+                            >
+                                <span>Por cobrar</span>
+                                <span
+                                    :class="toCollect > 0 ? 'text-pending' : ''"
+                                    >{{ money(toCollect) }}</span
+                                >
+                            </div>
+                            <p
+                                v-if="guaranteeLeftover > 0"
+                                class="mt-2 rounded-lg bg-info/5 px-3 py-2 text-[11px] text-slate-600 dark:text-slate-300"
+                            >
+                                Sobran {{ money(guaranteeLeftover) }} de la
+                                fianza: eso se le devuelve al huésped.
+                            </p>
+                            <p
+                                v-else-if="toCollect <= 0"
+                                class="mt-2 text-[11px] text-slate-500"
+                            >
+                                No queda nada por cobrar: la salida se registra
+                                directo.
+                            </p>
+                        </div>
+
+                        <div
+                            v-if="toCollect > 0"
+                            class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
+                        >
+                            <div
+                                class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                Cómo paga los {{ money(toCollect) }}
+                            </div>
+                            <FormSelect
+                                id="checkout-method"
+                                v-model="method"
+                                class="mt-2.5 h-9 text-xs"
+                            >
+                                <option
+                                    v-for="m in counterMethods"
+                                    :key="m.key"
+                                    :value="m.key"
+                                >
+                                    {{ m.label }}
+                                </option>
+                            </FormSelect>
+                            <div v-if="method !== 'cash'" class="mt-3">
+                                <label
+                                    class="text-xs text-slate-500"
+                                    for="checkout-reference"
+                                    >Referencia (opcional)</label
+                                >
+                                <FormInput
+                                    id="checkout-reference"
+                                    v-model="reference"
+                                    type="text"
+                                    maxlength="100"
+                                    class="mt-1 h-9 text-xs"
+                                    placeholder="Autorización o folio"
+                                />
+                            </div>
+                        </div>
+
+                        <!-- La fianza es un pasivo: se devuelve salvo decisión
+                             explícita, y quedársela exige motivo. -->
+                        <div
+                            v-if="guarantee > 0"
+                            class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
+                        >
+                            <label class="flex items-center gap-3">
+                                <FormSwitch>
+                                    <FormSwitch.Input
+                                        v-model="refundGuarantee"
+                                        type="checkbox"
+                                    />
+                                </FormSwitch>
+                                <span class="text-xs font-medium"
+                                    >Devolver la fianza de
+                                    {{ money(guarantee) }}</span
+                                >
+                            </label>
+                            <p
+                                v-if="!refundGuarantee"
+                                class="mt-2 rounded-lg bg-pending/10 px-3 py-2 text-[11px] text-slate-700 dark:text-slate-200"
+                            >
+                                <template v-if="guaranteeApplied > 0">
+                                    Se aplican
+                                    {{ money(guaranteeApplied) }} a la cuenta y
+                                    se cobran {{ money(toCollect) }} en
+                                    mostrador.
+                                </template>
+                                <template v-else>
+                                    La cuenta está en ceros: la fianza se queda
+                                    como penalización, no cubre nada.
+                                </template>
+                            </p>
+                            <!-- El efectivo sale del cajón; lo demás se
+                                 devuelve por donde entró, y el folio del
+                                 comprobante es lo único con lo que se puede. -->
+                            <p
+                                v-if="
+                                    folio?.guarantee_method_label &&
+                                    folio.guarantee_method_label !== 'Efectivo'
+                                "
+                                class="mt-2 rounded-lg bg-info/5 px-3 py-2 text-[11px] text-slate-600 dark:text-slate-300"
+                            >
+                                Se recibió por
+                                {{ folio.guarantee_method_label.toLowerCase() }}
+                                <template v-if="folio.guarantee_reference">
+                                    (referencia
+                                    {{ folio.guarantee_reference }})</template
+                                >: devuélvela por ahí, no del cajón.
+                            </p>
+                            <p
+                                v-if="damagesTotal > 0 && refundGuarantee"
+                                class="mt-2 text-[11px] text-slate-500"
+                            >
+                                Los daños están en la cuenta. Si prefieres
+                                cubrirlos con la fianza, apaga la devolución y
+                                anota el motivo.
+                            </p>
                             <FormInput
-                                id="damage-concept"
-                                v-model="damageConcept"
+                                v-if="!refundGuarantee"
+                                v-model="retainReason"
                                 type="text"
-                                maxlength="100"
-                                class="mt-1"
-                                placeholder="Toalla quemada"
+                                maxlength="255"
+                                class="mt-3 h-9 text-xs"
+                                placeholder="Motivo de la retención (daños, faltantes)"
                             />
                         </div>
-                        <div class="w-32">
-                            <label
-                                class="text-xs text-slate-500"
-                                for="damage-amount"
-                                >Importe</label
-                            >
-                            <FormInput
-                                id="damage-amount"
-                                v-model="damageAmount"
-                                type="number"
-                                min="0"
-                                step="1"
-                                class="mt-1"
-                            />
-                        </div>
-                        <Button
-                            variant="outline-primary"
-                            class="min-h-11 rounded-[0.5rem] text-xs"
-                            :disabled="busy || !damageConcept.trim()"
-                            @click="addDamage"
-                        >
-                            Agregar a la cuenta
-                        </Button>
                     </div>
 
-                    <p
-                        v-if="damagesAdded > 0"
-                        class="mt-3 rounded-lg bg-pending/10 px-3 py-2 text-[11px] font-medium text-pending"
-                    >
-                        {{ damagesAdded }}
-                        {{
-                            damagesAdded === 1
-                                ? 'daño cargado'
-                                : 'daños cargados'
-                        }}
-                        a la cuenta de esta estancia.
-                    </p>
-
-                    <label
-                        class="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5"
+                    <!-- Revisión de la habitación: el paso obligado antes de
+                         dejar salir al huésped. Ocupa la columna ancha porque
+                         es donde se teclea. -->
+                    <div
+                        class="rounded-xl border p-4 lg:col-span-3"
                         :class="
                             reviewed
-                                ? 'border-success/30 bg-success/5'
-                                : 'border-slate-200/70 bg-white dark:border-darkmode-400 dark:bg-darkmode-600'
+                                ? 'border-slate-200/70 dark:border-darkmode-400'
+                                : 'border-warning/40 bg-warning/5'
                         "
                     >
-                        <input
-                            v-model="reviewed"
-                            type="checkbox"
-                            class="mt-0.5 rounded border-slate-300"
-                        />
-                        <span class="min-w-0">
-                            <span class="block text-xs font-medium">
-                                Ya revisé la habitación
-                            </span>
-                            <span class="block text-[11px] text-slate-500">
-                                Sin faltantes ni daños, o los que había ya
-                                quedaron cargados arriba.
-                            </span>
-                        </span>
-                    </label>
-
-                    <label
-                        v-if="canBlacklist"
-                        class="mt-3 flex items-center gap-3 text-sm"
-                    >
-                        <input
-                            v-model="blacklist"
-                            type="checkbox"
-                            class="rounded border-slate-300"
-                        />
-                        Vetar a este cliente y su vehículo
-                    </label>
-                    <FormInput
-                        v-if="blacklist"
-                        v-model="blacklistReason"
-                        type="text"
-                        maxlength="255"
-                        class="mt-2"
-                        placeholder="Por qué se veta (lo verá la caseta en su próxima visita)"
-                    />
-                </div>
-
-                <!-- La fianza es un pasivo: se devuelve salvo decisión
-                     explícita, y quedársela exige motivo. -->
-                <div
-                    v-if="guarantee > 0"
-                    class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
-                >
-                    <label class="flex items-center gap-3">
-                        <FormSwitch>
-                            <FormSwitch.Input
-                                v-model="refundGuarantee"
-                                type="checkbox"
+                        <div class="flex items-center gap-2">
+                            <Lucide
+                                icon="Hammer"
+                                class="h-4 w-4 shrink-0"
+                                :class="
+                                    reviewed ? 'text-slate-400' : 'text-warning'
+                                "
                             />
-                        </FormSwitch>
-                        <span class="text-sm"
-                            >Devolver la fianza de {{ money(guarantee) }}</span
+                            <span class="text-sm font-medium">
+                                Revisión de la habitación
+                            </span>
+                        </div>
+                        <p class="mt-1 text-xs text-slate-500">
+                            Antes de dejar salir al huésped, revisa que no falte
+                            ni esté dañado nada. Lo que agregues sube a la
+                            cuenta y queda como incidencia; si hay fianza,
+                            puedes cubrirlo con ella.
+                        </p>
+
+                        <!-- Buscador y no la lista entera: con catorce
+                             conceptos la pared de pastillas empujaba el
+                             formulario fuera de la vista y había que leerlos
+                             todos para hallar uno. -->
+                        <div v-if="damageCatalog.length" class="mt-3">
+                            <div class="relative">
+                                <Lucide
+                                    icon="Search"
+                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                />
+                                <FormInput
+                                    v-model="damageSearch"
+                                    type="text"
+                                    class="h-9 pl-9 text-xs"
+                                    placeholder="Buscar en la lista de daños…"
+                                />
+                            </div>
+                            <!-- Lista y no pastillas sueltas: en renglones se
+                                 lee de un vistazo qué cuesta qué, y con
+                                 catorce conceptos las pastillas eran un
+                                 párrafo de texto donde no se distinguía uno
+                                 del otro. -->
+                            <div
+                                v-if="damageMatches.length"
+                                class="mt-2 max-h-48 divide-y divide-slate-200/60 overflow-y-auto rounded-lg border border-slate-200/70 bg-white dark:divide-darkmode-400 dark:border-darkmode-400 dark:bg-darkmode-600"
+                            >
+                                <button
+                                    v-for="damage in damageMatches"
+                                    :key="damage.concept"
+                                    type="button"
+                                    class="flex w-full items-center gap-3 px-3 py-2 text-left transition hover:bg-primary/5"
+                                    @click="
+                                        pickDamage(
+                                            damage.concept,
+                                            damage.amount,
+                                        )
+                                    "
+                                >
+                                    <span
+                                        class="min-w-0 flex-1 truncate text-xs text-slate-600 dark:text-slate-300"
+                                        >{{ damage.concept }}</span
+                                    >
+                                    <span class="text-xs font-medium">{{
+                                        money(damage.amount)
+                                    }}</span>
+                                    <Lucide
+                                        icon="Plus"
+                                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                                    />
+                                </button>
+                            </div>
+                            <p
+                                v-else
+                                class="mt-2 text-[11px] text-slate-500"
+                            >
+                                Nada con ese nombre; captúralo abajo con su
+                                importe.
+                            </p>
+                        </div>
+
+                        <p
+                            v-else
+                            class="mt-3 rounded-lg border border-dashed border-slate-300/70 px-3 py-2 text-[11px] text-slate-500 dark:border-darkmode-400"
                         >
-                    </label>
-                    <p
-                        v-if="damagesAdded > 0 && refundGuarantee"
-                        class="mt-2 text-[11px] text-slate-500"
-                    >
-                        Los daños ya se cargaron a la cuenta. Si prefieres
-                        cubrirlos con la fianza, apaga la devolución y anota el
-                        motivo.
-                    </p>
-                    <FormInput
-                        v-if="!refundGuarantee"
-                        v-model="retainReason"
-                        type="text"
-                        maxlength="255"
-                        class="mt-3"
-                        placeholder="Motivo de la retención (daños, faltantes)"
-                    />
+                            Todavía no tienes lista de daños con precio.
+                            <a
+                                :href="route('tenant.damage-catalog')"
+                                class="font-medium text-primary hover:underline"
+                                >Ármala en Ajustes</a
+                            >
+                            para que todos los turnos cobren lo mismo.
+                        </p>
+
+                        <div class="mt-3 grid gap-2.5 sm:grid-cols-12">
+                            <div class="sm:col-span-6">
+                                <label
+                                    class="text-xs text-slate-500"
+                                    for="damage-concept"
+                                    >Qué se dañó</label
+                                >
+                                <FormInput
+                                    id="damage-concept"
+                                    v-model="damageConcept"
+                                    type="text"
+                                    maxlength="100"
+                                    class="mt-1 h-9 text-xs"
+                                    placeholder="Toalla quemada"
+                                />
+                            </div>
+                            <div class="sm:col-span-3">
+                                <label
+                                    class="text-xs text-slate-500"
+                                    for="damage-amount"
+                                    >Importe</label
+                                >
+                                <FormInput
+                                    id="damage-amount"
+                                    v-model="damageAmount"
+                                    type="number"
+                                    min="0"
+                                    step="1"
+                                    class="mt-1 h-9 text-xs"
+                                />
+                            </div>
+                            <div class="flex items-end sm:col-span-3">
+                                <Button
+                                    variant="outline-primary"
+                                    class="h-9 w-full justify-center rounded-[0.5rem] text-xs"
+                                    :disabled="busy || !damageConcept.trim()"
+                                    @click="addDamage"
+                                >
+                                    Agregar
+                                </Button>
+                            </div>
+                        </div>
+
+                        <!-- Lo cargado, con su importe y su botón de quitar:
+                             antes solo decía "2 daños cargados" y un concepto
+                             mal tecleado se quedaba en la cuenta para siempre. -->
+                        <div v-if="damages.length" class="mt-3 space-y-1.5">
+                            <div
+                                class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                Cargado a esta cuenta
+                            </div>
+                            <div
+                                v-for="damage in damages"
+                                :key="damage.id"
+                                class="flex items-center gap-2 rounded-lg border border-slate-200/70 bg-white px-3 py-2 dark:border-darkmode-400 dark:bg-darkmode-600"
+                            >
+                                <span class="min-w-0 flex-1 truncate text-xs">{{
+                                    damage.concept
+                                }}</span>
+                                <span class="text-xs font-medium">{{
+                                    money(damage.amount)
+                                }}</span>
+                                <button
+                                    type="button"
+                                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                    title="Quitar de la cuenta"
+                                    :disabled="busy"
+                                    @click="$emit('remove-damage', damage.id)"
+                                >
+                                    <Lucide icon="X" class="h-3.5 w-3.5" />
+                                </button>
+                            </div>
+                            <p class="text-[11px] text-slate-500">
+                                Suman {{ money(damagesTotal) }} a la cuenta de
+                                esta estancia.
+                            </p>
+                        </div>
+
+                        <label
+                            class="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border px-3 py-2.5"
+                            :class="
+                                reviewed
+                                    ? 'border-success/30 bg-success/5'
+                                    : 'border-slate-200/70 bg-white dark:border-darkmode-400 dark:bg-darkmode-600'
+                            "
+                        >
+                            <input
+                                v-model="reviewed"
+                                type="checkbox"
+                                class="mt-0.5 rounded border-slate-300"
+                            />
+                            <span class="min-w-0">
+                                <span class="block text-xs font-medium">
+                                    Ya revisé la habitación
+                                </span>
+                                <span class="block text-[11px] text-slate-500">
+                                    Sin faltantes ni daños, o los que había ya
+                                    quedaron cargados arriba.
+                                </span>
+                            </span>
+                        </label>
+
+                        <div
+                            v-if="canBlacklist"
+                            class="mt-3 border-t border-slate-200/60 pt-3 dark:border-darkmode-400"
+                        >
+                            <label
+                                class="flex cursor-pointer items-center gap-2.5 text-xs"
+                            >
+                                <input
+                                    v-model="blacklist"
+                                    type="checkbox"
+                                    class="rounded border-slate-300"
+                                />
+                                Vetar a este cliente y su vehículo
+                            </label>
+                            <FormInput
+                                v-if="blacklist"
+                                v-model="blacklistReason"
+                                type="text"
+                                maxlength="255"
+                                class="mt-2 h-9 text-xs"
+                                placeholder="Por qué se veta (lo verá la caseta en su próxima visita)"
+                            />
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <div
-                class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                class="flex flex-col gap-2 border-t border-slate-200/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-end dark:border-darkmode-400"
             >
                 <Button
                     variant="outline-secondary"
-                    class="rounded-[0.5rem]"
+                    class="h-9 justify-center rounded-[0.5rem] text-xs"
                     @click="$emit('close')"
                     >Cancelar</Button
                 >
                 <Button
-                    v-if="pending > 0"
+                    v-if="toCollect > 0"
                     variant="outline-danger"
-                    class="rounded-[0.5rem]"
+                    class="h-9 justify-center rounded-[0.5rem] text-xs"
                     :disabled="busy || !reviewed"
                     title="El huésped se va debiendo; el saldo queda en su historial"
                     @click="confirm(true)"
@@ -451,7 +701,7 @@ function confirm(force = false) {
                 >
                 <Button
                     variant="primary"
-                    class="rounded-[0.5rem]"
+                    class="h-9 justify-center rounded-[0.5rem] text-xs"
                     :title="
                         reviewed
                             ? undefined
@@ -467,8 +717,8 @@ function confirm(force = false) {
                     {{
                         busy
                             ? 'Registrando…'
-                            : pending > 0
-                              ? `Cobrar ${money(pending)} y registrar salida`
+                            : toCollect > 0
+                              ? `Cobrar ${money(toCollect)} y registrar salida`
                               : 'Registrar salida'
                     }}
                 </Button>

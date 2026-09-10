@@ -3,7 +3,6 @@
 namespace App\Console\Commands;
 
 use App\Actions\Rooms\ChangeRoomStatus;
-use App\Enums\ReservationStatus;
 use App\Enums\RoomStatus;
 use App\Models\Reservation;
 use Illuminate\Console\Command;
@@ -25,11 +24,12 @@ class ReserveArrivalRooms extends Command
 
     public function handle(ChangeRoomStatus $changeRoomStatus): int
     {
+        // Mismo predicado con el que rooms:advance-housekeeping suelta el
+        // semáforo (Reservation::scopeHoldsRoomAt): si encender y apagar
+        // usan definiciones distintas, el cuarto parpadea entre corridas o
+        // se queda apartado para siempre.
         $arrivals = Reservation::query()
-            ->where('status', ReservationStatus::Confirmed)
-            ->whereNotNull('room_id')
-            ->where('starts_at', '<=', now()->endOfDay())
-            ->where('ends_at', '>', now())
+            ->holdsRoomAt()
             ->with('room')
             ->get();
 

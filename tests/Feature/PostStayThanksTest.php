@@ -40,8 +40,10 @@ function makeActiveStay(): Stay
     $reservation = app(CreateReservation::class)->handle([
         'rate_plan_id' => test()->plan->id,
         'room_id' => test()->room->id,
-        'starts_at' => now()->addDay()->setTime(15, 0),
-        'ends_at' => now()->addDays(2)->setTime(12, 0),
+        // Llega HOY: el check-in de una reserva de otro día es "llegada
+        // anticipada" y exige confirmarlo a mano.
+        'starts_at' => now()->addHours(2),
+        'ends_at' => now()->addDay()->setTime(12, 0),
         'confirmed' => true,
         'guest_name' => 'Sale Contento',
         'guest_phone' => '5522334455',

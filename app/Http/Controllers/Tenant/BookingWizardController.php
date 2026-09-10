@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Tenant;
 use App\Http\Controllers\Controller;
 use App\Models\Property;
 use App\Models\RatePlan;
+use App\Models\RoomType;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -33,8 +34,23 @@ class BookingWizardController extends Controller
         abort_unless((bool) (($property->settings['widget_reservas_enabled'] ?? true)), 404);
         $settings = $property->settings ?? [];
 
+        // Embed de UNA sola habitación (?habitacion=<id>): el hotel pega el
+        // wizard en la página de esa cabaña y solo se puede reservar esa.
+        // Si el id no resuelve (tipo borrado o desactivado) NO se rompe la
+        // página del hotel: cae al wizard completo — un iframe en 404 en su
+        // sitio es peor que ofrecer de más.
+        $lockedType = $request->filled('habitacion')
+            ? RoomType::query()
+                ->where('active', true)
+                ->find((int) $request->query('habitacion'))
+            : null;
+
+        // Las modalidades se detectan de las tarifas reales; con el wizard
+        // acotado a una habitación, de las tarifas de ESA (si la cabaña solo
+        // se vende por noche, su embed no ofrece "por unas horas").
         $activeRatePlans = RatePlan::query()
             ->where('active', true)
+            ->when($lockedType, fn ($q) => $q->where('room_type_id', $lockedType->id))
             ->whereHas('roomType', fn ($q) => $q->where('active', true));
 
         // Apariencia personalizada (/reservas/ajustes): colores, logo y
@@ -43,6 +59,12 @@ class BookingWizardController extends Controller
 
         return Inertia::render('tenant/reservar/Wizard', [
             'appearance' => $appearance,
+            // null = wizard completo (catálogo entero). Con valor, el wizard
+            // ni pregunta cuál habitación: cotiza y aparta solo esa.
+            'lockedRoomType' => $lockedType ? [
+                'id' => $lockedType->id,
+                'name' => $lockedType->name,
+            ] : null,
             'property' => [
                 'name' => $property->name,
                 'logo_url' => $appearance['logo_url'],

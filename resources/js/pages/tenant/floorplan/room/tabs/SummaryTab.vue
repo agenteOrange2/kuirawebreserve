@@ -3,7 +3,6 @@ import { computed, inject } from 'vue';
 import Button from '@/components/Base/Button';
 import Lucide from '@/components/Base/Lucide';
 import { FloorPlanKey } from '../../context';
-import { transitionMeta } from '../../status';
 import {
     countdownLabel,
     formatChannel,
@@ -15,9 +14,12 @@ import {
 
 /**
  * Resumen: lo que se hace con este cuarto AHORA. Vender si está libre, quién
- * está adentro con su cuenta, la próxima reserva, y el semáforo.
+ * está adentro con su cuenta y la próxima reserva.
  *
  * Viene de la ficha vieja, que traía esto y todo lo demás en un solo scroll.
+ * La limpieza y el mantenimiento se fueron a su propio tab: son otro oficio y
+ * los hacen otras personas, y aquí quedaban debajo del huésped.
+ *
  * Aquí no se decide nada: cada botón llama al handler del plano y hereda su
  * toast, su candado de "acción en curso" y su refresco.
  */
@@ -39,11 +41,9 @@ const {
     canChargeConsumption,
     canViewDocuments,
     manualCheckinAllowed,
-    arrivalActions,
-    transitions,
+    roomSale,
     busyAction,
     saving,
-    changeStatus,
     dispatchArrival,
     checkInReservation,
     requestCheckout,
@@ -66,8 +66,12 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
 
 <template>
     <div class="space-y-4">
+        <!-- Vender: entregar el cuarto ahora si se puede, y apartarlo para
+             otra fecha, que casi siempre se puede aunque hoy esté ocupado,
+             sucio o apartado. Quien decide si las fechas caben es el motor
+             de disponibilidad, no el semáforo. -->
         <section
-            v-if="room.status === 'available' && canManageReservations"
+            v-if="roomSale.sellNow.length"
             class="rounded-xl border border-primary/20 bg-primary/5 p-4 dark:border-primary/30 dark:bg-primary/10"
         >
             <div class="flex items-start gap-3">
@@ -90,13 +94,13 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
             <div
                 class="mt-4 grid grid-cols-1 gap-3"
                 :class="
-                    arrivalActions.length > 2
+                    roomSale.actions.length > 2
                         ? 'sm:grid-cols-3'
                         : 'sm:grid-cols-2'
                 "
             >
                 <Button
-                    v-for="action in arrivalActions"
+                    v-for="action in roomSale.actions"
                     :key="action.key"
                     :variant="action.primary ? 'primary' : 'outline-primary'"
                     class="h-auto min-h-12 justify-start rounded-lg px-3.5 py-2.5 text-left"
@@ -611,9 +615,16 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 v-if="canManageReservations"
                 class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2"
             >
+                <!-- Anticipada cuando la entrada es de otro día: botón
+                     secundario y con nombre propio, porque registrarla hoy
+                     adelanta la entrada real y regala las noches de más. -->
                 <Button
                     v-if="manualCheckinAllowed"
-                    variant="primary"
+                    :variant="
+                        room.upcoming_reservation.starts_today
+                            ? 'primary'
+                            : 'outline-primary'
+                    "
                     class="min-h-11 justify-center text-xs"
                     :disabled="
                         busyAction ===
@@ -626,7 +637,9 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         busyAction ===
                         `reservation:${room.upcoming_reservation.id}`
                             ? 'Procesando…'
-                            : 'Registrar llegada'
+                            : room.upcoming_reservation.starts_today
+                              ? 'Registrar llegada'
+                              : 'Registrar llegada anticipada'
                     }}
                 </Button>
                 <Button
@@ -720,89 +733,49 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
             </p>
         </section>
 
+        <!-- El cuarto no está para entregarse hoy, pero el calendario es
+             otra cosa: apartarlo para una fecha que no choque sí se puede, y
+             antes esto quedaba escondido detrás del semáforo. -->
         <section
-            v-if="
-                room.status === 'dirty' ||
-                room.status === 'cleaning' ||
-                room.status === 'maintenance'
-            "
+            v-if="!roomSale.sellNow.length && roomSale.bookAhead"
             class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
         >
-            <h3 class="text-sm font-medium text-slate-900 dark:text-slate-100">
-                Contexto operativo
-            </h3>
-            <p class="mt-2 text-xs text-slate-500">
-                <span v-if="room.status === 'dirty'"
-                    >La habitación está pendiente de limpieza antes de volver a
-                    venderse.</span
-                >
-                <span v-else-if="room.status === 'cleaning'"
-                    >El cuarto está en proceso de limpieza; al terminar, el
-                    semáforo puede volver a disponible.</span
-                >
-                <span v-else
-                    >La habitación está fuera de servicio por mantenimiento o
-                    bloqueo manual.</span
-                >
-            </p>
-
             <div
-                v-if="room.status === 'maintenance' && room.maintenance_notes"
-                class="mt-3 flex items-start gap-2 rounded-xl border border-warning/30 bg-warning/10 p-3 text-sm text-slate-700 dark:text-slate-200"
+                class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                Otras fechas
+            </div>
+            <p class="mt-1.5 text-xs text-slate-600 dark:text-slate-300">
+                {{ roomSale.reason }}
+            </p>
+            <Button
+                variant="outline-primary"
+                class="mt-3 h-9 w-full justify-center rounded-[0.5rem] text-xs sm:w-auto"
+                @click="dispatchArrival(roomSale.bookAhead.key, room)"
             >
                 <Lucide
-                    icon="Wrench"
-                    class="mt-0.5 h-4 w-4 shrink-0 text-warning"
+                    :icon="roomSale.bookAhead.icon"
+                    class="mr-1.5 h-3.5 w-3.5"
                 />
-                <span class="whitespace-pre-line">{{
-                    room.maintenance_notes
-                }}</span>
-            </div>
+                {{ roomSale.bookAhead.label }}
+            </Button>
         </section>
 
+        <!-- Ni entregar ni apartar: mantenimiento o candado por usos. Se dice
+             qué hay que hacer para devolverla a la venta, en vez de dejar el
+             hueco donde antes iban los botones. -->
         <section
-            v-if="canManage && room.transitions.length"
-            class="rounded-xl border border-slate-200/70 p-4 dark:border-darkmode-400"
+            v-else-if="!roomSale.actions.length && roomSale.reason"
+            class="rounded-xl border border-warning/30 bg-warning/5 p-4 dark:border-warning/30 dark:bg-warning/10"
         >
-            <h3 class="text-sm font-medium text-slate-900 dark:text-slate-100">
-                Limpieza y mantenimiento
-            </h3>
-            <p class="mt-1 text-xs text-slate-500">
-                Aquí solo vive la operación física del cuarto (limpieza y
-                mantenimiento). Reservada y ocupada se mueven solas cuando creas
-                una reserva o registras la llegada del huésped.
-            </p>
-            <p
-                v-if="room.status === 'reserved' && room.upcoming_reservation"
-                class="mt-2 flex items-start gap-2 rounded-xl border border-info/30 bg-info/5 p-3 text-sm text-slate-600 dark:text-slate-300"
-            >
-                <Lucide icon="Info" class="mt-0.5 h-4 w-4 shrink-0 text-info" />
-                <span>
-                    Esta habitación está apartada por la reserva
-                    {{ room.upcoming_reservation.code }}; para liberarla,
-                    cancela la reserva desde "Ver reserva".
-                </span>
-            </p>
-            <!-- En fila y no apilados: tres botones a lo ancho de un modal de
-                 1200px eran tres barras enormes para tres acciones chicas. -->
             <div
-                class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3"
+                class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
             >
-                <Button
-                    v-for="status in room.transitions"
-                    :key="status"
-                    :variant="transitionMeta[status].variant"
-                    :disabled="saving"
-                    class="min-h-11 w-full justify-center text-xs"
-                    @click="changeStatus(room, status)"
-                >
-                    <Lucide
-                        :icon="transitionMeta[status].icon"
-                        class="mr-1.5 h-3.5 w-3.5"
-                    />
-                    {{ transitionMeta[status].label }}
-                </Button>
+                Fuera de venta
             </div>
+            <p class="mt-1.5 text-xs text-slate-600 dark:text-slate-300">
+                {{ roomSale.reason }}
+            </p>
         </section>
     </div>
 </template>

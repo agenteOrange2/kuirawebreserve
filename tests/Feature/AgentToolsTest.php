@@ -569,3 +569,326 @@ it('readable no rompe una respuesta que no sea un objeto JSON', function () {
 
     expect(\App\Services\Agent\AgentBrain::readable($raw))->toBe('"texto suelto"');
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Avisos obligatorios al cotizar (capacidad, plazo de liquidación y
+// teléfono). El dato ya viajaba en el JSON pero el bot lo omitía, así que
+// ahora va como frase hecha que solo tiene que copiar.
+// ─────────────────────────────────────────────────────────────────────────
+
+function agentAvailability(RatePlan $plan, string $starts, ?string $ends = null): array
+{
+    $request = Request::create('/api/agent/availability', 'GET', array_filter([
+        'rate_plan_id' => $plan->id,
+        'starts_at' => $starts,
+        'ends_at' => $ends,
+    ]));
+
+    return app(AgentToolsController::class)
+        ->availability($request, app(\App\Services\AvailabilityService::class))
+        ->getData(true);
+}
+
+it('al cotizar, el aviso dice capacidad, persona extra, plazo de liquidación y teléfono', function () {
+    $this->property->update(['settings' => [
+        'phone' => '+526568508818',
+        'balance_due_enabled' => true,
+        'balance_due_value' => 7,
+        'balance_due_unit' => 'day',
+    ]]);
+    $this->room->update(['max_occupancy' => 3]);
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'price' => 3500,
+        'deposit_percent' => 50,
+        'deposit_amount' => null,
+        'active' => true,
+    ]);
+
+    $payload = agentAvailability($plan, now()->addDays(30)->toDateString(), now()->addDays(31)->toDateString());
+    $notice = implode("\n", $payload['quote_notice']);
+
+    expect($notice)->toContain('Incluye 2 personas (máximo 3)')
+        // El anticipo del aviso es el MISMO que cobrará el link de pago: si
+        // el hotel cuenta otra cifra en sus instrucciones, manda esta.
+        ->and($notice)->toContain('anticipo de $1,750.00 (50% del total)')
+        ->and($notice)->toContain('Cada persona extra cuesta $650.00 por noche')
+        ->and($notice)->toContain('debe quedar liquidado a más tardar el')
+        ->and($notice)->toContain('7 días antes de la llegada')
+        ->and($notice)->toContain('+526568508818');
+});
+
+it('con la llegada más próxima que el plazo, el aviso no cita una fecha ya vencida', function () {
+    $this->property->update(['settings' => [
+        'balance_due_enabled' => true,
+        'balance_due_value' => 7,
+        'balance_due_unit' => 'day',
+    ]]);
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+        // La tarifa fija su propio plazo sin mirar el calendario: para una
+        // llegada en 2 días, "una semana antes" ya pasó.
+        'payment_due_value' => 1,
+        'payment_due_unit' => 'week',
+    ]);
+
+    $payload = agentAvailability($plan, now()->addDays(2)->toDateString(), now()->addDays(3)->toDateString());
+    $notice = implode("\n", $payload['quote_notice']);
+
+    expect($notice)->toContain('debe quedar liquidado antes de tu llegada')
+        ->and($notice)->not->toContain('a más tardar el');
+});
+
+it('el hotel que no exige pago anticipado no promete ningún plazo', function () {
+    $this->property->update(['settings' => ['balance_due_enabled' => false, 'phone' => '+526568508818']]);
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+    ]);
+
+    $notice = implode("\n", agentAvailability($plan, now()->addDays(30)->toDateString())['quote_notice']);
+
+    expect($notice)->not->toContain('liquidado')
+        ->and($notice)->toContain('+526568508818');
+});
+
+it('el panorama también trae capacidad redactada y el plazo de liquidación', function () {
+    $this->property->update(['settings' => [
+        'phone' => '+526568508818',
+        'balance_due_enabled' => true,
+        'balance_due_value' => 1,
+        'balance_due_unit' => 'week',
+    ]]);
+    RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+    ]);
+
+    $request = Request::create('/api/agent/availability-overview', 'GET', [
+        'starts_at' => now()->addDays(30)->toDateString(),
+        'ends_at' => now()->addDays(31)->toDateString(),
+    ]);
+    $payload = app(AgentToolsController::class)
+        ->availabilityOverview($request, app(\App\Services\AvailabilityService::class))
+        ->getData(true);
+
+    expect($payload['options'][0]['occupancy_notice'])->toContain('Incluye 2 personas')
+        ->and(implode(' ', $payload['payment_notice']))->toContain('1 semana antes de la llegada')
+        ->and(implode(' ', $payload['payment_notice']))->toContain('+526568508818');
+});
+
+it('crear_apartado guarda el correo que capturó el asistente', function () {
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+    ]);
+
+    $request = Request::create('/api/agent/holds', 'POST', [
+        'rate_plan_id' => $plan->id,
+        'starts_at' => now()->addDays(5)->setTime(15, 0)->toDateTimeString(),
+        'guest_name' => 'Ana García',
+        'guest_phone' => '6561112233',
+        'guest_email' => 'ana@example.com',
+    ]);
+
+    $payload = app(AgentToolsController::class)
+        ->storeHold($request, app(CreateReservation::class))
+        ->getData(true);
+
+    $reservation = \App\Models\Reservation::where('code', strtoupper($payload['code']))->firstOrFail();
+
+    expect($reservation->guest?->email)->toBe('ana@example.com')
+        // Y al confirmar también avisa hasta cuándo hay que liquidar.
+        ->and($payload)->toHaveKey('payment_notice');
+});
+
+it('una fecha de un año que ya pasó se cotiza en el próximo año, nunca en el pasado', function () {
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+    ]);
+
+    // Caso real cabañas 2026-09-10: el huésped dijo "3 de octubre" sin año
+    // y el modelo mandó el año pasado; ahí todo sale libre.
+    $arrival = now()->addDays(23);
+    $payload = agentAvailability(
+        $plan,
+        $arrival->copy()->subYear()->toDateString(),
+        $arrival->copy()->subYear()->addDays(2)->toDateString(),
+    );
+
+    expect(substr($payload['starts_at'], 0, 10))->toBe($arrival->toDateString())
+        ->and(substr($payload['ends_at'], 0, 10))->toBe($arrival->copy()->addDays(2)->toDateString())
+        ->and($payload['units'])->toBe(2)
+        ->and($payload['date_notice'])->toContain('ya pasó')
+        ->and($payload['date_notice'])->toContain((string) $arrival->year);
+});
+
+it('con fecha futura no hay date_notice ni se mueve nada', function () {
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+    ]);
+
+    $arrival = now()->addDays(10);
+    $payload = agentAvailability($plan, $arrival->toDateString(), $arrival->copy()->addDay()->toDateString());
+
+    expect(substr($payload['starts_at'], 0, 10))->toBe($arrival->toDateString())
+        ->and($payload['date_notice'])->toBeNull();
+});
+
+it('si solo la llegada trae el año viejo, la salida que ya era futura se respeta', function () {
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+    ]);
+
+    $arrival = now()->addDays(23);
+    $payload = agentAvailability(
+        $plan,
+        $arrival->copy()->subYear()->toDateString(),
+        $arrival->copy()->addDays(2)->toDateString(),
+    );
+
+    expect(substr($payload['starts_at'], 0, 10))->toBe($arrival->toDateString())
+        ->and(substr($payload['ends_at'], 0, 10))->toBe($arrival->copy()->addDays(2)->toDateString());
+});
+
+it('el panorama tampoco consulta el pasado', function () {
+    RatePlan::factory()->create(['property_id' => $this->property->id, 'room_type_id' => $this->roomType->id, 'type' => 'night', 'active' => true]);
+
+    $arrival = now()->addDays(23);
+    $request = Request::create('/agent/availability-overview', 'GET', [
+        'starts_at' => $arrival->copy()->subYear()->toDateString(),
+        'ends_at' => $arrival->copy()->subYear()->addDays(2)->toDateString(),
+        'guests' => 2,
+    ]);
+
+    $payload = app(AgentToolsController::class)
+        ->availabilityOverview($request, app(\App\Services\AvailabilityService::class))
+        ->getData(true);
+
+    expect($payload['starts_at'])->toBe($arrival->toDateString())
+        ->and($payload['ends_at'])->toBe($arrival->copy()->addDays(2)->toDateString())
+        ->and($payload['date_notice'])->toContain('ya pasó');
+});
+
+it('crear_apartado con el año pasado aparta en el próximo año en vez de tronar', function () {
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+    ]);
+
+    $arrival = now()->addDays(23)->setTime(15, 0);
+    $request = Request::create('/api/agent/holds', 'POST', [
+        'rate_plan_id' => $plan->id,
+        'starts_at' => $arrival->copy()->subYear()->format('Y-m-d H:i'),
+        'guest_name' => 'Ana García',
+    ]);
+
+    $payload = app(AgentToolsController::class)
+        ->storeHold($request, app(CreateReservation::class))
+        ->getData(true);
+
+    $reservation = \App\Models\Reservation::where('code', strtoupper($payload['code']))->firstOrFail();
+
+    expect($reservation->starts_at->toDateString())->toBe($arrival->toDateString())
+        ->and($payload['date_notice'])->toContain('ya pasó');
+});
+
+it('el apartado trae la fianza de ESA reserva: una cabaña paga el monto base', function () {
+    $this->property->update(['settings' => array_replace($this->property->settings ?? [], [
+        'guarantee_enabled' => true,
+        'guarantee_amount' => 1500,
+        'guarantee_tiers' => [['from' => 2, 'amount' => 1000]],
+    ])]);
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+    ]);
+
+    $payload = app(AgentToolsController::class)->storeHold(
+        Request::create('/api/agent/holds', 'POST', [
+            'rate_plan_id' => $plan->id,
+            'starts_at' => now()->addDays(5)->setTime(15, 0)->toDateTimeString(),
+            'guest_name' => 'Ana García',
+        ]),
+        app(CreateReservation::class),
+    )->getData(true);
+
+    expect($payload['guarantee_for_this_booking']['rooms'])->toBe(1)
+        ->and($payload['guarantee_for_this_booking']['per_room'])->toEqual(1500)
+        ->and($payload['guarantee_for_this_booking']['total'])->toEqual(1500)
+        ->and($payload['guarantee_for_this_booking']['label'])->toContain('$1,500.00');
+});
+
+it('en un grupo de dos cabañas la fianza baja al escalón y trae el total', function () {
+    $this->property->update(['settings' => array_replace($this->property->settings ?? [], [
+        'guarantee_enabled' => true,
+        'guarantee_amount' => 1500,
+        'guarantee_tiers' => [['from' => 2, 'amount' => 1000]],
+    ])]);
+    $suite = RoomType::factory()->create(['property_id' => $this->property->id, 'name' => 'Cabaña Grande', 'capacity' => 6]);
+    Room::factory()->count(2)->create(['property_id' => $this->property->id, 'room_type_id' => $suite->id]);
+    RatePlan::factory()->create(['property_id' => $this->property->id, 'room_type_id' => $suite->id, 'price' => 4500]);
+
+    $payload = json_decode(app(AgentToolsController::class)->storeGroupHold(
+        Request::create('/agent/group-holds', 'POST', [
+            'starts_at' => now()->addDays(4)->setTime(15, 0)->toIso8601String(),
+            'ends_at' => now()->addDays(5)->setTime(12, 0)->toIso8601String(),
+            'guest_name' => 'Marco Hernández',
+            'lines' => [['room_type_id' => $suite->id, 'rooms' => 2]],
+        ]),
+        app(\App\Actions\Reservations\CreateGroupReservation::class),
+    )->getContent(), true);
+
+    expect($payload['guarantee_for_this_booking']['rooms'])->toBe(2)
+        ->and($payload['guarantee_for_this_booking']['per_room'])->toEqual(1000)
+        ->and($payload['guarantee_for_this_booking']['total'])->toEqual(2000)
+        ->and($payload['guarantee_for_this_booking']['label'])->toContain('2 habitaciones')
+        ->and($payload['guarantee_for_this_booking']['label'])->toContain('$2,000.00 en total');
+});
+
+it('sin fianza activa el apartado no trae guarantee_for_this_booking', function () {
+    $this->property->update(['settings' => array_replace($this->property->settings ?? [], [
+        'guarantee_enabled' => false,
+    ])]);
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+    ]);
+
+    $payload = app(AgentToolsController::class)->storeHold(
+        Request::create('/api/agent/holds', 'POST', [
+            'rate_plan_id' => $plan->id,
+            'starts_at' => now()->addDays(5)->setTime(15, 0)->toDateTimeString(),
+            'guest_name' => 'Ana García',
+        ]),
+        app(CreateReservation::class),
+    )->getData(true);
+
+    expect($payload['guarantee_for_this_booking'])->toBeNull();
+});

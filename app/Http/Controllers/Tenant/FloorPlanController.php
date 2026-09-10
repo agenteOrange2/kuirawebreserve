@@ -65,6 +65,11 @@ class FloorPlanController extends Controller
                     ),
                 'upcomingReservation' => fn ($query) => $query
                     ->with(['guest:id,first_name,last_name', 'ratePlan:id,name']),
+                // La que aparta el cuarto hoy. Va aparte de la próxima
+                // reserva porque son cosas distintas, y sin precargarla el
+                // plano haría una consulta por habitación.
+                'holdingReservation' => fn ($query) => $query
+                    ->with(['guest:id,first_name,last_name']),
                 'statusLogs' => fn ($query) => $query
                     ->where('created_at', '>=', now()->startOfDay())
                     ->latest('created_at')

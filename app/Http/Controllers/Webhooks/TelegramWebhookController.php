@@ -10,6 +10,7 @@ use App\Models\Message;
 use App\Models\Property;
 use App\Models\Tenant;
 use App\Services\Agent\AgentBrain;
+use App\Services\Channels\InboundVoiceService;
 use App\Services\Telegram\TelegramApi;
 use Illuminate\Http\Request;
 
@@ -22,6 +23,24 @@ use Illuminate\Http\Request;
  */
 class TelegramWebhookController extends Controller
 {
+    /** Campo del update de Telegram => clase de contenido nuestra. */
+    public const MEDIA_FIELDS = [
+        'photo' => 'image',
+        'document' => 'file',
+        'voice' => InboundVoiceService::KIND_AUDIO,
+        'audio' => InboundVoiceService::KIND_AUDIO,
+        'video' => InboundVoiceService::KIND_VIDEO,
+        'video_note' => InboundVoiceService::KIND_VIDEO,
+        'sticker' => InboundVoiceService::KIND_STICKER,
+    ];
+
+    /** Contenido que el bot no lee tal cual: se transcribe o se pide texto. */
+    public const SPOKEN_KINDS = [
+        InboundVoiceService::KIND_AUDIO,
+        InboundVoiceService::KIND_VIDEO,
+        InboundVoiceService::KIND_STICKER,
+    ];
+
     public function __construct(protected TelegramApi $api) {}
 
     public function receive(Request $request, string $token)
@@ -49,11 +68,12 @@ class TelegramWebhookController extends Controller
 
     /**
      * Normaliza un update de Telegram a mensaje entrante. Solo chats
-     * privados (los grupos quedan fuera del flujo de reservas); foto y
-     * documento viajan en `media` con su file_id para bajarlos después.
+     * privados (los grupos quedan fuera del flujo de reservas); los
+     * adjuntos viajan en `media` con su clase y su file_id para bajarlos
+     * después. La nota de voz entra por ahí y se transcribe.
      *
      * @param  array<string, mixed>  $payload
-     * @return array{from: string, name: string|null, body: string, externalId: string|null, media: array{file_id: string, mime: string|null, filename: string|null}|null}|null
+     * @return array{from: string, name: string|null, body: string, externalId: string|null, media: array{kind: string, file_id: string, mime: string|null, filename: string|null, seconds: int|null}|null}|null
      */
     public static function extractMessage(array $payload): ?array
     {
@@ -83,20 +103,26 @@ class TelegramWebhookController extends Controller
         $body = $message['text'] ?? $message['caption'] ?? null;
         $media = null;
 
-        if (isset($message['photo']) || isset($message['document'])) {
+        foreach (self::MEDIA_FIELDS as $field => $kind) {
+            if (! isset($message[$field])) {
+                continue;
+            }
+
             // photo llega como lista de tamaños: el último es el grande.
-            $descriptor = isset($message['photo'])
-                ? end($message['photo'])
-                : $message['document'];
+            $descriptor = $field === 'photo' ? end($message[$field]) : $message[$field];
 
             if (is_array($descriptor) && ! empty($descriptor['file_id'])) {
                 $media = [
+                    'kind' => $kind,
                     'file_id' => (string) $descriptor['file_id'],
-                    'mime' => $descriptor['mime_type'] ?? (isset($message['photo']) ? 'image/jpeg' : null),
+                    'mime' => $descriptor['mime_type'] ?? ($field === 'photo' ? 'image/jpeg' : null),
                     'filename' => $descriptor['file_name'] ?? null,
+                    'seconds' => isset($descriptor['duration']) ? (int) $descriptor['duration'] : null,
                 ];
-                $body ??= isset($message['photo']) ? '[Imagen]' : '[Documento]';
+                $body ??= InboundVoiceService::label($kind);
             }
+
+            break;
         }
 
         if ($body === null) {
@@ -115,7 +141,7 @@ class TelegramWebhookController extends Controller
     /**
      * Mismo camino que Meta/Evolution, dentro del tenant dueño del bot.
      *
-     * @param  array{file_id: string, mime: string|null, filename: string|null}|null  $media
+     * @param  array{kind: string, file_id: string, mime: string|null, filename: string|null, seconds: int|null}|null  $media
      */
     protected function handleInbound(TelegramChannelLink $link, string $from, ?string $name, string $body, ?string $externalId, ?array $media = null): void
     {
@@ -159,11 +185,34 @@ class TelegramWebhookController extends Controller
             // El chat_id de Telegram NO es un teléfono: no ligar reservas
             // por coincidencia numérica accidental (mismo criterio que PSID).
 
+            // Nota de voz, video o sticker: se resuelve ANTES de guardar,
+            // para que en la bandeja se lea el dictado y no un marcador.
+            $voice = app(InboundVoiceService::class);
+            $kind = $media['kind'] ?? null;
+            // Con pie de foto manda el texto: un video con caption es un
+            // mensaje escrito con adjunto, no un mensaje que no se puede leer.
+            $spoken = in_array($kind, self::SPOKEN_KINDS, true)
+                && $body === InboundVoiceService::label((string) $kind);
+            $transcribed = false;
+            $spokenMeta = [];
+
+            if ($spoken) {
+                $interpreted = $voice->interpret(
+                    (string) $kind,
+                    fn () => $this->api->downloadFile($link, (string) $media['file_id']),
+                    $media['seconds'] ?? null,
+                );
+
+                $body = $interpreted['body'];
+                $spokenMeta = $interpreted['meta'];
+                $transcribed = $interpreted['transcribed'];
+            }
+
             $message = $conversation->messages()->create([
                 'direction' => 'in',
                 'sender_type' => 'visitor',
                 'body' => $body,
-                'meta' => array_filter(['external_id' => $externalId, 'channel' => Channel::TYPE_TELEGRAM]),
+                'meta' => array_filter(['external_id' => $externalId, 'channel' => Channel::TYPE_TELEGRAM] + $spokenMeta),
                 'created_at' => now(),
             ]);
             $conversation->update(['last_message_at' => now()]);
@@ -172,7 +221,7 @@ class TelegramWebhookController extends Controller
             // servicio decida su destino (adjunto/comprobante).
             $mediaOutcome = null;
 
-            if ($media !== null) {
+            if (! $spoken && $media !== null) {
                 $binary = $this->api->downloadFile($link, $media['file_id']);
 
                 if ($binary) {
@@ -192,6 +241,14 @@ class TelegramWebhookController extends Controller
                 return;
             }
 
+            // Llegó algo que no se pudo leer: se avisa que por aquí solo
+            // texto y a espera humana, en vez de dejarlo en silencio.
+            if ($spoken && ! $transcribed) {
+                $voice->askForText($conversation, (string) $kind);
+
+                return;
+            }
+
             $brain = app(AgentBrain::class);
 
             // El bot no ve imágenes: una foto sin texto espera a un humano
@@ -199,6 +256,9 @@ class TelegramWebhookController extends Controller
             $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true);
 
             if (! $noCaption && $channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
+                // "escribiendo..." mientras piensa (Telegram lo apaga solo).
+                $this->api->sendChatAction($link, $from);
+
                 $reply = $brain->reply($conversation);
 
                 if ($reply?->body) {

@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: KuiraWebReserve Habitaciones
- * Description: Muestra en tu sitio los tipos de habitacion de tu hotel con foto, precio y amenidades EN VIVO desde KuiraWebReserve (nunca copia el precio: lo consulta cada vez, con cache de minutos). Shortcodes [kuirawebreserve_rooms], [kuira_reservas], [kuira_experiencias] y [kuira_grupos].
- * Version: 1.2.0
+ * Description: Muestra en tu sitio los tipos de habitacion de tu hotel con foto, precio y amenidades EN VIVO desde KuiraWebReserve (nunca copia el precio: lo consulta cada vez, con cache de minutos). Shortcodes [kuirawebreserve_rooms], [kuira_reservas] (opcional habitacion="ID" para una sola), [kuira_experiencias] y [kuira_grupos].
+ * Version: 1.3.0
  * Author: KuiraWebReserve
  * License: GPL-2.0-or-later
  * Text Domain: kuirawebreserve-rooms
@@ -13,7 +13,7 @@ if (! defined('ABSPATH')) {
 
 final class KuiraWebReserveRooms
 {
-    const VERSION = '1.2.0';
+    const VERSION = '1.3.0';
 
     const OPTION = 'kuira_rooms_settings';
 
@@ -45,7 +45,7 @@ final class KuiraWebReserveRooms
         add_shortcode('kuirawebreserve_rooms', [self::class, 'shortcode']);
         // Shortcodes de widgets: el wizard completo como iframe (los mismos
         // que anuncia la pagina Integracion del panel).
-        add_shortcode('kuira_reservas', fn () => self::widgetShortcode('reservas'));
+        add_shortcode('kuira_reservas', fn ($atts = []) => self::widgetShortcode('reservas', $atts));
         add_shortcode('kuira_experiencias', fn () => self::widgetShortcode('experiencias'));
         add_shortcode('kuira_grupos', fn () => self::widgetShortcode('grupos'));
     }
@@ -283,6 +283,8 @@ final class KuiraWebReserveRooms
                         <p><code>[kuirawebreserve_rooms columns="2"]</code></p>
                         <p class="kuira-detail">Wizard completo incrustado (fechas, disponibilidad y pago en linea):</p>
                         <p><code>[kuira_reservas]</code> <code>[kuira_experiencias]</code> <code>[kuira_grupos]</code></p>
+                        <p class="kuira-detail">Una sola habitacion (una pagina por cabania: solo se reserva esa). El numero lo da tu panel en Integracion:</p>
+                        <p><code>[kuira_reservas habitacion="11"]</code></p>
                         <p class="kuira-version">Version del plugin: <?php echo esc_html(self::VERSION); ?></p>
                     </div>
                 </div>
@@ -522,8 +524,12 @@ final class KuiraWebReserveRooms
      * hotel (el loader inyecta el iframe con alto autoajustable; precios y
      * cupos SIEMPRE en vivo). El script se imprime una sola vez por pagina
      * aunque haya varios widgets.
+     *
+     * [kuira_reservas habitacion="11"] acota el wizard a UNA habitacion:
+     * un embed distinto por cabania, cada uno en su propia pagina. El id
+     * lo da el panel del hotel en Integracion.
      */
-    protected static function widgetShortcode(string $key): string
+    protected static function widgetShortcode(string $key, $atts = []): string
     {
         $domain = self::settings()['domain'];
 
@@ -535,7 +541,12 @@ final class KuiraWebReserveRooms
 
         static $scriptPrinted = false;
 
-        $out = '<div data-kuira-widget="'.esc_attr($key).'"></div>';
+        $atts = shortcode_atts(['habitacion' => ''], is_array($atts) ? $atts : []);
+        $room = preg_replace('/[^0-9]/', '', (string) $atts['habitacion']);
+
+        $out = '<div data-kuira-widget="'.esc_attr($key).'"'
+            .($room !== '' ? ' data-kuira-room="'.esc_attr($room).'"' : '')
+            .'></div>';
 
         if (! $scriptPrinted) {
             $scriptPrinted = true;

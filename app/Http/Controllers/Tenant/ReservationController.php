@@ -125,9 +125,17 @@ class ReservationController extends Controller
         // partida); el mostrador puede ajustarlo, pero ChargeGuarantee le
         // exige motivo — este endpoint es del panel, no público.
         $data = $request->validate([
-            'guarantee_method' => ['nullable', Rule::in(['cash', 'card'])],
+            // Lo que acepte el mostrador de ESTE hotel: la lista cableada
+            // que había aquí ignoraba /ajustes/metodos-pago por completo, así
+            // que un hotel sin terminal podía registrar fianzas con tarjeta y
+            // uno que cobra por transferencia no podía registrarlas.
+            'guarantee_method' => ['nullable', Rule::in(app(\App\Services\ReservationPolicy::class)->counterMethods())],
             'guarantee_amount' => ['nullable', 'numeric', 'min:0', 'max:999999'],
             'guarantee_reason' => ['nullable', 'string', 'max:255'],
+            'guarantee_reference' => ['nullable', 'string', 'max:100'],
+            // Llegada anticipada: el panel la manda solo cuando quien atiende
+            // confirmó que el huésped ya está aquí, días antes de su fecha.
+            'early' => ['sometimes', 'boolean'],
         ]);
 
         return $this->transition(
@@ -138,6 +146,8 @@ class ReservationController extends Controller
                 $data['guarantee_method'] ?? null,
                 isset($data['guarantee_amount']) ? (float) $data['guarantee_amount'] : null,
                 $data['guarantee_reason'] ?? null,
+                $request->boolean('early'),
+                $data['guarantee_reference'] ?? null,
             ),
             $reservation,
         );
