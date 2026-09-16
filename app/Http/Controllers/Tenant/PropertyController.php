@@ -172,7 +172,10 @@ class PropertyController extends Controller
             'settings.hold_value' => ['sometimes', 'integer', 'min:1', 'max:999'],
             'settings.hold_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['minute', 'hour', 'day', 'week'])],
             'settings.transfer_valid_value' => ['sometimes', 'integer', 'min:1', 'max:999'],
-            'settings.transfer_valid_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['hour', 'day', 'week'])],
+            // Minutos incluidos: hay hoteles que la tenían en minutos desde
+            // el levantamiento y la pantalla no podía ni mostrarla ni
+            // guardarla — el plazo real no era editable por nadie.
+            'settings.transfer_valid_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['minute', 'hour', 'day', 'week'])],
             // Plazo para pagar en el hotel (efectivo): reloj propio,
             // independiente del hold y de la transferencia (default 24 h).
             'settings.cash_deadline_value' => ['sometimes', 'integer', 'min:1', 'max:999'],
@@ -188,6 +191,14 @@ class PropertyController extends Controller
             'settings.cancel_free_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['hour', 'day', 'week'])],
             'settings.cancel_penalty_percent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'settings.cancel_policy_text' => ['sometimes', 'nullable', 'string', 'max:2000'],
+            // Reenganche del asistente ("¿sigues por ahí?"): cuánto silencio
+            // del huésped se espera, y desde cuántos mensajes suyos vale la
+            // pena escribirle. 0 mensajes = sin filtro (comportamiento de
+            // siempre). Cabañas 2026-09-12: con 4 mensajes o menos contestaba
+            // el 14% y de ahí para arriba el 36% — perseguir al primer grupo
+            // es escribirle a quien solo preguntó el precio y se fue.
+            'settings.nudge_silence_minutes' => ['sometimes', 'integer', 'min:5', 'max:1440'],
+            'settings.nudge_min_messages' => ['sometimes', 'integer', 'min:0', 'max:20'],
             // Walk-ins de mostrador: cobrar al registrar la llegada o la
             // cuenta final al registrar la salida (default histórico).
             'settings.walkin_charge' => ['sometimes', \Illuminate\Validation\Rule::in(['checkout', 'checkin'])],

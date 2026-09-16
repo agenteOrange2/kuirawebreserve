@@ -288,16 +288,33 @@ class BookingLookupController extends Controller
      */
     protected function phoneMatches(Reservation $reservation, string $input): bool
     {
-        // El contacto vive en el Guest ligado, no en la reserva.
-        $stored = preg_replace('/\D+/', '', (string) $reservation->guest?->phone);
         $given = preg_replace('/\D+/', '', $input);
 
-        if ($stored === '' || strlen($given) < 4) {
+        if (strlen($given) < 4) {
             return false;
         }
 
-        $length = min(8, strlen($stored), strlen($given));
+        // El contacto vive en el Guest ligado, no en la reserva. Si la ficha
+        // no tiene número, vale el WhatsApp desde el que se hizo la reserva:
+        // es exactamente "el teléfono con el que reservaste" que le pide el
+        // aviso. Caso real cabañas 2026-09-13 (RES-2026-1724): reservas del
+        // bot con la ficha sin teléfono que la consulta nunca encontraba.
+        $candidates = [preg_replace('/\D+/', '', (string) $reservation->guest?->phone)];
 
-        return substr($stored, -$length) === substr($given, -$length);
+        foreach (\App\Models\Conversation::query()->where('reservation_id', $reservation->id)->with('channel')->get() as $conversation) {
+            if ($conversation->phoneIsIdentity()) {
+                $candidates[] = preg_replace('/\D+/', '', (string) $conversation->contact_phone);
+            }
+        }
+
+        foreach (array_filter($candidates) as $stored) {
+            $length = min(8, strlen($stored), strlen($given));
+
+            if (substr($stored, -$length) === substr($given, -$length)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

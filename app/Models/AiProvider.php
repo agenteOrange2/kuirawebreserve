@@ -80,10 +80,16 @@ class AiProvider extends Model
             'label' => 'MiniMax',
             'driver' => 'openai',
             'url' => 'https://api.minimax.io/v1',
-            'placeholder_model' => 'MiniMax-M2',
+            'placeholder_model' => 'MiniMax-M2.7',
             'key_hint' => 'eyJ…',
+            // M2 NO soporta prompt caching y los demás sí (medido contra la
+            // API el 2026-09-14: con M2 cached_tokens siempre 0; con M2.7,
+            // 10,299 de 10,628). Como el prompt fijo son ~12,650 tokens en
+            // cada respuesta, el modelo sin caché cuesta ~3 veces más.
             'models' => [
-                ['id' => 'MiniMax-M2', 'tier' => 'new'],
+                ['id' => 'MiniMax-M2.7', 'tier' => 'new'],
+                ['id' => 'MiniMax-M2.5', 'tier' => 'new'],
+                ['id' => 'MiniMax-M2', 'tier' => 'mid'],
                 ['id' => 'MiniMax-Text-01', 'tier' => 'mid'],
                 ['id' => 'abab6.5s-chat', 'tier' => 'cheap'],
             ],

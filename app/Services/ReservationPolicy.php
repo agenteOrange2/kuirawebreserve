@@ -41,6 +41,67 @@ class ReservationPolicy
     }
 
     /**
+     * ¿Se reciben transferencias a esta hora? Horario opcional por hotel
+     * (cabañas 2026-09-11: solo de 9 a 5; fuera de ese horario solo se
+     * cobra en línea, porque de noche nadie verifica depósitos y el apartado
+     * vence antes). Sin horario configurado, siempre.
+     */
+    public function transferOpenNow(?CarbonInterface $at = null): bool
+    {
+        $settings = $this->settings();
+
+        if (empty($settings['transfer_hours_enabled'])) {
+            return true;
+        }
+
+        $at ??= now();
+        $minutes = $at->hour * 60 + $at->minute;
+
+        return $minutes >= $this->clockMinutes((string) ($settings['transfer_hours_open'] ?? '09:00'))
+            && $minutes < $this->clockMinutes((string) ($settings['transfer_hours_close'] ?? '17:00'));
+    }
+
+    /** "de 9:00 AM a 5:00 PM", o null si el hotel no tiene horario. */
+    public function transferHoursLabel(): ?string
+    {
+        $settings = $this->settings();
+
+        if (empty($settings['transfer_hours_enabled'])) {
+            return null;
+        }
+
+        return 'de '.$this->clockLabel((string) ($settings['transfer_hours_open'] ?? '09:00'))
+            .' a '.$this->clockLabel((string) ($settings['transfer_hours_close'] ?? '17:00'));
+    }
+
+    protected function clockMinutes(string $time): int
+    {
+        [$hours, $minutes] = array_map('intval', explode(':', $time.':0'));
+
+        return $hours * 60 + $minutes;
+    }
+
+    protected function clockLabel(string $time): string
+    {
+        $minutes = $this->clockMinutes($time);
+
+        return now()->startOfDay()->addMinutes($minutes)->format('g:i A');
+    }
+
+    /**
+     * Cuánto se sostiene un apartado cuando el huésped YA mandó su
+     * comprobante por el chat: el reloj se detiene mientras el hotel
+     * verifica el depósito. Caso real cabañas 2026-09-10: el comprobante
+     * llegó a las 20:19, el apartado venció a las 20:27 y el bot le dijo
+     * "venció" a quien ya había pagado. De noche nadie verifica hasta el día
+     * siguiente, por eso el default es de un día.
+     */
+    public function proofReviewMinutes(): int
+    {
+        return max(60, (int) config('reservations.proof_review_hours', 24) * 60);
+    }
+
+    /**
      * ¿El hotel exige el pago total antes de la llegada? (interruptor
      * global del módulo de fecha límite / cobro automático de saldos).
      */
@@ -138,6 +199,62 @@ class ReservationPolicy
     }
 
     /**
+     * Hasta cuándo sigue apartada una reserva, en palabras que el huésped
+     * entiende: "hoy a las 8:50 PM", "mañana a las 10:00 AM", "el lunes 14
+     * de septiembre a las 9:00 AM". El bot recibía la hora como timestamp
+     * ISO y la traducía mal (o se inventaba "20 minutos").
+     */
+    public function holdDeadlineLabel(CarbonInterface $at): string
+    {
+        $now = now();
+
+        $when = match (true) {
+            $at->isSameDay($now) => 'hoy',
+            $at->isSameDay($now->addDay()) => 'mañana',
+            default => 'el '.$at->locale('es')->isoFormat('dddd D [de] MMMM'),
+        };
+
+        return $when.' a las '.$at->format('g:i A');
+    }
+
+    /**
+     * La verdad sobre un apartado vivo, lista para decírsela al huésped:
+     * hasta qué hora se sostiene, que se libera si no se paga antes, y que
+     * después se puede retomar con el mismo código si la habitación sigue
+     * libre.
+     *
+     * Una sola frase para las tres superficies que hablan del vencimiento
+     * (la respuesta de solicitar_pago, el guardián del bot y el recordatorio
+     * automático). Caso real cabañas 2026-09-13 (RES-2026-1727): el apartado
+     * vencía a las 8:50 PM y el bot le dijo al huésped que podía transferir
+     * "mañana" — y a las 8:50 el sistema le avisó que su apartado venció.
+     *
+     * null si la reserva no es un apartado vigente.
+     */
+    public function holdDeadlineNotice(\App\Models\Reservation $reservation): ?string
+    {
+        if ($reservation->status !== \App\Enums\ReservationStatus::Pending
+            || $reservation->hold_expires_at === null
+            || $reservation->hold_expires_at->isPast()) {
+            return null;
+        }
+
+        // Un grupo se nombra por su GRP-: con el folio de una sola cabaña el
+        // huésped creyó que tenía que reactivar "el 1747" (GRP-2026-0152).
+        $group = $reservation->reservation_group_id ? $reservation->group : null;
+
+        if ($group !== null) {
+            return 'Tu grupo '.$group->displayCode().' queda guardado hasta '
+                .$this->holdDeadlineLabel($reservation->hold_expires_at)
+                .'. Si no se paga antes de esa hora, las habitaciones se liberan. Si después quieres retomarlo, escríbeme y lo reactivo con el mismo código si siguen libres.';
+        }
+
+        return 'Tu apartado '.$reservation->displayCode().' queda guardado hasta '
+            .$this->holdDeadlineLabel($reservation->hold_expires_at)
+            .'. Si no se paga antes de esa hora, la habitación se libera. Si después quieres retomarlo, escríbeme y lo reactivo con el mismo código si sigue libre.';
+    }
+
+    /**
      * Fecha límite de pago total para una reserva: la tarifa manda si
      * define su propia anticipación (comportamiento de siempre); si no, el
      * default del hotel (5 días). El default solo aplica cuando queda al
@@ -153,7 +270,13 @@ class ReservationPolicy
         $due = $ratePlan->paymentDueAt($start);
 
         if ($due !== null) {
-            return $due;
+            // Mismo candado que abajo: una fecha límite que nace vencida no
+            // es una fecha límite. Con la tarifa en "una semana antes", quien
+            // reserva con tres días de anticipación tenía el plazo cumplido
+            // antes de existir, y el barrido de saldos lo trataba como
+            // moroso desde el primer minuto (caso real cabañas 2026-09-12,
+            // RES-2026-1718). Sin plazo, el saldo se cobra a mano.
+            return $due->gt(now()->addDay()) ? $due : null;
         }
 
         $value = (int) ($this->settings()['balance_due_value'] ?? 5);
@@ -430,6 +553,32 @@ class ReservationPolicy
                 ->map(fn (array $tier) => 'desde '.$tier['from'].' habitaciones, '.$money($tier['amount']).' cada una')
                 ->implode('; '),
         ];
+    }
+
+    /**
+     * Cuántos mensajes tiene que haber escrito el huésped para que valga la
+     * pena reengancharlo con el "¿sigues por ahí?". 0 = sin filtro (el
+     * comportamiento de siempre).
+     *
+     * Medido en cabañas sobre 146 avisos reales (2026-09-12): quien escribió
+     * 4 mensajes o menos contestó el 14%, quien pasó de ahí el 36%. Perseguir
+     * al primer grupo es escribirle a alguien que solo preguntó el precio y
+     * se fue — y son la mitad de los avisos que salen.
+     */
+    public function nudgeMinVisitorMessages(): int
+    {
+        return max(0, (int) ($this->settings()['nudge_min_messages'] ?? 0));
+    }
+
+    /**
+     * Cuánto silencio del huésped se espera antes del reenganche. Default:
+     * los 20 minutos de siempre. En cabañas el aviso llegaba mientras la
+     * persona estaba consultando con su familia ("están checando las
+     * cabañas" a los 25 minutos), que es justo cuando estorba.
+     */
+    public function nudgeSilenceMinutes(): int
+    {
+        return max(5, (int) ($this->settings()['nudge_silence_minutes'] ?? 20));
     }
 
     /**

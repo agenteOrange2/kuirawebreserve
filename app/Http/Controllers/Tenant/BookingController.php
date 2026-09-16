@@ -380,7 +380,7 @@ class BookingController extends Controller
         $enabled = $gate->methodsFor((string) tenant('id'));
 
         $settings = Property::firstOrFail()->settings ?? [];
-        $accounts = ! $enabled['transfer'] ? collect() : collect($settings['bank_accounts'] ?? [])
+        $accounts = (! $enabled['transfer'] || ! app(\App\Services\ReservationPolicy::class)->transferOpenNow()) ? collect() : collect($settings['bank_accounts'] ?? [])
             ->filter(fn (array $account) => ! empty($account['active']))
             ->map(fn (array $account) => [
                 'banco' => $account['bank'] ?? '',

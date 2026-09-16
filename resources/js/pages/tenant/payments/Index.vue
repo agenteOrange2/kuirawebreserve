@@ -13,6 +13,7 @@ import RazeLayout from '@/layouts/RazeLayout.vue';
 interface PaymentQueueItem {
     id: number;
     reservation_id: number;
+    group_id: number | null;
     reservation_code: string | null;
     guest_name: string;
     concept: string;
@@ -21,6 +22,13 @@ interface PaymentQueueItem {
     expires_at: string | null;
     requested_by: string;
     conversation_id: number | null;
+    has_receipt: boolean;
+    /** Lo que el sistema leyó en el comprobante y lo que no cuadra. */
+    receipt_check: {
+        verdict: string | null;
+        summary: string | null;
+        warnings: string[];
+    } | null;
 }
 
 interface OverdueBalance {
@@ -505,6 +513,42 @@ watch(paymentsMethod, () => fetchPayments(1));
                                     >{{ item.concept }} ·
                                     {{ item.amount_label }}</span
                                 >
+                                <!-- Lo leído en el comprobante: monto, banco y
+                                     clave de rastreo para cotejar con el banco
+                                     sin abrir la foto -->
+                                <span
+                                    v-if="item.receipt_check?.summary"
+                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                    :class="
+                                        item.receipt_check.verdict === 'match'
+                                            ? 'bg-success/10 text-success'
+                                            : 'bg-pending/10 text-pending'
+                                    "
+                                    >{{ item.receipt_check.summary }}</span
+                                >
+                                <span
+                                    v-else-if="item.has_receipt"
+                                    class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
+                                    >Comprobante por verificar</span
+                                >
+                            </div>
+                            <div
+                                v-if="item.receipt_check?.warnings?.length"
+                                class="mt-1 flex flex-wrap gap-1.5"
+                            >
+                                <span
+                                    v-for="(
+                                        aviso, i
+                                    ) in item.receipt_check.warnings"
+                                    :key="i"
+                                    class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
+                                >
+                                    <Lucide
+                                        icon="TriangleAlert"
+                                        class="h-3 w-3"
+                                    />
+                                    {{ aviso }}
+                                </span>
                             </div>
                             <p class="mt-0.5 text-xs text-slate-500">
                                 Solicitado por {{ item.requested_by }}
@@ -518,7 +562,7 @@ watch(paymentsMethod, () => fetchPayments(1));
                             <Button
                                 v-if="item.conversation_id"
                                 as="a"
-                                :href="route('tenant.inbox')"
+                                :href="`${route('tenant.inbox')}?conversation=${item.conversation_id}`"
                                 variant="outline-secondary"
                                 class="h-8 rounded-[0.5rem] bg-white text-xs"
                                 title="El comprobante llegó por conversación: revísalo en la Bandeja"

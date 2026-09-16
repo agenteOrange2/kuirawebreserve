@@ -5,10 +5,10 @@ namespace App\Http\Controllers\Tenant;
 use App\Actions\Rooms\ChangeRoomStatus;
 use App\Actions\Rooms\SyncRoomUsageLock;
 use App\Enums\ReservationStatus;
-use App\Models\Reservation;
 use App\Enums\RoomStatus;
 use App\Http\Controllers\Controller;
 use App\Models\Order;
+use App\Models\Reservation;
 use App\Models\Room;
 use App\Models\Stay;
 use Illuminate\Http\JsonResponse;
@@ -29,15 +29,21 @@ class RoomController extends Controller
      */
     public function stays(Room $room): JsonResponse
     {
-        $stays = Stay::query()
-            ->where('room_id', $room->id)
+        // Cinco por lista: el tab es un vistazo y cada lista trae su botón al
+        // historial completo. Con diez, "lo que viene" de una cabaña con
+        // temporada llena se volvía una columna de dos pantallas.
+        $limit = 5;
+
+        $staysQuery = Stay::query()->where('room_id', $room->id);
+
+        $stays = (clone $staysQuery)
             ->with(['guest:id,first_name,last_name', 'ratePlan:id,name'])
             ->withSum(
                 ['orders as consumos_total' => fn ($query) => $query->where('status', Order::STATUS_COMPLETED)],
                 'total',
             )
             ->latest('check_in_at')
-            ->take(10)
+            ->take($limit)
             ->get()
             ->map(fn (Stay $stay) => [
                 'id' => $stay->id,
@@ -57,13 +63,15 @@ class RoomController extends Controller
 
         // Lo que viene para esta habitación: sirve para saber hasta cuándo se
         // puede extender a quien está adentro sin pisar a nadie.
-        $upcoming = Reservation::query()
+        $upcomingQuery = Reservation::query()
             ->where('room_id', $room->id)
             ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
-            ->where('ends_at', '>=', now())
+            ->where('ends_at', '>=', now());
+
+        $upcoming = (clone $upcomingQuery)
             ->with(['guest:id,first_name,last_name', 'ratePlan:id,name'])
             ->orderBy('starts_at')
-            ->take(10)
+            ->take($limit)
             ->get()
             ->map(fn (Reservation $reservation) => [
                 'id' => $reservation->id,
@@ -77,7 +85,13 @@ class RoomController extends Controller
                 'total_amount' => (float) $reservation->total_amount,
             ]);
 
-        return response()->json(['stays' => $stays, 'upcoming' => $upcoming]);
+        // Los totales dicen cuántas quedan fuera del vistazo ("Ver las 14").
+        return response()->json([
+            'stays' => $stays,
+            'upcoming' => $upcoming,
+            'stays_total' => $staysQuery->count(),
+            'upcoming_total' => $upcomingQuery->count(),
+        ]);
     }
 
     public function index(Request $request): JsonResponse

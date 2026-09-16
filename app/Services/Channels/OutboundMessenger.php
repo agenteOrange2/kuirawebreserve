@@ -43,6 +43,41 @@ class OutboundMessenger
     }
 
     /**
+     * El canal RECHAZÓ la respuesta: fuera de la ventana de 24 h, número
+     * inválido, token vencido o la instancia caída. Hasta hoy eso solo
+     * dejaba una línea en el log — la bandeja mostraba el mensaje como
+     * enviado y el huésped nunca lo recibía (cabañas 2026-09-15, conv. 830:
+     * una respuesta de 4,457 caracteres que WhatsApp rechazó entera).
+     */
+    public function flagUndelivered(Conversation $conversation, ?\App\Models\Message $message = null): void
+    {
+        try {
+            if ($message !== null) {
+                $message->forceFill([
+                    'meta' => array_merge($message->meta ?? [], ['undelivered' => true]),
+                ])->saveQuietly();
+            }
+
+            if ($conversation->status !== Conversation::STATUS_PENDING) {
+                $conversation->update(['status' => Conversation::STATUS_PENDING]);
+            }
+
+            app(\App\Services\StaffNotifier::class)->notify(
+                type: \App\Models\StaffNotification::TYPE_MESSAGE,
+                title: 'Respuesta no entregada',
+                body: ($conversation->guest?->full_name ?? $conversation->contact_name ?? 'Un huésped')
+                    .' no recibió la respuesta del asistente: '
+                    .\Illuminate\Support\Str::limit(trim((string) $message?->body), 80)
+                    .' Contéstale tú por el canal.',
+                url: '/bandeja?conversation='.$conversation->id,
+                subject: $conversation,
+            );
+        } catch (\Throwable $e) {
+            report($e);
+        }
+    }
+
+    /**
      * Adjunto saliente (foto o PDF que manda el staff). El webchat no tiene
      * transporte: el visitante lo verá al recargar su hilo.
      */

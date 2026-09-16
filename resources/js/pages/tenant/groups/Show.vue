@@ -8,11 +8,14 @@ import {
     FormInput,
     FormLabel,
     FormSelect,
+    FormSwitch,
     FormTextarea,
 } from '@/components/Base/Form';
 import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
+import { useCounterMethods } from '@/composables/useCounterMethods';
+import type { CounterMethod } from '@/composables/useCounterMethods';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
@@ -477,6 +480,95 @@ async function cancelExperience() {
 }
 
 // ── Cobro consolidado desde el panel ──
+// ── Reabrir el grupo y registrar lo que entregó el responsable ──
+const cancelledRooms = computed(() =>
+    props.group.reservations_detail.filter((r) =>
+        ['cancelled', 'no_show'].includes(r.status),
+    ),
+);
+
+const reopenOpen = ref(false);
+const reopenConfirmed = ref(true);
+const reopenBusy = ref(false);
+
+async function submitReopen() {
+    if (reopenBusy.value) return;
+    reopenBusy.value = true;
+    try {
+        await axios.patch(
+            route('tenant.group-reservations.reopen', props.group.id),
+            {
+                confirmed: reopenConfirmed.value,
+            },
+        );
+        toast.success(
+            'Grupo reabierto',
+            `${props.group.code} volvió con sus mismos códigos.`,
+        );
+        reopenOpen.value = false;
+        router.reload();
+    } catch (e: any) {
+        toast.error(
+            'No se pudo reabrir el grupo',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        reopenBusy.value = false;
+    }
+}
+
+const { methods: counterMethods, first: firstCounterMethod } =
+    useCounterMethods();
+const payOpen = ref(false);
+const payBusy = ref(false);
+const payForm = reactive({
+    amount: 0 as number | string,
+    method: 'cash' as CounterMethod,
+    reference: '',
+    notes: '',
+    // Un solo aviso por el folio del grupo, no uno por cabaña.
+    notify: true,
+});
+
+function openPayment() {
+    payForm.amount = Number(props.group.pending_balance.toFixed(2));
+    payForm.method = firstCounterMethod.value;
+    payForm.reference = '';
+    payForm.notes = '';
+    payForm.notify = true;
+    payOpen.value = true;
+}
+
+async function submitPayment() {
+    if (payBusy.value) return;
+    payBusy.value = true;
+    try {
+        await axios.post(
+            route('tenant.group-reservations.payments', props.group.id),
+            {
+                amount: payForm.amount,
+                method: payForm.method,
+                reference: payForm.reference || null,
+                notes: payForm.notes || null,
+                notify_guest: payForm.notify,
+            },
+        );
+        toast.success(
+            'Pago registrado',
+            `Se repartió entre las habitaciones del grupo ${props.group.code}.`,
+        );
+        payOpen.value = false;
+        router.reload();
+    } catch (e: any) {
+        toast.error(
+            'No se pudo registrar el pago',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        payBusy.value = false;
+    }
+}
+
 const chargeBusy = ref(false);
 
 async function issueCharge(method: 'gateway' | 'transfer') {
@@ -651,6 +743,30 @@ const requestStatusClass: Record<string, string> = {
                         >
                             <Lucide icon="UserPen" class="mr-1.5 h-3.5 w-3.5" />
                             Editar responsable
+                        </Button>
+                        <Button
+                            v-if="cancelledRooms.length"
+                            variant="primary"
+                            class="h-9 rounded-[0.5rem] text-xs"
+                            @click="reopenOpen = true"
+                        >
+                            <Lucide
+                                icon="RotateCcw"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Reabrir grupo
+                        </Button>
+                        <Button
+                            v-if="group.pending_balance > 0"
+                            variant="outline-primary"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs"
+                            @click="openPayment"
+                        >
+                            <Lucide
+                                icon="Banknote"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Registrar pago
                         </Button>
                         <Button
                             v-if="hasGateway"
@@ -1869,6 +1985,227 @@ const requestStatusClass: Record<string, string> = {
                             {{
                                 expBusy ? 'Agregando...' : 'Agregar experiencia'
                             }}
+                        </Button>
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
+        <!-- Reabrir el grupo completo -->
+        <Dialog size="lg" :open="reopenOpen" @close="reopenOpen = false">
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[560px]">
+                <form class="flex flex-col" @submit.prevent="submitReopen">
+                    <div
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="RotateCcw" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">Reabrir grupo</h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                {{ group.code }} ·
+                                {{ cancelledRooms.length }} habitación{{
+                                    cancelledRooms.length === 1 ? '' : 'es'
+                                }}
+                                por reabrir
+                            </p>
+                        </div>
+                    </div>
+                    <div class="space-y-3 px-5 py-4 text-xs">
+                        <p class="text-slate-600 dark:text-slate-300">
+                            Vuelven con sus mismos códigos. Es todo o nada: si
+                            alguna cabaña ya no tiene cupo, no se reabre ninguna
+                            y te decimos cuál falló.
+                        </p>
+                        <div
+                            class="divide-y divide-slate-200/60 rounded-lg border border-slate-200/70 dark:divide-darkmode-400 dark:border-darkmode-400"
+                        >
+                            <div
+                                v-for="room in cancelledRooms"
+                                :key="room.id"
+                                class="flex items-center justify-between gap-3 px-3.5 py-2"
+                            >
+                                <span
+                                    >{{ room.code }} ·
+                                    {{ room.room_type }}</span
+                                >
+                                <span class="text-slate-500">{{
+                                    room.status_label
+                                }}</span>
+                            </div>
+                        </div>
+                        <label class="flex items-start gap-2.5">
+                            <input
+                                v-model="reopenConfirmed"
+                                type="checkbox"
+                                class="mt-0.5 rounded border-slate-300"
+                            />
+                            <span>
+                                Dejarlas confirmadas
+                                <span class="mt-0.5 block text-slate-500">
+                                    Si lo dejas sin marcar, vuelven como
+                                    apartado y vencen solas.
+                                </span>
+                            </span>
+                        </label>
+                    </div>
+                    <div
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            @click="reopenOpen = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="reopenBusy"
+                        >
+                            {{ reopenBusy ? 'Reabriendo…' : 'Reabrir grupo' }}
+                        </Button>
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Registrar lo que entregó el responsable -->
+        <Dialog size="lg" :open="payOpen" @close="payOpen = false">
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[560px]">
+                <form class="flex flex-col" @submit.prevent="submitPayment">
+                    <div
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                        >
+                            <Lucide icon="Banknote" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                Registrar pago del grupo
+                            </h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                {{ group.code }} · saldo
+                                {{ money(group.pending_balance) }}
+                            </p>
+                        </div>
+                    </div>
+                    <div class="space-y-4 px-5 py-4">
+                        <div>
+                            <label class="text-xs text-slate-500">Monto</label>
+                            <FormInput
+                                v-model="payForm.amount"
+                                type="number"
+                                step="0.01"
+                                min="0.01"
+                                :max="group.pending_balance"
+                                required
+                                class="mt-1 h-9 text-xs"
+                            />
+                            <p class="mt-1 text-[11px] text-slate-400">
+                                Puede ser parcial. Se reparte entre las
+                                habitaciones del grupo según lo que deba cada
+                                una.
+                            </p>
+                        </div>
+                        <div>
+                            <label class="text-xs text-slate-500"
+                                >Forma de pago</label
+                            >
+                            <div
+                                class="mt-1 grid gap-2"
+                                :class="
+                                    counterMethods.length > 2
+                                        ? 'grid-cols-3'
+                                        : 'grid-cols-2'
+                                "
+                            >
+                                <button
+                                    v-for="m in counterMethods"
+                                    :key="m.key"
+                                    type="button"
+                                    class="flex h-9 items-center justify-center gap-1.5 rounded-lg border text-xs font-medium transition"
+                                    :class="
+                                        payForm.method === m.key
+                                            ? 'border-primary bg-primary/10 text-primary'
+                                            : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
+                                    "
+                                    @click="payForm.method = m.key"
+                                >
+                                    <Lucide
+                                        :icon="m.icon"
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    {{ m.short }}
+                                </button>
+                            </div>
+                        </div>
+                        <div v-if="payForm.method !== 'cash'">
+                            <label class="text-xs text-slate-500"
+                                >Folio o referencia</label
+                            >
+                            <FormInput
+                                v-model="payForm.reference"
+                                type="text"
+                                maxlength="100"
+                                :required="payForm.method === 'transfer'"
+                                class="mt-1 h-9 text-xs"
+                                placeholder="Autorización o folio del banco"
+                            />
+                        </div>
+                        <div>
+                            <label class="text-xs text-slate-500">Nota</label>
+                            <FormInput
+                                v-model="payForm.notes"
+                                type="text"
+                                maxlength="255"
+                                class="mt-1 h-9 text-xs"
+                                placeholder="Opcional: quién lo recibió, detalles"
+                            />
+                        </div>
+                        <div
+                            class="flex items-center gap-2.5 border-t border-dashed border-slate-200/70 pt-3 sm:col-span-2 dark:border-darkmode-400"
+                        >
+                            <FormSwitch>
+                                <FormSwitch.Input
+                                    v-model="payForm.notify"
+                                    type="checkbox"
+                                />
+                            </FormSwitch>
+                            <div class="min-w-0">
+                                <div class="text-xs font-medium">
+                                    Avisar al huésped
+                                </div>
+                                <p class="text-[11px] text-slate-500">
+                                    Un solo mensaje por el folio del grupo, con
+                                    el monto y el saldo pendiente.
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            @click="payOpen = false"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="payBusy"
+                        >
+                            {{ payBusy ? 'Registrando…' : 'Registrar pago' }}
                         </Button>
                     </div>
                 </form>

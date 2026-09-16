@@ -161,7 +161,7 @@ const nextArrival = computed(() => props.upcoming[0] ?? null);
 
 const reserveHref = computed(
     () =>
-        `${route('tenant.reservations')}?intent=reserve&room=${props.room.id}`,
+        `${route('tenant.reservations.operation')}?intent=reserve&room=${props.room.id}`,
 );
 
 const sectionIcon =

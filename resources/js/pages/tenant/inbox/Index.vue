@@ -18,6 +18,8 @@ interface ConversationRow {
     channel: string;
     channel_mode: string;
     name: string;
+    /** Número presentable del contacto (null si el canal no lo da). */
+    phone: { label: string; digits: string } | null;
     guest_id: number | null;
     status: string;
     archived: boolean;
@@ -42,13 +44,51 @@ interface ThreadMessage {
     sender: string | null;
     body: string;
     voice_note: boolean;
+    /** El canal rechazó el mensaje: el huésped NO lo recibió. */
+    undelivered: boolean;
     attachments: {
         id: number;
         url: string;
         name: string;
         is_image: boolean;
+        /** Lo que el sistema leyó en la imagen (comprobante o no). */
+        reading: AttachmentReading | null;
     }[];
     at: string;
+}
+interface AttachmentReading {
+    verdict: string | null;
+    summary: string | null;
+    warnings: string[];
+    description: string | null;
+}
+/** La reserva de la conversación abierta, con su dinero y su comprobante. */
+interface ReservationCard {
+    code: string;
+    is_group: boolean;
+    url: string;
+    status: string;
+    status_label: string;
+    rooms_count: number;
+    rooms_label: string;
+    guests: number;
+    starts_label: string;
+    ends_label: string;
+    total_label: string;
+    paid_label: string;
+    pending_label: string;
+    payment_status: string | null;
+    payment_status_label: string | null;
+    hold_expires_label: string | null;
+    request: {
+        id: number;
+        concept: string;
+        amount_label: string;
+        has_receipt: boolean;
+        verdict: string | null;
+        summary: string | null;
+        warnings: string[];
+    } | null;
 }
 interface ChannelRow {
     id: number;
@@ -255,6 +295,28 @@ async function teachAssistant() {
 }
 const thread = ref<ThreadMessage[]>([]);
 const threadLoading = ref(false);
+// La reserva de la conversación abierta: folio, fechas y dinero. Antes había
+// que salir a /reservas o /pagos para saber si el huésped ya había pagado.
+const reservationCard = ref<ReservationCard | null>(null);
+
+const receiptTone: Record<string, string> = {
+    match: 'bg-success/10 text-success',
+    review: 'bg-pending/10 text-pending',
+    duplicate: 'bg-danger/10 text-danger',
+    not_receipt: 'bg-slate-100 text-slate-500 dark:bg-darkmode-400',
+};
+
+function readingLabel(reading: AttachmentReading): string {
+    if (reading.verdict === 'not_receipt') {
+        return reading.description
+            ? `No es comprobante: ${reading.description}`
+            : 'No es un comprobante de pago';
+    }
+    if (reading.verdict === 'duplicate') {
+        return 'Comprobante repetido: lo revisa el personal';
+    }
+    return reading.summary ?? 'Comprobante por verificar';
+}
 const reply = ref('');
 const sending = ref(false);
 const threadRef = ref<HTMLElement | null>(null);
@@ -290,6 +352,7 @@ async function open(c: ConversationRow) {
     usedCopilot.value = false;
     threadLoading.value = true;
     thread.value = [];
+    reservationCard.value = null;
     await refreshThread();
     threadLoading.value = false;
     c.unread = 0;
@@ -302,6 +365,7 @@ async function refreshThread() {
         const { data } = await axios.get(`/api/inbox/${selected.value.id}`);
         const grew = data.messages.length !== thread.value.length;
         thread.value = data.messages;
+        reservationCard.value = data.reservation ?? null;
         Object.assign(selected.value, data.conversation);
         if (grew) scrollThread();
     } catch {
@@ -340,12 +404,14 @@ async function sendReply() {
             form,
         );
 
-        // El adjunto queda en el hilo aunque el canal no sepa mandarlo; se
-        // dice de frente en vez de dejar creer que el huésped ya lo tiene.
-        if (attachment.value && data?.delivered === false) {
+        // Queda en el hilo aunque el canal lo rechace; se dice de frente en
+        // vez de dejar creer que el huésped ya lo tiene.
+        if (data?.delivered === false) {
             toast.error(
-                'El archivo no salió',
-                'Quedó en el hilo, pero este canal todavía no manda adjuntos. Por ahora solo WhatsApp.',
+                attachment.value ? 'El archivo no salió' : 'El mensaje no salió',
+                attachment.value
+                    ? 'Quedó en el hilo, pero este canal todavía no manda adjuntos. Por ahora solo WhatsApp.'
+                    : 'El canal lo rechazó (puede ser la ventana de 24 horas o el número). Quedó en el hilo marcado como no entregado: búscalo por otra vía.',
             );
         }
 
@@ -672,9 +738,12 @@ onBeforeUnmount(() => {
 <template>
     <RazeLayout title="Bandeja">
         <div class="mt-2">
-            <!-- Encabezado -->
+            <!-- Encabezado. En el celular se quita mientras se lee un hilo:
+                 ahí el nombre y el volver ya viven en la cabecera del chat, y
+                 ese espacio le hacía falta a los mensajes. -->
             <div
-                class="box box--stacked flex flex-wrap items-center justify-between gap-3 p-4 sm:p-5"
+                class="box box--stacked flex-wrap items-center justify-between gap-3 p-4 sm:p-5"
+                :class="selected ? 'hidden xl:flex' : 'flex'"
             >
                 <div class="flex items-center gap-3">
                     <div
@@ -699,7 +768,11 @@ onBeforeUnmount(() => {
                         </p>
                     </div>
                 </div>
-                <div class="flex flex-wrap items-center gap-2">
+                <!-- Móvil: cuadrícula de 2 para que los botones no se
+                     amontonen; escritorio: fila de siempre. -->
+                <div
+                    class="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto sm:flex-wrap sm:items-center"
+                >
                     <!-- Permiso de notificaciones: solo se pide con un clic,
                          que es lo que exigen los navegadores. -->
                     <Button
@@ -708,7 +781,7 @@ onBeforeUnmount(() => {
                             alerts.permission.value === 'default'
                         "
                         variant="outline-primary"
-                        class="rounded-[0.5rem] bg-white text-xs"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                         title="Avisar aunque la pestaña esté en segundo plano"
                         @click="alerts.requestPermission"
                     >
@@ -720,7 +793,7 @@ onBeforeUnmount(() => {
                     </Button>
                     <Button
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white text-xs"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                         :title="
                             alerts.muted.value
                                 ? 'Los mensajes nuevos no suenan'
@@ -736,7 +809,7 @@ onBeforeUnmount(() => {
                     </Button>
                     <Button
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white text-xs"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                         @click="channelsOpen = true"
                     >
                         <Lucide
@@ -754,7 +827,7 @@ onBeforeUnmount(() => {
                         :href="route('tenant.webchat')"
                         target="_blank"
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] bg-white text-xs"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
                         <Lucide
                             icon="ExternalLink"
@@ -857,12 +930,14 @@ onBeforeUnmount(() => {
                             </span>
                             <Button
                                 variant="outline-secondary"
-                                size="sm"
-                                class="shrink-0 rounded-[0.5rem] bg-white"
+                                class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
                                 :disabled="archivingAll"
                                 @click="archiveAllResolved"
                             >
-                                <Lucide icon="Archive" class="mr-1.5 h-4 w-4" />
+                                <Lucide
+                                    icon="Archive"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
                                 {{
                                     archivingAll
                                         ? 'Archivando…'
@@ -881,11 +956,13 @@ onBeforeUnmount(() => {
                             <Button
                                 v-if="canManage && counts.archived > 0"
                                 variant="outline-danger"
-                                size="sm"
-                                class="shrink-0 rounded-[0.5rem] bg-white"
+                                class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
                                 @click="emptyArchiveOpen = true"
                             >
-                                <Lucide icon="Trash2" class="mr-1.5 h-4 w-4" />
+                                <Lucide
+                                    icon="Trash2"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
                                 Vaciar archivo
                             </Button>
                         </div>
@@ -1140,8 +1217,12 @@ onBeforeUnmount(() => {
 
                 <!-- Hilo -->
                 <div
-                    class="col-span-12 h-[calc(100dvh-11.5rem)] min-h-[480px] flex-col xl:col-span-8 xl:flex xl:h-[calc(100vh-15rem)] xl:min-h-[560px]"
-                    :class="selected ? 'flex' : 'hidden'"
+                    class="col-span-12 min-h-[360px] flex-col xl:col-span-8 xl:flex xl:h-[calc(100vh-15rem)] xl:min-h-[560px]"
+                    :class="
+                        selected
+                            ? 'flex h-[calc(100dvh-7.5rem)] xl:h-[calc(100vh-15rem)]'
+                            : 'hidden'
+                    "
                 >
                     <template v-if="selected">
                         <!-- Header del hilo -->
@@ -1179,22 +1260,36 @@ onBeforeUnmount(() => {
                                         >Ver perfil</Link
                                     >
                                 </div>
+                                <!-- En celular las etiquetas van en UNA línea
+                                     que se desliza: envueltas ocupaban hasta
+                                     cuatro renglones y se comían el chat. -->
                                 <div
-                                    class="mt-0.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500"
+                                    class="mt-0.5 flex flex-nowrap items-center gap-1.5 overflow-x-auto text-xs whitespace-nowrap text-slate-500 sm:flex-wrap sm:overflow-visible"
                                 >
                                     <Lucide
                                         :icon="
                                             channelMeta[selected.channel]
                                                 ?.icon ?? 'MessageCircle'
                                         "
-                                        class="h-3.5 w-3.5"
+                                        class="h-3.5 w-3.5 shrink-0"
                                     />
                                     <span class="mr-1">{{
                                         channelMeta[selected.channel]?.label ??
                                         selected.channel
                                     }}</span>
+                                    <!-- El número a la vista: para llamarle o
+                                         pasarlo al personal sin abrir la ficha. -->
+                                    <a
+                                        v-if="selected.phone"
+                                        :href="`tel:+${selected.phone.digits}`"
+                                        class="mr-1 inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 font-medium text-slate-600 transition hover:text-primary dark:bg-darkmode-400 dark:text-slate-300"
+                                        title="Llamar"
+                                    >
+                                        <Lucide icon="Phone" class="h-3 w-3" />
+                                        {{ selected.phone.label }}
+                                    </a>
                                     <span
-                                        class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                        class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="
                                             statusMeta[selected.status]?.tone
                                         "
@@ -1204,12 +1299,12 @@ onBeforeUnmount(() => {
                                     >
                                     <span
                                         v-if="selected.archived"
-                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
                                         >Archivada</span
                                     >
                                     <span
                                         v-if="leadMeta[selected.lead_status]"
-                                        class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                        class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="
                                             leadMeta[selected.lead_status].tone
                                         "
@@ -1219,14 +1314,14 @@ onBeforeUnmount(() => {
                                     >
                                     <span
                                         v-if="selected.reservation_code"
-                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
                                         >{{ selected.reservation_code }}</span
                                     >
                                     <span
                                         v-if="
                                             selected.payment_pending_verification
                                         "
-                                        class="rounded-full bg-pending/10 px-2 py-0.5 text-xs font-medium text-pending"
+                                        class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
                                         >Verificar pago</span
                                     >
                                     <span
@@ -1234,7 +1329,7 @@ onBeforeUnmount(() => {
                                             selected.payment_status &&
                                             selected.payment_status_label
                                         "
-                                        class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                        class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="
                                             paymentMeta[selected.payment_status]
                                                 ?.tone
@@ -1328,7 +1423,7 @@ onBeforeUnmount(() => {
                                 </Button>
                                 <FormSelect
                                     :model-value="selected.assigned_to ?? ''"
-                                    class="min-w-0 flex-1 text-xs md:!w-auto md:max-w-[12rem] md:flex-none"
+                                    class="h-9 min-w-0 flex-1 text-xs md:!w-auto md:max-w-[12rem] md:flex-none"
                                     @update:model-value="
                                         (v: string) =>
                                             patchConversation(
@@ -1523,6 +1618,137 @@ onBeforeUnmount(() => {
                             </div>
                         </div>
 
+                        <!-- La reserva de esta conversación y su dinero -->
+                        <div
+                            v-if="reservationCard"
+                            class="border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 text-xs dark:border-darkmode-400 dark:bg-darkmode-700/40"
+                        >
+                            <div
+                                class="flex flex-wrap items-center gap-x-3 gap-y-1.5"
+                            >
+                                <a
+                                    :href="reservationCard.url"
+                                    class="inline-flex h-7 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 text-[11px] font-medium text-slate-600 transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-300"
+                                >
+                                    <Lucide
+                                        :icon="
+                                            reservationCard.is_group
+                                                ? 'Layers'
+                                                : 'CalendarCheck'
+                                        "
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    {{ reservationCard.code }}
+                                </a>
+                                <span
+                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-400"
+                                    >{{ reservationCard.status_label }}</span
+                                >
+                                <span
+                                    class="inline-flex items-center gap-1.5 text-slate-500"
+                                >
+                                    <Lucide
+                                        icon="BedDouble"
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    {{ reservationCard.rooms_count }}
+                                    {{
+                                        reservationCard.rooms_count === 1
+                                            ? 'habitación'
+                                            : 'habitaciones'
+                                    }}
+                                    · {{ reservationCard.guests }}
+                                    {{
+                                        reservationCard.guests === 1
+                                            ? 'persona'
+                                            : 'personas'
+                                    }}
+                                </span>
+                                <span
+                                    class="inline-flex items-center gap-1.5 text-slate-500"
+                                >
+                                    <Lucide icon="Clock" class="h-3.5 w-3.5" />
+                                    {{ reservationCard.starts_label }} →
+                                    {{ reservationCard.ends_label }}
+                                </span>
+                                <span
+                                    class="inline-flex items-center gap-1.5 text-slate-500"
+                                >
+                                    <Lucide
+                                        icon="Banknote"
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    {{ reservationCard.total_label }} · pagado
+                                    {{ reservationCard.paid_label }} · falta
+                                    <span class="font-medium">{{
+                                        reservationCard.pending_label
+                                    }}</span>
+                                </span>
+                                <span
+                                    v-if="reservationCard.hold_expires_label"
+                                    class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
+                                    >Se sostiene hasta
+                                    {{
+                                        reservationCard.hold_expires_label
+                                    }}</span
+                                >
+                            </div>
+
+                            <!-- El cobro que espera comprobante, con lo que el
+                                 sistema leyó en la foto -->
+                            <div
+                                v-if="reservationCard.request"
+                                class="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-slate-200/70 bg-white px-2.5 py-1.5 dark:border-darkmode-400 dark:bg-darkmode-600"
+                            >
+                                <Lucide
+                                    icon="ReceiptText"
+                                    class="h-3.5 w-3.5 text-slate-400"
+                                />
+                                <span class="font-medium"
+                                    >{{ reservationCard.request.concept }}
+                                    {{
+                                        reservationCard.request.amount_label
+                                    }}</span
+                                >
+                                <span
+                                    v-if="reservationCard.request.has_receipt"
+                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                    :class="
+                                        receiptTone[
+                                            reservationCard.request.verdict ??
+                                                'review'
+                                        ] ?? 'bg-pending/10 text-pending'
+                                    "
+                                    >{{
+                                        reservationCard.request.summary ??
+                                        'Comprobante por verificar'
+                                    }}</span
+                                >
+                                <span v-else class="text-slate-500"
+                                    >Sin comprobante todavía</span
+                                >
+                                <span
+                                    v-for="(
+                                        aviso, i
+                                    ) in reservationCard.request.warnings"
+                                    :key="i"
+                                    class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
+                                >
+                                    <Lucide
+                                        icon="TriangleAlert"
+                                        class="h-3 w-3"
+                                    />
+                                    {{ aviso }}
+                                </span>
+                                <a
+                                    href="/pagos"
+                                    class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-2.5 text-[11px] font-medium text-slate-600 transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-300"
+                                >
+                                    Verificar en Pagos
+                                </a>
+                            </div>
+                        </div>
+
                         <!-- Mensajes -->
                         <div
                             ref="threadRef"
@@ -1573,33 +1799,72 @@ onBeforeUnmount(() => {
                                             </div>
                                             {{ m.body }}
                                             <div
+                                                v-if="m.undelivered"
+                                                class="mt-1.5 inline-flex items-center gap-1 rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
+                                                title="El canal lo rechazó: el huésped no lo recibió"
+                                            >
+                                                <Lucide
+                                                    icon="TriangleAlert"
+                                                    class="h-3 w-3"
+                                                />
+                                                No se entregó
+                                            </div>
+                                            <div
                                                 v-if="m.attachments?.length"
                                                 class="mt-2 space-y-2"
                                             >
-                                                <a
+                                                <div
                                                     v-for="a in m.attachments"
                                                     :key="a.id"
-                                                    :href="a.url"
-                                                    target="_blank"
-                                                    class="block"
                                                 >
-                                                    <img
-                                                        v-if="a.is_image"
-                                                        :src="a.url"
-                                                        :alt="a.name"
-                                                        class="max-h-48 max-w-full rounded-lg border border-slate-200/70 object-contain dark:border-darkmode-400"
-                                                    />
+                                                    <a
+                                                        :href="a.url"
+                                                        target="_blank"
+                                                        class="block"
+                                                    >
+                                                        <img
+                                                            v-if="a.is_image"
+                                                            :src="a.url"
+                                                            :alt="a.name"
+                                                            class="max-h-48 max-w-full rounded-lg border border-slate-200/70 object-contain dark:border-darkmode-400"
+                                                        />
+                                                        <span
+                                                            v-else
+                                                            class="inline-flex items-center gap-1.5 text-sm underline"
+                                                        >
+                                                            <Lucide
+                                                                icon="FileText"
+                                                                class="h-4 w-4"
+                                                            />
+                                                            {{ a.name }}
+                                                        </span>
+                                                    </a>
+                                                    <!-- Qué se leyó en la
+                                                         imagen: comprobante
+                                                         con sus datos, o no -->
                                                     <span
-                                                        v-else
-                                                        class="inline-flex items-center gap-1.5 text-sm underline"
+                                                        v-if="a.reading"
+                                                        class="mt-1 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                        :class="
+                                                            receiptTone[
+                                                                a.reading
+                                                                    .verdict ??
+                                                                    'review'
+                                                            ] ??
+                                                            'bg-pending/10 text-pending'
+                                                        "
                                                     >
                                                         <Lucide
-                                                            icon="FileText"
-                                                            class="h-4 w-4"
+                                                            icon="ReceiptText"
+                                                            class="h-3 w-3"
                                                         />
-                                                        {{ a.name }}
+                                                        {{
+                                                            readingLabel(
+                                                                a.reading,
+                                                            )
+                                                        }}
                                                     </span>
-                                                </a>
+                                                </div>
                                             </div>
                                         </div>
                                         <div
@@ -1638,48 +1903,54 @@ onBeforeUnmount(() => {
                             </template>
                         </div>
 
-                        <!-- Composer -->
+                        <!-- Compositor -->
                         <div
                             v-if="canManage"
-                            class="border-t border-slate-200/60 p-4 dark:border-darkmode-400"
+                            class="border-t border-slate-200/60 p-3 sm:p-4 dark:border-darkmode-400"
                         >
                             <div
                                 v-if="selected.bot_enabled"
-                                class="mb-3 flex items-center gap-2.5 rounded-lg bg-primary/5 px-3.5 py-2 text-xs text-slate-500"
+                                class="mb-2.5 flex items-start gap-2 rounded-lg bg-primary/5 px-3 py-2 text-[11px] leading-snug text-slate-500"
                             >
                                 <Lucide
                                     icon="Bot"
-                                    class="h-4 w-4 shrink-0 text-primary"
+                                    class="mt-px h-3.5 w-3.5 shrink-0 text-primary"
                                 />
-                                El bot atiende esta conversación. Si respondes
-                                tú, la tomas (el bot se pausa).
+                                <span
+                                    >El bot atiende esta conversación. Si
+                                    respondes tú, la tomas (el bot se
+                                    pausa).</span
+                                >
                             </div>
 
                             <!-- Copiloto: borrador con aprobación humana -->
                             <div
                                 v-if="suggestLoading"
-                                class="mb-3 flex items-center gap-2.5 rounded-lg border border-dashed border-primary/30 bg-primary/[0.03] px-3.5 py-2.5 text-xs text-slate-500"
+                                class="mb-2.5 flex items-center gap-2 rounded-lg border border-dashed border-primary/30 bg-primary/[0.03] px-3 py-2 text-[11px] text-slate-500"
                             >
                                 <Lucide
                                     icon="Sparkles"
-                                    class="h-4 w-4 animate-pulse text-primary"
+                                    class="h-3.5 w-3.5 shrink-0 animate-pulse text-primary"
                                 />
                                 El copiloto está redactando una sugerencia…
                             </div>
                             <div
                                 v-else-if="suggestion"
-                                class="mb-3 rounded-lg border border-primary/20 bg-primary/[0.04] p-3.5"
+                                class="mb-2.5 rounded-xl border border-primary/20 bg-primary/[0.04] p-3"
                             >
                                 <div
-                                    class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                    class="flex flex-wrap items-center gap-x-2 gap-y-1"
                                 >
                                     <Lucide
                                         icon="Sparkles"
-                                        class="h-4 w-4 text-primary"
+                                        class="h-3.5 w-3.5 shrink-0 text-primary"
                                     />
-                                    Sugerencia del copiloto
                                     <span
-                                        class="ml-auto rounded-full bg-primary/10 px-2 py-0.5 text-[11px] tracking-normal text-primary normal-case"
+                                        class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                                        >Sugerencia del copiloto</span
+                                    >
+                                    <span
+                                        class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] text-primary sm:ml-auto"
                                         >{{ suggestion.meta.provider }} ·
                                         {{
                                             (suggestion.meta.ms / 1000).toFixed(
@@ -1689,39 +1960,39 @@ onBeforeUnmount(() => {
                                     >
                                 </div>
                                 <p
-                                    class="mt-2 text-sm whitespace-pre-line text-slate-600 dark:text-slate-300"
+                                    class="mt-2 text-xs leading-relaxed whitespace-pre-line text-slate-600 dark:text-slate-300"
                                 >
                                     {{ suggestion.text }}
                                 </p>
-                                <div class="mt-3 flex items-center gap-2.5">
+                                <div
+                                    class="mt-2.5 flex flex-wrap items-center gap-2"
+                                >
                                     <Button
                                         variant="primary"
-                                        size="sm"
-                                        class="rounded-[0.5rem]"
+                                        class="h-8 rounded-[0.5rem] text-xs"
                                         @click="useSuggestion"
                                     >
                                         <Lucide
                                             icon="Check"
-                                            class="mr-1.5 h-4 w-4"
+                                            class="mr-1.5 h-3.5 w-3.5"
                                         />
                                         Usar y editar
                                     </Button>
                                     <Button
                                         variant="outline-secondary"
-                                        size="sm"
-                                        class="rounded-[0.5rem] bg-white"
+                                        class="h-8 rounded-[0.5rem] bg-white text-xs"
                                         :disabled="suggestLoading"
                                         @click="fetchSuggestion"
                                     >
                                         <Lucide
                                             icon="RefreshCw"
-                                            class="mr-1.5 h-4 w-4"
+                                            class="mr-1.5 h-3.5 w-3.5"
                                         />
                                         Otra
                                     </Button>
                                     <button
                                         type="button"
-                                        class="ml-auto text-sm text-slate-400 hover:text-danger"
+                                        class="ml-auto text-xs text-slate-400 transition hover:text-danger"
                                         @click="suggestion = null"
                                     >
                                         Descartar
@@ -1729,85 +2000,114 @@ onBeforeUnmount(() => {
                                 </div>
                             </div>
 
-                            <div class="flex items-end gap-2.5">
-                                <Button
-                                    v-if="llmReady && !suggestion"
-                                    variant="outline-secondary"
-                                    class="h-10 rounded-[0.5rem] bg-white text-xs"
-                                    :disabled="suggestLoading"
-                                    title="Pídele al copiloto un borrador de respuesta"
-                                    @click="fetchSuggestion"
-                                >
-                                    <Lucide
-                                        icon="Sparkles"
-                                        class="h-4 w-4 text-primary sm:mr-2"
-                                    />
-                                    <span class="hidden sm:inline"
-                                        >Copiloto</span
-                                    >
-                                </Button>
+                            <!-- Una sola caja: el texto arriba y las
+                                 herramientas abajo. Antes eran botones y
+                                 textarea en la misma fila, y el ancho mínimo
+                                 del textarea los empujaba fuera del panel. -->
+                            <div
+                                class="rounded-xl border border-slate-200 bg-white transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/15 dark:border-darkmode-400 dark:bg-darkmode-600"
+                            >
                                 <textarea
                                     ref="replyRef"
                                     v-model="reply"
                                     rows="2"
                                     placeholder="Responder como staff…"
-                                    class="max-h-40 min-h-[56px] flex-1 resize-none overflow-y-auto rounded-lg border border-slate-200 px-3.5 py-2.5 text-sm transition outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                    class="block max-h-40 min-h-[52px] w-full resize-none overflow-y-auto border-0 bg-transparent px-3.5 pt-2.5 pb-1 text-sm leading-relaxed text-slate-700 outline-none placeholder:text-slate-400 dark:text-slate-200"
                                     @input="autosizeReply"
                                     @keydown.enter.exact.prevent="sendReply"
                                 />
-                                <input
-                                    ref="attachmentInput"
-                                    type="file"
-                                    accept="image/jpeg,image/png,image/webp,application/pdf"
-                                    class="hidden"
-                                    @change="pickAttachment"
-                                />
-                                <Button
-                                    variant="outline-secondary"
-                                    class="h-10 rounded-[0.5rem] bg-white px-3"
-                                    title="Adjuntar foto o PDF"
-                                    :disabled="sending"
-                                    @click="attachmentInput?.click()"
-                                >
-                                    <Lucide icon="Paperclip" class="h-4 w-4" />
-                                </Button>
-                                <Button
-                                    variant="primary"
-                                    class="h-10 rounded-[0.5rem] px-4 shadow-md shadow-primary/20"
-                                    title="Enviar (Enter)"
-                                    :disabled="
-                                        sending ||
-                                        (!reply.trim() && !attachment)
-                                    "
-                                    @click="sendReply"
+
+                                <!-- Archivo elegido, antes de mandarlo -->
+                                <div
+                                    v-if="attachment"
+                                    class="mx-2.5 mb-1.5 flex items-center gap-2 rounded-lg bg-slate-100 px-2.5 py-1.5 text-[11px] dark:bg-darkmode-400"
                                 >
                                     <Lucide
-                                        icon="SendHorizontal"
-                                        class="h-4 w-4"
+                                        icon="Paperclip"
+                                        class="h-3.5 w-3.5 shrink-0 text-slate-500"
                                     />
-                                </Button>
-                            </div>
+                                    <span class="min-w-0 flex-1 truncate">{{
+                                        attachment.name
+                                    }}</span>
+                                    <button
+                                        type="button"
+                                        title="Quitar el archivo"
+                                        class="shrink-0 text-slate-400 transition hover:text-danger"
+                                        @click="clearAttachment"
+                                    >
+                                        <Lucide icon="X" class="h-3.5 w-3.5" />
+                                    </button>
+                                </div>
 
-                            <!-- Archivo elegido, antes de mandarlo -->
-                            <div
-                                v-if="attachment"
-                                class="mt-2 flex items-center gap-2 rounded-lg bg-slate-100 px-3 py-2 text-xs dark:bg-darkmode-400"
-                            >
-                                <Lucide
-                                    icon="Paperclip"
-                                    class="h-4 w-4 shrink-0 text-slate-500"
-                                />
-                                <span class="min-w-0 flex-1 truncate">{{
-                                    attachment.name
-                                }}</span>
-                                <button
-                                    type="button"
-                                    title="Quitar el archivo"
-                                    class="shrink-0 text-slate-400 transition hover:text-danger"
-                                    @click="clearAttachment"
+                                <div
+                                    class="flex items-center gap-1 border-t border-slate-100 px-2 py-1.5 dark:border-darkmode-400/70"
                                 >
-                                    <Lucide icon="X" class="h-4 w-4" />
-                                </button>
+                                    <button
+                                        v-if="llmReady && !suggestion"
+                                        type="button"
+                                        class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full px-2 text-xs font-medium text-slate-500 transition hover:bg-primary/10 hover:text-primary disabled:opacity-50 sm:px-2.5"
+                                        :disabled="suggestLoading"
+                                        title="Pídele al copiloto un borrador de respuesta"
+                                        @click="fetchSuggestion"
+                                    >
+                                        <Lucide
+                                            icon="Sparkles"
+                                            class="h-4 w-4 text-primary"
+                                        />
+                                        <span class="hidden sm:inline"
+                                            >Copiloto</span
+                                        >
+                                    </button>
+                                    <input
+                                        ref="attachmentInput"
+                                        type="file"
+                                        accept="image/jpeg,image/png,image/webp,application/pdf"
+                                        class="hidden"
+                                        @change="pickAttachment"
+                                    />
+                                    <button
+                                        type="button"
+                                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary disabled:opacity-50 dark:hover:bg-darkmode-400"
+                                        title="Adjuntar foto o PDF"
+                                        :disabled="sending"
+                                        @click="attachmentInput?.click()"
+                                    >
+                                        <Lucide
+                                            icon="Paperclip"
+                                            class="h-4 w-4"
+                                        />
+                                    </button>
+                                    <span
+                                        class="ml-auto hidden truncate pr-1 text-[11px] text-slate-400 lg:inline"
+                                        >Enter envía · Shift+Enter salta de
+                                        línea</span
+                                    >
+                                    <button
+                                        type="button"
+                                        class="ml-auto inline-flex h-8 shrink-0 items-center gap-1.5 rounded-full bg-primary px-3 text-xs font-medium text-white shadow-sm shadow-primary/20 transition hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-40 sm:px-3.5 lg:ml-2"
+                                        title="Enviar (Enter)"
+                                        :disabled="
+                                            sending ||
+                                            (!reply.trim() && !attachment)
+                                        "
+                                        @click="sendReply"
+                                    >
+                                        <Lucide
+                                            :icon="
+                                                sending
+                                                    ? 'RefreshCw'
+                                                    : 'SendHorizontal'
+                                            "
+                                            class="h-3.5 w-3.5"
+                                            :class="
+                                                sending ? 'animate-spin' : ''
+                                            "
+                                        />
+                                        <span class="hidden sm:inline">{{
+                                            sending ? 'Enviando…' : 'Enviar'
+                                        }}</span>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </template>

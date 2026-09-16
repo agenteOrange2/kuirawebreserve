@@ -124,9 +124,11 @@ it('cuenta ocupación, llegadas y canceladas del periodo', function () {
 
     $props = dashboardProps();
 
-    // 1 de 2 habitaciones ocupada hoy = 50% y una noche vendida.
-    expect(metric($props, 'Ocupación promedio')['value'])->toBe('50%')
-        ->and(metric($props, 'Noches vendidas')['value'])->toBe('1')
+    // Las 2 habitaciones ocupadas hoy: una con estancia registrada y otra
+    // solo vendida (reserva confirmada sin check-in). La cancelada no
+    // ocupa nada.
+    expect(metric($props, 'Ocupación promedio')['value'])->toBe('100%')
+        ->and(metric($props, 'Noches vendidas')['value'])->toBe('2')
         ->and(metric($props, 'Llegadas')['value'])->toBe('1')
         ->and(metric($props, 'Canceladas')['value'])->toBe('1')
         ->and(metric($props, 'Reservas nuevas')['value'])->toBe('2')
@@ -136,3 +138,108 @@ it('cuenta ocupación, llegadas y canceladas del periodo', function () {
 it('un rango inválido no pasa la validación', function () {
     dashboardProps(['range' => 'siempre']);
 })->throws(Illuminate\Validation\ValidationException::class);
+
+it('la reserva vendida sin check-in ocupa, y con estancia no se cuenta dos veces', function () {
+    $ratePlan = \App\Models\RatePlan::factory()->create([
+        'property_id' => test()->property->id,
+        'room_type_id' => test()->roomType->id,
+    ]);
+
+    // Así opera el hotel que cobra por chat: la reserva se completa en el
+    // cierre de día sin que nadie haya registrado la llegada. Antes esto
+    // valía 0% de ocupación con la casa llena.
+    $sinCheckIn = Reservation::create([
+        'property_id' => test()->property->id,
+        'room_type_id' => test()->roomType->id,
+        'room_id' => test()->rooms[0]->id,
+        'rate_plan_id' => $ratePlan->id,
+        'guest_name' => 'Nadie le abrió el plano',
+        'num_people' => 2,
+        'starts_at' => now()->startOfDay()->addHours(14),
+        'ends_at' => now()->addDay()->setTime(11, 0),
+        'status' => ReservationStatus::Completed,
+        'total_amount' => 650,
+    ]);
+
+    expect(metric(dashboardProps(), 'Noches vendidas')['value'])->toBe('1');
+
+    // La misma reserva, ahora con su estancia: sigue siendo UNA noche.
+    Stay::create([
+        'reservation_id' => $sinCheckIn->id,
+        'room_id' => test()->rooms[0]->id,
+        'rate_plan_id' => $ratePlan->id,
+        'guest_name' => 'Nadie le abrió el plano',
+        'num_people' => 2,
+        'check_in_at' => now()->startOfDay()->addHours(14),
+        'planned_end_at' => now()->addDay()->setTime(11, 0),
+        'status' => Stay::STATUS_ACTIVE,
+        'amount' => 650,
+        'channel' => 'reservation',
+    ]);
+
+    expect(metric(dashboardProps(), 'Noches vendidas')['value'])->toBe('1')
+        ->and(metric(dashboardProps(), 'Ocupación promedio')['value'])->toBe('50%');
+});
+
+it('la noche de salida no se cuenta como noche ocupada', function () {
+    $ratePlan = \App\Models\RatePlan::factory()->create([
+        'property_id' => test()->property->id,
+        'room_type_id' => test()->roomType->id,
+    ]);
+
+    // Entró ayer y se fue hoy a las 11: durmió la noche de ayer, no la de
+    // hoy. Contar el día de salida inflaba las noches vendidas.
+    Reservation::create([
+        'property_id' => test()->property->id,
+        'room_type_id' => test()->roomType->id,
+        'rate_plan_id' => $ratePlan->id,
+        'guest_name' => 'Se fue en la mañana',
+        'num_people' => 2,
+        'starts_at' => now()->subDay()->setTime(14, 0),
+        'ends_at' => now()->setTime(11, 0),
+        'status' => ReservationStatus::Completed,
+        'total_amount' => 650,
+    ]);
+
+    expect(metric(dashboardProps(), 'Noches vendidas')['value'])->toBe('0');
+});
+
+it('el bloque de motel que entra y sale el mismo día sí ocupa', function () {
+    $ratePlan = \App\Models\RatePlan::factory()->create([
+        'property_id' => test()->property->id,
+        'room_type_id' => test()->roomType->id,
+    ]);
+
+    // Tres horas por la tarde. Contar solo "sigue ahí al cerrar el día" lo
+    // borraba del dashboard: en un motel son buena parte de las estancias.
+    Stay::create([
+        'room_id' => test()->rooms[0]->id,
+        'rate_plan_id' => $ratePlan->id,
+        'guest_name' => 'Bloque de tres horas',
+        'num_people' => 2,
+        'check_in_at' => now()->startOfDay()->addHours(15),
+        'planned_end_at' => now()->startOfDay()->addHours(18),
+        'check_out_at' => now()->startOfDay()->addHours(18),
+        'status' => Stay::STATUS_COMPLETED,
+        'amount' => 450,
+        'channel' => 'walk_in',
+    ]);
+
+    // Y el que cruza la medianoche es UN uso, no dos.
+    Stay::create([
+        'room_id' => test()->rooms[1]->id,
+        'rate_plan_id' => $ratePlan->id,
+        'guest_name' => 'Cruza la medianoche',
+        'num_people' => 2,
+        'check_in_at' => now()->subDay()->startOfDay()->addHours(21),
+        'planned_end_at' => now()->startOfDay()->addHours(2),
+        'check_out_at' => now()->startOfDay()->addHours(2),
+        'status' => Stay::STATUS_COMPLETED,
+        'amount' => 450,
+        'channel' => 'walk_in',
+    ]);
+
+    $props = dashboardProps(['range' => 'custom', 'from' => now()->subDay()->toDateString(), 'to' => now()->toDateString()]);
+
+    expect(metric($props, 'Noches vendidas')['value'])->toBe('2');
+});

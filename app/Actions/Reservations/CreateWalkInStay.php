@@ -78,13 +78,13 @@ class CreateWalkInStay
             if (! empty($data['guest_id'])) {
                 $guest = Guest::findOrFail($data['guest_id']);
             } elseif (! empty($data['guest_phone'])) {
-                $guest = Guest::firstOrCreate(
-                    ['phone' => $data['guest_phone']],
-                    [
+                // Por los últimos 10 dígitos: ver Guest::findByContact().
+                $guest = Guest::findByContact($data['guest_phone'], $data['guest_email'] ?? null)
+                    ?? Guest::create([
+                        'phone' => $data['guest_phone'],
                         'first_name' => $data['guest_name'] ?? null,
                         'email' => $data['guest_email'] ?? null,
-                    ],
-                );
+                    ]);
             }
 
             // La ficha del CRM se enriquece de paso, sin pisar lo que ya

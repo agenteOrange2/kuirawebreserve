@@ -32,9 +32,19 @@ class DirectGuestMessenger
 
     public function send(Reservation $reservation, string $body, string $subject = 'Sobre tu reserva', bool $withCalendar = false): bool
     {
-        $sent = $this->sendWhatsApp($reservation, $body);
+        $whatsapp = $this->sendWhatsApp($reservation, $body);
+        $correo = $this->sendEmail($reservation, $body, $subject, $withCalendar);
 
-        return $this->sendEmail($reservation, $body, $subject, $withCalendar) || $sent;
+        if (! $whatsapp && ! $correo) {
+            $this->alertUndelivered(
+                $reservation->guest_name ?: 'El huésped',
+                (string) $reservation->guest?->phone,
+                $body,
+                $reservation,
+            );
+        }
+
+        return $correo || $whatsapp;
     }
 
     /**
@@ -57,9 +67,18 @@ class DirectGuestMessenger
      */
     public function sendToGuestFull(?\App\Models\Guest $guest, string $subject, string $body, string $code = '', array $details = []): bool
     {
-        $sent = $this->whatsAppTo((string) $guest?->phone, $body);
+        $whatsapp = $this->whatsAppTo((string) $guest?->phone, $body);
+        $correo = $this->noticeEmailTo($guest?->email, $subject, $body, $code, $details);
 
-        return $this->noticeEmailTo($guest?->email, $subject, $body, $code, $details) || $sent;
+        if (! $whatsapp && ! $correo) {
+            $this->alertUndelivered(
+                $guest?->full_name ?: 'El huésped',
+                (string) $guest?->phone,
+                $body,
+            );
+        }
+
+        return $correo || $whatsapp;
     }
 
     /**
@@ -86,6 +105,28 @@ class DirectGuestMessenger
             'whatsapp' => $this->whatsAppTo((string) $phone, $body),
             'email' => $this->noticeEmailTo($email ?: null, $subject, $body, '', []),
         ];
+    }
+
+    /**
+     * Ni WhatsApp ni correo: hasta hoy eso solo dejaba una línea en el log y
+     * nadie en el hotel se enteraba de que el huésped jamás recibió su
+     * confirmación, su cobro o su recordatorio. Ahora suena la campana con
+     * el teléfono a la vista para hablarle por otra vía.
+     */
+    protected function alertUndelivered(string $quien, ?string $phone, string $body, ?Reservation $reservation = null): void
+    {
+        try {
+            app(\App\Services\StaffNotifier::class)->notify(
+                type: \App\Models\StaffNotification::TYPE_MESSAGE,
+                title: 'Aviso no entregado',
+                body: $quien.' no recibió el mensaje'.($phone ? " (tel. {$phone})" : '').': '
+                    .\Illuminate\Support\Str::limit(trim($body), 90).' Contáctalo por otra vía.',
+                url: $reservation ? '/reservas/'.$reservation->id : '/bandeja',
+                subject: $reservation,
+            );
+        } catch (Throwable $e) {
+            report($e);
+        }
     }
 
     protected function noticeEmailTo(?string $email, string $subject, string $body, string $code, array $details): bool
@@ -130,6 +171,18 @@ class DirectGuestMessenger
         if (strlen($phone) === 10) {
             $code = preg_replace('/\D+/', '', (string) ($settings['phone_country_code'] ?? '52'));
             $phone = $code.$phone;
+        }
+
+        // Un número imposible ni siquiera llega a la API: la Cloud API
+        // contesta "(#131009) el formato del número de teléfono es
+        // incorrecto" y el aviso se pierde en el log. En cabañas hay fichas
+        // con "656" y "+5213" (2026-09-15).
+        if (strlen($phone) < 11 || strlen($phone) > 15) {
+            \Illuminate\Support\Facades\Log::warning('Aviso directo: teléfono no enviable', [
+                'telefono' => $rawPhone,
+            ]);
+
+            return false;
         }
 
         $preference = $settings['direct_notify_channel'] ?? 'auto';

@@ -312,8 +312,9 @@ const monthlyOptions = {
                 </div>
             </div>
 
-            <!-- Próximas reservas -->
-            <div class="col-span-12">
+            <!-- Próximas reservas. El ancla la usa el "Ver todo" del tab
+                 Historial del plano. -->
+            <div id="proximas" class="col-span-12 scroll-mt-24">
                 <div class="flex items-center md:h-10">
                     <div class="text-base font-medium">Próximas reservas</div>
                     <span
@@ -394,9 +395,10 @@ const monthlyOptions = {
                                     <Button
                                         as="a"
                                         :href="
-                                            route('tenant.reservations', {
-                                                reservation: reservation.id,
-                                            })
+                                            route(
+                                                'tenant.reservations.operation',
+                                                { reservation: reservation.id },
+                                            )
                                         "
                                         variant="outline-secondary"
                                         class="rounded-[0.5rem] bg-white"
@@ -424,7 +426,10 @@ const monthlyOptions = {
             </div>
 
             <!-- Estancias recientes -->
-            <div class="col-span-12 flex flex-col xl:col-span-7">
+            <div
+                id="estancias"
+                class="col-span-12 flex scroll-mt-24 flex-col xl:col-span-7"
+            >
                 <div class="flex items-center md:h-10">
                     <div class="text-base font-medium">Estancias recientes</div>
                 </div>
@@ -690,7 +695,7 @@ const monthlyOptions = {
                     </div>
                 </div>
 
-                <div class="flex flex-1 flex-col">
+                <div id="semaforo" class="flex flex-1 scroll-mt-24 flex-col">
                     <div class="flex items-center md:h-10">
                         <div class="text-base font-medium">
                             Línea de tiempo del semáforo

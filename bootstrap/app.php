@@ -6,7 +6,10 @@ use Illuminate\Foundation\Application;
 use Illuminate\Foundation\Configuration\Exceptions;
 use Illuminate\Foundation\Configuration\Middleware;
 use Illuminate\Http\Middleware\AddLinkHeadersForPreloadedAssets;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use Inertia\Inertia;
+use Symfony\Component\HttpFoundation\Response;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -75,5 +78,68 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
-        //
+        // Folio del incidente en cada excepción registrada: es el mismo que
+        // se le enseña al usuario en la pantalla de error, y con él soporte
+        // encuentra en el log la línea exacta que provocó la queja.
+        $exceptions->context(fn () => ['folio' => \App\Support\ErrorReference::current()]);
+
+        // Pantalla de error con el theme en vez de la página gris de
+        // Laravel. Solo para navegación: lo que pide JSON —la API del bot,
+        // los webhooks, las llamadas del propio panel— sigue recibiendo
+        // JSON, que es lo que sabe interpretar.
+        $exceptions->respond(function (Response $response, Throwable $e, Request $request) {
+            $status = $response->getStatusCode();
+
+            // Subdominio que no es de ningún hotel: no es una falla del
+            // servidor, es una dirección mal escrita, y así hay que contarlo.
+            if ($e instanceof \Stancl\Tenancy\Exceptions\TenantCouldNotBeIdentifiedOnDomainException) {
+                $status = 404;
+            }
+
+            if ($status < 400 || $response->isRedirection()) {
+                return $response;
+            }
+
+            if ($request->expectsJson()
+                || $request->isJson()
+                || $request->is('api/*', 'webhooks/*', 'broadcasting/*', 'horizon/*')) {
+                return $response;
+            }
+
+            // Con APP_DEBUG encendido, los 500 conservan la traza: quien
+            // desarrolla necesita ver dónde reventó, no una disculpa.
+            if ($status >= 500 && config('app.debug')) {
+                return $response;
+            }
+
+            // Sesión caducada a mitad de un formulario: devolver al usuario
+            // a donde estaba, con el aviso, es mejor que una pantalla nueva.
+            if ($status === 419 && ! $request->isMethod('GET')) {
+                return back()->withInput($request->except('password', 'password_confirmation'))
+                    ->with('error', 'La página estuvo abierta demasiado tiempo y la sesión expiró. Revisa los datos y vuelve a enviar.');
+            }
+
+            try {
+                // Los datos compartidos de Inertia (usuario, hotel, menú) los
+                // pone un middleware que corre DESPUÉS de SubstituteBindings.
+                // El 404 más común del panel —una reserva borrada, un enlace
+                // viejo— nace justo ahí, antes de que ese middleware alcance a
+                // compartir nada, y sin eso la pantalla saldría suelta, sin
+                // menú, a quien está trabajando con su sesión abierta.
+                // Volverlos a compartir aquí es lo que hace que el 404 se vea
+                // dentro del panel. Si la petición ya los tenía, se reescriben
+                // con lo mismo.
+                $inertiaMiddleware = app(HandleInertiaRequests::class);
+                Inertia::version(fn () => $inertiaMiddleware->version($request));
+                Inertia::share($inertiaMiddleware->share($request));
+
+                return Inertia::render('Error', \App\Support\ErrorPage::payload($request, $status))
+                    ->toResponse($request)
+                    ->setStatusCode($status);
+            } catch (Throwable) {
+                // Si ni Inertia se puede armar (hotel desconocido, base
+                // caída), queda el respaldo Blade, que no depende de nada.
+                return response()->view('errors.layout', ['status' => $status], $status);
+            }
+        });
     })->create();

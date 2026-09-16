@@ -108,6 +108,9 @@ it('el saldo vencido NO cancela por default (solo alerta)', function () {
 it('cancela el saldo vencido solo si el hotel lo activó', function () {
     [$reservation, $conversation] = reservaConSaldo(['cancel_on_balance_overdue' => true]);
     $reservation->update(['payment_due_at' => now()->subHours(2)]);
+    // Se le pidió el saldo antes de vencer: sin ese aviso ya no se cancela
+    // (ver PaidReservationSurvivesTest — nadie pierde su cuarto en silencio).
+    $conversation->markFollowup('balance_request');
 
     $this->artisan('payments:collect-balance')->assertSuccessful();
 

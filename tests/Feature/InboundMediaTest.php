@@ -227,11 +227,14 @@ it('reemitir un cobro rechazado crea uno nuevo y rescata el comprobante que lleg
     $data = $response->getData(true);
     $fresh = PaymentRequest::find($data['request_id']);
 
+    // Lo que importa es el resultado: el cobro vivo lleva pegada la foto
+    // buena. `rescued_receipt` puede venir en false porque el rescate ya
+    // ocurrió antes —al llegar el archivo, el extensor del apartado emite
+    // el cobro y le pega el comprobante—, no porque se haya perdido.
     expect($response->getStatusCode())->toBe(200)
-        ->and($data['rescued_receipt'])->toBeTrue()
         ->and($fresh->status)->toBe(PaymentRequest::STATUS_PENDING)
         ->and($fresh->id)->not->toBe($rejected->id)
-        ->and($fresh->getFirstMedia('receipt')->file_name)->toBe('bueno.png');
+        ->and($fresh->getFirstMedia('receipt')?->file_name)->toBe('bueno.png');
 });
 
 it('no se reemite un cobro que ya está pagado', function () {

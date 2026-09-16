@@ -81,6 +81,9 @@ class AgentToolsController extends Controller
             // el huésped preguntaba y coincidía con una FAQ.
             'payment_terms' => array_filter([
                 'transfer_window' => $this->minutesLabel(app(\App\Services\ReservationPolicy::class)->transferMinutes()),
+                // Contrato / aviso legal que el huésped debe leer y confirmar
+                // antes de apartar (opcional por hotel).
+                'legal_notice_url' => $this->legalNoticeUrl(),
                 'balance_due' => app(\App\Services\ReservationPolicy::class)->balanceDueLabel(),
                 'notice' => implode(' ', $this->paymentNoticeLines()),
             ]),
@@ -437,12 +440,23 @@ class AgentToolsController extends Controller
         // cuántas personas entran y qué cuesta la extra, el anticipo, hasta
         // cuándo hay que liquidar y a dónde llamar. Va como frase hecha para
         // que solo tenga que copiarla.
+        // Primera línea: QUÉ cabaña y si está libre, pegada a SU precio.
+        // Caso real cabañas 2026-09-11 (Karely): el bot dijo "¡Hay
+        // disponibilidad!" para la Luxury —ocupada— con el precio de la Real.
+        $typeName = $ratePlan->roomType?->name ?? 'La habitación';
+        $range = $start->locale('es')->isoFormat('dddd D [de] MMMM').' al '.$end->locale('es')->isoFormat('dddd D [de] MMMM');
+        $headline = $rooms->isNotEmpty()
+            ? "{$typeName}, {$range}: disponible, total $".number_format($total, 2).'.'
+            : "{$typeName}, {$range}: NO está disponible. No la ofrezcas ni la cotices.";
+
         $noticeLines = array_values(array_filter([
-            $ratePlan->roomType ? $this->occupancyNotice($ratePlan->roomType, $ratePlan) : null,
-            ...$this->paymentNoticeLines($ratePlan, $start, $total),
+            $headline,
+            $rooms->isNotEmpty() && $ratePlan->roomType ? $this->occupancyNotice($ratePlan->roomType, $ratePlan) : null,
+            ...($rooms->isNotEmpty() ? $this->paymentNoticeLines($ratePlan, $start, $total) : []),
         ]));
 
         return response()->json([
+            'room_type' => $ratePlan->roomType?->name,
             'available' => $rooms->isNotEmpty(),
             'rooms_count' => $rooms->count(),
             'starts_at' => $start->toIso8601String(),
@@ -484,7 +498,19 @@ class AgentToolsController extends Controller
             'starts_at' => ['required', 'date'],
             'ends_at' => ['nullable', 'date', 'after:starts_at'],
             'guests' => ['nullable', 'integer', 'min:1', 'max:200'],
+            'conversation_id' => ['nullable', 'integer'],
         ]);
+
+        // Lo que ESTE huésped ya tiene apartado para esas fechas. El motor
+        // de disponibilidad cuenta sus propios apartados como ocupados —es
+        // correcto para todos los demás— y el bot lo leía como "ya no hay
+        // lugar" y se lo decía a quien acababa de transferir (cabañas
+        // 2026-09-14, GRP-2026-0149: cuatro cabañas suyas, "solo queda 1").
+        $propias = $this->ownLiveReservations(
+            ! empty($data['conversation_id'])
+                ? \App\Models\Conversation::query()->find($data['conversation_id'])
+                : null,
+        );
 
         $requestedStart = Carbon::parse($data['starts_at']);
         $requestedEnd = ! empty($data['ends_at']) ? Carbon::parse($data['ends_at']) : null;
@@ -523,10 +549,19 @@ class AgentToolsController extends Controller
             $maxGuests = $occupancy['max_guests'];
             $total = $plan->priceFor($start, $end);
 
+            // De este tipo y estas fechas, ¿cuántas ya son de este huésped?
+            $suyas = $propias
+                ->where('room_type_id', $type->id)
+                ->filter(fn (Reservation $r) => $r->starts_at < $end && $r->ends_at > $start)
+                ->count();
+
             $options[] = [
                 'room_type' => $type->name,
                 // Lo pide crear_apartado_grupo para armar sus líneas.
                 'room_type_id' => $type->id,
+                // Ya apartadas por ESTE huésped: no están libres para nadie
+                // más, pero para él no son un "no hay".
+                'yours_already' => $suyas,
                 'rate_plan_id' => $plan->id,
                 'rate_plan' => $plan->name,
                 // units = cuántas existen; units_available = cuántas quedan
@@ -536,6 +571,7 @@ class AgentToolsController extends Controller
                 'available' => $free->isNotEmpty(),
                 'included_guests' => $includedGuests,
                 'max_guests' => $maxGuests,
+                'extra_guest_fee' => $occupancy['extra_guest_fee'],
                 'extra_guest_fee_label' => $occupancy['extra_guest_fee_label'],
                 // Capacidad y persona extra en una frase: al listar varias
                 // opciones el bot las daba "peladas", con el precio y nada más.
@@ -595,14 +631,110 @@ class AgentToolsController extends Controller
             }
         }
 
+        // La misma gente en MENOS habitaciones usando la persona extra: para
+        // 10 personas el panorama proponía 3 cabañas de 4 ($9,000) cuando
+        // caben en 2 de máximo 5 con dos personas extra ($6,500). El huésped
+        // tuvo que pelearlo (cabañas 2026-09-14: "no, dos sencillas").
+        $withExtras = [];
+        $extrasTotal = 0.0;
+        $remaining = $guests ?? 0;
+
+        if ($guests !== null) {
+            // Primero las que más gente admiten y, a igualdad, la más barata.
+            $pool = $availableOptions->sortBy(fn (array $option) => [-$option['max_guests'], $option['total']])->values();
+
+            foreach ($pool as $option) {
+                if ($remaining <= 0) {
+                    break;
+                }
+
+                $fee = (float) ($option['extra_guest_fee'] ?? 0);
+                $nights = max(1, (int) $option['nights']);
+                $units = 0;
+                $subtotal = 0.0;
+                $extraGuests = 0;
+
+                while ($units < $option['units_available'] && $remaining > 0) {
+                    $inRoom = min($option['max_guests'], $remaining);
+                    $extra = max(0, $inRoom - $option['included_guests']);
+
+                    $subtotal += (float) $option['total'] + $extra * $fee * $nights;
+                    $extraGuests += $extra;
+                    $remaining -= $inRoom;
+                    $units++;
+                }
+
+                if ($units < 1) {
+                    continue;
+                }
+
+                $withExtras[] = [
+                    'room_type' => $option['room_type'],
+                    'room_type_id' => $option['room_type_id'],
+                    'rate_plan_id' => $option['rate_plan_id'],
+                    'units' => $units,
+                    'extra_guests' => $extraGuests,
+                    'subtotal' => round($subtotal, 2),
+                    'subtotal_label' => '$'.number_format($subtotal, 2),
+                ];
+
+                $extrasTotal += $subtotal;
+            }
+        }
+
+        $extrasTotal = round($extrasTotal, 2);
+        $extrasCovered = $guests !== null ? $guests - max(0, $remaining) : 0;
+        $standardRooms = (int) array_sum(array_column($combination, 'units'));
+        $extrasRooms = (int) array_sum(array_column($withExtras, 'units'));
+
+        // Solo vale la pena ofrecerla si cubre al grupo y mejora a la
+        // combinación normal: menos habitaciones, más barata, o la normal ni
+        // siquiera alcanzaba.
+        $offerExtras = $guests !== null
+            && $withExtras !== []
+            && $extrasCovered >= $guests
+            && ($covered < $guests || $extrasRooms < $standardRooms || $extrasTotal + 0.01 < $combinationTotal);
+
         $notes = ['Ofrece SOLO tipos con units_available mayor a 0, y nunca más unidades de las que dice units_available (units es cuántas existen en total).'];
+
+        if ($offerExtras) {
+            $detail = collect($withExtras)
+                ->map(fn (array $line) => $line['units'].' '.$line['room_type'].($line['extra_guests'] > 0 ? ' (+'.$line['extra_guests'].' persona extra)' : ''))
+                ->implode(' + ');
+
+            $notes[] = "Cabe en menos habitaciones con persona extra: {$detail} = $".number_format($extrasTotal, 2)
+                .' (combination_with_extras). Ofrécele las dos opciones con su total y deja que elija; al apartar manda el total de personas en el campo personas.';
+        }
+
+        // Lo primero que tiene que leer el modelo: parte de lo "ocupado" es
+        // de este mismo huésped. Sin esta línea le dice "ya no hay lugar" a
+        // quien tiene las habitaciones apartadas y pagadas.
+        if ($propias->isNotEmpty()) {
+            $suyasEnRango = $propias->filter(
+                fn (Reservation $r) => $r->starts_at < ($requestedEnd ?? $requestedStart->copy()->addDay())
+                    && $r->ends_at > $requestedStart,
+            );
+
+            if ($suyasEnRango->isNotEmpty()) {
+                $folio = $suyasEnRango->first()->group?->displayCode()
+                    ?? $suyasEnRango->first()->displayCode();
+
+                array_unshift(
+                    $notes,
+                    'ATENCIÓN: este huésped YA TIENE '.$suyasEnRango->count().' habitación(es) apartadas para estas fechas bajo el folio '
+                    .$folio.' (campo yours_already por tipo). Esas habitaciones son SUYAS: aparecen como ocupadas porque él las apartó. '
+                    .'NUNCA le digas que no hay disponibilidad, que su reserva no existe o que la perdió. Confírmale su folio; '
+                    .'si algo no cuadra con su pago, usa transferir_a_humano.',
+                );
+            }
+        }
 
         if ($unitsAvailable === 0) {
             $notes[] = 'No queda ninguna habitación libre en ese rango: dilo con claridad. Si alternative_dates trae fechas, ofrécelas TAL CUAL (son fechas verificadas con lugar); si viene vacío, di que esas semanas están llenas y pide otra fecha. No inventes alternativas.';
             $notes[] = 'De las fechas alternativas solo sabes CUÁNTAS habitaciones quedan y para cuánta gente, NO cuáles: no las nombres. Si el huésped elige una, vuelve a llamar consultar_disponibilidad_general con esa fecha para decirle qué habitaciones son.';
         }
 
-        if ($guests !== null && $unitsAvailable > 0 && $covered < $guests) {
+        if ($guests !== null && $unitsAvailable > 0 && $covered < $guests && ! $offerExtras) {
             $notes[] = "La capacidad libre no alcanza para {$guests} personas: dilo tal cual, ofrece otras fechas o usa transferir_a_humano. No completes el grupo con habitaciones que no están libres.";
         }
 
@@ -612,7 +744,7 @@ class AgentToolsController extends Controller
         // "puede ser el otro fin de semana" sin saberlo.
         $alternatives = [];
 
-        if ($unitsAvailable === 0 || ($guests !== null && $covered < $guests)) {
+        if ($unitsAvailable === 0 || ($guests !== null && $covered < $guests && ! $offerExtras)) {
             $alternatives = $this->nearbyDatesWithRoom(
                 $types,
                 $requestedStart,
@@ -637,6 +769,11 @@ class AgentToolsController extends Controller
             'combination_guests_covered' => $guests !== null ? $covered : null,
             'combination_total' => $combination ? $combinationTotal : null,
             'combination_total_label' => $combination ? '$'.number_format($combinationTotal, 2) : null,
+            // La misma gente en menos habitaciones, con persona extra.
+            'combination_with_extras' => $offerExtras ? $withExtras : [],
+            'combination_with_extras_rooms' => $offerExtras ? $extrasRooms : null,
+            'combination_with_extras_total' => $offerExtras ? $extrasTotal : null,
+            'combination_with_extras_total_label' => $offerExtras ? '$'.number_format($extrasTotal, 2) : null,
             'alternative_dates' => $alternatives,
             // Plazo de liquidación y teléfono del hotel: van también aquí
             // porque muchas conversaciones cotizan por el panorama y nunca
@@ -646,6 +783,37 @@ class AgentToolsController extends Controller
             'note' => implode(' ', $notes),
             'date_notice' => $dateNotice,
         ]);
+    }
+
+    /**
+     * Las reservas VIVAS de esta conversación (y las de su mismo grupo): las
+     * que el motor de disponibilidad cuenta como ocupadas y que, para este
+     * huésped, no son un "no hay" sino lo que ya apartó.
+     *
+     * @return \Illuminate\Support\Collection<int, Reservation>
+     */
+    protected function ownLiveReservations(?\App\Models\Conversation $conversation): \Illuminate\Support\Collection
+    {
+        $reservation = $conversation?->reservation;
+
+        if (! $reservation) {
+            return collect();
+        }
+
+        return Reservation::query()
+            ->with('group:id,code,created_at')
+            ->where(function ($query) use ($reservation) {
+                $reservation->reservation_group_id
+                    ? $query->where('reservation_group_id', $reservation->reservation_group_id)
+                    : $query->whereKey($reservation->id);
+            })
+            ->where(function ($query) {
+                $query->whereIn('status', [ReservationStatus::Confirmed, ReservationStatus::CheckedIn])
+                    ->orWhere(fn ($pending) => $pending
+                        ->where('status', ReservationStatus::Pending)
+                        ->where('hold_expires_at', '>', now()));
+            })
+            ->get();
     }
 
     /**
@@ -855,17 +1023,35 @@ class AgentToolsController extends Controller
     }
 
     /**
-     * get_reservation: estado de una reserva por su código (RES-AAAA-XXXX).
+     * get_reservation: estado de una reserva por su código (RES-AAAA-XXXX)
+     * o de un grupo completo por el suyo (GRP-AAAA-XXXX).
+     *
+     * Los folios de grupo son los que el bot REPARTE cuando aparta varias
+     * habitaciones, así que son los que el huésped tiene anotados y los que
+     * teclea de vuelta. Buscar solo en `reservations.code` devolvía 404 y el
+     * bot lo decía como "su reserva no aparece registrada" — se lo dijo a
+     * una señora que acababa de transferir $6,750 y de mandar su comprobante
+     * (cabañas 2026-09-14, GRP-2026-0149). El hotel le devolvió el dinero.
      */
     public function showReservation(string $code): JsonResponse
     {
+        $code = strtoupper(trim($code));
+
+        if (str_starts_with($code, 'GRP-')) {
+            return $this->showGroup($code);
+        }
+
         $reservation = Reservation::query()
             ->with(['room:id,number', 'ratePlan:id,name'])
-            ->where('code', strtoupper(trim($code)))
+            ->where('code', $code)
             ->first();
 
         if (! $reservation) {
-            return response()->json(['message' => 'No encontramos una reserva con ese código.'], 404);
+            return response()->json([
+                'message' => 'No encontramos ninguna reserva ni grupo con ese código. '
+                    .'OJO: esto NO significa que el huésped no tenga reserva — puede haberlo tecleado mal o venir de otro lado. '
+                    .'Si dice que ya pagó o que ya mandó comprobante, NUNCA le digas que su reserva no existe ni que no está registrada: usa transferir_a_humano para que el personal lo revise.',
+            ], 404);
         }
 
         $activeRequest = $reservation->paymentRequests()->active()->latest('id')->first();
@@ -895,6 +1081,387 @@ class AgentToolsController extends Controller
             ] : null,
             'hold_expires_at' => $reservation->hold_expires_at?->toIso8601String(),
         ]);
+    }
+
+    /**
+     * El grupo completo bajo su folio GRP-: cuántas habitaciones, qué total,
+     * cuánto se ha pagado y hasta cuándo se sostiene. Un grupo es TODO O
+     * NADA, así que se responde como una sola cosa y no como N reservas.
+     */
+    protected function showGroup(string $code): JsonResponse
+    {
+        $group = \App\Models\ReservationGroup::query()
+            ->with(['reservations.room:id,number', 'reservations.roomType:id,name'])
+            ->where('code', $code)
+            ->first();
+
+        if (! $group) {
+            return response()->json([
+                'message' => 'No encontramos ningún grupo con ese folio. Si el huésped dice que ya pagó o que ya mandó comprobante, '
+                    .'NUNCA le digas que su reserva no existe: usa transferir_a_humano.',
+            ], 404);
+        }
+
+        $reservations = $group->reservations;
+        $vivas = $reservations->whereIn('status', [
+            ReservationStatus::Pending, ReservationStatus::Confirmed, ReservationStatus::CheckedIn,
+        ]);
+        $total = $group->totalAmount();
+        $pagado = round((float) \App\Models\Payment::query()
+            ->whereIn('reservation_id', $reservations->pluck('id'))
+            ->where(fn ($q) => $q->whereNull('kind')->orWhere('kind', '!=', \App\Models\Payment::KIND_GUARANTEE))
+            ->sum('amount'), 2);
+        $primera = $reservations->sortBy('starts_at')->first();
+        // El grupo se sostiene mientras siga vivo el apartado más largo: es
+        // todo o nada, no vence habitación por habitación.
+        $hold = $vivas->filter(fn (Reservation $r) => $r->hold_expires_at !== null)->max('hold_expires_at');
+
+        return response()->json([
+            'kind' => 'group',
+            'code' => $group->displayCode(),
+            'rooms_count' => $reservations->count(),
+            'rooms_alive' => $vivas->count(),
+            'status' => $vivas->isNotEmpty()
+                ? ($vivas->contains(fn (Reservation $r) => $r->status === ReservationStatus::Pending) ? 'pending' : 'confirmed')
+                : 'cancelled',
+            'status_label' => $vivas->isEmpty()
+                ? 'El grupo ya no está vigente'
+                : ($vivas->contains(fn (Reservation $r) => $r->status === ReservationStatus::Pending)
+                    ? 'Apartado, esperando que el hotel confirme el pago'
+                    : 'Confirmado'),
+            'guest_first_name' => str($group->guest_name ?? '')->before(' ')->toString() ?: null,
+            'rooms' => $reservations->map(fn (Reservation $r) => [
+                'code' => $r->displayCode(),
+                'room' => $r->room?->number,
+                'room_type' => $r->roomType?->name,
+                'status_label' => $r->status->label(),
+            ])->values(),
+            'starts_at' => $primera?->starts_at?->toIso8601String(),
+            'ends_at' => $primera?->ends_at?->toIso8601String(),
+            'total' => $total,
+            'total_label' => '$'.number_format($total, 2),
+            'paid_label' => '$'.number_format($pagado, 2),
+            'pending_amount' => round(max(0, $total - $pagado), 2),
+            'pending_label' => '$'.number_format(max(0, $total - $pagado), 2),
+            'hold_expires_at' => $hold?->toIso8601String(),
+            'instructions' => $vivas->isEmpty()
+                ? 'El grupo ya no está vigente. Si el huésped dice que pagó o mandó comprobante, NO le digas que no existe ni que venció: usa transferir_a_humano para que el personal revise su depósito.'
+                : 'El grupo SIGUE VIGENTE con '.$vivas->count().' habitación(es). Díselo con su folio; nunca le digas que no hay disponibilidad para esas fechas: esas habitaciones ya son suyas.',
+        ]);
+    }
+
+    /**
+     * reopen_hold: reactiva con el MISMO código un apartado que venció sin
+     * pago (regla del hotel de cabañas, 2026-09-11: "si se tardó en depositar
+     * y se venció, volver a reservar y darle su código").
+     *
+     * Solo apartados vencidos por plazo y solo el de ESTA conversación (o de
+     * su mismo huésped): el código se reenvía y se dice en voz alta. Lo que
+     * canceló el hotel o un "no llegó" lo reabre el personal desde el panel.
+     */
+    public function reopenHold(Request $request, \App\Actions\Reservations\TransitionReservation $action): JsonResponse
+    {
+        $data = $request->validate([
+            'code' => ['required', 'string', 'max:40'],
+            'conversation_id' => ['nullable', 'integer'],
+        ]);
+
+        $code = strtoupper(trim($data['code']));
+        $conversation = ! empty($data['conversation_id'])
+            ? \App\Models\Conversation::query()->find($data['conversation_id'])
+            : null;
+
+        // Folio de grupo: el huésped teclea el que le dieron, y el que le
+        // dieron fue el GRP-. Reactivar solo una de sus cuatro cabañas sería
+        // peor que no reactivar ninguna.
+        if (str_starts_with($code, 'GRP-')) {
+            return $this->reopenGroupHold($code, $conversation, $request->user(), $action);
+        }
+
+        $reservation = Reservation::query()->where('code', $code)->first();
+
+        if (! $reservation) {
+            return response()->json([
+                'message' => 'No encontramos ninguna reserva ni grupo con ese código. Si el huésped dice que ya pagó o mandó comprobante, '
+                    .'NUNCA le digas que su reserva no existe: usa transferir_a_humano.',
+            ], 404);
+        }
+
+        $sameGuest = $reservation->guest_id !== null && $conversation?->guest_id === $reservation->guest_id;
+
+        if ($conversation && $conversation->reservation_id !== $reservation->id && ! $sameGuest) {
+            return response()->json(['message' => 'Ese código no corresponde a esta conversación. Pide al huésped que lo verifique o usa transferir_a_humano.'], 403);
+        }
+
+        if (in_array($reservation->status, [ReservationStatus::Pending, ReservationStatus::Confirmed, ReservationStatus::CheckedIn], true)) {
+            return response()->json(['message' => "La reserva sigue vigente ({$reservation->status->label()}): no hace falta reactivarla. Revisa su estado con consultar_reserva."], 422);
+        }
+
+        if (! $reservation->isExpiredHold()) {
+            return response()->json(['message' => 'Esta reserva no venció por plazo: la canceló el hotel o se registró que no llegó. Solo el personal puede reabrirla; usa transferir_a_humano.'], 422);
+        }
+
+        // Si ya mandó su comprobante por este chat, el apartado revivido se
+        // sostiene lo que dura la verificación, no los minutos de un
+        // apartado nuevo (si no, vuelve a vencer antes de que lo revisen).
+        $policy = app(\App\Services\ReservationPolicy::class);
+        $proofSent = $conversation !== null && $conversation->messages()
+            ->where('direction', 'in')
+            ->where('created_at', '>=', $reservation->created_at)
+            ->whereHas('media')
+            ->exists();
+
+        try {
+            $reservation = $action->reopen($reservation, $request->user(), [
+                'hold_minutes' => $proofSent ? $policy->proofReviewMinutes() : $policy->holdMinutes(),
+            ]);
+        } catch (NoAvailabilityException $e) {
+            return response()->json(['message' => 'La habitación de ese apartado ya no está libre: '.$e->getMessage().' Ofrece otras fechas u otra habitación con consultar_disponibilidad.'], 422);
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $reservation->load(['room:id,number', 'ratePlan']);
+
+        return response()->json([
+            'code' => $reservation->displayCode(),
+            'status' => $reservation->status->value,
+            'room' => $reservation->room?->number,
+            'starts_at' => $reservation->starts_at->toIso8601String(),
+            'ends_at' => $reservation->ends_at->toIso8601String(),
+            'total_label' => '$'.number_format((float) $reservation->total_amount, 2),
+            'deposit_label' => '$'.number_format((float) $reservation->deposit_amount, 2),
+            'requires_prepayment' => (bool) $reservation->ratePlan?->requiresPrepayment(),
+            'hold_expires_at' => $reservation->hold_expires_at?->toIso8601String(),
+            'proof_received' => $proofSent,
+            'payment_options' => $this->paymentOptionsSummary(),
+            'message' => $proofSent
+                ? 'Apartado reactivado con el mismo código y sostenido mientras el hotel verifica el comprobante que ya mandó. Dale su código y dile eso; NO digas que el pago fue recibido ni le pidas que pague otra vez.'
+                : 'Apartado reactivado con el mismo código. Dale su código y hasta cuándo queda apartado (hold_expires_at); si requiere prepago, ofrécele el pago con solicitar_pago.',
+        ]);
+    }
+
+    /**
+     * Reactiva un GRUPO vencido con su mismo folio: todo o nada, igual que
+     * cuando se creó. Si alguna habitación ya la ganó otro huésped, no se
+     * revive media reserva — se le dice al personal.
+     */
+    protected function reopenGroupHold(
+        string $code,
+        ?\App\Models\Conversation $conversation,
+        ?\App\Models\User $user,
+        \App\Actions\Reservations\TransitionReservation $action,
+    ): JsonResponse {
+        $group = \App\Models\ReservationGroup::query()->with('reservations')->where('code', $code)->first();
+
+        if (! $group) {
+            return response()->json([
+                'message' => 'No encontramos ningún grupo con ese folio. Si el huésped dice que ya pagó, usa transferir_a_humano en vez de decirle que no existe.',
+            ], 404);
+        }
+
+        $vivas = $group->reservations->whereIn('status', [
+            ReservationStatus::Pending, ReservationStatus::Confirmed, ReservationStatus::CheckedIn,
+        ]);
+
+        if ($vivas->isNotEmpty()) {
+            return response()->json([
+                'message' => "El grupo {$group->displayCode()} sigue vigente con {$vivas->count()} habitación(es): no hace falta reactivarlo. Revísalo con consultar_reserva y díselo al huésped.",
+            ], 422);
+        }
+
+        $vencidas = $group->reservations->filter(fn (Reservation $r) => $r->isExpiredHold());
+
+        if ($vencidas->isEmpty()) {
+            return response()->json([
+                'message' => 'Ese grupo no venció por plazo: lo canceló el hotel o se registró que no llegó. Solo el personal puede reabrirlo; usa transferir_a_humano.',
+            ], 422);
+        }
+
+        $policy = app(\App\Services\ReservationPolicy::class);
+        $proofSent = $conversation !== null && $conversation->messages()
+            ->where('direction', 'in')
+            ->where('created_at', '>=', $vencidas->min('created_at'))
+            ->whereHas('media')
+            ->exists();
+
+        $minutes = $proofSent ? $policy->proofReviewMinutes() : $policy->holdMinutes();
+        $reabiertas = [];
+
+        foreach ($vencidas as $hold) {
+            try {
+                $reabiertas[] = $action->reopen($hold, $user, ['hold_minutes' => $minutes]);
+            } catch (NoAvailabilityException|\InvalidArgumentException $e) {
+                // Todo o nada: lo que ya se revivió se deja como está y lo
+                // resuelve una persona, pero NO se le dice al huésped que
+                // "no existe" ni que no hay nada.
+                return response()->json([
+                    'message' => "Una de las habitaciones del grupo {$group->displayCode()} ya no está libre, así que el grupo no se puede reactivar completo. "
+                        .'NO le digas que su reserva no existe ni que perdió su dinero: usa transferir_a_humano para que el personal lo resuelva.',
+                ], 422);
+            }
+        }
+
+        $primera = collect($reabiertas)->sortBy('starts_at')->first();
+
+        return response()->json([
+            'kind' => 'group',
+            'code' => $group->displayCode(),
+            'rooms_count' => count($reabiertas),
+            'status' => ReservationStatus::Pending->value,
+            'starts_at' => $primera?->starts_at?->toIso8601String(),
+            'ends_at' => $primera?->ends_at?->toIso8601String(),
+            'total_label' => '$'.number_format($group->totalAmount(), 2),
+            'hold_expires_at' => $primera?->hold_expires_at?->toIso8601String(),
+            'proof_received' => $proofSent,
+            'message' => $proofSent
+                ? 'Grupo reactivado completo con el MISMO folio y sostenido mientras el hotel verifica el comprobante que ya mandó. Dale su folio y dile eso; NO des el pago por recibido ni le pidas que pague otra vez.'
+                : 'Grupo reactivado completo con el MISMO folio. Dale el folio y hasta cuándo queda apartado.',
+        ]);
+    }
+
+    /**
+     * validate_coupon: el huésped trae un código de descuento. Mismas reglas
+     * que el wizard (BookingCouponController) y que el apartado
+     * (CreateReservation): vigencia, usos, noches mínimas, tipo de cabaña,
+     * cliente frecuente y cumpleaños. El descuento se calcula aquí sobre la
+     * tarifa real; el apartado lo vuelve a validar y lo congela.
+     */
+    public function checkCoupon(Request $request): JsonResponse
+    {
+        $dateNotice = $request->filled('starts_at') ? $this->forwardPastDates($request) : null;
+
+        $data = $request->validate([
+            'code' => ['required', 'string', 'max:40'],
+            'rate_plan_id' => ['nullable', 'exists:rate_plans,id'],
+            'starts_at' => ['nullable', 'date'],
+            'ends_at' => ['nullable', 'date'],
+            'conversation_id' => ['nullable', 'integer'],
+        ]);
+
+        if (! $this->couponsAllowed()) {
+            return response()->json(['message' => 'Este hotel no maneja cupones de descuento. No ofrezcas ningún descuento.'], 422);
+        }
+
+        $coupon = $this->findCoupon($data['code']);
+
+        if (! $coupon || ! $coupon->isRedeemable()) {
+            return response()->json(['message' => 'Ese código no es válido o ya no está disponible. Díselo tal cual y no ofrezcas otro descuento.'], 422);
+        }
+
+        $plan = ! empty($data['rate_plan_id']) ? RatePlan::query()->with('roomType:id,name')->find($data['rate_plan_id']) : null;
+        $start = ! empty($data['starts_at']) ? Carbon::parse($data['starts_at']) : null;
+        $end = ! empty($data['ends_at'])
+            ? Carbon::parse($data['ends_at'])
+            : ($plan && $start ? $plan->suggestedEnd($start) : null);
+
+        if ($plan && $start && $end) {
+            [$start, $end] = $this->normalizeNightTimes($plan, $start, $end);
+        }
+
+        $nights = $start && $end
+            ? max(1, (int) $start->copy()->startOfDay()->diffInDays($end->copy()->startOfDay()))
+            : null;
+
+        // Cliente frecuente y cumpleaños se revisan contra la ficha del
+        // huésped de ESTA conversación.
+        $guest = ! empty($data['conversation_id'])
+            ? \App\Models\Conversation::query()->find($data['conversation_id'])?->guest
+            : null;
+
+        $reason = $coupon->rejectionReason($guest, $start, $nights, $plan?->room_type_id, $end);
+
+        if ($reason !== null) {
+            return response()->json(['message' => $reason.' Díselo tal cual; si quiere, se puede apartar sin el cupón.'], 422);
+        }
+
+        $payload = [
+            'code' => $coupon->code,
+            'valid' => true,
+            'discount_label' => $coupon->kindLabel(),
+            'message' => 'Cupón válido. Al apartar, pásalo en crear_apartado con cupon = '.$coupon->code.': el descuento queda aplicado en el apartado.',
+        ];
+
+        if ($plan && $start && $end) {
+            $subtotal = $plan->priceFor($start, $end);
+            $discount = $coupon->discountFor($subtotal);
+
+            $payload['subtotal_label'] = '$'.number_format($subtotal, 2);
+            $payload['discount_amount_label'] = '$'.number_format($discount, 2);
+            $payload['total_label'] = '$'.number_format($subtotal - $discount, 2);
+            $payload['quote_notice'] = [
+                ($plan->roomType?->name ?? 'La habitación').' con el cupón '.$coupon->code.' ('.$coupon->kindLabel().' de descuento): $'.number_format($subtotal, 2).' menos $'.number_format($discount, 2).', total $'.number_format($subtotal - $discount, 2).'.',
+            ];
+        }
+
+        return response()->json($payload + ['date_notice' => $dateNotice]);
+    }
+
+    /** Todo lo que el huésped ha escrito en la conversación, en un texto. */
+    protected function guestSaid(\App\Models\Conversation $conversation): string
+    {
+        return $conversation->messages()
+            ->where('direction', 'in')
+            ->latest('id')
+            ->limit(200)
+            ->pluck('body')
+            ->implode(' ');
+    }
+
+    /** Contrato / aviso legal del hotel, si lo tiene configurado. */
+    protected function legalNoticeUrl(): ?string
+    {
+        $settings = Property::firstOrFail()->settings ?? [];
+        $url = trim((string) ($settings['legal_notice_url'] ?? ''));
+
+        return $url !== '' ? $url : null;
+    }
+
+    /** ¿El bot debe ver la herramienta de cupones? Módulo y algún cupón activo. */
+    public function couponsPublic(): bool
+    {
+        return $this->couponsAllowed() && \App\Models\Coupon::query()->where('active', true)->exists();
+    }
+
+    /**
+     * El número real del huésped cuando la conversación es de WhatsApp. En
+     * Messenger, Instagram, Telegram, TikTok y webchat contact_phone guarda
+     * el id del hilo, no un teléfono: ahí no se inventa nada.
+     */
+    protected function conversationPhone(?\App\Models\Conversation $conversation): ?string
+    {
+        if ($conversation === null || ! $conversation->phoneIsIdentity()) {
+            return null;
+        }
+
+        $phone = trim((string) $conversation->contact_phone);
+
+        return strlen(preg_replace('/\D+/', '', $phone)) >= 10 ? $phone : null;
+    }
+
+    protected function couponsAllowed(): bool
+    {
+        return app(\App\Services\CouponService::class)->enabled();
+    }
+
+    /**
+     * Llave de comparación de un código de cupón: sin NINGÚN tipo de
+     * espacio (también el no separable que se cuela al copiar desde el
+     * celular o una hoja de cálculo) y en mayúsculas.
+     */
+    protected function couponKey(?string $code): string
+    {
+        return \App\Models\Coupon::keyOf($code);
+    }
+
+    /**
+     * El cupón tal cual está guardado aunque el huésped lo escriba sin
+     * espacios, con espacios de más o en minúsculas: "verano25" encuentra
+     * "VERANO 25" (el código real de cabañas lleva un espacio).
+     */
+    protected function findCoupon(?string $code): ?\App\Models\Coupon
+    {
+        return app(\App\Services\CouponService::class)->find($code);
     }
 
     /**
@@ -938,11 +1505,19 @@ class AgentToolsController extends Controller
             ->values()
             ->all();
 
-        return [
+        // Horario de transferencias del hotel (cabañas: 9 a 5). Fuera de él
+        // la transferencia ni se ofrece: solo el pago en línea.
+        $policy = app(\App\Services\ReservationPolicy::class);
+        $transferOpen = $policy->transferOpenNow();
+
+        return array_filter([
             'pasarelas' => $gateways,
-            'transferencia' => $hasAccounts,
-            'efectivo' => app(\App\Services\ReservationPolicy::class)->cashPaymentEnabled(),
-        ];
+            'transferencia' => $hasAccounts && $transferOpen,
+            'transferencia_nota' => $hasAccounts && ! $transferOpen
+                ? 'Las transferencias solo se reciben '.$policy->transferHoursLabel().'. Ahora NO ofrezcas transferencia: solo el pago en línea (pasarela).'
+                : null,
+            'efectivo' => $policy->cashPaymentEnabled(),
+        ], fn ($value) => $value !== null);
     }
 
     public function requestPayment(Request $request, \App\Actions\Payments\IssuePaymentRequest $action): JsonResponse
@@ -997,7 +1572,7 @@ class AgentToolsController extends Controller
         $enabled = $gate->methodsFor((string) tenant('id'));
 
         $settings = Property::firstOrFail()->settings ?? [];
-        $accounts = ! $enabled['transfer'] ? collect() : collect($settings['bank_accounts'] ?? [])
+        $accounts = (! $enabled['transfer'] || ! app(\App\Services\ReservationPolicy::class)->transferOpenNow()) ? collect() : collect($settings['bank_accounts'] ?? [])
             ->filter(fn (array $account) => ! empty($account['active']))
             ->map(fn (array $account) => [
                 'banco' => $account['bank'] ?? '',
@@ -1031,6 +1606,20 @@ class AgentToolsController extends Controller
             ], 422);
         }
 
+        // Horario de transferencias del hotel: fuera de él solo en línea.
+        if ($metodo === 'transferencia' && ! app(\App\Services\ReservationPolicy::class)->transferOpenNow()) {
+            // El apartado NO se sostiene hasta que reabra el horario (decisión
+            // del hotel de cabañas, 2026-09-13): el bot no puede ofrecer "te
+            // paso los datos mañana". Caso real RES-2026-1727 — vencía a las
+            // 8:50 PM y el bot le dijo al huésped que esperara a mañana.
+            $notice = app(\App\Services\ReservationPolicy::class)->holdDeadlineNotice($reservation);
+
+            return response()->json([
+                'message' => 'Las transferencias solo se reciben '.app(\App\Services\ReservationPolicy::class)->transferHoursLabel().'. Ahora solo se puede pagar en línea: ofrece el link de pago (metodo pasarela).'
+                    .($notice === null ? '' : ' NO le prometas que puede transferir mañana ni que le pasas los datos después: su apartado no se sostiene hasta entonces. Dile esto tal cual: '.$notice),
+            ], 422);
+        }
+
         if ($metodo === 'transferencia' && $accounts->isEmpty()) {
             return response()->json(['message' => 'El hotel no tiene cuentas bancarias activas para transferencia; ofrece las otras opciones de pago.'], 422);
         }
@@ -1060,7 +1649,10 @@ class AgentToolsController extends Controller
                     // de pago con el URL completo intacto.
                     'payment_link' => $paymentRequest->publicReturnUrl(),
                     'expires_at' => $paymentRequest->expires_at?->toIso8601String(),
-                    'instructions' => 'Comparte el link tal cual: el huésped paga en la página segura del proveedor y la confirmación llega sola al sistema. NUNCA afirmes que el pago fue recibido; el sistema avisará. No pidas datos de tarjeta por el chat.',
+                    // Emitir el cobro estira el apartado sobre otra copia
+                    // bloqueada: sin refresh saldría la hora de antes.
+                    'hold_deadline_notice' => app(\App\Services\ReservationPolicy::class)->holdDeadlineNotice($reservation->refresh()),
+                    'instructions' => 'Comparte el link tal cual: el huésped paga en la página segura del proveedor y la confirmación llega sola al sistema. NUNCA afirmes que el pago fue recibido; el sistema avisará. No pidas datos de tarjeta por el chat. Dile hasta cuándo queda apartada copiando hold_deadline_notice tal cual, y nunca le prometas pagar después de esa hora.',
                 ], 201);
             } catch (\InvalidArgumentException $e) {
                 return response()->json(['message' => $e->getMessage()], 422);
@@ -1091,9 +1683,12 @@ class AgentToolsController extends Controller
             'amount' => (float) $paymentRequest->amount,
             'amount_label' => $paymentRequest->amountLabel(),
             'expires_at' => $paymentRequest->expires_at?->toIso8601String(),
-            'valid_hours' => (int) now()->diffInHours($paymentRequest->expires_at ?? now()),
+            // Hacia arriba: con una ventana de 60 min, medida milisegundos
+            // después, el truncado daba valid_hours 0 (cabañas 2026-09-13).
+            'valid_hours' => (int) ceil(now()->diffInMinutes($paymentRequest->expires_at ?? now()) / 60),
             'bank_accounts' => $accounts,
-            'instructions' => 'Pide al huésped que realice la transferencia por el monto exacto y envíe por este chat su comprobante (foto o captura). El equipo del hotel lo verificará; NUNCA afirmes que el pago fue recibido.',
+            'hold_deadline_notice' => app(\App\Services\ReservationPolicy::class)->holdDeadlineNotice($reservation->refresh()),
+            'instructions' => 'Pide al huésped que realice la transferencia por el monto exacto y envíe por este chat su comprobante (foto o captura). El equipo del hotel lo verificará; NUNCA afirmes que el pago fue recibido. Dile hasta cuándo queda apartada copiando hold_deadline_notice tal cual, y nunca le prometas pagar después de esa hora.',
         ], 201);
     }
 
@@ -1121,7 +1716,7 @@ class AgentToolsController extends Controller
         $enabled = $gate->methodsFor((string) tenant('id'));
 
         $settings = Property::firstOrFail()->settings ?? [];
-        $accounts = ! $enabled['transfer'] ? collect() : collect($settings['bank_accounts'] ?? [])
+        $accounts = (! $enabled['transfer'] || ! app(\App\Services\ReservationPolicy::class)->transferOpenNow()) ? collect() : collect($settings['bank_accounts'] ?? [])
             ->filter(fn (array $account) => ! empty($account['active']))
             ->map(fn (array $account) => [
                 'banco' => $account['bank'] ?? '',
@@ -1226,7 +1821,19 @@ class AgentToolsController extends Controller
             'adults' => ['sometimes', 'integer', 'min:1', 'max:20'],
             'children' => ['sometimes', 'integer', 'min:0', 'max:20'],
             'notes' => ['nullable', 'string', 'max:500'],
+            // Cupón que trajo el huésped (módulo cupones). CreateReservation
+            // lo revalida y congela el descuento en el apartado.
+            'coupon_code' => ['nullable', 'string', 'max:40'],
+            // Cómo eligió pagar el huésped: el hotel puede exigirlo ANTES
+            // de apartar (ajuste agent_require_payment_choice).
+            'metodo_pago' => ['nullable', 'string', Rule::in(['pasarela', 'transferencia', 'efectivo'])],
         ]);
+
+        // El código como está guardado aunque el huésped lo escriba sin
+        // espacios o en minúsculas ("verano25" → "VERANO 25").
+        if (! empty($data['coupon_code'])) {
+            $data['coupon_code'] = $this->findCoupon($data['coupon_code'])?->code ?? $data['coupon_code'];
+        }
 
         // Mismas horas normalizadas que ofreció get_availability: lo
         // cotizado es lo que se aparta.
@@ -1234,6 +1841,98 @@ class AgentToolsController extends Controller
         $holdStart = Carbon::parse($data['starts_at']);
         $holdEnd = ! empty($data['ends_at']) ? Carbon::parse($data['ends_at']) : $holdPlan->suggestedEnd($holdStart);
         [$holdStart, $holdEnd] = $this->normalizeNightTimes($holdPlan, $holdStart, $holdEnd);
+
+        // Un apartado por cabaña y fechas en cada conversación. Caso real
+        // cabañas 2026-09-11 (Marcus Fenix): al cambiar de método de pago el
+        // bot volvía a llamar crear_apartado, su PROPIO apartado le ganaba la
+        // cabaña y le decía al huésped "ya no está disponible"; terminó con
+        // dos apartados y dos respuestas falsas. Si ya lo tiene, es el mismo.
+        $conversation = $request->filled('conversation_id')
+            ? \App\Models\Conversation::query()->find($request->integer('conversation_id'))
+            : null;
+        $previous = $conversation?->reservation;
+        $previousLive = $previous !== null
+            && $previous->status === ReservationStatus::Pending
+            && $previous->hold_expires_at?->isFuture()
+            && $previous->reservation_group_id === null;
+
+        if ($previousLive
+            && $previous->room_type_id === $holdPlan->room_type_id
+            && $previous->starts_at->equalTo($holdStart)
+            && $previous->ends_at->equalTo($holdEnd)) {
+            $previous->loadMissing(['room:id,number', 'roomType:id,name', 'ratePlan']);
+
+            return response()->json([
+                'code' => $previous->displayCode(),
+                'status' => ReservationStatus::Pending->value,
+                'already_held' => true,
+                'room' => $previous->room?->number,
+                'room_type' => $previous->roomType?->name,
+                'starts_at' => $previous->starts_at->toIso8601String(),
+                'ends_at' => $previous->ends_at->toIso8601String(),
+                'total' => (float) $previous->total_amount,
+                'total_label' => '$'.number_format((float) $previous->total_amount, 2),
+                'deposit_label' => '$'.number_format((float) $previous->deposit_amount, 2),
+                'requires_prepayment' => (bool) $previous->ratePlan?->requiresPrepayment(),
+                'hold_expires_at' => $previous->hold_expires_at?->toIso8601String(),
+                'payment_options' => $this->paymentOptionsSummary(),
+                'message' => 'El huésped YA tiene este apartado (mismo código): no se creó otro y la cabaña sigue apartada para él. Para cobrarlo o cambiar la forma de pago llama solicitar_pago con este código. No le digas que no hay disponibilidad.',
+            ]);
+        }
+
+        // Antes de apartar, el hotel puede exigir dos cosas (ajustes del
+        // tenant). Caso real cabañas 2026-09-11: el bot apartaba la cabaña
+        // en cuanto el huésped daba su nombre, sin correo, sin el aviso
+        // legal y sin que dijera cómo iba a pagar.
+        $settings = Property::firstOrFail()->settings ?? [];
+        $legalUrl = $this->legalNoticeUrl();
+        $legalLine = $legalUrl !== null
+            ? ' Comparte el aviso legal (el contrato) '.$legalUrl.' con esta frase: "Es importante que lea y confirme el contrato; confírmeme de leído, por favor".'
+            : '';
+
+        if (! empty($settings['agent_require_email']) && empty($data['guest_email'])) {
+            return response()->json([
+                'message' => 'Este hotel pide el CORREO del huésped antes de apartar. Pídeselo junto con su nombre completo.'.$legalLine.' Con eso, vuelve a llamar crear_apartado.',
+            ], 422);
+        }
+
+        $paymentChoice = $request->string('metodo_pago')->toString();
+        $paymentOptions = $this->paymentOptionsSummary();
+        $hasPaymentOptions = $paymentOptions['pasarelas'] !== [] || ($paymentOptions['transferencia'] ?? false) || ($paymentOptions['efectivo'] ?? false);
+
+        if (! empty($settings['agent_require_payment_choice'])
+            && $hasPaymentOptions
+            && $holdPlan->requiresPrepayment()
+            && ! in_array($paymentChoice, ['pasarela', 'transferencia', 'efectivo'], true)) {
+            return response()->json([
+                'message' => 'Todavía NO se aparta la cabaña: primero pregúntale cómo va a pagar el anticipo, con las opciones reales (payment_options).'.$legalLine.' Cuando elija, vuelve a llamar crear_apartado con metodo_pago = pasarela, transferencia o efectivo; ahí sí se aparta.',
+                'payment_options' => $paymentOptions,
+                'legal_notice_url' => $legalUrl,
+            ], 422);
+        }
+
+        // El teléfono del huésped es el WhatsApp desde el que escribe: el bot
+        // casi nunca lo pasa (ya está hablando con él) y la ficha quedaba sin
+        // número. Sin él, la consulta pública /reserva no lo encuentra aunque
+        // el aviso de confirmación le pide entrar "con el teléfono con el que
+        // reservaste" (caso real cabañas 2026-09-13, RES-2026-1724: las 8
+        // reservas vivas sin teléfono eran todas del bot).
+        $data['guest_phone'] = ($data['guest_phone'] ?? null) ?: $this->conversationPhone($conversation);
+
+        // El cupón de una colaboración se aplica porque el huésped lo
+        // mencionó en el chat, aunque el bot olvide pasarlo (caso real
+        // cabañas 2026-09-11, "vengo del video del pache pache").
+        $mentionedCoupon = null;
+
+        if (empty($data['coupon_code']) && $conversation !== null) {
+            $mentionedCoupon = \App\Models\Coupon::mentionedIn($this->guestSaid($conversation));
+
+            if ($mentionedCoupon !== null) {
+                $data['coupon_code'] = $mentionedCoupon->code;
+            }
+        }
+
+        $couponNote = null;
 
         try {
             $reservation = $action->handle([
@@ -1246,6 +1945,31 @@ class AgentToolsController extends Controller
             ], $request->user());
         } catch (NoAvailabilityException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
+        } catch (\InvalidArgumentException $e) {
+            // El cupón que pidió el bot no aplica: el motivo exacto.
+            if ($mentionedCoupon === null) {
+                return response()->json([
+                    'message' => $e->getMessage().' Díselo tal cual; si quiere, se puede apartar sin el cupón.',
+                ], 422);
+            }
+
+            // El que solo MENCIONÓ en el chat no puede costarle el apartado:
+            // se aparta sin él y el bot le explica por qué no se aplicó.
+            $couponNote = 'El cupón '.$mentionedCoupon->code.' no se aplicó: '.$e->getMessage().' Díselo tal cual.';
+            unset($data['coupon_code']);
+
+            try {
+                $reservation = $action->handle([
+                    ...$data,
+                    'starts_at' => $holdStart,
+                    'ends_at' => $holdEnd,
+                    'confirmed' => false,
+                    'source_channel' => 'agent',
+                    'notes' => $data['notes'] ?? 'Creada por asistente IA',
+                ], $request->user());
+            } catch (NoAvailabilityException|\InvalidArgumentException $retry) {
+                return response()->json(['message' => $retry->getMessage()], 422);
+            }
         }
 
         // Con prepago, la confirmación depende del pago, no del hotel: el bot
@@ -1263,6 +1987,8 @@ class AgentToolsController extends Controller
         $payload = [
             'code' => $reservation->displayCode(),
             'status' => ReservationStatus::Pending->value,
+            // Con cuántas personas quedó: el total ya trae la persona extra.
+            'people' => $reservation->num_people,
             'room' => $reservation->room?->number,
             'starts_at' => $reservation->starts_at->toIso8601String(),
             'ends_at' => $reservation->ends_at->toIso8601String(),
@@ -1313,6 +2039,44 @@ class AgentToolsController extends Controller
             ]);
         }
 
+        // Cambió de cabaña para la MISMA estancia: se libera el apartado
+        // anterior. Con reservas de grupo disponibles, dos cabañas a la vez
+        // van por crear_apartado_grupo, así que dos apartados sueltos
+        // encimados en la misma conversación son un cambio de opinión.
+        if ($previousLive
+            && $previous->id !== $reservation->id
+            && $previous->starts_at < $reservation->ends_at
+            && $previous->ends_at > $reservation->starts_at) {
+            if ($this->groupsAllowed()) {
+                try {
+                    app(\App\Actions\Reservations\TransitionReservation::class)->cancel(
+                        $previous,
+                        $request->user(),
+                        ReservationStatus::Cancelled,
+                        'Reemplazado por '.$reservation->displayCode().': el huésped cambió de cabaña',
+                    );
+                    $payload['replaced_hold'] = $previous->displayCode();
+                    $payload['message'] .= ' Se liberó su apartado anterior '.$previous->displayCode().' ('.($previous->roomType?->name ?? 'otra cabaña').'): su apartado ahora es este código.';
+                } catch (\Throwable $e) {
+                    report($e);
+                }
+            } else {
+                $payload['message'] .= ' Ojo: esta conversación tiene además el apartado '.$previous->displayCode().' ('.($previous->roomType?->name ?? 'otra cabaña').', mismas fechas). Si el huésped cambió de cabaña, avisa al personal para liberarlo.';
+            }
+        }
+
+        if ($reservation->coupon_code !== null) {
+            $payload['coupon_applied'] = $reservation->coupon_code;
+            $payload['message'] .= ' Se aplicó el cupón '.$reservation->coupon_code.': el total ya trae el descuento (-$'.number_format((float) $reservation->discount_amount, 2).'). Díselo.';
+        } elseif ($couponNote !== null) {
+            $payload['message'] .= ' '.$couponNote;
+        }
+
+        if ($legalUrl !== null) {
+            $payload['legal_notice_url'] = $legalUrl;
+            $payload['legal_notice'] = 'Manda el aviso legal (contrato) '.$legalUrl.' y pídele que lo lea y te confirme de leído, con esta frase: "Es importante que lea y confirme el contrato; confírmeme de leído, por favor".';
+        }
+
         return response()->json($payload, 201);
     }
 
@@ -1342,7 +2106,29 @@ class AgentToolsController extends Controller
             'lines' => ['required', 'array', 'min:1', 'max:10'],
             'lines.*.room_type_id' => ['required', 'integer', 'exists:room_types,id'],
             'lines.*.rooms' => ['required', 'integer', 'min:1', 'max:30'],
+            'guests' => ['nullable', 'integer', 'min:1', 'max:300'],
         ]);
+
+        // Cuántas personas van en cada cabaña. Sin esto el grupo nacía con 1
+        // persona por habitación y nunca cobraba la persona extra: a Kevin
+        // se le cotizaron $6,250 por 9 personas y el grupo quedó en $6,000
+        // (cabañas 2026-09-14, GRP-2026-0152).
+        $spread = $this->spreadGuests($data['lines'], isset($data['guests']) ? (int) $data['guests'] : null);
+
+        if (isset($spread['error'])) {
+            return response()->json(['message' => $spread['error']], 422);
+        }
+
+        $data['lines'] = $spread['lines'];
+        unset($data['guests']);
+
+        // Mismo criterio que crear_apartado: sin teléfono explícito, el del
+        // WhatsApp de la conversación.
+        $data['guest_phone'] = ($data['guest_phone'] ?? null) ?: $this->conversationPhone(
+            $request->filled('conversation_id')
+                ? \App\Models\Conversation::query()->find($request->integer('conversation_id'))
+                : null,
+        );
 
         // Modalidad: por noche cuando el tipo tiene tarifa de noche (el caso
         // de quien da fechas); si el hotel solo cobra por bloque, se respeta.
@@ -1372,10 +2158,12 @@ class AgentToolsController extends Controller
             'code' => $group->displayCode(),
             'status' => ReservationStatus::Pending->value,
             'rooms_count' => $reservations->count(),
+            'guests' => (int) $reservations->sum('num_people'),
             'rooms' => $reservations->map(fn (Reservation $reservation) => [
                 'code' => $reservation->displayCode(),
                 'room_type' => $reservation->roomType?->name,
                 'room' => $reservation->room?->number,
+                'people' => $reservation->num_people,
             ])->values(),
             'starts_at' => $reservations->min('starts_at')?->toIso8601String(),
             'ends_at' => $reservations->max('ends_at')?->toIso8601String(),
@@ -1391,6 +2179,7 @@ class AgentToolsController extends Controller
             'guarantee_for_this_booking' => $this->guaranteeForBooking($reservations->count()),
             'payment_options' => $this->paymentOptionsSummary(),
             'message' => 'Grupo apartado con UN solo folio. Da el código del grupo (no el de cada habitación, salvo que lo pidan) y di cuántas habitaciones quedaron. '
+                .'El total ya incluye las personas extra de cada habitación (campo people): da total_label tal cual, no lo recalcules. '
                 .($this->paymentMethodsPublic()
                     ? 'El cobro del grupo es UNO consolidado: llama solicitar_pago con este mismo folio GRP-.'
                     : $this->noPaymentMethodsNote()),
@@ -1402,6 +2191,76 @@ class AgentToolsController extends Controller
         }
 
         return response()->json($payload, 201);
+    }
+
+    /**
+     * Reparte las personas del grupo entre sus habitaciones como lo haría
+     * recepción: primero las incluidas de cada cabaña y después las extra,
+     * hasta el máximo de cada una. Devuelve una línea por habitación con sus
+     * adultos (CreateReservation cobra la persona extra de cada una), o el
+     * error con cuántas caben. Sin personas, cada habitación lleva sus
+     * incluidas: nunca más "1 persona" por cabaña.
+     *
+     * @param  array<int, array{room_type_id: int, rooms: int}>  $lines
+     * @return array{lines?: array<int, array{room_type_id: int, rooms: int, adults: int}>, error?: string}
+     */
+    protected function spreadGuests(array $lines, ?int $guests): array
+    {
+        $slots = [];
+
+        foreach ($lines as $line) {
+            $type = RoomType::query()->with('rooms')->find($line['room_type_id']);
+
+            if (! $type) {
+                continue;
+            }
+
+            $occupancy = $this->occupancyOf($type);
+
+            for ($i = 0; $i < (int) $line['rooms']; $i++) {
+                $slots[] = [
+                    'room_type_id' => $type->id,
+                    'included' => max(1, $occupancy['included_guests']),
+                    'max' => max(1, $occupancy['max_guests'], $occupancy['included_guests']),
+                    'adults' => 0,
+                ];
+            }
+        }
+
+        if ($guests === null) {
+            $slots = array_map(fn (array $slot) => ['adults' => $slot['included']] + $slot, $slots);
+        } else {
+            $maxTotal = array_sum(array_column($slots, 'max'));
+
+            if ($guests > $maxTotal) {
+                return ['error' => "No caben {$guests} personas en esas habitaciones: caben hasta {$maxTotal} contando personas extra ("
+                    .array_sum(array_column($slots, 'included')).' incluidas). Agrega otra habitación (consulta consultar_disponibilidad_general con las personas) o ajusta el grupo con el huésped.'];
+            }
+
+            $left = $guests;
+
+            foreach ($slots as $i => $slot) {
+                $take = min($slot['included'], $left);
+                $slots[$i]['adults'] = $take;
+                $left -= $take;
+            }
+
+            foreach ($slots as $i => $slot) {
+                if ($left <= 0) {
+                    break;
+                }
+
+                $take = min($slot['max'] - $slot['adults'], $left);
+                $slots[$i]['adults'] += $take;
+                $left -= $take;
+            }
+        }
+
+        return ['lines' => array_map(fn (array $slot) => [
+            'room_type_id' => $slot['room_type_id'],
+            'rooms' => 1,
+            'adults' => max(1, $slot['adults']),
+        ], $slots)];
     }
 
     /**
@@ -1417,7 +2276,7 @@ class AgentToolsController extends Controller
         }
 
         return $requiresPrepayment
-            ? 'Apartado creado; se confirma al recibir el pago. Ofrece al huésped elegir entre las opciones de payment_options y llama solicitar_pago con el metodo que elija.'
+            ? 'Apartado creado; se confirma al recibir el pago. Ofrece al huésped elegir entre las opciones de payment_options y llama solicitar_pago con el metodo que elija. NO le digas todavía cuánto tiempo tiene para pagar (hold_minutes es solo el apartado previo a elegir método): el plazo real lo devuelve solicitar_pago en hold_deadline_notice.'
             : 'Apartado creado; el hotel lo confirmará. Si no se confirma, expira solo.';
     }
 

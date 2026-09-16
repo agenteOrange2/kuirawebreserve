@@ -202,6 +202,58 @@ it('el cupón de cumpleaños exige fecha registrada y cercana', function () {
         ->and((float) $near->getData(true)['discount'])->toEqual(200.0);
 });
 
+it('el cupón por días de la semana exige que toda la estancia caiga en esos días', function () {
+    $coupon = Coupon::create(['code' => 'FINDE', 'kind' => 'percent', 'value' => 10, 'weekdays' => [5, 6, 0]]);
+    $friday = \Carbon\CarbonImmutable::parse('next friday')->setTime(15, 0);
+    $thursday = $friday->subDay();
+
+    // Viernes a lunes: noches de viernes, sábado y domingo. Aplica.
+    expect($coupon->rejectionReason(null, $friday, 3, null, $friday->addDays(3)))->toBeNull()
+        // Jueves a sábado: la noche del jueves queda fuera.
+        ->and($coupon->rejectionReason(null, $thursday, 2, null, $thursday->addDays(2)))
+        ->toBe('Este cupón aplica solo para estancias en viernes, sábado y domingo.')
+        // Sin salida: solo cuenta el día de llegada.
+        ->and($coupon->rejectionReason(null, $friday, 1, null))->toBeNull()
+        // Una semana completa pasa por el lunes: no aplica.
+        ->and($coupon->rejectionReason(null, $friday, 7, null, $friday->addDays(7)))->not->toBeNull();
+});
+
+it('el hold rechaza el cupón fuera de sus días y lo aplica dentro', function () {
+    $arrival = now()->addHour();
+    $end = $arrival->addMinutes(720);
+    $stayDays = collect([$arrival->dayOfWeek, $end->subSecond()->dayOfWeek])->unique()->values()->all();
+    $otherDay = collect(range(0, 6))->diff($stayDays)->first();
+
+    Coupon::create(['code' => 'OTRODIA', 'kind' => 'percent', 'value' => 10, 'weekdays' => [$otherDay]]);
+    $rejected = couponHold(['coupon_code' => 'OTRODIA']);
+
+    expect($rejected->getStatusCode())->toBe(422)
+        ->and($rejected->getData(true)['message'])->toContain('aplica solo para estancias en');
+
+    Coupon::create(['code' => 'ESTEDIA', 'kind' => 'percent', 'value' => 10, 'weekdays' => $stayDays]);
+    $ok = couponHold(['coupon_code' => 'ESTEDIA']);
+
+    expect($ok->getStatusCode())->toBe(201)
+        ->and($ok->getData(true)['discount'])->toEqual(100.0);
+});
+
+it('el panel guarda los días ordenados y los siete días como sin restricción', function () {
+    $store = fn (array $weekdays) => app(\App\Http\Controllers\Tenant\CouponController::class)->store(
+        Request::create('/api/coupons', 'POST', [
+            'code' => 'DIAS'.count($weekdays),
+            'kind' => 'percent',
+            'value' => 10,
+            'weekdays' => $weekdays,
+        ]),
+    )->getData(true);
+
+    $weekend = $store([0, 6, 5]);
+    expect($weekend['weekdays'])->toBe([0, 5, 6])
+        ->and($weekend['weekdays_label'])->toBe('viernes, sábado y domingo');
+
+    expect($store(range(0, 6))['weekdays'])->toBeNull();
+});
+
 it('recepción aplica cupón en una reserva manual con la misma validación', function () {
     Coupon::create(['code' => 'MOSTRADOR', 'kind' => 'percent', 'value' => 10]);
 
@@ -249,4 +301,169 @@ it('recepción aplica cupón en una reserva manual con la misma validación', fu
 
     expect($rejected->getStatusCode())->toBe(422)
         ->and($rejected->getData(true)['message'])->toContain('al menos 5 noches');
+});
+
+/**
+ * Pone o quita el cupón de una reserva ya creada por donde lo hace la ficha
+ * del panel (/reservas/{id}), con un usuario que puede administrar reservas.
+ */
+function couponOnReservation(Reservation $reservation, ?string $code): \Illuminate\Http\JsonResponse
+{
+    Spatie\Permission\Models\Permission::findOrCreate('reservations.manage', 'web');
+    $user = \App\Models\User::factory()->create();
+
+    $controller = app(\App\Http\Controllers\Tenant\ReservationController::class);
+    $action = app(\App\Actions\Reservations\ApplyReservationCoupon::class);
+
+    $request = Request::create(
+        "/api/reservations/{$reservation->id}/coupon",
+        $code === null ? 'DELETE' : 'POST',
+        $code === null ? [] : ['code' => $code],
+    );
+    $request->setUserResolver(fn () => $user);
+
+    return $code === null
+        ? $controller->removeCoupon($request, $reservation, $action)
+        : $controller->applyCoupon($request, $reservation, $action);
+}
+
+it('el código se encuentra aunque se escriba con espacios, guiones o minúsculas', function () {
+    // Caso real cabañas 2026-09-12: PACHEPACHE se anunció en un video como
+    // "pache pache". El bot lo aceptaba y el wizard del sitio lo rechazaba
+    // por el espacio, así que quien lo escribió como lo oyó pagó completo.
+    Coupon::create(['code' => 'PACHEPACHE', 'kind' => 'percent', 'value' => 30]);
+
+    $hold = couponHold(['coupon_code' => 'pache pache']);
+
+    expect($hold->getStatusCode())->toBe(201)
+        ->and($hold->getData(true)['coupon_code'])->toBe('PACHEPACHE')
+        ->and($hold->getData(true)['discount'])->toEqual(300.0);
+
+    $check = app(BookingCouponController::class)->check(
+        Request::create('/api/booking/coupons/check', 'POST', ['code' => 'Pache-Pache', 'subtotal' => 1000]),
+    );
+
+    expect($check->getStatusCode())->toBe(200)
+        ->and($check->getData(true)['discount'])->toEqual(300.0);
+});
+
+it('la ficha aplica un cupón a una reserva que ya existe y recalcula el total', function () {
+    Coupon::create(['code' => 'TARDIO', 'kind' => 'percent', 'value' => 30]);
+
+    couponHold(); // el huésped reservó sin escribir el código
+    $reservation = Reservation::firstOrFail();
+    app(TransitionReservation::class)->confirm($reservation);
+
+    expect((float) $reservation->refresh()->total_amount)->toEqual(1000.0);
+
+    $response = couponOnReservation($reservation, 'tardio');
+    $payload = $response->getData(true);
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and($payload['coupon_code'])->toBe('TARDIO')
+        ->and((float) $payload['discount_amount'])->toEqual(300.0)
+        ->and((float) $payload['total_amount'])->toEqual(700.0)
+        // Ya salió de Pendiente: el uso se cuenta aquí, porque el canje
+        // automático del confirm no volverá a pasar.
+        ->and(Coupon::firstOrFail()->used_count)->toBe(1);
+});
+
+it('quitar el cupón devuelve el total de lista y el uso al cupón', function () {
+    Coupon::create(['code' => 'QUITAME', 'kind' => 'percent', 'value' => 20]);
+
+    couponHold(['coupon_code' => 'QUITAME']);
+    $reservation = Reservation::firstOrFail();
+    app(TransitionReservation::class)->confirm($reservation);
+
+    expect(Coupon::firstOrFail()->used_count)->toBe(1);
+
+    $payload = couponOnReservation($reservation->refresh(), null)->getData(true);
+
+    expect($payload['coupon_code'])->toBeNull()
+        ->and((float) $payload['discount_amount'])->toEqual(0.0)
+        ->and((float) $payload['total_amount'])->toEqual(1000.0)
+        ->and(Coupon::firstOrFail()->used_count)->toBe(0);
+});
+
+it('cambiar de cupón parte del precio de lista, no del total ya descontado', function () {
+    Coupon::create(['code' => 'DIEZ', 'kind' => 'percent', 'value' => 10]);
+    Coupon::create(['code' => 'VEINTE', 'kind' => 'percent', 'value' => 20]);
+
+    couponHold(['coupon_code' => 'DIEZ']);
+    $reservation = Reservation::firstOrFail();
+
+    $payload = couponOnReservation($reservation, 'VEINTE')->getData(true);
+
+    expect((float) $payload['total_amount'])->toEqual(800.0)
+        ->and((float) $payload['discount_amount'])->toEqual(200.0);
+
+    // El mismo cupón dos veces no descuenta dos veces: se dice y ya.
+    $repeat = couponOnReservation($reservation->refresh(), 'veinte');
+
+    expect($repeat->getStatusCode())->toBe(422)
+        ->and($repeat->getData(true)['message'])->toContain('ya trae el cupón');
+});
+
+it('una reserva cerrada no cambia de descuento', function () {
+    Coupon::create(['code' => 'CERRADA', 'kind' => 'percent', 'value' => 10]);
+
+    couponHold();
+    $reservation = Reservation::firstOrFail();
+    app(TransitionReservation::class)->cancel($reservation);
+
+    $response = couponOnReservation($reservation->refresh(), 'CERRADA');
+
+    expect($response->getStatusCode())->toBe(422)
+        ->and($response->getData(true)['message'])->toContain('ya está cerrada');
+});
+
+it('editar una reserva con cupón conserva el descuento prometido', function () {
+    Coupon::create(['code' => 'SOBREVIVE', 'kind' => 'percent', 'value' => 30]);
+
+    couponHold(['coupon_code' => 'SOBREVIVE']);
+    $reservation = Reservation::firstOrFail();
+
+    expect((float) $reservation->total_amount)->toEqual(700.0);
+
+    $updated = app(\App\Actions\Reservations\UpdateReservation::class)->handle($reservation, [
+        'rate_plan_id' => $reservation->rate_plan_id,
+        'starts_at' => $reservation->starts_at->format('Y-m-d H:i:s'),
+        'ends_at' => $reservation->ends_at->format('Y-m-d H:i:s'),
+        'guest_name' => 'Con Cupón Editado',
+    ]);
+
+    expect($updated->coupon_code)->toBe('SOBREVIVE')
+        ->and((float) $updated->discount_amount)->toEqual(300.0)
+        ->and((float) $updated->total_amount)->toEqual(700.0);
+});
+
+it('reagendar a días que el cupón no cubre lo retira y deja el motivo', function () {
+    $arrival = now()->addDay()->setTime(15, 0);
+
+    Coupon::create([
+        'code' => 'SOLOESEDIA',
+        'kind' => 'percent',
+        'value' => 30,
+        'weekdays' => [$arrival->dayOfWeek],
+    ]);
+
+    couponHold(['arrive_at' => $arrival->toIso8601String(), 'coupon_code' => 'SOLOESEDIA']);
+    $reservation = Reservation::firstOrFail();
+
+    expect((float) $reservation->discount_amount)->toEqual(300.0);
+
+    $moved = $arrival->addDays(2);
+    $updated = app(\App\Actions\Reservations\UpdateReservation::class)->handle($reservation, [
+        'rate_plan_id' => $reservation->rate_plan_id,
+        'starts_at' => $moved->format('Y-m-d H:i:s'),
+        'ends_at' => $moved->addMinutes(720)->format('Y-m-d H:i:s'),
+    ]);
+
+    expect($updated->coupon_code)->toBeNull()
+        ->and((float) $updated->discount_amount)->toEqual(0.0)
+        ->and((float) $updated->total_amount)->toEqual(1000.0)
+        ->and(\Spatie\Activitylog\Models\Activity::query()
+            ->where('log_name', 'coupon')
+            ->where('description', 'like', '%retirado al editar%')
+            ->exists())->toBeTrue();
 });

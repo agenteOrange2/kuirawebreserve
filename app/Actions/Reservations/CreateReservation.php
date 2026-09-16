@@ -13,6 +13,7 @@ use App\Models\Reservation;
 use App\Models\Room;
 use App\Models\User;
 use App\Services\AvailabilityService;
+use App\Services\CouponService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -27,6 +28,7 @@ class CreateReservation
         protected AvailabilityService $availability,
         protected ChangeRoomStatus $changeRoomStatus,
         protected \App\Actions\Experiences\CreateExperienceBooking $createExperienceBooking,
+        protected CouponService $coupons,
     ) {}
 
     /**
@@ -117,6 +119,7 @@ class CreateReservation
                 $start,
                 $ratePlan->unitsFor($start, $end),
                 $ratePlan->room_type_id,
+                $end,
             );
             $discount = $coupon?->discountFor($total) ?? 0.0;
             $total = round(max(0, $total - $discount), 2);
@@ -232,7 +235,7 @@ class CreateReservation
                         $reservation->guest_name ?: 'Sin nombre',
                         $reservation->starts_at->format('d/m/Y H:i'),
                     )),
-                    url: '/reservas?reservation='.$reservation->id,
+                    url: '/reservas/operacion?reservation='.$reservation->id,
                     subject: $reservation,
                 );
             } catch (\Throwable $e) {
@@ -287,36 +290,9 @@ class CreateReservation
         ?\Carbon\CarbonInterface $start = null,
         ?int $nights = null,
         ?int $roomTypeId = null,
+        ?\Carbon\CarbonInterface $end = null,
     ): ?\App\Models\Coupon {
-        $code = strtoupper(trim((string) $code));
-
-        if ($code === '') {
-            return null;
-        }
-
-        // Módulo cupones (Empresarial): sin él no se aceptan códigos por
-        // ningún canal. Sin contexto de tenant (tests) aplica.
-        $tenant = tenant();
-        if ($tenant !== null && ! $tenant->hasModule('cupones')) {
-            throw new \InvalidArgumentException('Los cupones de descuento no están incluidos en el plan de este hotel.');
-        }
-
-        $coupon = \App\Models\Coupon::query()->where('code', $code)->first();
-
-        if (! $coupon || ! $coupon->isRedeemable()) {
-            throw new \InvalidArgumentException('Ese código de descuento no es válido o ya no está disponible.');
-        }
-
-        // Condiciones del cupón (estancia larga, tipo, frecuente,
-        // cumpleaños): el motivo exacto viaja al huésped, nunca se cobra
-        // el total completo en silencio.
-        $reason = $coupon->rejectionReason($guest, $start, $nights, $roomTypeId);
-
-        if ($reason !== null) {
-            throw new \InvalidArgumentException($reason);
-        }
-
-        return $coupon;
+        return $this->coupons->resolve($code, $guest, $start, $nights, $roomTypeId, $end);
     }
 
     /**
@@ -500,10 +476,17 @@ class CreateReservation
             return null;
         }
 
-        $guest = Guest::firstOrCreate(
-            $phone ? ['phone' => $phone] : ['email' => $email],
-            ['first_name' => $data['guest_name'] ?? null, 'email' => $email, 'phone' => $phone],
-        );
+        // Por los últimos 10 dígitos, no por el texto exacto: el mismo
+        // número escrito distinto abría una ficha nueva cada vez.
+        $guest = Guest::findByContact($phone, $email) ?? Guest::create([
+            'first_name' => $data['guest_name'] ?? null,
+            'email' => $email,
+            'phone' => $phone,
+        ]);
+
+        if ($phone && ! $guest->phone) {
+            $guest->update(['phone' => $phone]);
+        }
 
         // Huésped ya conocido por teléfono que ahora deja correo: se
         // agrega a su ficha (sin pisar un correo ya guardado en el CRM).

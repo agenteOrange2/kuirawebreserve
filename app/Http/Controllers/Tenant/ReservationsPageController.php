@@ -256,6 +256,9 @@ class ReservationsPageController extends Controller
                 'guest' => $prefillGuest ? $this->prefillGuestPayload($prefillGuest) : null,
             ],
             'focusReservationId' => $focusReservationId,
+            // "Editar" desde la ficha (/reservas/{id}): la reserva viaja
+            // completa, esté o no en el asomo de próximas.
+            'editReservation' => $this->editReservation($request),
         ]);
     }
 
@@ -387,6 +390,28 @@ class ReservationsPageController extends Controller
             'updated_at' => $r->updated_at?->format('d/m/Y H:i'),
             'timeline' => $this->timelineFor($timeline),
         ];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    protected function editReservation(Request $request): ?array
+    {
+        $id = $request->integer('edit');
+
+        if (! $id) {
+            return null;
+        }
+
+        $reservation = Reservation::query()
+            ->with(['room:id,number', 'roomType:id,name', 'ratePlan:id,name,type', 'guest:id,first_name,last_name,phone,email'])
+            ->withSum('payments', 'amount')
+            ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
+            ->find($id);
+
+        return $reservation
+            ? $this->serializeReservation($reservation, $this->recentTimelines([$reservation->id])->get($reservation->id, collect()))
+            : null;
     }
 
     /**

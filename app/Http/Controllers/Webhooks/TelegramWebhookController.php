@@ -253,16 +253,19 @@ class TelegramWebhookController extends Controller
 
             // El bot no ve imágenes: una foto sin texto espera a un humano
             // (el servicio ya dejó la conversación en pendiente).
-            $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true);
+            // Salvo que se haya leído y NO sea comprobante: el bot ya sabe
+            // qué se ve y puede contestar.
+            $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true)
+                && $mediaOutcome !== \App\Services\Channels\InboundMediaService::OUTCOME_DESCRIBED;
 
             if (! $noCaption && $channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
                 // "escribiendo..." mientras piensa (Telegram lo apaga solo).
                 $this->api->sendChatAction($link, $from);
 
-                $reply = $brain->reply($conversation);
+                $reply = $brain->replyTo($conversation, $message);
 
-                if ($reply?->body) {
-                    $this->api->sendText($link, $from, $reply->body);
+                if ($reply?->body && ! $this->api->sendText($link, $from, $reply->body)) {
+                    app(\App\Services\Channels\OutboundMessenger::class)->flagUndelivered($conversation, $reply);
                 }
             } else {
                 if ($conversation->status !== Conversation::STATUS_PENDING) {

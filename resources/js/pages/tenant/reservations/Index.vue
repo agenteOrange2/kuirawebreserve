@@ -33,6 +33,7 @@ import RazeLayout from '@/layouts/RazeLayout.vue';
 import MonthCalendar from './MonthCalendar.vue';
 import PaymentModal from './PaymentModal.vue';
 import RackCalendar from './RackCalendar.vue';
+import ReopenDialog from './ReopenDialog.vue';
 
 interface PaymentRow {
     id: number;
@@ -220,6 +221,8 @@ const props = defineProps<{
     gatewayAvailable: boolean;
     holdMinutes: number;
     focusReservationId: number | null;
+    /** "Editar" desde la ficha (/reservas?edit=ID): abre el formulario. */
+    editReservation?: ReservationRow | null;
     prefill: {
         intent: 'walkin' | 'reserve' | null;
         room:
@@ -282,14 +285,10 @@ const departuresToday = computed(
 // ── Calendario (/reservas/calendario): mes clásico o habitaciones × días ──
 const calMode = ref<'month' | 'rooms'>('month');
 
+// El detalle de una reserva vive en su ficha (/reservas/{id}); el panel
+// lateral ya no se abre desde la lista ni desde el calendario.
 function openFromRack(reservationId: number) {
-    if (
-        [...props.reservations, ...props.history, ...props.inHouse].some(
-            (r) => r.id === reservationId,
-        )
-    ) {
-        selectedReservationId.value = reservationId;
-    }
+    router.visit(`/reservas/${reservationId}`);
 }
 
 function createFromRack(payload: {
@@ -558,6 +557,24 @@ const askConfirm = (r: ReservationRow) => askAction('confirm', r);
 const askCheckIn = (r: ReservationRow) => askAction('check_in', r);
 const askNoShow = (r: ReservationRow) => askAction('no_show', r);
 const askCancel = (r: ReservationRow) => askAction('cancel', r);
+
+onMounted(() => {
+    if (props.editReservation) {
+        openEdit(props.editReservation);
+        editReturnTo.value = props.editReservation.id;
+    }
+});
+
+// ── Reabrir / reagendar una cancelada o un "no llegó" (ReopenDialog) ──
+const reopenTarget = ref<ReservationRow | null>(null);
+
+const isReopenable = (r: ReservationRow) =>
+    ['cancelled', 'no_show'].includes(r.status);
+
+function openReopen(r: ReservationRow) {
+    reopenTarget.value = r;
+    selectedReservationId.value = null;
+}
 // Cuenta final (folio) de la estancia al hacer check-out.
 interface FolioData {
     lodging_total: number;
@@ -1226,6 +1243,10 @@ function openCreate(
     showCreate.value = true;
 }
 
+// Llegó desde "Editar" de la ficha: se abre el mismo formulario de siempre y,
+// al guardar, se regresa a la ficha.
+const editReturnTo = ref<number | null>(null);
+
 function openEdit(reservation: ReservationRow) {
     editingReservationId.value = reservation.id;
     selectedReservationId.value = null;
@@ -1254,7 +1275,7 @@ function openEdit(reservation: ReservationRow) {
     form.vehicle_desc = reservation.vehicle_desc ?? '';
     form.eta = reservation.eta ?? '';
     form.confirmed = reservation.status === 'confirmed';
-    form.coupon_code = ''; // el cupón congelado no se reedita desde aquí
+    form.coupon_code = ''; // el cupón se cambia desde la ficha (/reservas/{id})
     // Solo los opcionales se re-eligen; la línea de personas extra la
     // recalcula el servidor según huéspedes/fechas.
     form.extra_charges = (reservation.extra_charges ?? [])
@@ -1348,16 +1369,11 @@ watch(
             return;
         }
 
-        const exists = [...reservations, ...history].some(
-            (reservation) => reservation.id === reservationId,
-        );
-
-        if (!exists) {
-            return;
-        }
+        void reservations;
+        void history;
 
         focusReservationConsumed.value = true;
-        selectedReservationId.value = reservationId;
+        router.visit(`/reservas/${reservationId}`, { replace: true });
     },
     { immediate: true, deep: true },
 );
@@ -1509,6 +1525,12 @@ async function submitCreate() {
                 reservationPayload,
             );
             toast.success('Reserva actualizada');
+            if (editReturnTo.value !== null) {
+                const back = editReturnTo.value;
+                editReturnTo.value = null;
+                router.visit(`/reservas/${back}`);
+                return;
+            }
         } else {
             await axios.post('/api/reservations', {
                 ...reservationPayload,
@@ -1693,7 +1715,7 @@ const modalDescription = computed(() => {
                     <Button
                         v-else
                         :as="Link"
-                        :href="route('tenant.reservations')"
+                        :href="route('tenant.reservations.operation')"
                         variant="outline-secondary"
                         class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
@@ -1767,7 +1789,7 @@ const modalDescription = computed(() => {
                         :key="r.id"
                         type="button"
                         class="flex items-center gap-1.5 rounded-full bg-warning/10 px-3 py-1.5 text-xs font-medium text-warning transition hover:bg-warning/20"
-                        @click="selectedReservationId = r.id"
+                        @click="router.visit(`/reservas/${r.id}`)"
                     >
                         {{ r.code }} · {{ r.guest_name }}
                         <span class="font-normal"
@@ -2209,8 +2231,9 @@ const modalDescription = computed(() => {
                                                     as="button"
                                                     type="button"
                                                     @click="
-                                                        selectedReservationId =
-                                                            r.id
+                                                        router.visit(
+                                                            `/reservas/${r.id}`,
+                                                        )
                                                     "
                                                 >
                                                     <Lucide
@@ -2386,8 +2409,8 @@ const modalDescription = computed(() => {
                         }}
                     </p>
                     <p class="mt-0.5 text-xs text-slate-500">
-                        Estancias que se cerraron con saldo. Cóbralas, agrega
-                        lo que faltó o ciérralas con un motivo.
+                        Estancias que se cerraron con saldo. Cóbralas, agrega lo
+                        que faltó o ciérralas con un motivo.
                     </p>
                 </div>
                 <Button
@@ -2647,12 +2670,25 @@ const modalDescription = computed(() => {
                                     >
                                 </Table.Td>
                                 <Table.Td>
-                                    <div class="flex justify-end">
+                                    <div class="flex justify-end gap-1">
+                                        <button
+                                            v-if="canManage && isReopenable(r)"
+                                            class="rounded-md p-1.5 text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                            title="Reabrir o reagendar"
+                                            @click="openReopen(r)"
+                                        >
+                                            <Lucide
+                                                icon="RotateCcw"
+                                                class="h-4 w-4"
+                                            />
+                                        </button>
                                         <button
                                             class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-darkmode-400"
                                             title="Ver detalle"
                                             @click="
-                                                selectedReservationId = r.id
+                                                router.visit(
+                                                    `/reservas/${r.id}`,
+                                                )
                                             "
                                         >
                                             <Lucide
@@ -2753,6 +2789,17 @@ const modalDescription = computed(() => {
                 </div>
             </Dialog.Panel>
         </Dialog>
+
+        <!-- Reabrir / reagendar una cancelada o un "no llegó" -->
+        <ReopenDialog
+            :reservation="reopenTarget"
+            :hold-minutes="holdMinutes"
+            @close="reopenTarget = null"
+            @done="
+                reopenTarget = null;
+                reload();
+            "
+        />
 
         <!-- Confirmación de No-show / Cancelación -->
         <Dialog
@@ -4462,6 +4509,16 @@ const modalDescription = computed(() => {
                                     <h2 class="text-base font-medium">
                                         Reserva {{ selectedReservation.code }}
                                     </h2>
+                                    <Link
+                                        :href="`/reservas/${selectedReservation.id}`"
+                                        class="inline-flex h-7 items-center gap-1 rounded-full border border-slate-200 px-2.5 text-[11px] font-medium text-slate-500 transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400"
+                                    >
+                                        <Lucide
+                                            icon="ExternalLink"
+                                            class="h-3 w-3"
+                                        />
+                                        Abrir ficha
+                                    </Link>
                                     <span
                                         class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
                                         :class="
@@ -4905,6 +4962,24 @@ const modalDescription = computed(() => {
                         >
                             <Lucide icon="Ban" class="mr-1.5 h-3.5 w-3.5" />
                             Cancelar
+                        </Button>
+                    </Slideover.Footer>
+                    <Slideover.Footer
+                        v-else-if="
+                            canManage && isReopenable(selectedReservation)
+                        "
+                        class="flex flex-wrap justify-end gap-2 bg-slate-50/80"
+                    >
+                        <Button
+                            variant="primary"
+                            class="h-9 rounded-[0.5rem] text-xs"
+                            @click="openReopen(selectedReservation)"
+                        >
+                            <Lucide
+                                icon="RotateCcw"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Reabrir o reagendar
                         </Button>
                     </Slideover.Footer>
                 </template>

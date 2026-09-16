@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Tenant;
 
 use App\Enums\ReservationStatus;
+use App\Models\Guest;
 use App\Models\Property;
 use App\Models\Reservation;
 use Illuminate\Http\Request;
@@ -20,6 +21,9 @@ use Spatie\Activitylog\Models\Activity;
  */
 class ReservationHistoryPageController extends ReservationsPageController
 {
+    /** Diez por página: el tablero manda aquí a revisar, no a leer un archivo. */
+    protected const PER_PAGE = 10;
+
     protected const HISTORY_STATUSES = [
         ReservationStatus::Completed,
         ReservationStatus::Cancelled,
@@ -30,9 +34,22 @@ class ReservationHistoryPageController extends ReservationsPageController
     {
         $property = Property::firstOrFail();
         $search = trim($request->string('q')->toString());
+
+        // Filtro por huésped: la ficha manda aquí con su id, no con su
+        // nombre — los nombres se repiten ("DAMARIS GOMEZ" y "Damaris
+        // Michelle" son dos personas distintas en cabañas). Y con un
+        // huésped a la vista el archivo deja de ser archivo: se muestran
+        // TODAS sus reservas, también las vigentes. Si no, "Ver todo"
+        // llevaba a una página vacía a quien solo tiene una reserva por
+        // llegar (caso real 2026-09-15, RES-2026-1728).
+        $guestId = (int) $request->integer('guest');
+        $guest = $guestId > 0 ? Guest::withTrashed()->find($guestId) : null;
+
+        $statuses = $guest !== null ? ReservationStatus::cases() : self::HISTORY_STATUSES;
+
         $status = ReservationStatus::tryFrom($request->string('status')->toString());
 
-        if (! in_array($status, self::HISTORY_STATUSES, true)) {
+        if (! in_array($status, $statuses, true)) {
             $status = null;
         }
 
@@ -44,7 +61,8 @@ class ReservationHistoryPageController extends ReservationsPageController
                 'guest:id,first_name,last_name,phone,email',
             ])
             ->withSum('payments', 'amount')
-            ->whereIn('status', $status ? [$status] : self::HISTORY_STATUSES)
+            ->whereIn('status', $status ? [$status] : $statuses)
+            ->when($guest, fn ($query, Guest $guest) => $query->where('guest_id', $guest->id))
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('guest_name', 'like', "%{$search}%")
@@ -57,8 +75,14 @@ class ReservationHistoryPageController extends ReservationsPageController
                     }
                 });
             })
-            ->latest('updated_at')
-            ->paginate(25)
+            // Con un huésped a la vista importa cuándo vino, no cuándo se
+            // tocó el registro.
+            ->when(
+                $guest !== null,
+                fn ($query) => $query->latest('starts_at'),
+                fn ($query) => $query->latest('updated_at'),
+            )
+            ->paginate(self::PER_PAGE)
             ->withQueryString();
 
         $timeline = Activity::query()
@@ -73,11 +97,17 @@ class ReservationHistoryPageController extends ReservationsPageController
         return Inertia::render('tenant/reservations/History', [
             'property' => $property->only(['id', 'name']),
             'reservations' => $paginator,
-            'filters' => ['q' => $search, 'status' => $status?->value ?? ''],
-            'statusOptions' => collect(self::HISTORY_STATUSES)
+            'filters' => ['q' => $search, 'status' => $status?->value ?? '', 'guest' => $guest?->id],
+            'guest' => $guest === null ? null : [
+                'id' => $guest->id,
+                'full_name' => $guest->full_name ?? 'Sin nombre',
+                'is_archived' => $guest->trashed(),
+            ],
+            'statusOptions' => collect($statuses)
                 ->map(fn (ReservationStatus $s) => ['value' => $s->value, 'label' => $s->label()])
                 ->values(),
             'canManage' => $request->user()->can('reservations.manage'),
+            'holdMinutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
         ]);
     }
 }

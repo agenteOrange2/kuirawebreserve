@@ -320,3 +320,49 @@ it('cambiar de pasarela emite un checkout NUEVO: nunca recicla el link de la otr
     $third = $issue->handle($reservation->refresh(), \App\Models\PaymentRequest::METHOD_GATEWAY, null, $stripe);
     expect($third->id)->toBe($second->id);
 });
+
+it('el link de pasarela inventado por el bot no llega al huésped (caso real 2026-09-13)', function () {
+    Http::fake([
+        'api.stripe.com/v1/checkout/sessions' => Http::response(['id' => 'cs_9', 'url' => 'https://checkout.stripe.com/pay/cs_9#frag']),
+    ]);
+
+    stripeLink(['tenant_id' => (string) tenant('id')]);
+    $reservation = reservaGateway();
+
+    app(IssuePaymentRequest::class)->handle(
+        $reservation,
+        PaymentRequest::METHOD_GATEWAY,
+        null,
+        PaymentGatewayLink::query()->latest('id')->first(),
+    );
+    $paymentRequest = PaymentRequest::latest('id')->first();
+
+    $channel = \App\Models\Channel::firstOrCreate(
+        ['property_id' => $this->property->id, 'type' => \App\Models\Channel::TYPE_WHATSAPP_EVOLUTION, 'external_id' => 'wa'],
+        ['name' => 'WhatsApp', 'mode' => 'auto', 'active' => true],
+    );
+    $conversation = \App\Models\Conversation::create([
+        'channel_id' => $channel->id,
+        'reservation_id' => $reservation->id,
+        'contact_phone' => '5216561112233',
+        'status' => \App\Models\Conversation::STATUS_OPEN,
+        'last_message_at' => now(),
+    ]);
+
+    $brain = app(\App\Services\Agent\AgentBrain::class);
+
+    // RES-2026-1725: el bot escribió este link de la nada y el huésped lo intentó.
+    $inventado = 'Puedes pagar el anticipo con Mercado Pago: https://pay.mercadopago.com.mx/XXXXXXXX ¿Procedes?';
+    $saneado = $brain->sanitizeGatewayLinks($inventado, $conversation);
+
+    expect($saneado)->not->toContain('pay.mercadopago.com.mx')
+        ->and($saneado)->toContain('/pago/'.$paymentRequest->uuid)
+        ->and($saneado)->toContain('¿Procedes?');
+
+    // Sin cobro vivo, el link inventado se BORRA: nunca se manda el de otro.
+    $paymentRequest->update(['status' => PaymentRequest::STATUS_CANCELED]);
+    $sinCobro = $brain->sanitizeGatewayLinks($inventado, $conversation->refresh());
+
+    expect($sinCobro)->not->toContain('mercadopago')
+        ->and($sinCobro)->toContain('Puedes pagar el anticipo con Mercado Pago:');
+});

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { Link, router } from '@inertiajs/vue3';
+import axios from 'axios';
 import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormInput, FormSelect } from '@/components/Base/Form';
@@ -7,6 +8,7 @@ import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
+import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
 interface PriceLine {
@@ -144,10 +146,58 @@ function paymentBadge(r: UpcomingRow): string {
 // Las acciones (confirmar, llegada, cancelar, cobrar) viven en /reservas,
 // donde está el modal completo; aquí se abre esa reserva enfocada.
 const openInList = (r: UpcomingRow) =>
-    `${route('tenant.reservations')}?reservation=${r.id}`;
+    `${route('tenant.reservations.operation')}?reservation=${r.id}`;
 
 // ── Detalle ──
+const toast = useToasts();
+
 const detail = ref<UpcomingRow | null>(null);
+
+// ── Acciones desde el modal: llegada, no llegó y cancelar ──
+// Antes solo se podía "atender en reservas"; quien revisa las próximas ya
+// tiene la reserva enfrente y necesita resolverla ahí (pedido del hotel de
+// cabañas 2026-09-11).
+const cancelKind = ref<'cancel' | 'no_show' | null>(null);
+const cancelTarget = ref<UpcomingRow | null>(null);
+const cancelReason = ref('');
+const cancelBusy = ref(false);
+
+function askCancel(row: UpcomingRow, kind: 'cancel' | 'no_show') {
+    cancelTarget.value = row;
+    cancelKind.value = kind;
+    cancelReason.value = '';
+}
+
+async function submitCancel() {
+    const row = cancelTarget.value;
+    if (!row || !cancelKind.value || cancelBusy.value) return;
+
+    const noShow = cancelKind.value === 'no_show';
+    cancelBusy.value = true;
+    try {
+        await axios.patch(`/api/reservations/${row.id}/cancel`, {
+            no_show: noShow,
+            reason: cancelReason.value.trim() || null,
+        });
+        toast.success(
+            noShow
+                ? 'Se registró que el huésped no llegó'
+                : 'Reserva cancelada',
+            `${row.code} pasó al historial y la habitación quedó libre.`,
+        );
+        cancelKind.value = null;
+        cancelTarget.value = null;
+        detail.value = null;
+        router.reload({ preserveScroll: true } as any);
+    } catch (e: any) {
+        toast.error(
+            'No se pudo completar la acción',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        cancelBusy.value = false;
+    }
+}
 
 const detailLines = computed(() => {
     if (!detail.value) return [];
@@ -199,7 +249,9 @@ const detailLines = computed(() => {
                         </p>
                     </div>
                 </div>
-                <div class="flex flex-wrap gap-2">
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center"
+                >
                     <Button
                         :as="Link"
                         :href="route('tenant.reservations.calendar')"
@@ -228,11 +280,11 @@ const detailLines = computed(() => {
             </div>
 
             <div class="box box--stacked mt-5">
-                <!-- Filtros -->
+                <!-- Filtros, en franja gris dentro del mismo box -->
                 <div
-                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                    class="flex flex-col gap-2.5 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center dark:border-darkmode-400 dark:bg-darkmode-700/40"
                 >
-                    <div class="relative w-full sm:w-72">
+                    <div class="relative w-full min-w-0 sm:w-72">
                         <Lucide
                             icon="Search"
                             class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
@@ -240,11 +292,14 @@ const detailLines = computed(() => {
                         <FormInput
                             v-model="q"
                             type="text"
-                            placeholder="Buscar por huésped, teléfono, código o habitación…"
-                            class="pl-9"
+                            placeholder="Buscar huésped, teléfono, código o habitación"
+                            class="h-9 pl-9 text-xs"
                         />
                     </div>
-                    <FormSelect v-model="status" class="w-full sm:w-48">
+                    <FormSelect
+                        v-model="status"
+                        class="h-9 w-full text-xs sm:w-48"
+                    >
                         <option value="">Todos los estados</option>
                         <option
                             v-for="option in statusOptions"
@@ -259,15 +314,20 @@ const detailLines = computed(() => {
                     >
                         Las llegadas más cercanas también están en
                         <Link
-                            :href="route('tenant.reservations')"
+                            :href="route('tenant.reservations.operation')"
                             class="font-medium text-primary hover:underline"
-                            >la lista de reservas</Link
+                            >la operación del día</Link
                         >.
                     </span>
                 </div>
 
-                <div class="overflow-auto p-4 lg:overflow-visible">
-                    <Table v-if="reservations.data.length" striped>
+                <!-- Tabla completa: solo desde lg, que es donde caben las
+                     siete columnas sin arrastrar la pantalla de lado. -->
+                <div
+                    v-if="reservations.data.length"
+                    class="hidden overflow-auto p-4 lg:block lg:overflow-visible"
+                >
+                    <Table striped>
                         <Table.Thead>
                             <Table.Tr>
                                 <Table.Th>Huésped</Table.Th>
@@ -315,14 +375,14 @@ const detailLines = computed(() => {
                                     {{ r.ends_at }}
                                     <span
                                         v-if="r.starts_today"
-                                        class="ml-1 rounded-full bg-success/10 px-1.5 text-xs text-success"
+                                        class="ml-1 rounded-full bg-success/10 px-1.5 text-[11px] text-success"
                                         >llega hoy</span
                                     >
                                 </Table.Td>
                                 <Table.Td>${{ r.total_amount }}</Table.Td>
                                 <Table.Td>
                                     <span
-                                        class="inline-flex rounded-full px-2 py-0.5 text-xs"
+                                        class="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="paymentBadge(r)"
                                     >
                                         {{ r.payment_status_label }}
@@ -336,7 +396,7 @@ const detailLines = computed(() => {
                                 </Table.Td>
                                 <Table.Td>
                                     <span
-                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
+                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="statusFor(r.status).class"
                                     >
                                         <Lucide
@@ -349,7 +409,8 @@ const detailLines = computed(() => {
                                 <Table.Td>
                                     <div class="flex justify-end gap-1">
                                         <button
-                                            class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                                            type="button"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
                                             title="Ver detalle"
                                             @click="detail = r"
                                         >
@@ -361,7 +422,7 @@ const detailLines = computed(() => {
                                         <Link
                                             v-if="canManage"
                                             :href="openInList(r)"
-                                            class="rounded-md p-1.5 text-primary hover:bg-primary/10"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
                                             title="Abrir en la lista de reservas para atenderla"
                                         >
                                             <Lucide
@@ -374,43 +435,172 @@ const detailLines = computed(() => {
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
-                    <div v-else class="py-10 text-center text-slate-500">
+                </div>
+
+                <!-- Renglones en móvil y tablet: los mismos datos, apilados,
+                     sin scroll horizontal. -->
+                <div
+                    v-if="reservations.data.length"
+                    class="divide-y divide-slate-200/60 lg:hidden dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="r in reservations.data"
+                        :key="r.id"
+                        class="px-4 py-3.5"
+                    >
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div
+                                    class="flex flex-wrap items-center gap-1.5"
+                                >
+                                    <span
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                        >{{ r.code }}</span
+                                    >
+                                    <span
+                                        v-if="r.starts_today"
+                                        class="rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"
+                                        >Llega hoy</span
+                                    >
+                                </div>
+                                <div
+                                    class="mt-1.5 truncate text-sm font-medium"
+                                >
+                                    {{ r.guest_name ?? 'Anónimo' }}
+                                </div>
+                                <a
+                                    v-if="r.guest_phone"
+                                    :href="`tel:${r.guest_phone}`"
+                                    class="text-xs text-slate-500 transition hover:text-primary"
+                                    >{{ r.guest_phone }}</a
+                                >
+                            </div>
+                            <div class="shrink-0 text-right">
+                                <div class="text-sm font-medium">
+                                    ${{ r.total_amount }}
+                                </div>
+                                <div
+                                    v-if="r.pending_balance > 0"
+                                    class="mt-0.5 text-[11px] text-slate-500"
+                                >
+                                    Pendiente {{ money(r.pending_balance) }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div
+                            class="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3"
+                        >
+                            <span
+                                class="inline-flex min-w-0 items-center gap-1.5"
+                            >
+                                <Lucide
+                                    icon="BedDouble"
+                                    class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                />
+                                <span class="truncate">
+                                    {{ r.room ?? 'Sin asignar' }}
+                                    <span
+                                        v-if="r.room_type"
+                                        class="text-slate-400"
+                                        >· {{ r.room_type }}</span
+                                    >
+                                </span>
+                            </span>
+                            <span class="inline-flex items-center gap-1.5">
+                                <Lucide
+                                    icon="CalendarDays"
+                                    class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                />
+                                {{ r.starts_at }}
+                                <span class="text-slate-400">→</span>
+                                {{ r.ends_at }}
+                            </span>
+                        </div>
+
+                        <div class="mt-2.5 flex flex-wrap items-center gap-1.5">
+                            <span
+                                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                :class="statusFor(r.status).class"
+                            >
+                                <Lucide
+                                    :icon="statusFor(r.status).icon"
+                                    class="h-3 w-3"
+                                />
+                                {{ r.status_label }}
+                            </span>
+                            <span
+                                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                :class="paymentBadge(r)"
+                            >
+                                {{ r.payment_status_label }}
+                            </span>
+                            <button
+                                type="button"
+                                class="ml-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                title="Ver detalle"
+                                @click="detail = r"
+                            >
+                                <Lucide icon="Eye" class="h-4 w-4" />
+                            </button>
+                            <Link
+                                v-if="canManage"
+                                :href="openInList(r)"
+                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                title="Abrir en la lista de reservas para atenderla"
+                            >
+                                <Lucide
+                                    icon="SquareArrowOutUpRight"
+                                    class="h-4 w-4"
+                                />
+                            </Link>
+                        </div>
+                    </div>
+                </div>
+
+                <div
+                    v-if="!reservations.data.length"
+                    class="flex flex-col items-center gap-3 px-6 py-12 text-center"
+                >
+                    <div
+                        class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="CalendarDays" class="h-4 w-4" />
+                    </div>
+                    <p class="text-sm text-slate-500">
                         {{
                             filters.q || filters.status
                                 ? 'Nada coincide con la búsqueda.'
                                 : 'No hay reservas apartadas a futuro.'
                         }}
-                    </div>
+                    </p>
+                </div>
 
-                    <!-- Paginación -->
-                    <div
-                        v-if="reservations.links.length > 3"
-                        class="mt-4 flex flex-wrap justify-center gap-1"
-                    >
-                        <template
-                            v-for="(link, i) in reservations.links"
-                            :key="i"
+                <!-- Paginación, en franja propia -->
+                <div
+                    v-if="reservations.links.length > 3"
+                    class="flex flex-wrap justify-center gap-1 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                >
+                    <template v-for="(link, i) in reservations.links" :key="i">
+                        <Link
+                            v-if="link.url"
+                            :href="link.url"
+                            preserve-state
+                            class="rounded-md px-2.5 py-1 text-xs"
+                            :class="
+                                link.active
+                                    ? 'bg-primary text-white'
+                                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                            "
                         >
-                            <Link
-                                v-if="link.url"
-                                :href="link.url"
-                                preserve-state
-                                class="rounded-md px-3 py-1.5 text-sm"
-                                :class="
-                                    link.active
-                                        ? 'bg-primary text-white'
-                                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
-                                "
-                            >
-                                <span v-html="link.label" />
-                            </Link>
-                            <span
-                                v-else
-                                class="px-3 py-1.5 text-sm text-slate-400"
-                                v-html="link.label"
-                            />
-                        </template>
-                    </div>
+                            <span v-html="link.label" />
+                        </Link>
+                        <span
+                            v-else
+                            class="px-2.5 py-1 text-xs text-slate-400"
+                            v-html="link.label"
+                        />
+                    </template>
                 </div>
             </div>
         </div>
@@ -418,7 +608,7 @@ const detailLines = computed(() => {
         <!-- Detalle de la reserva -->
         <Dialog :open="detail !== null" size="lg" @close="detail = null">
             <Dialog.Panel v-if="detail">
-                <div class="flex max-h-[85vh] flex-col">
+                <div class="flex max-h-[calc(100dvh-6rem)] flex-col">
                     <div class="flex items-start gap-3.5 p-5 pb-4">
                         <div
                             class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
@@ -446,7 +636,9 @@ const detailLines = computed(() => {
                         </span>
                     </div>
                     <div class="min-h-0 flex-1 overflow-y-auto px-5 pb-2">
-                        <div class="grid grid-cols-2 gap-x-4 gap-y-3 text-sm">
+                        <div
+                            class="grid grid-cols-1 gap-x-4 gap-y-3 text-sm sm:grid-cols-2"
+                        >
                             <div>
                                 <div class="text-xs text-slate-400">
                                     Habitación
@@ -591,30 +783,152 @@ const detailLines = computed(() => {
                         </div>
                     </div>
                     <div
-                        class="flex justify-between gap-2 border-t border-slate-200/60 p-5 dark:border-darkmode-400"
+                        class="flex flex-col-reverse gap-2 border-t border-slate-200/60 p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5 dark:border-darkmode-400"
                     >
-                        <Button
-                            v-if="canManage"
-                            :as="Link"
-                            :href="openInList(detail)"
-                            variant="outline-primary"
-                            class="rounded-[0.5rem]"
+                        <div
+                            class="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap"
                         >
-                            <Lucide
-                                icon="SquareArrowOutUpRight"
-                                class="mr-1.5 h-3.5 w-3.5"
-                            />
-                            Atender en reservas
-                        </Button>
+                            <Button
+                                v-if="canManage"
+                                :as="Link"
+                                :href="`/reservas/${detail.id}`"
+                                variant="outline-primary"
+                                class="h-9 rounded-[0.5rem] text-xs"
+                            >
+                                <Lucide
+                                    icon="SquareArrowOutUpRight"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Abrir ficha
+                            </Button>
+                            <Button
+                                v-if="canManage"
+                                :as="Link"
+                                :href="`/reservas/${detail.id}?checkin=1`"
+                                variant="primary"
+                                class="h-9 rounded-[0.5rem] text-xs"
+                            >
+                                <Lucide
+                                    icon="LogIn"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Registrar llegada
+                            </Button>
+                            <Button
+                                v-if="canManage"
+                                variant="outline-warning"
+                                class="h-9 rounded-[0.5rem] text-xs"
+                                @click="askCancel(detail, 'no_show')"
+                            >
+                                <Lucide
+                                    icon="UserX"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                No llegó
+                            </Button>
+                            <Button
+                                v-if="canManage"
+                                variant="outline-danger"
+                                class="h-9 rounded-[0.5rem] text-xs"
+                                @click="askCancel(detail, 'cancel')"
+                            >
+                                <Lucide icon="Ban" class="mr-1.5 h-3.5 w-3.5" />
+                                Cancelar
+                            </Button>
+                        </div>
                         <Button
                             variant="outline-secondary"
-                            class="ml-auto rounded-[0.5rem]"
+                            class="h-9 rounded-[0.5rem] text-xs sm:ml-auto"
                             @click="detail = null"
                         >
                             Cerrar
                         </Button>
                     </div>
                 </div>
+            </Dialog.Panel>
+        </Dialog>
+        <!-- No llegó / Cancelar desde el modal -->
+        <Dialog
+            size="lg"
+            :open="cancelKind !== null"
+            @close="cancelKind = null"
+        >
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[520px]">
+                <form
+                    v-if="cancelKind && cancelTarget"
+                    class="flex flex-col"
+                    @submit.prevent="submitCancel"
+                >
+                    <div class="flex items-start gap-3 px-5 pt-5">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border"
+                            :class="
+                                cancelKind === 'no_show'
+                                    ? 'border-warning/10 bg-warning/10 text-warning'
+                                    : 'border-danger/10 bg-danger/10 text-danger'
+                            "
+                        >
+                            <Lucide
+                                :icon="
+                                    cancelKind === 'no_show' ? 'UserX' : 'Ban'
+                                "
+                                class="h-4 w-4"
+                            />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                {{
+                                    cancelKind === 'no_show'
+                                        ? 'El huésped no llegó'
+                                        : 'Cancelar reserva'
+                                }}
+                            </h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                {{ cancelTarget.code }} ·
+                                {{ cancelTarget.guest_name ?? 'Anónimo' }} ·
+                                Hab. {{ cancelTarget.room ?? 'por asignar' }}.
+                                Pasa al historial y la habitación queda libre;
+                                se puede reabrir desde su ficha.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="px-5 py-4">
+                        <FormInput
+                            v-model="cancelReason"
+                            type="text"
+                            maxlength="255"
+                            class="h-9 text-xs"
+                            placeholder="Motivo (queda en el historial)"
+                        />
+                    </div>
+                    <div
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            @click="cancelKind = null"
+                            >Volver</Button
+                        >
+                        <Button
+                            type="submit"
+                            :variant="
+                                cancelKind === 'no_show' ? 'warning' : 'danger'
+                            "
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="cancelBusy"
+                        >
+                            {{
+                                cancelBusy
+                                    ? 'Guardando…'
+                                    : cancelKind === 'no_show'
+                                      ? 'Confirmar que no llegó'
+                                      : 'Cancelar reserva'
+                            }}
+                        </Button>
+                    </div>
+                </form>
             </Dialog.Panel>
         </Dialog>
     </RazeLayout>

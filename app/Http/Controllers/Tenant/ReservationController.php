@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Tenant;
 
+use App\Actions\Reservations\ApplyReservationCoupon;
 use App\Actions\Reservations\CreateReservation;
 use App\Actions\Reservations\RegisterReservationPayment;
 use App\Actions\Reservations\TransitionReservation;
@@ -97,6 +98,48 @@ class ReservationController extends Controller
         return response()->json($this->serialize($reservation->load(['room:id,number', 'roomType:id,name', 'ratePlan:id,name,type'])));
     }
 
+    /**
+     * Aplica un cupón a una reserva YA creada (módulo cupones).
+     *
+     * El descuento solo entraba al reservar: si el huésped no escribió el
+     * código, o lo escribió mal, recepción no tenía forma de dárselo salvo
+     * cancelar y volver a reservar. El total se rearma desde el precio sin
+     * descuento, así que aplicar dos veces no encoge la cuenta.
+     */
+    public function applyCoupon(Request $request, Reservation $reservation, ApplyReservationCoupon $action): JsonResponse
+    {
+        $data = $request->validate([
+            'code' => ['required', 'string', 'max:40'],
+        ]);
+
+        return $this->withCoupon($reservation, $data['code'], $request->user(), $action);
+    }
+
+    /** Quita el cupón de la reserva y devuelve el total al precio de lista. */
+    public function removeCoupon(Request $request, Reservation $reservation, ApplyReservationCoupon $action): JsonResponse
+    {
+        return $this->withCoupon($reservation, null, $request->user(), $action);
+    }
+
+    protected function withCoupon(
+        Reservation $reservation,
+        ?string $code,
+        ?\App\Models\User $user,
+        ApplyReservationCoupon $action,
+    ): JsonResponse {
+        try {
+            $reservation = $action->handle($reservation, $code, $user);
+        } catch (InvalidArgumentException $e) {
+            // El motivo exacto (vencido, no aplica en esos días, ya cerrada)
+            // llega a recepción tal cual, para que sepa qué decirle al huésped.
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(
+            $this->serialize($reservation->load(['room:id,number', 'roomType:id,name', 'ratePlan:id,name,type'])),
+        );
+    }
+
     public function confirm(Request $request, Reservation $reservation, TransitionReservation $action): JsonResponse
     {
         return $this->transition(fn () => $action->confirm($reservation, $request->user()), $reservation);
@@ -113,6 +156,29 @@ class ReservationController extends Controller
 
         return $this->transition(
             fn () => $action->cancel($reservation, $request->user(), $to, $data['reason'] ?? null),
+            $reservation,
+        );
+    }
+
+    /**
+     * Reabrir (y reagendar) una reserva cancelada o de "no llegó", con su
+     * mismo código. Sin fechas, vuelve en las suyas; con fechas, se reagenda
+     * y se recalcula como en la edición.
+     */
+    public function reopen(Request $request, Reservation $reservation, TransitionReservation $action): JsonResponse
+    {
+        $data = $request->validate([
+            'starts_at' => ['nullable', 'date'],
+            'ends_at' => ['nullable', 'date'],
+            'room_id' => ['nullable', 'integer', 'exists:rooms,id'],
+            'confirmed' => ['sometimes', 'boolean'],
+        ]);
+
+        return $this->transition(
+            fn () => $action->reopen($reservation, $request->user(), [
+                ...$data,
+                'confirmed' => $request->boolean('confirmed'),
+            ]),
             $reservation,
         );
     }
@@ -192,11 +258,18 @@ class ReservationController extends Controller
     public function registerPayment(Request $request, Reservation $reservation, RegisterReservationPayment $action): JsonResponse
     {
         // Métodos presenciales aceptados por la recepción, dentro de los dos
-        // que este endpoint admite (la transferencia va por su propio flujo).
+        // que este endpoint admite...
         $counterMethods = array_values(array_intersect(
             ['cash', 'card'],
             app(\App\Services\ReservationPolicy::class)->counterMethods(),
         ));
+
+        // ...más la transferencia YA VERIFICADA, con su folio. Caso real
+        // cabañas 2026-09-11: el huésped depositó, su cobro por transferencia
+        // había vencido a los 20 minutos y no había dónde registrar ese
+        // dinero — ni en Pagos (sin cobro vivo) ni aquí (solo efectivo o
+        // tarjeta). El folio es obligatorio: es lo que se concilia con el banco.
+        $counterMethods[] = 'transfer';
 
         $data = $request->validate([
             'amount' => ['required', 'numeric', 'gt:0'],
@@ -208,18 +281,31 @@ class ReservationController extends Controller
             // (/ajustes/metodos-pago → Políticas): un hotel sin terminal no
             // debe poder registrar un cobro con tarjeta ni por descuido.
             'method' => ['required', Rule::in($counterMethods)],
-            'reference' => ['nullable', 'string', 'max:100'],
+            'reference' => ['nullable', 'required_if:method,transfer', 'string', 'max:100'],
             'notes' => ['nullable', 'string', 'max:255'],
+            // Por defecto el huésped recibe su comprobante por el mismo hilo
+            // (o WhatsApp/correo directo). Se apaga para un cobro que no le
+            // interesa ver, p. ej. un ajuste interno.
+            'notify_guest' => ['sometimes', 'boolean'],
         ], [
-            'method.in' => in_array('cash', $counterMethods, true) || in_array('card', $counterMethods, true)
-                ? 'La transferencia no se registra directo: genera el cobro en línea y confírmala con su comprobante en Pagos.'
-                : 'La recepción no acepta cobros en efectivo ni con terminal; revísalo en Ajustes, Métodos de pago.',
+            'method.in' => 'Ese método de cobro no está habilitado en la recepción; revísalo en Ajustes, Métodos de pago.',
+            'reference.required_if' => 'Anota el folio o la referencia de la transferencia: es lo que se concilia con el banco.',
         ]);
 
         try {
-            $action->handle($reservation, $data, $request->user());
+            $payment = $action->handle($reservation, $data, $request->user());
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        if ($request->boolean('notify_guest', true)) {
+            try {
+                app(\App\Services\Payments\PaymentGuestNotifier::class)
+                    ->manualPaymentReceived($reservation, (float) $payment->amount, $payment->method);
+            } catch (\Throwable $e) {
+                // El dinero ya quedó registrado: un aviso fallido no lo deshace.
+                report($e);
+            }
         }
 
         return response()->json($this->serialize(

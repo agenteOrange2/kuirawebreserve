@@ -92,9 +92,11 @@ class CreateExperienceBooking
             return null;
         }
 
-        return Guest::firstOrCreate(
-            $phone ? ['phone' => $phone] : ['email' => $email],
-            ['first_name' => $data['guest_name'] ?? null, 'email' => $email, 'phone' => $phone],
-        );
+        // Por los últimos 10 dígitos: ver Guest::findByContact().
+        return Guest::findByContact($phone, $email) ?? Guest::create([
+            'first_name' => $data['guest_name'] ?? null,
+            'email' => $email,
+            'phone' => $phone,
+        ]);
     }
 }

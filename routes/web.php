@@ -37,3 +37,8 @@ Route::middleware('auth')->group(function () {
 
 require __DIR__.'/admin.php';
 require __DIR__.'/settings.php';
+
+// Cualquier dirección que no exista en el dominio central. Va al final, ya
+// cargados admin.php y settings.php: Laravel solo prueba el fallback cuando
+// ninguna ruta real respondió. Ver NotFoundController.
+Route::fallback(\App\Http\Controllers\NotFoundController::class);

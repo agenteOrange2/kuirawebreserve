@@ -70,11 +70,26 @@ class CouponController extends Controller
             'min_visits' => ['nullable', 'integer', 'min:1', 'max:1000'],
             'room_type_id' => ['nullable', 'integer', 'exists:room_types,id'],
             'birthday' => ['sometimes', 'boolean'],
+            // Noches de la estancia en que vale (0=domingo..6=sábado).
+            'weekdays' => ['sometimes', 'nullable', 'array', 'max:7'],
+            'weekdays.*' => ['integer', 'between:0,6', 'distinct'],
             'starts_at' => ['nullable', 'date'],
             'ends_at' => ['nullable', 'date', 'after_or_equal:starts_at'],
             'max_uses' => ['nullable', 'integer', 'min:1', 'max:1000000'],
             'active' => ['sometimes', 'boolean'],
         ]);
+
+        if (array_key_exists('weekdays', $data)) {
+            $weekdays = collect($data['weekdays'] ?? [])
+                ->map(fn ($day) => (int) $day)
+                ->unique()
+                ->sort()
+                ->values()
+                ->all();
+
+            // Ninguno o los siete = sin restricción.
+            $data['weekdays'] = ($weekdays === [] || count($weekdays) === 7) ? null : $weekdays;
+        }
 
         // Un porcentaje mayor a 100 no descuenta más, solo confunde.
         $kind = $data['kind'] ?? $coupon?->kind;
@@ -107,6 +122,8 @@ class CouponController extends Controller
             'min_visits' => $coupon->min_visits,
             'room_type_id' => $coupon->room_type_id,
             'birthday' => (bool) $coupon->birthday,
+            'weekdays' => $coupon->weekdays,
+            'weekdays_label' => $coupon->weekdaysLabel(),
             'conditions' => $conditions,
             'starts_at' => $coupon->starts_at?->format('Y-m-d'),
             'ends_at' => $coupon->ends_at?->format('Y-m-d'),

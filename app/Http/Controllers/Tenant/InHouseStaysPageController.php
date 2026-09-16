@@ -20,6 +20,9 @@ use Inertia\Response;
  */
 class InHouseStaysPageController extends ReservationsPageController
 {
+    /** Diez por página: el tablero manda aquí a revisar, no a leer un archivo. */
+    protected const PER_PAGE = 10;
+
     public function __invoke(Request $request): Response
     {
         $property = Property::firstOrFail();
@@ -35,7 +38,7 @@ class InHouseStaysPageController extends ReservationsPageController
             }))
             // Primero quien está por salir: es el trabajo del día.
             ->orderBy('planned_end_at')
-            ->paginate(25)
+            ->paginate(self::PER_PAGE)
             ->withQueryString();
 
         $paginator->through(fn (Stay $stay) => $this->serializeStay($stay));

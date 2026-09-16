@@ -60,6 +60,17 @@ it('ignora ecos propios, grupos y otros eventos', function () {
     ))->toBeEmpty();
 });
 
+it('ignora las reacciones: no son mensajes que contestar', function () {
+    // Caso real cabañas 2026-09-13 (conv. 635): un 👍 llegó como
+    // "[reaction no soportado todavía]" y el bot contestó "¿algo más?".
+    expect(EvolutionWebhookController::extractMessages(evolutionPayload([
+        'data' => [
+            'message' => ['reactionMessage' => ['text' => '👍', 'key' => ['id' => 'BAE5F1A2B3C4']]],
+            'messageType' => 'reactionMessage',
+        ],
+    ])))->toBeEmpty();
+});
+
 it('rechaza webhooks con token desconocido', function () {
     $this->postJson('/webhooks/evolution/'.str_repeat('x', 48), evolutionPayload())
         ->assertNotFound();

@@ -17,6 +17,7 @@ use App\Models\Stay;
 use App\Models\User;
 use App\Models\Zone;
 use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -30,6 +31,12 @@ use Inertia\Response;
  * El dinero sigue la misma contabilidad que los cortes: las fianzas no son
  * ingreso, y los consumos cargados a habitación cuentan una sola vez (al
  * liquidarse en el folio, no cuando se levanta la orden).
+ *
+ * La ocupación cuenta noches, no estancias: un hotel que vende por chat y
+ * cobra por transferencia casi nunca abre el plano, así que medirla solo
+ * con los check-ins registrados le mostraba 0% con la casa llena. Se suman
+ * las reservas vendidas que no tienen estancia; las que sí la tienen se
+ * cuentan una sola vez.
  */
 class DashboardController extends Controller
 {
@@ -95,20 +102,58 @@ class DashboardController extends Controller
         $seriesStart = $range === 'today' ? $today->subDays(6) : $start;
         $seriesEnd = $end->min($now->endOfDay());
 
+        $windowStart = $prevStart->min($seriesStart);
+        $windowEnd = $seriesEnd->max($elapsedEnd);
+
         $stays = Stay::query()
-            ->where('check_in_at', '<=', $seriesEnd->max($elapsedEnd))
+            ->where('check_in_at', '<=', $windowEnd)
             ->where(fn ($q) => $q
                 ->whereNull('check_out_at')
-                ->orWhere('check_out_at', '>=', $prevStart->min($seriesStart)))
-            ->get(['check_in_at', 'check_out_at']);
+                ->orWhere('check_out_at', '>=', $windowStart))
+            ->get(['reservation_id', 'check_in_at', 'check_out_at']);
 
-        $occupiedOn = function (CarbonImmutable $day) use ($stays): int {
+        // Reservas vendidas a las que nadie les registró la llegada. Sin
+        // ellas la ocupación sale en cero en un hotel que cobra por chat y
+        // nunca abre el plano: el cierre de día completa la reserva, pero
+        // como no hubo check-in no existe estancia que contar. Se excluyen
+        // las que SÍ tienen estancia para no contar la misma noche dos
+        // veces.
+        $stayed = $stays->pluck('reservation_id')->filter()->unique()->all();
+
+        $soldStays = Reservation::query()
+            ->whereIn('status', [
+                ReservationStatus::Confirmed,
+                ReservationStatus::CheckedIn,
+                ReservationStatus::Completed,
+            ])
+            ->where('starts_at', '<=', $windowEnd)
+            ->where('ends_at', '>=', $windowStart)
+            ->when($stayed !== [], fn ($q) => $q->whereKeyNot($stayed))
+            ->get(['starts_at', 'ends_at']);
+
+        // Una estancia ocupa el día D si ENTRÓ ese día, o si entró antes y
+        // sigue ahí al terminar D. Lo segundo evita contar la salida de las
+        // 11 AM como una noche más; lo primero es lo que no se puede perder:
+        // en un motel el bloque de 3 horas entra y sale el mismo día, y con
+        // solo "sigue ahí al cerrar el día" desaparecía del dashboard (en La
+        // Cúpula eran 7 de cada 28 estancias).
+        $occupies = static function (CarbonInterface $from, ?CarbonInterface $to, CarbonImmutable $day): bool {
             $dayEnd = $day->endOfDay();
 
-            return $stays
-                ->filter(fn (Stay $s) => $s->check_in_at <= $dayEnd
-                    && ($s->check_out_at === null || $s->check_out_at >= $day))
+            return $from <= $dayEnd
+                && ($from >= $day || $to === null || $to > $dayEnd);
+        };
+
+        $occupiedOn = function (CarbonImmutable $day) use ($stays, $soldStays, $occupies): int {
+            $registered = $stays
+                ->filter(fn (Stay $s) => $occupies($s->check_in_at, $s->check_out_at, $day))
                 ->count();
+
+            $sold = $soldStays
+                ->filter(fn (Reservation $r) => $occupies($r->starts_at, $r->ends_at, $day))
+                ->count();
+
+            return $registered + $sold;
         };
 
         $roomNights = $this->sumDays($start, $elapsedEnd, $occupiedOn);
@@ -132,8 +177,8 @@ class DashboardController extends Controller
             ['title' => 'Ingresos', 'value' => $this->money($revenue['total']), 'change' => $pct($revenue['total'], $revenuePrev['total']), 'desc' => 'Hospedaje cobrado más ventas de POS en el periodo.'],
             ['title' => 'Hospedaje cobrado', 'value' => $this->money($revenue['lodging']), 'change' => $pct($revenue['lodging'], $revenuePrev['lodging']), 'desc' => 'Pagos de reservas y estancias; las fianzas no cuentan.'],
             ['title' => 'Consumo y POS', 'value' => $this->money($revenue['pos']), 'change' => $pct($revenue['pos'], $revenuePrev['pos']), 'desc' => 'Ventas de barra/cocina y consumos liquidados en folio.'],
-            ['title' => 'Ocupación promedio', 'value' => $occupancyAvg.'%', 'change' => $pct($occupancyAvg, $occupancyAvgPrev), 'desc' => 'Promedio diario de habitaciones ocupadas en el periodo.'],
-            ['title' => 'Noches vendidas', 'value' => (string) $roomNights, 'change' => $pct($roomNights, $roomNightsPrev), 'desc' => 'Noches-habitación ocupadas en el periodo.'],
+            ['title' => 'Ocupación promedio', 'value' => $occupancyAvg.'%', 'change' => $pct($occupancyAvg, $occupancyAvgPrev), 'desc' => 'Promedio diario de habitaciones ocupadas: estancias registradas más reservas vendidas sin check-in.'],
+            ['title' => 'Noches vendidas', 'value' => (string) $roomNights, 'change' => $pct($roomNights, $roomNightsPrev), 'desc' => 'Noches-habitación vendidas en el periodo, se haya registrado la llegada o no.'],
             ['title' => 'Reservas nuevas', 'value' => (string) $counts['created'], 'change' => $pct($counts['created'], $countsPrev['created']), 'desc' => 'Reservas capturadas en el periodo, por cualquier canal.'],
             ['title' => 'Llegadas', 'value' => (string) $counts['arrivals'], 'change' => $pct($counts['arrivals'], $countsPrev['arrivals']), 'desc' => 'Reservas con llegada dentro del periodo.'],
             ['title' => 'Check-ins', 'value' => (string) $counts['check_ins'], 'change' => $pct($counts['check_ins'], $countsPrev['check_ins']), 'desc' => 'Huéspedes registrados en el periodo.'],

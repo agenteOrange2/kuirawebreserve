@@ -2,6 +2,7 @@
 
 namespace App\Actions\Payments;
 
+use App\Actions\Reservations\ReviveCancelledReservation;
 use App\Actions\Reservations\TransitionReservation;
 use App\Enums\PaymentStatus;
 use App\Enums\ReservationStatus;
@@ -10,7 +11,6 @@ use App\Models\Payment;
 use App\Models\PaymentRequest;
 use App\Models\Reservation;
 use App\Models\User;
-use App\Services\AvailabilityService;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -25,8 +25,8 @@ use InvalidArgumentException;
 class RegisterGatewayPayment
 {
     public function __construct(
-        protected AvailabilityService $availability,
         protected TransitionReservation $transition,
+        protected ReviveCancelledReservation $revive,
     ) {}
 
     /**
@@ -267,15 +267,11 @@ class RegisterGatewayPayment
      */
     protected function reviveOrFlag(Reservation $reservation, ?User $user): array
     {
-        $room = $reservation->room;
-
-        if ($room && $this->availability->isRoomAvailable($room, $reservation->starts_at, $reservation->ends_at, $reservation->id)) {
-            $reservation->update([
-                'status' => ReservationStatus::Pending, // confirm() la lleva a Confirmed
-                'hold_expires_at' => now()->addMinutes(5),
-                'cancellation_reason' => null,
-            ]);
-
+        // Una sola implementación de "llegó el dinero de una cancelada"
+        // (ReviveCancelledReservation), compartida con el registro de
+        // mostrador: intenta su misma habitación y, si se vendió, otra del
+        // mismo tipo. confirm() la lleva después a Confirmada.
+        if ($this->revive->handle($reservation, $user)) {
             return ['revived' => true];
         }
 

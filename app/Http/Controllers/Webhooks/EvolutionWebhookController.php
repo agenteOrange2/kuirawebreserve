@@ -99,6 +99,13 @@ class EvolutionWebhookController extends Controller
             }
 
             $content = $item['message'] ?? [];
+
+            // Una reacción (👍) no es un mensaje: contestarla con "¿algo
+            // más?" es ruido (caso cabañas 2026-09-13, conv. 635).
+            if (isset($content['reactionMessage']) || ($item['messageType'] ?? '') === 'reactionMessage') {
+                continue;
+            }
+
             $body = $content['conversation']
                 ?? $content['extendedTextMessage']['text']
                 ?? $content['imageMessage']['caption']
@@ -265,19 +272,26 @@ class EvolutionWebhookController extends Controller
 
             // El bot no ve imágenes: una foto sin texto espera a un humano
             // (el servicio ya dejó la conversación en pendiente).
-            $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true);
+            // Salvo que se haya leído y NO sea comprobante: el bot ya sabe
+            // qué se ve y puede contestar.
+            $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true)
+                && $mediaOutcome !== \App\Services\Channels\InboundMediaService::OUTCOME_DESCRIBED;
 
             if (! $noCaption && $channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
                 // "escribiendo..." mientras piensa: el delay del envío solo
                 // cubre el tramo de DESPUÉS, no estos 3 a 8 segundos.
                 $this->api->sendPresence($link, $from);
 
-                $reply = $brain->reply($conversation);
+                $reply = $brain->replyTo($conversation, $message);
 
                 if ($reply?->body) {
                     // Con "escribiendo..." y retraso humano (anti-ban): el
                     // reintento del webhook no duplica gracias al dedupe.
-                    $this->api->sendText($link, $from, $reply->body, EvolutionApi::humanDelay($reply->body));
+                    $entregado = $this->api->sendText($link, $from, $reply->body, EvolutionApi::humanDelay($reply->body));
+
+                    if (! $entregado) {
+                        app(\App\Services\Channels\OutboundMessenger::class)->flagUndelivered($conversation, $reply);
+                    }
                 }
             } else {
                 if ($conversation->status !== Conversation::STATUS_PENDING) {

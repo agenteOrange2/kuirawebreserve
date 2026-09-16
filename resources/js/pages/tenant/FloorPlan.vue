@@ -728,7 +728,9 @@ const sellNowActions = computed<ArrivalAction[]>(() => {
 const bookAheadAction = computed<ArrivalAction>(() => ({
     key: 'reserve',
     label: 'Apartar para otra fecha',
-    hint: hasMotel.value ? 'Día y hora, aquí mismo' : 'Elige las noches y quién llega',
+    hint: hasMotel.value
+        ? 'Día y hora, aquí mismo'
+        : 'Elige las noches y quién llega',
     icon: 'CalendarPlus',
     primary: false,
 }));
@@ -1825,7 +1827,9 @@ async function confirmCheckInWithGuarantee(payload: {
         guarantee_method: payload.method,
         // Folio del comprobante: obligatorio en transferencia, porque es por
         // donde se devuelve el depósito.
-        ...(payload.reference ? { guarantee_reference: payload.reference } : {}),
+        ...(payload.reference
+            ? { guarantee_reference: payload.reference }
+            : {}),
         // Solo viajan cuando el mostrador ajustó el monto: el servidor exige
         // motivo para cualquier cifra distinta a la de la política.
         ...(payload.amount !== null
@@ -2228,7 +2232,9 @@ async function confirmCheckout(payload: {
 }
 
 function openReservationDetail(reservationId: number) {
-    router.visit(route('tenant.reservations', { reservation: reservationId }));
+    router.visit(
+        route('tenant.reservations.operation', { reservation: reservationId }),
+    );
 }
 
 /* --- Extender estancia y cambio de cuarto ------------------------------

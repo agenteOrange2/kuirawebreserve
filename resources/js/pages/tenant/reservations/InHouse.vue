@@ -70,7 +70,7 @@ const channelLabel: Record<string, string> = {
 // La salida se registra en /reservas: ahí vive el folio con sus consumos,
 // el saldo y la fianza. Este botón manda allá con la estancia enfocada.
 const checkOutHref = (s: StayRow) =>
-    `${route('tenant.reservations')}?stay=${s.id}`;
+    `${route('tenant.reservations.operation')}?stay=${s.id}`;
 </script>
 
 <template>
@@ -153,7 +153,94 @@ const checkOutHref = (s: StayRow) =>
                     </span>
                 </div>
 
-                <div class="overflow-auto p-4 lg:overflow-visible">
+                <!-- Móvil: tarjetas apiladas en vez de tabla arrastrable. -->
+                <div v-if="stays.data.length" class="space-y-2 p-4 sm:hidden">
+                    <div
+                        v-for="s in stays.data"
+                        :key="`card-${s.id}`"
+                        class="rounded-lg border border-slate-200/70 bg-white p-3 dark:border-darkmode-400 dark:bg-darkmode-600"
+                    >
+                        <div class="flex items-start justify-between gap-2">
+                            <div class="min-w-0">
+                                <div class="truncate text-sm font-medium">
+                                    {{ s.guest_name ?? 'Anónimo' }}
+                                </div>
+                                <div class="mt-0.5 text-xs text-slate-500">
+                                    Hab. {{ s.room ?? '—' }} ·
+                                    {{ s.num_people }}
+                                    {{
+                                        s.num_people === 1
+                                            ? 'persona'
+                                            : 'personas'
+                                    }}
+                                </div>
+                            </div>
+                            <span
+                                v-if="s.overdue"
+                                class="shrink-0 rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
+                                >Salida vencida</span
+                            >
+                        </div>
+
+                        <dl
+                            class="mt-2.5 grid grid-cols-2 gap-x-3 gap-y-2 text-xs"
+                        >
+                            <div>
+                                <dt class="text-[11px] text-slate-500">
+                                    Entró
+                                </dt>
+                                <dd class="mt-0.5 font-medium">
+                                    {{ s.check_in_at }}
+                                </dd>
+                            </div>
+                            <div>
+                                <dt class="text-[11px] text-slate-500">Sale</dt>
+                                <dd class="mt-0.5 font-medium">
+                                    {{ s.planned_end_at }}
+                                </dd>
+                            </div>
+                            <div>
+                                <dt class="text-[11px] text-slate-500">
+                                    Monto
+                                </dt>
+                                <dd class="mt-0.5 font-medium">
+                                    ${{ s.amount }}
+                                </dd>
+                            </div>
+                            <div v-if="s.vehicle_plate">
+                                <dt class="text-[11px] text-slate-500">
+                                    Vehículo
+                                </dt>
+                                <dd class="mt-0.5 truncate font-medium">
+                                    {{ s.vehicle_plate }}
+                                </dd>
+                            </div>
+                        </dl>
+
+                        <div
+                            v-if="canManage"
+                            class="mt-2.5 border-t border-dashed border-slate-200/70 pt-2.5 dark:border-darkmode-400"
+                        >
+                            <Button
+                                :as="Link"
+                                :href="checkOutHref(s)"
+                                variant="outline-primary"
+                                class="h-8 w-full rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                            >
+                                <Lucide
+                                    icon="LogOut"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Registrar salida
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Escritorio: tabla -->
+                <div
+                    class="hidden overflow-auto p-4 sm:block lg:overflow-visible"
+                >
                     <Table v-if="stays.data.length" striped>
                         <Table.Thead>
                             <Table.Tr>
@@ -227,40 +314,46 @@ const checkOutHref = (s: StayRow) =>
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
-                    <div v-else class="py-10 text-center text-slate-500">
-                        {{
-                            filters.q
-                                ? 'Nada coincide con la búsqueda.'
-                                : 'Ninguna habitación en uso ahora mismo.'
-                        }}
-                    </div>
+                </div>
 
-                    <!-- Paginación -->
-                    <div
-                        v-if="stays.links.length > 3"
-                        class="mt-4 flex flex-wrap justify-center gap-1"
-                    >
-                        <template v-for="(link, i) in stays.links" :key="i">
-                            <Link
-                                v-if="link.url"
-                                :href="link.url"
-                                preserve-state
-                                class="rounded-md px-3 py-1.5 text-sm"
-                                :class="
-                                    link.active
-                                        ? 'bg-primary text-white'
-                                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
-                                "
-                            >
-                                <span v-html="link.label" />
-                            </Link>
-                            <span
-                                v-else
-                                class="px-3 py-1.5 text-sm text-slate-400"
-                                v-html="link.label"
-                            />
-                        </template>
-                    </div>
+                <!-- El vacío y la paginación van fuera del bloque de
+                     escritorio, para que también se vean en el celular. -->
+                <div
+                    v-if="!stays.data.length"
+                    class="px-4 py-10 text-center text-slate-500"
+                >
+                    {{
+                        filters.q
+                            ? 'Nada coincide con la búsqueda.'
+                            : 'Ninguna habitación en uso ahora mismo.'
+                    }}
+                </div>
+
+                <!-- Paginación -->
+                <div
+                    v-if="stays.links.length > 3"
+                    class="flex flex-wrap justify-center gap-1 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                >
+                    <template v-for="(link, i) in stays.links" :key="i">
+                        <Link
+                            v-if="link.url"
+                            :href="link.url"
+                            preserve-state
+                            class="rounded-md px-3 py-1.5 text-sm"
+                            :class="
+                                link.active
+                                    ? 'bg-primary text-white'
+                                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                            "
+                        >
+                            <span v-html="link.label" />
+                        </Link>
+                        <span
+                            v-else
+                            class="px-3 py-1.5 text-sm text-slate-400"
+                            v-html="link.label"
+                        />
+                    </template>
                 </div>
             </div>
         </div>

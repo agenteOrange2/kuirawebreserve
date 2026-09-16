@@ -84,6 +84,10 @@ class InboxController extends Controller
 
         return response()->json([
             'conversation' => $this->serializeConversation($refreshed),
+            // La reserva y su dinero en la misma pantalla donde se contesta:
+            // antes había que salir a /reservas o /pagos para saber si el
+            // huésped ya había pagado o hasta qué hora se le sostiene.
+            'reservation' => $this->reservationCard($refreshed),
             'messages' => $conversation->messages()->with(['sender:id,name', 'media'])->orderBy('id')->get()->map(fn (Message $m) => [
                 'id' => $m->id,
                 'direction' => $m->direction,
@@ -93,6 +97,8 @@ class InboxController extends Controller
                 // El staff tiene que saber que ese texto salió de un audio:
                 // la transcripción se equivoca con fechas y nombres.
                 'voice_note' => (bool) ($m->meta['voice_note'] ?? false),
+                // El canal lo rechazó: el huésped NO lo recibió.
+                'undelivered' => (bool) ($m->meta['undelivered'] ?? false),
                 'attachments' => $m->attachmentsPayload(),
                 'at' => $m->created_at->format('d/m H:i'),
             ]),
@@ -187,7 +193,19 @@ class InboxController extends Controller
                 $data['body'] ?: null,
             );
         } elseif ($data['body'] !== null && $data['body'] !== '') {
-            $messenger->pushToConversation($conversation, $data['body']);
+            // El resultado se ignoraba: si el canal rechazaba el texto (fuera
+            // de la ventana de 24 h, instancia caída, número inválido) la
+            // bandeja lo mostraba como enviado y el huésped nunca lo recibía.
+            // El webchat no tiene transporte y no cuenta como fallo: el
+            // visitante lo lee al refrescar su hilo.
+            $delivered = $messenger->pushToConversation($conversation, $data['body'])
+                || $conversation->channel?->type === Channel::TYPE_WEBCHAT;
+
+            if (! $delivered) {
+                $message->forceFill([
+                    'meta' => array_merge($message->meta ?? [], ['undelivered' => true]),
+                ])->saveQuietly();
+            }
         }
 
         return response()->json([
@@ -284,12 +302,27 @@ class InboxController extends Controller
     protected function conversationQuery(): \Illuminate\Database\Eloquent\Builder
     {
         return Conversation::query()
-            ->with(['channel:id,type,name,mode', 'guest:id,first_name,last_name', 'assignee:id,name', 'reservation:id,code,payment_status'])
+            ->with([
+                'channel:id,type,name,mode',
+                'guest:id,first_name,last_name,phone',
+                'assignee:id,name',
+                // El folio que se le dio al huésped: el del GRUPO cuando la
+                // reserva es de un grupo (el chip mostraba el de una sola
+                // cabaña y el huésped contestaba con ese, GRP-2026-0152).
+                'reservation:id,code,payment_status,reservation_group_id',
+                'reservation.group:id,code',
+            ])
             ->withCount(['messages as unread_count' => fn ($q) => $q->where('direction', 'in')->whereNull('read_at')])
             ->withExists(['reservation as payment_pending_verification' => fn ($q) => $q
-                ->whereHas('paymentRequests', fn ($pr) => $pr
-                    ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
-                    ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)),
+                // El cobro de un grupo cuelga del GRP-, no de la habitación:
+                // sin esto, un comprobante de grupo no encendía el chip.
+                ->where(fn ($reservation) => $reservation
+                    ->whereHas('paymentRequests', fn ($pr) => $pr
+                        ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
+                        ->where('status', \App\Models\PaymentRequest::STATUS_PENDING))
+                    ->orWhereHas('group.paymentRequests', fn ($pr) => $pr
+                        ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
+                        ->where('status', \App\Models\PaymentRequest::STATUS_PENDING))),
                 // De dónde salió la conversación: saber que nació de un
                 // comentario cambia el tono con el que se contesta.
                 'socialComments as from_social']);
@@ -298,6 +331,116 @@ class InboxController extends Controller
     /**
      * @return array<string, mixed>
      */
+    /**
+     * Teléfono presentable del contacto, o null. En WhatsApp a veces llega
+     * un identificador interno de 15+ dígitos (LID) que no es un número:
+     * ese no se muestra; se cae al teléfono de la ficha del huésped.
+     *
+     * @return array{label: string, digits: string}|null
+     */
+    protected function displayPhone(Conversation $c): ?array
+    {
+        $candidates = [
+            $c->phoneIsIdentity() ? $c->contact_phone : null,
+            $c->guest?->phone,
+        ];
+
+        foreach ($candidates as $raw) {
+            $digits = preg_replace('/\D+/', '', (string) $raw);
+
+            if (strlen($digits) < 10 || strlen($digits) > 13) {
+                continue;
+            }
+
+            // México: 52 + (1 heredado de WhatsApp) + 10 dígitos.
+            if (str_starts_with($digits, '521') && strlen($digits) === 13) {
+                $digits = '52'.substr($digits, 3);
+            }
+
+            if (strlen($digits) === 10) {
+                $digits = '52'.$digits;
+            }
+
+            $national = substr($digits, -10);
+            $country = substr($digits, 0, strlen($digits) - 10);
+
+            return [
+                'label' => '+'.$country.' '.substr($national, 0, 3).' '.substr($national, 3, 3).' '.substr($national, 6),
+                'digits' => $digits,
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * La reserva de la conversación con su dinero: folio (GRP- si es grupo),
+     * fechas, cuánto lleva pagado, hasta cuándo se sostiene el apartado y el
+     * comprobante que espera verificación con lo que se leyó en él. Solo para
+     * la conversación abierta: en la lista sería una consulta por fila.
+     *
+     * @return array<string, mixed>|null
+     */
+    protected function reservationCard(Conversation $conversation): ?array
+    {
+        $reservation = $conversation->reservation()
+            ->with(['roomType:id,name', 'group.reservations.roomType:id,name'])
+            ->first();
+
+        if (! $reservation) {
+            return null;
+        }
+
+        $group = $reservation->group;
+        $rooms = $group?->reservations ?? collect([$reservation]);
+        $total = round((float) $rooms->sum('total_amount'), 2);
+        $paid = round((float) $rooms->sum(fn (\App\Models\Reservation $r) => $r->paidTotal()), 2);
+
+        $request = \App\Models\PaymentRequest::query()
+            ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
+            ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)
+            ->where(fn ($query) => $query
+                ->whereIn('reservation_id', $rooms->pluck('id'))
+                ->when($group, fn ($query, $g) => $query->orWhere('reservation_group_id', $g->id)))
+            ->with('media')
+            ->latest('id')
+            ->first();
+
+        return [
+            'code' => $group?->displayCode() ?? $reservation->displayCode(),
+            'is_group' => $group !== null,
+            'url' => $group
+                ? route('tenant.groups.show', $group, absolute: false)
+                : route('tenant.reservations.detail', $reservation, absolute: false),
+            'status' => $reservation->status->value,
+            'status_label' => $reservation->status->label(),
+            'rooms_count' => $rooms->count(),
+            'rooms_label' => $rooms->map(fn (\App\Models\Reservation $r) => $r->roomType?->name)->filter()->unique()->implode(' · '),
+            'guests' => (int) $rooms->sum('num_people'),
+            'starts_label' => $reservation->starts_at->locale('es')->isoFormat('ddd D MMM HH:mm'),
+            'ends_label' => $reservation->ends_at->locale('es')->isoFormat('ddd D MMM HH:mm'),
+            'total_label' => '$'.number_format($total, 2),
+            'paid_label' => '$'.number_format($paid, 2),
+            'pending_label' => '$'.number_format(max(0, round($total - $paid, 2)), 2),
+            'payment_status' => $reservation->payment_status?->value,
+            'payment_status_label' => $reservation->payment_status?->label(),
+            // El reloj del apartado: es lo que pregunta el huésped y lo que
+            // el personal necesita ver antes de contestarle.
+            'hold_expires_label' => $reservation->status === \App\Enums\ReservationStatus::Pending && $reservation->hold_expires_at?->isFuture()
+                ? $reservation->hold_expires_at->locale('es')->isoFormat('ddd D MMM HH:mm')
+                : null,
+            'request' => $request ? [
+                'id' => $request->id,
+                'concept' => $request->conceptLabel(),
+                'amount_label' => $request->amountLabel(),
+                'has_receipt' => $request->media->contains('collection_name', 'receipt'),
+                'verdict' => $request->meta['receipt_check']['verdict'] ?? null,
+                'summary' => $request->meta['receipt_check']['summary'] ?? null,
+                'warnings' => $request->meta['receipt_check']['warnings'] ?? [],
+            ] : null,
+        ];
+    }
+
     protected function serializeConversation(Conversation $c): array
     {
         return [
@@ -306,6 +449,9 @@ class InboxController extends Controller
             'channel' => $c->channel?->type,
             'channel_mode' => $c->channel?->mode,
             'name' => $c->guest?->full_name ?? $c->contact_name ?? 'Visitante',
+            // El número para llamarle o escribirle: en WhatsApp es el propio
+            // contacto; en Messenger/IG solo si la ficha del huésped lo tiene.
+            'phone' => $this->displayPhone($c),
             'guest_id' => $c->guest_id,
             'status' => $c->status,
             'archived' => $c->archived_at !== null,
@@ -319,7 +465,7 @@ class InboxController extends Controller
             'last_message_at' => $c->last_message_at?->diffForHumans(short: true),
             'preview' => $c->last_message_preview,
             // Chip de pago (spec-pagos §9.3) para conversaciones con reserva.
-            'reservation_code' => $c->reservation?->displayCode(),
+            'reservation_code' => $c->reservation?->group?->displayCode() ?? $c->reservation?->displayCode(),
             'payment_status' => $c->reservation?->payment_status?->value,
             'payment_status_label' => $c->reservation?->payment_status?->label(),
             'payment_pending_verification' => (bool) ($c->payment_pending_verification ?? false),

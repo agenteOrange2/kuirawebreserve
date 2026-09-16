@@ -3,7 +3,7 @@
 namespace App\Http\Controllers\Tenant;
 
 use App\Http\Controllers\Controller;
-use App\Models\Coupon;
+use App\Services\CouponService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -15,6 +15,8 @@ use Illuminate\Http\Request;
  */
 class BookingCouponController extends Controller
 {
+    public function __construct(protected CouponService $coupons) {}
+
     public function check(Request $request): JsonResponse
     {
         $data = $request->validate([
@@ -31,16 +33,6 @@ class BookingCouponController extends Controller
             'guest_phone' => ['nullable', 'string', 'max:30'],
         ]);
 
-        $coupon = Coupon::query()
-            ->where('code', strtoupper(trim($data['code'])))
-            ->first();
-
-        if (! $coupon || ! $coupon->isRedeemable()) {
-            return response()->json([
-                'message' => 'Ese código no es válido o ya no está disponible.',
-            ], 422);
-        }
-
         $start = isset($data['starts_at']) && $data['starts_at'] ? \Illuminate\Support\Carbon::parse($data['starts_at']) : null;
         $end = isset($data['ends_at']) && $data['ends_at'] ? \Illuminate\Support\Carbon::parse($data['ends_at']) : null;
         $nights = $start !== null && $end !== null
@@ -51,10 +43,27 @@ class BookingCouponController extends Controller
             ? \App\Models\Guest::query()->where('phone', trim($data['guest_phone']))->first()
             : null;
 
-        $reason = $coupon->rejectionReason($guest, $start, $nights, $request->integer('room_type_id') ?: null);
+        // Mismo criterio que el bot y que el apartado: el código se busca por
+        // su llave (sin espacios ni acentos ni mayúsculas), así que "pache
+        // pache" encuentra PACHEPACHE. Antes el wizard pedía el código exacto
+        // y quien lo escribía con espacio pagaba completo.
+        try {
+            $coupon = $this->coupons->resolve(
+                $data['code'],
+                $guest,
+                $start,
+                $nights,
+                $request->integer('room_type_id') ?: null,
+                $end,
+            );
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
 
-        if ($reason !== null) {
-            return response()->json(['message' => $reason], 422);
+        if ($coupon === null) {
+            return response()->json([
+                'message' => 'Ese código no es válido o ya no está disponible.',
+            ], 422);
         }
 
         return response()->json([

@@ -92,7 +92,34 @@ class MetaApi
         }
     }
 
+    /**
+     * Un texto que pasa el tope del canal NO se entrega: la API lo rechaza
+     * entero (WhatsApp 4,096 caracteres; Messenger 2,000; Instagram 1,000).
+     * Caso real cabañas 2026-09-15: una respuesta de 4,457 caracteres quedó
+     * en la bandeja como enviada y el huésped nunca recibió nada. Se manda
+     * en trozos que sí entran, en orden.
+     */
     public function sendText(MetaChannelLink $link, string $to, string $text): bool
+    {
+        $trozos = \App\Services\Channels\MessageChunker::split(
+            $text,
+            \App\Services\Channels\MessageChunker::limitFor($link->type),
+        );
+
+        if ($trozos === []) {
+            return false;
+        }
+
+        foreach ($trozos as $trozo) {
+            if (! $this->sendTextChunk($link, $to, $trozo)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    protected function sendTextChunk(MetaChannelLink $link, string $to, string $text): bool
     {
         $graph = rtrim(config('meta.graph_url'), '/');
 
@@ -132,6 +159,10 @@ class MetaApi
                 Log::warning('Meta: envío fallido', [
                     'type' => $link->type,
                     'tenant' => $link->tenant_id,
+                    // Sin a quién ni de qué tamaño, un rechazo es
+                    // indiagnosticable: el del 15-sep se descubrió a mano.
+                    'to' => $to,
+                    'chars' => mb_strlen($text),
                     'status' => $response->status(),
                     'body' => $response->json(),
                 ]);

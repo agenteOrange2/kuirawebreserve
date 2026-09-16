@@ -28,6 +28,15 @@ class AppServiceProvider extends ServiceProvider
         $this->configureDefaults();
         $this->configureTenantAwareSessions();
         $this->hydratePlansFromDatabase();
+
+        // El comprobante que manda el huésped por chat detiene el reloj de su
+        // apartado (caso real cabañas 2026-09-10). Registro explícito y fuera
+        // de app/Listeners: con el descubrimiento de eventos cacheado en el
+        // VPS, un listener nuevo no se enteraría hasta limpiar la caché.
+        \Illuminate\Support\Facades\Event::listen(
+            \Spatie\MediaLibrary\MediaCollections\Events\MediaHasBeenAddedEvent::class,
+            [\App\Services\Payments\PaymentProofHoldExtender::class, 'handle'],
+        );
     }
 
     /**

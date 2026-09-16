@@ -60,6 +60,25 @@ const unidad = (valor: number, unit: string) => {
     return `${valor} ${valor === 1 ? singular : plural}`;
 };
 
+// Los plazos en minutos, para poder compararlos entre sí: la pantalla los
+// guarda como valor + unidad y "20 minutos" contra "1 día" no se compara a
+// ojo.
+const enMinutos = (valor: number, unit: string) =>
+    valor *
+    ({ minute: 1, hour: 60, day: 1440, week: 10080 }[unit] ?? 1);
+
+// Caso real (cabañas, septiembre 2026): la vigencia estaba en 20 minutos y
+// de 15 cobros por transferencia expiraron 9 — nadie alcanza a abrir la app
+// del banco, transferir y mandar el comprobante en ese tiempo. No se
+// corrige solo: el plazo es decisión del hotel, pero tiene que verlo.
+const transferCorta = computed(
+    () =>
+        // Un hotel que cobra por pasarela o al llegar no usa este plazo:
+        // advertirle de algo que no aplica solo ensucia la pantalla.
+        props.enabledMethods.transfer !== false &&
+        enMinutos(form.transfer_valid_value, form.transfer_valid_unit) < 30,
+);
+
 const resumen = computed(() => {
     const lineas = [
         `Una reserva sin confirmar se libera sola tras ${unidad(form.hold_value, form.hold_unit)}.`,
@@ -274,6 +293,21 @@ async function submit() {
                                 mandar su comprobante. Mientras el cobro viva,
                                 el apartado se extiende con él.
                             </p>
+                            <p
+                                v-if="transferCorta"
+                                class="mt-1.5 flex items-start gap-1.5 text-[11px] text-warning"
+                            >
+                                <Lucide
+                                    icon="TriangleAlert"
+                                    class="mt-px h-3.5 w-3.5 shrink-0"
+                                />
+                                <span>
+                                    Menos de media hora rara vez alcanza para
+                                    abrir el banco, transferir y mandar el
+                                    comprobante: el cobro vence y la reserva se
+                                    libera aunque el huésped sí quisiera pagar.
+                                </span>
+                            </p>
                             <FormHelp
                                 v-if="
                                     errors.transfer_valid_value ||
@@ -298,6 +332,7 @@ async function submit() {
                                 v-model="form.transfer_valid_unit"
                                 class="!w-36"
                             >
+                                <option value="minute">Minutos</option>
                                 <option value="hour">Horas</option>
                                 <option value="day">Días</option>
                                 <option value="week">Semanas</option>

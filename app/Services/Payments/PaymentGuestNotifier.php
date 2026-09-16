@@ -50,24 +50,13 @@ class PaymentGuestNotifier
             return;
         }
 
-        // Cobro consolidado de grupo: aviso directo al responsable
-        // (WhatsApp + correo).
+        // Cobro consolidado de grupo: en la conversación donde se apartó y,
+        // si no hay o no se entregó, directo al responsable.
         if ($request->isForGroup()) {
             $group = $request->group()->with(['guest', 'reservations'])->first();
 
             if ($group) {
-                $confirmed = $group->reservations->where('status', \App\Enums\ReservationStatus::Confirmed)->count();
-                $this->direct->sendToGuestFull(
-                    $group->guest,
-                    'Pago recibido',
-                    "Recibimos tu pago de {$request->amountLabel()}. Tu grupo {$group->displayCode()} ({$group->reservations->count()} habitaciones, {$confirmed} confirmadas) está listo. Te esperamos.",
-                    $group->displayCode(),
-                    [
-                        ['label' => 'Grupo', 'value' => $group->displayCode()],
-                        ['label' => 'Habitaciones', 'value' => (string) $group->reservations->count()],
-                        ['label' => 'Total pagado', 'value' => $request->amountLabel()],
-                    ],
-                );
+                $this->groupPaymentReceived($group, (float) $request->amount);
             }
 
             return;
@@ -81,9 +70,111 @@ class PaymentGuestNotifier
                 .$this->guaranteeNotice($reservation)
             : " Quedó registrado en tu reserva {$reservation->displayCode()}.";
 
+        // Lo que falta, dicho en el mismo aviso: con el anticipo pagado el
+        // huésped preguntaba después "¿y cuánto me falta?".
+        if (($pending = $reservation->pendingBalance()) > 0) {
+            $body .= ' Saldo pendiente: $'.number_format($pending, 2).'.';
+        }
+
         $confirmed = $reservation->status === ReservationStatus::Confirmed;
 
         $this->push($request->reservation_id, $body, wonLead: $confirmed, subject: 'Pago recibido', withCalendar: $confirmed);
+    }
+
+    /**
+     * Pago de un grupo (verificado en /pagos, pasarela o mostrador): UN
+     * mensaje por el GRP-, en la conversación donde se apartó. Antes salía
+     * solo directo por WhatsApp o correo, la bandeja no se enteraba y el bot
+     * seguía hablando de un anticipo que ya estaba pagado.
+     */
+    public function groupPaymentReceived(\App\Models\ReservationGroup $group, float $amount, ?string $method = null): void
+    {
+        $group->loadMissing(['guest', 'reservations']);
+
+        $live = $group->reservations->filter(fn (Reservation $r) => in_array($r->status, [
+            ReservationStatus::Pending, ReservationStatus::Confirmed, ReservationStatus::CheckedIn,
+        ], true));
+        $allConfirmed = $live->isNotEmpty() && $live->every(fn (Reservation $r) => $r->status !== ReservationStatus::Pending);
+        $pending = round($live->sum(fn (Reservation $r) => $r->pendingBalance()), 2);
+        $code = $group->displayCode();
+
+        $body = 'Recibimos tu pago de $'.number_format($amount, 2).$this->methodLabel($method).'.';
+        $body .= $allConfirmed
+            ? " Tu grupo {$code} ({$live->count()} habitaciones) está confirmado. Te esperamos — para tu registro, trae una identificación oficial."
+                .$this->guaranteeNotice($live->first())
+            : " Quedó registrado en tu grupo {$code}.";
+        $body .= $pending > 0 ? ' Saldo pendiente: $'.number_format($pending, 2).'.' : '';
+
+        $conversation = Conversation::query()
+            ->whereIn('reservation_id', $group->reservations->pluck('id'))
+            ->latest('id')
+            ->first();
+
+        if ($conversation) {
+            $conversation->messages()->create([
+                'direction' => 'out',
+                'sender_type' => 'system',
+                'body' => $body,
+                'created_at' => now(),
+            ]);
+            $conversation->update(['last_message_at' => now()]);
+
+            if ($allConfirmed) {
+                $conversation->markLead(Conversation::LEAD_WON);
+            }
+
+            if ($this->messenger->pushToConversation($conversation, $body)) {
+                return;
+            }
+        }
+
+        $this->direct->sendToGuestFull(
+            $group->guest,
+            'Pago recibido',
+            $body,
+            $code,
+            [
+                ['label' => 'Grupo', 'value' => $code],
+                ['label' => 'Habitaciones', 'value' => (string) $live->count()],
+                ['label' => 'Pago', 'value' => '$'.number_format($amount, 2)],
+            ],
+        );
+    }
+
+    /**
+     * Pago registrado en mostrador (efectivo, tarjeta o transferencia ya
+     * verificada con folio): el huésped recibe su comprobante por el mismo
+     * hilo, con la confirmación y lo que le falta, igual que cuando el pago
+     * se aprueba en /pagos. Antes el mostrador registraba y el huésped no se
+     * enteraba de nada.
+     */
+    public function manualPaymentReceived(Reservation $reservation, float $amount, string $method): void
+    {
+        $reservation->refresh();
+
+        $confirmed = $reservation->status === ReservationStatus::Confirmed;
+        $pending = $reservation->pendingBalance();
+
+        $body = 'Recibimos tu pago de $'.number_format($amount, 2).$this->methodLabel($method).'.';
+        $body .= $confirmed
+            ? " Tu reserva {$reservation->displayCode()} está confirmada. Te esperamos — para tu registro, trae una identificación oficial."
+                .$this->guaranteeNotice($reservation)
+            : " Quedó registrado en tu reserva {$reservation->displayCode()}.";
+        $body .= $pending > 0
+            ? ' Saldo pendiente: $'.number_format($pending, 2).'.'
+            : ' Tu reserva quedó liquidada.';
+
+        $this->push($reservation->id, $body, wonLead: $confirmed, subject: 'Pago recibido', withCalendar: $confirmed);
+    }
+
+    protected function methodLabel(?string $method): string
+    {
+        return match ($method) {
+            'cash' => ' en efectivo',
+            'card' => ' con tarjeta',
+            'transfer' => ' por transferencia',
+            default => '',
+        };
     }
 
     /**
@@ -231,10 +322,12 @@ class PaymentGuestNotifier
         $body = "Tu reserva {$reservation->displayCode()} está confirmada: {$reservation->roomType?->name}, llegada el {$arrival}. Te esperamos — para tu registro, trae una identificación oficial."
             .$this->guaranteeNotice($reservation);
 
-        // Invitación al pre-registro (consulta pública /reserva): con sus
-        // datos completos desde antes, la llegada es entregar la llave.
+        // Consulta pública /reserva: ver la reserva y sus pagos, y adelantar
+        // el registro de llegada. El texto anterior la presentaba solo como
+        // "pre-registro" sin decir qué era, y el dueño no entendía qué tenía
+        // que ver (2026-09-13); ahora dice qué se hace ahí y con qué código.
         if ($lookup = $this->bookingLookupUrl()) {
-            $body .= " Si quieres agilizar tu llegada, completa tu pre-registro en {$lookup} — entra con tu código y el teléfono con el que reservaste.";
+            $body .= " Puedes consultar tu reserva y adelantar tu registro de llegada (hora estimada y placa del vehículo) en {$lookup}: entra con tu código {$reservation->displayCode()} y tu número de teléfono.";
         }
 
         $this->push(

@@ -44,6 +44,32 @@ class EvolutionApi
      */
     public function sendText(EvolutionChannelLink $link, string $to, string $text, ?int $delayMs = null): bool
     {
+        $trozos = \App\Services\Channels\MessageChunker::split(
+            $text,
+            \App\Services\Channels\MessageChunker::limitFor('whatsapp_evolution'),
+        );
+
+        if ($trozos === []) {
+            return false;
+        }
+
+        if (count($trozos) > 1) {
+            foreach ($trozos as $i => $trozo) {
+                // El retraso "humano" solo antes del primero: los demás son
+                // la continuación del mismo mensaje.
+                if (! $this->sendTextChunk($link, $to, $trozo, $i === 0 ? $delayMs : null)) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return $this->sendTextChunk($link, $to, $trozos[0], $delayMs);
+    }
+
+    protected function sendTextChunk(EvolutionChannelLink $link, string $to, string $text, ?int $delayMs = null): bool
+    {
         try {
             // Evolution API v2: POST /message/sendText/{instance}. El server
             // espera el delay ANTES de responder el HTTP: el timeout lo cubre.

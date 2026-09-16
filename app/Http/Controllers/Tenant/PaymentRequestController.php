@@ -223,16 +223,34 @@ class PaymentRequestController extends Controller
     public static function queue(): array
     {
         return PaymentRequest::query()
-            ->with(['reservation:id,code,guest_name,status,created_at', 'experienceBooking:id,guest_name,code,created_at', 'requestedBy:id,name'])
+            ->with([
+                'reservation:id,code,guest_name,status,created_at',
+                'experienceBooking:id,guest_name,code,created_at',
+                'group:id,code,guest_name,created_at',
+                'group.reservations:id,reservation_group_id',
+                'requestedBy:id,name',
+                'media',
+            ])
             ->where('method', PaymentRequest::METHOD_TRANSFER)
             ->where('status', PaymentRequest::STATUS_PENDING)
+            // Con comprobante primero: es dinero que ya está esperando ojos.
+            ->orderByRaw('(select count(*) from media where media.model_id = payment_requests.id and media.model_type = ? and media.collection_name = ?) desc', [(new PaymentRequest)->getMorphClass(), 'receipt'])
             ->orderBy('created_at')
             ->get()
             ->map(fn (PaymentRequest $r) => [
                 'id' => $r->id,
                 'reservation_id' => $r->reservation_id,
+                'group_id' => $r->reservation_group_id,
                 'reservation_code' => $r->subjectCode(),
-                'guest_name' => $r->reservation?->guest_name ?? $r->experienceBooking?->guest_name ?? 'Huésped',
+                'guest_name' => $r->reservation?->guest_name ?? $r->group?->guest_name ?? $r->experienceBooking?->guest_name ?? 'Huésped',
+                'has_receipt' => $r->media->contains('collection_name', 'receipt'),
+                // Lo que se leyó en la foto y lo que no cuadra: se verifica
+                // contra el banco sin abrirla.
+                'receipt_check' => is_array($r->meta['receipt_check'] ?? null) ? [
+                    'verdict' => $r->meta['receipt_check']['verdict'] ?? null,
+                    'summary' => $r->meta['receipt_check']['summary'] ?? null,
+                    'warnings' => $r->meta['receipt_check']['warnings'] ?? [],
+                ] : null,
                 'concept' => $r->conceptLabel(),
                 'amount_label' => $r->amountLabel(),
                 'requested_at' => $r->created_at->diffForHumans(short: true),

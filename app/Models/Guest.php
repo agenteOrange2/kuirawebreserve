@@ -76,6 +76,78 @@ class Guest extends Model implements HasMedia
         return $this->meta['vehicle'] ?? [];
     }
 
+    /**
+     * Los últimos 10 dígitos: el mismo número llega escrito de varias
+     * formas según por dónde entre (`5216562025344` del JID de WhatsApp,
+     * `+526562025344` del wizard, `656 202 5344` del mostrador).
+     */
+    public static function normalizePhone(?string $phone): ?string
+    {
+        $digits = (string) preg_replace('/\D+/', '', (string) $phone);
+
+        if (strlen($digits) < 4) {
+            return null;
+        }
+
+        // Corto (una extensión, un fijo viejo): se compara completo, que es
+        // como se comparaba antes. Nada de suponer que dos números cortos
+        // parecidos son la misma persona.
+        if (strlen($digits) < 10) {
+            return $digits;
+        }
+
+        $digits = substr($digits, -10);
+
+        // Números de relleno: en cabañas dos huéspedes distintos tenían
+        // guardado 1234567890, así que como llave habría fundido sus
+        // fichas y las de todos los que vinieran después.
+        return self::isPlaceholderPhone($digits) ? null : $digits;
+    }
+
+    /** 1234567890, 0000000000, 1111111111 y compañía: relleno, no un teléfono. */
+    public static function isPlaceholderPhone(string $digits): bool
+    {
+        if (preg_match('/^(\d)\1{9}$/', $digits) === 1) {
+            return true;
+        }
+
+        return in_array($digits, ['1234567890', '0123456789', '9876543210'], true);
+    }
+
+    /**
+     * La ficha que ya existe para este teléfono o correo, si la hay.
+     *
+     * Buscar por el texto exacto del teléfono partía en dos a la misma
+     * persona: cabañas 2026-09-15 tenía 7 huéspedes duplicados, y en
+     * varios el historial quedó repartido entre las dos fichas (Aline
+     * Alonzo: 1 reserva en una y 4 en la otra). El correo se compara sin
+     * distinguir mayúsculas.
+     */
+    public static function findByContact(?string $phone, ?string $email = null): ?self
+    {
+        $digits = self::normalizePhone($phone);
+
+        if ($digits !== null) {
+            $match = self::query()
+                ->whereNotNull('phone')
+                ->where('phone', 'like', '%'.substr($digits, -4).'%')
+                ->get()
+                ->first(fn (self $guest) => self::normalizePhone($guest->phone) === $digits);
+
+            if ($match !== null) {
+                return $match;
+            }
+        }
+
+        $email = trim((string) $email);
+
+        if ($email !== '') {
+            return self::query()->whereRaw('lower(email) = ?', [mb_strtolower($email)])->first();
+        }
+
+        return null;
+    }
+
     public function getFullNameAttribute(): ?string
     {
         $name = trim(($this->first_name ?? '').' '.($this->last_name ?? ''));

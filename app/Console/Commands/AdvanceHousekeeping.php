@@ -8,7 +8,9 @@ use App\Enums\ReservationStatus;
 use App\Enums\RoomStatus;
 use App\Models\Reservation;
 use App\Models\Room;
+use App\Models\StaffNotification;
 use App\Services\HousekeepingPolicy;
+use App\Services\StaffNotifier;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Throwable;
@@ -20,7 +22,9 @@ use Throwable;
  * 1. Cierre de día: reservas confirmadas cuya salida ya pasó (+ gracia)
  *    sin check-in. Según /ajustes/limpieza se asume ocupada (reserva
  *    completada, habitación a sucia), se asume no-show (habitación libre)
- *    o se deja para gestión manual.
+ *    o se deja para gestión manual. Si la que se completa ya tenía un
+ *    abono y todavía debe, avisa a la campana: cerrar en silencio es justo
+ *    como se perdieron 319 saldos en cabañas.
  * 2. Ventana de llegada: llegadas que no aparecieron pasadas N horas de la
  *    hora de entrada. Opcional y apagada por default; sin ella, una reserva
  *    de tres noches que nadie ocupó aparta el cuarto las tres.
@@ -127,6 +131,32 @@ class AdvanceHousekeeping extends Command
                     }
                 });
                 $closed++;
+
+                // El dinero que quedó a deber. Sin este aviso la reserva se
+                // completa sola de madrugada y nadie vuelve a mirarla: el
+                // saldo solo existía en la cabeza de quien cobró.
+                //
+                // Solo si YA había entrado dinero. Con anticipo pagado, el
+                // huésped estaba comprometido y "quedó debiendo" es cierto
+                // (cabañas). Sin un solo peso —el hotel o motel que cobra al
+                // llegar— lo más probable es que no llegó, y avisar de una
+                // deuda por cada no-show es ruido que enseña a ignorar la
+                // campana. Esa reserva igual cae en la bandeja, marcada para
+                // confirmar si llegó.
+                $fresh = $reservation->fresh();
+                $pending = $fresh->pendingBalance();
+
+                if ($pending > 0 && $fresh->paidTotal() > 0) {
+                    app(StaffNotifier::class)->notify(
+                        type: StaffNotification::TYPE_PAYMENT,
+                        title: 'Cuenta cerrada con saldo',
+                        body: $reservation->displayCode().' · '.($reservation->guest_name ?? 'Sin nombre')
+                            .' quedó debiendo $'.number_format($pending, 2)
+                            .'. Si ya se cobró en recepción, regístralo.',
+                        url: '/reservas/cuentas',
+                        subject: $reservation,
+                    );
+                }
             } catch (Throwable $e) {
                 // Una reserva atorada no debe frenar el cierre de las demás.
                 $this->warn("Reserva {$reservation->displayCode()}: {$e->getMessage()}");

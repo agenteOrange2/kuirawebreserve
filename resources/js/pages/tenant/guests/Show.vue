@@ -50,6 +50,8 @@ interface GuestData {
 /** Una visita: la reserva con su estancia fundida, o un walk-in suelto. */
 interface HistoryRow {
     key: string;
+    /** Id de la reserva: con él la fila abre su detalle. Las estancias sin reserva no tienen. */
+    id: number | null;
     code: string | null;
     kind: 'reservation' | 'walk_in';
     room: string | null;
@@ -222,6 +224,8 @@ const rowClass = (row: HistoryRow) =>
         row.upcoming
             ? 'border-primary/20 bg-primary/[0.03]'
             : 'border-slate-200/60 bg-slate-50/60 dark:border-darkmode-400 dark:bg-darkmode-700/40',
+        // La fila de una reserva abre su detalle: que se note que se puede.
+        row.id ? 'cursor-pointer transition hover:border-primary/40' : '',
     ].join(' ');
 
 const statusClass = (row: HistoryRow) => {
@@ -237,17 +241,25 @@ const statusClass = (row: HistoryRow) => {
     return 'bg-slate-100 text-slate-600 dark:bg-darkmode-400 dark:text-slate-300';
 };
 
+// Lo que la ficha YA está enseñando: lo próximo más las pasadas que
+// caben. `shown` solo cuenta las pasadas, así que comparar el total
+// contra él pintaba el botón "Ver todo" aunque no hubiera nada
+// escondido (quien solo tiene una reserva por llegar: total 1, shown 0).
+const historyShown = computed(
+    () => props.history.shown + props.history.upcoming.length,
+);
+
 const historyBadge = computed(() =>
-    props.history.total > props.history.shown
-        ? `${props.history.shown} de ${props.history.total}`
+    props.history.total > historyShown.value
+        ? `${historyShown.value} de ${props.history.total}`
         : String(props.history.total),
 );
 
-// El historial completo de este huésped ya vive en la búsqueda de
-// reservas; aquí solo se asoman las últimas.
+// El historial completo de este huésped vive en /reservas/historial
+// filtrado por su id: por nombre se mezclaba con otro huésped que se
+// llama parecido, y las reservas vigentes no salían por ningún lado.
 const fullHistoryHref = computed(
-    () =>
-        `${route('tenant.reservations.history')}?q=${encodeURIComponent(props.guest.full_name)}`,
+    () => `${route('tenant.reservations.history')}?guest=${props.guest.id}`,
 );
 </script>
 
@@ -379,7 +391,7 @@ const fullHistoryHref = computed(
                                 !guest.is_archived
                             "
                             as="a"
-                            :href="`${route('tenant.reservations')}?intent=reserve&guest=${guest.id}`"
+                            :href="`${route('tenant.reservations.operation')}?intent=reserve&guest=${guest.id}`"
                             variant="primary"
                             class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
                             title="Abre una nueva reserva con los datos de este huésped precargados"
@@ -874,7 +886,7 @@ const fullHistoryHref = computed(
                                     {{ historyBadge }}
                                 </span>
                                 <Button
-                                    v-if="history.total > history.shown"
+                                    v-if="history.total > historyShown"
                                     :as="Link"
                                     :href="fullHistoryHref"
                                     variant="outline-secondary"
@@ -901,9 +913,18 @@ const fullHistoryHref = computed(
                                 Próximas
                             </div>
                             <div class="space-y-1.5">
-                                <article
+                                <component
+                                    :is="row.id ? Link : 'article'"
                                     v-for="row in history.upcoming"
                                     :key="row.key"
+                                    :href="
+                                        row.id
+                                            ? route(
+                                                  'tenant.reservations.detail',
+                                                  row.id,
+                                              )
+                                            : undefined
+                                    "
                                     :class="rowClass(row)"
                                 >
                                     <div class="min-w-0">
@@ -948,7 +969,7 @@ const fullHistoryHref = computed(
                                             + {{ money(row.consumos) }} consumos
                                         </div>
                                     </div>
-                                </article>
+                                </component>
                             </div>
                         </div>
 
@@ -978,9 +999,18 @@ const fullHistoryHref = computed(
                                 }}</span>
                             </div>
                             <div class="space-y-1.5">
-                                <article
+                                <component
+                                    :is="row.id ? Link : 'article'"
                                     v-for="row in group.rows"
                                     :key="row.key"
+                                    :href="
+                                        row.id
+                                            ? route(
+                                                  'tenant.reservations.detail',
+                                                  row.id,
+                                              )
+                                            : undefined
+                                    "
                                     :class="rowClass(row)"
                                 >
                                     <div class="min-w-0">
@@ -1042,7 +1072,7 @@ const fullHistoryHref = computed(
                                             + {{ money(row.consumos) }} consumos
                                         </div>
                                     </div>
-                                </article>
+                                </component>
                             </div>
                         </div>
 

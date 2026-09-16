@@ -63,4 +63,28 @@ return [
         'timeout' => (int) env('TRANSCRIPTION_TIMEOUT', 20),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Lectura de comprobantes (visión)
+    |--------------------------------------------------------------------------
+    |
+    | La foto que manda el huésped se lee ANTES de tratarla como comprobante:
+    | una selfie o la foto de la INE ya no sostienen un apartado ni llegan a
+    | /pagos como "comprobante" (cabañas 2026-09-15). Cualquier endpoint
+    | compatible con OpenAI que acepte image_url sirve; MiniMax-M3 lee con la
+    | misma key de plataforma que ya usa el bot (medido: ~1,300 tokens y 7 s
+    | por imagen). Sin key, el flujo es el de antes: todo archivo cuenta como
+    | posible comprobante y el personal decide.
+    |
+    */
+
+    'receipt_reader' => [
+        'enabled' => env('RECEIPT_READER_ENABLED', true),
+        'url' => env('RECEIPT_READER_URL', 'https://api.minimax.io/v1'),
+        'api_key' => env('RECEIPT_READER_API_KEY'),
+        'model' => env('RECEIPT_READER_MODEL', 'MiniMax-M3'),
+        'max_bytes' => (int) env('RECEIPT_READER_MAX_BYTES', 6291456),
+        'timeout' => (int) env('RECEIPT_READER_TIMEOUT', 25),
+    ],
+
 ];

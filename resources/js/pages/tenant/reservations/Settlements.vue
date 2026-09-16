@@ -43,6 +43,31 @@ interface SettlementRow {
     extra_charges: { concept: string; amount: number }[];
 }
 
+/**
+ * Las cuentas sin estancia: la reserva terminó (casi siempre porque el
+ * cierre de día la completó) y le quedó dinero sin registrar. No tienen
+ * folio ni hora real de salida — el cobro vive en la ficha de la reserva —,
+ * así que solo se resuelven cobrando allá o cerrándolas con motivo.
+ */
+interface ReservationRow {
+    id: number;
+    code: string;
+    room: string | null;
+    guest_name: string;
+    guest_phone: string | null;
+    starts_at: string;
+    ends_at: string;
+    amount: number;
+    paid: number;
+    pending: number;
+    // Ni un abono: en un hotel que cobra al llegar casi siempre es alguien
+    // que no llegó, no una deuda.
+    unpaid: boolean;
+    auto_closed: boolean;
+    settlement_closed_at: string | null;
+    settlement_note: string | null;
+}
+
 interface PaginationLink {
     url: string | null;
     label: string;
@@ -56,8 +81,14 @@ const props = defineProps<{
         links: PaginationLink[];
         total: number;
     };
+    reservations: {
+        data: ReservationRow[];
+        links: PaginationLink[];
+        total: number;
+    };
     filters: { q: string; cerradas: boolean };
     pendingCount: number;
+    reservationsPendingCount: number;
     canManage: boolean;
 }>();
 
@@ -74,7 +105,11 @@ function reload() {
             q: q.value || undefined,
             cerradas: showClosed.value ? 1 : undefined,
         },
-        { preserveState: true, replace: true, only: ['stays', 'filters'] },
+        {
+            preserveState: true,
+            replace: true,
+            only: ['stays', 'reservations', 'filters'],
+        },
     );
 }
 
@@ -95,15 +130,30 @@ const money = (n: number) =>
 // Lo que falta cobrar en la página que se está viendo. El total de la
 // bandeja completa lo manda el servidor (pendingCount): sumar solo lo
 // visible daría una cifra que cambia al pasar de página.
-const pageTotal = computed(() =>
-    props.stays.data.reduce((sum, row) => sum + (row.pending ?? 0), 0),
+const pageTotal = computed(
+    () =>
+        props.stays.data.reduce((sum, row) => sum + (row.pending ?? 0), 0) +
+        props.reservations.data.reduce(
+            (sum, row) => sum + (row.pending ?? 0),
+            0,
+        ),
+);
+
+// El trabajo que queda son las dos listas juntas: el hotel no distingue
+// entre "tenía estancia" y "no la tuvo", solo sabe que hay dinero suelto.
+const totalPendiente = computed(
+    () => props.pendingCount + props.reservationsPendingCount,
 );
 
 /* --- Acciones sobre una cuenta ------------------------------------- */
 
-type ActionKind = 'pay' | 'charge' | 'checkout' | 'close';
+type ActionKind = 'pay' | 'charge' | 'checkout' | 'close' | 'close-reservation';
 
-const action = ref<{ kind: ActionKind; stay: SettlementRow } | null>(null);
+const action = ref<{
+    kind: ActionKind;
+    stay?: SettlementRow;
+    reservation?: ReservationRow;
+} | null>(null);
 const busy = ref(false);
 const error = ref<string | null>(null);
 
@@ -144,7 +194,32 @@ const meta: Record<
         cta: 'Cerrar la cuenta',
         hint: 'Cortesía, incobrable o error de captura. El motivo queda escrito: el dinero NO entra al corte.',
     },
+    'close-reservation': {
+        title: 'Cerrar sin cobrar',
+        icon: 'Archive',
+        cta: 'Cerrar la cuenta',
+        hint: 'No llegó, cortesía, incobrable o error de captura. El motivo queda escrito: el dinero NO entra al corte. Si sí se va a cobrar, hazlo desde la ficha de la reserva.',
+    },
 };
+
+// El modal es el mismo para los dos orígenes: lo que necesita saber es de
+// quién es la cuenta y cuánto falta, no si hubo estancia.
+const target = computed(() => {
+    const current = action.value;
+    if (!current) return null;
+
+    return current.reservation
+        ? {
+              room: current.reservation.room,
+              guest_name: current.reservation.guest_name,
+              pending: current.reservation.pending,
+          }
+        : {
+              room: current.stay!.room,
+              guest_name: current.stay!.guest_name,
+              pending: current.stay!.pending,
+          };
+});
 
 function open(kind: ActionKind, stay: SettlementRow) {
     error.value = null;
@@ -157,13 +232,21 @@ function open(kind: ActionKind, stay: SettlementRow) {
     action.value = { kind, stay };
 }
 
+function openReservationClose(reservation: ReservationRow) {
+    error.value = null;
+    form.note = '';
+    action.value = { kind: 'close-reservation', reservation };
+}
+
 const blocked = computed(() => {
     const current = action.value;
     if (!current) return true;
     if (current.kind === 'charge') {
         return form.concept.trim() === '' || Number(form.amount || 0) <= 0;
     }
-    if (current.kind === 'close') return form.note.trim().length < 4;
+    if (current.kind === 'close' || current.kind === 'close-reservation') {
+        return form.note.trim().length < 4;
+    }
     if (current.kind === 'checkout') return form.check_out_at === '';
 
     return false;
@@ -176,9 +259,28 @@ async function submit() {
     busy.value = true;
     error.value = null;
 
-    const base = `/api/stays/${current.stay.id}/settlement`;
-
     try {
+        // Cuenta sin estancia: solo se cierra con motivo desde aquí. El
+        // cobro vive en la ficha de la reserva y no se duplica.
+        if (current.kind === 'close-reservation') {
+            await axios.patch(
+                `/api/reservations/${current.reservation!.id}/settlement/close`,
+                { note: form.note.trim() },
+            );
+            toast.success(
+                'Cuenta cerrada',
+                'Sale de la bandeja con su motivo anotado; el dinero no entró al corte.',
+            );
+            action.value = null;
+            router.reload({
+                only: ['reservations', 'reservationsPendingCount'],
+            });
+
+            return;
+        }
+
+        const base = `/api/stays/${current.stay!.id}/settlement`;
+
         if (current.kind === 'pay') {
             const { data } = await axios.post(`${base}/payment`, {
                 method: form.method,
@@ -186,7 +288,7 @@ async function submit() {
             });
             toast.success(
                 'Cobro registrado',
-                `${current.stay.guest_name} · ${labelFor(form.method)}${
+                `${current.stay!.guest_name} · ${labelFor(form.method)}${
                     data.pending > 0
                         ? `. Todavía debe ${money(data.pending)}.`
                         : '. Cuenta liquidada.'
@@ -228,6 +330,18 @@ async function submit() {
     }
 }
 
+async function reopenReservation(reservation: ReservationRow) {
+    try {
+        await axios.patch(
+            `/api/reservations/${reservation.id}/settlement/reopen`,
+        );
+        toast.success('Cuenta reabierta', 'Vuelve a la bandeja para cobrarla.');
+        router.reload({ only: ['reservations', 'reservationsPendingCount'] });
+    } catch {
+        toast.error('No se pudo reabrir', 'Intenta de nuevo.');
+    }
+}
+
 async function reopen(stay: SettlementRow) {
     try {
         await axios.patch(`/api/stays/${stay.id}/settlement/reopen`);
@@ -256,8 +370,8 @@ async function reopen(stay: SettlementRow) {
                             Cuentas por cerrar
                         </h1>
                         <p class="mt-0.5 text-xs text-slate-500">
-                            Estancias que ya se cerraron y a las que les quedó
-                            dinero sin registrar.
+                            Estancias y reservas que ya terminaron y a las que
+                            les quedó dinero sin registrar.
                         </p>
                     </div>
                 </div>
@@ -306,7 +420,7 @@ async function reopen(stay: SettlementRow) {
                             "
                             @click="showClosed = false"
                         >
-                            Con saldo ({{ pendingCount }})
+                            Con saldo ({{ totalPendiente }})
                         </button>
                         <button
                             type="button"
@@ -322,7 +436,10 @@ async function reopen(stay: SettlementRow) {
                         </button>
                     </div>
                     <span
-                        v-if="!showClosed && stays.data.length"
+                        v-if="
+                            !showClosed &&
+                            (stays.data.length || reservations.data.length)
+                        "
                         class="ml-auto text-xs text-slate-500"
                     >
                         En esta página: {{ money(pageTotal) }} sin cobrar.
@@ -330,6 +447,12 @@ async function reopen(stay: SettlementRow) {
                 </div>
 
                 <div class="overflow-auto p-4 lg:overflow-visible">
+                    <p
+                        v-if="stays.data.length && reservations.data.length"
+                        class="mb-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                    >
+                        Con estancia registrada
+                    </p>
                     <Table v-if="stays.data.length" striped>
                         <Table.Thead>
                             <Table.Tr>
@@ -463,13 +586,16 @@ async function reopen(stay: SettlementRow) {
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
-                    <div v-else class="py-10 text-center text-sm text-slate-500">
+                    <div
+                        v-if="!stays.data.length && !reservations.data.length"
+                        class="py-10 text-center text-sm text-slate-500"
+                    >
                         {{
                             filters.q
                                 ? 'Nada coincide con la búsqueda.'
                                 : showClosed
                                   ? 'Ninguna cuenta se ha cerrado con motivo.'
-                                  : 'No hay cuentas pendientes: todo lo que se cerró quedó cobrado.'
+                                  : 'No hay cuentas pendientes: todo lo que terminó quedó cobrado.'
                         }}
                     </div>
 
@@ -498,6 +624,182 @@ async function reopen(stay: SettlementRow) {
                             />
                         </template>
                     </div>
+
+                    <template v-if="reservations.data.length">
+                        <p
+                            class="mt-6 mb-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            Sin registro de llegada
+                        </p>
+                        <Table striped>
+                            <Table.Thead>
+                                <Table.Tr>
+                                    <Table.Th>Habitación</Table.Th>
+                                    <Table.Th>Huésped</Table.Th>
+                                    <Table.Th>Fechas</Table.Th>
+                                    <Table.Th>Saldo</Table.Th>
+                                    <Table.Th
+                                        v-if="canManage"
+                                        class="text-right"
+                                        >Acciones</Table.Th
+                                    >
+                                </Table.Tr>
+                            </Table.Thead>
+                            <Table.Tbody>
+                                <Table.Tr
+                                    v-for="r in reservations.data"
+                                    :key="r.id"
+                                >
+                                    <Table.Td class="font-medium">
+                                        {{ r.room ?? '—' }}
+                                        <span
+                                            v-if="r.auto_closed"
+                                            class="mt-0.5 block text-[11px] text-slate-500"
+                                            title="Nadie registró la llegada: la cerró el cierre de día"
+                                            >cerró sola</span
+                                        >
+                                    </Table.Td>
+                                    <Table.Td>
+                                        <span class="text-sm font-medium">{{
+                                            r.guest_name
+                                        }}</span>
+                                        <span
+                                            class="block text-xs text-slate-500"
+                                            >{{ r.code }}</span
+                                        >
+                                        <a
+                                            v-if="r.guest_phone"
+                                            :href="`tel:${r.guest_phone}`"
+                                            class="text-xs text-primary hover:underline"
+                                            >{{ r.guest_phone }}</a
+                                        >
+                                    </Table.Td>
+                                    <Table.Td class="text-xs">
+                                        {{ r.starts_at }}
+                                        <span class="text-slate-400">→</span>
+                                        {{ r.ends_at }}
+                                    </Table.Td>
+                                    <Table.Td>
+                                        <span
+                                            class="text-sm font-medium"
+                                            :class="
+                                                r.settlement_closed_at
+                                                    ? 'text-slate-500'
+                                                    : 'text-pending'
+                                            "
+                                            >{{ money(r.pending) }}</span
+                                        >
+                                        <span
+                                            v-if="
+                                                r.unpaid &&
+                                                !r.settlement_closed_at
+                                            "
+                                            class="mt-0.5 block text-[11px] text-warning"
+                                            title="El cierre de día la asumió ocupada, pero no tiene ningún abono"
+                                            >Sin ningún pago: confirma si
+                                            llegó</span
+                                        >
+                                        <span
+                                            v-else
+                                            class="block text-[11px] text-slate-500"
+                                            >{{ money(r.paid) }} de
+                                            {{ money(r.amount) }}</span
+                                        >
+                                        <span
+                                            v-if="r.settlement_note"
+                                            class="mt-0.5 block text-[11px] text-slate-500"
+                                            >{{ r.settlement_note }}</span
+                                        >
+                                    </Table.Td>
+                                    <Table.Td v-if="canManage">
+                                        <div
+                                            class="flex flex-wrap justify-end gap-1.5"
+                                        >
+                                            <template
+                                                v-if="!r.settlement_closed_at"
+                                            >
+                                                <!-- El cobro vive en la ficha
+                                                     de la reserva: ahí están
+                                                     los abonos, el cupón y el
+                                                     comprobante. -->
+                                                <Button
+                                                    :as="Link"
+                                                    :href="
+                                                        route(
+                                                            'tenant.reservations.detail',
+                                                            r.id,
+                                                        )
+                                                    "
+                                                    variant="primary"
+                                                    class="h-8 rounded-[0.5rem] text-xs whitespace-nowrap"
+                                                >
+                                                    <Lucide
+                                                        icon="Banknote"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Cobrar
+                                                </Button>
+                                                <button
+                                                    type="button"
+                                                    class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-warning dark:hover:bg-darkmode-400"
+                                                    title="Cerrar sin cobrar"
+                                                    @click="
+                                                        openReservationClose(r)
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        icon="Archive"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </button>
+                                            </template>
+                                            <Button
+                                                v-else
+                                                variant="outline-secondary"
+                                                class="h-8 rounded-[0.5rem] bg-white text-xs whitespace-nowrap"
+                                                @click="reopenReservation(r)"
+                                            >
+                                                <Lucide
+                                                    icon="RotateCcw"
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                />
+                                                Reabrir
+                                            </Button>
+                                        </div>
+                                    </Table.Td>
+                                </Table.Tr>
+                            </Table.Tbody>
+                        </Table>
+
+                        <div
+                            v-if="reservations.links.length > 3"
+                            class="mt-4 flex flex-wrap justify-center gap-1"
+                        >
+                            <template
+                                v-for="(link, i) in reservations.links"
+                                :key="i"
+                            >
+                                <Link
+                                    v-if="link.url"
+                                    :href="link.url"
+                                    preserve-state
+                                    class="rounded-md px-3 py-1.5 text-sm"
+                                    :class="
+                                        link.active
+                                            ? 'bg-primary text-white'
+                                            : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                                    "
+                                >
+                                    <span v-html="link.label" />
+                                </Link>
+                                <span
+                                    v-else
+                                    class="px-3 py-1.5 text-sm text-slate-400"
+                                    v-html="link.label"
+                                />
+                            </template>
+                        </div>
+                    </template>
                 </div>
             </div>
         </div>
@@ -522,10 +824,10 @@ async function reopen(stay: SettlementRow) {
                         <h3 class="text-sm font-medium">
                             {{ meta[action.kind].title }}
                         </h3>
-                        <p class="mt-0.5 text-xs text-slate-500">
-                            Hab. {{ action.stay.room ?? '—' }} ·
-                            {{ action.stay.guest_name }} ·
-                            {{ money(action.stay.pending) }} sin cobrar
+                        <p v-if="target" class="mt-0.5 text-xs text-slate-500">
+                            Hab. {{ target.room ?? '—' }} ·
+                            {{ target.guest_name }} ·
+                            {{ money(target.pending) }} sin cobrar
                         </p>
                     </div>
                 </div>
@@ -590,7 +892,9 @@ async function reopen(stay: SettlementRow) {
                         </div>
                     </template>
 
-                    <template v-else-if="action.kind === 'checkout'">
+                    <template
+                        v-else-if="action.kind === 'checkout' && action.stay"
+                    >
                         <div>
                             <FormLabel class="text-xs"
                                 >Salida real del huésped</FormLabel
@@ -642,7 +946,10 @@ async function reopen(stay: SettlementRow) {
                     </Button>
                     <Button
                         :variant="
-                            action.kind === 'close' ? 'warning' : 'primary'
+                            action.kind === 'close' ||
+                            action.kind === 'close-reservation'
+                                ? 'warning'
+                                : 'primary'
                         "
                         class="h-9 rounded-[0.5rem] text-xs"
                         :disabled="busy || blocked"

@@ -19,6 +19,9 @@ use Spatie\Activitylog\Models\Activity;
  */
 class ReservationUpcomingPageController extends ReservationsPageController
 {
+    /** Diez por página: el tablero manda aquí a revisar, no a leer un archivo. */
+    protected const PER_PAGE = 10;
+
     protected const UPCOMING_STATUSES = [
         ReservationStatus::Pending,
         ReservationStatus::Confirmed,
@@ -61,7 +64,7 @@ class ReservationUpcomingPageController extends ReservationsPageController
             })
             // Por llegada: lo primero que hay que atender, primero.
             ->orderBy('starts_at')
-            ->paginate(25)
+            ->paginate(self::PER_PAGE)
             ->withQueryString();
 
         $timeline = Activity::query()

@@ -12,6 +12,9 @@ use App\Models\Room;
 use App\Models\Stay;
 use App\Models\User;
 use App\Services\AvailabilityService;
+use App\Services\CouponService;
+use Carbon\CarbonInterface;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -25,6 +28,7 @@ class TransitionReservation
         protected AvailabilityService $availability,
         protected ChangeRoomStatus $changeRoomStatus,
         protected CreateOrder $createOrder,
+        protected CouponService $coupons,
     ) {}
 
     /**
@@ -117,6 +121,134 @@ class TransitionReservation
         }
 
         return $reservation;
+    }
+
+    /**
+     * Reabre una reserva cancelada o de "no llegó" con el MISMO código, en
+     * sus fechas o en unas nuevas (reagendar).
+     *
+     * Caso real cabañas 2026-09-10: el apartado venció mientras el huésped
+     * depositaba; el personal le dio su código por chat, pero la reserva
+     * seguía cancelada y no había manera de revivirla — solo de hacer otra.
+     *
+     * Vuelve como apartado (Pendiente, con el plazo del hotel) o confirmada.
+     * Confirmar pasa por confirm(): la misma puerta de siempre (cupo, cupón,
+     * tours, semáforo del día y aviso al huésped). Los pagos ya registrados
+     * se conservan; los tours que se cancelaron con ella NO se reviven — su
+     * cupo pudo venderse.
+     *
+     * @param  array{starts_at?: mixed, ends_at?: mixed, room_id?: int|null, confirmed?: bool, hold_minutes?: int|null}  $data
+     *
+     * @throws NoAvailabilityException
+     * @throws InvalidArgumentException
+     */
+    public function reopen(Reservation $reservation, ?User $user = null, array $data = []): Reservation
+    {
+        $this->assertStatus($reservation, [ReservationStatus::Cancelled, ReservationStatus::NoShow]);
+
+        $newDates = ! empty($data['starts_at']);
+        $start = $newDates ? Carbon::parse($data['starts_at']) : Carbon::parse($reservation->starts_at);
+        $end = match (true) {
+            ! empty($data['ends_at']) => Carbon::parse($data['ends_at']),
+            $newDates && $reservation->ratePlan !== null => Carbon::parse($reservation->ratePlan->suggestedEnd($start)),
+            default => Carbon::parse($reservation->ends_at),
+        };
+
+        if ($end->lte($start)) {
+            throw new InvalidArgumentException('La salida debe ser después de la llegada.');
+        }
+
+        // Una llegada que ya pasó no se revive tal cual: sería una reserva
+        // apartando noches que nadie va a dormir.
+        if ($start->lt(now()->startOfDay())) {
+            throw new InvalidArgumentException('La llegada de esta reserva ya pasó: elige fechas nuevas para reagendarla.');
+        }
+
+        $datesChanged = ! $start->equalTo($reservation->starts_at) || ! $end->equalTo($reservation->ends_at);
+
+        $reservation = DB::transaction(function () use ($reservation, $user, $data, $start, $end, $datesChanged) {
+            $reservation = Reservation::query()->whereKey($reservation->id)->lockForUpdate()->firstOrFail();
+
+            // Dos personas reabriendo la misma a la vez: la segunda se entera.
+            $this->assertStatus($reservation, [ReservationStatus::Cancelled, ReservationStatus::NoShow]);
+
+            if ($datesChanged || ! empty($data['room_id'])) {
+                // Reagendar es la misma edición del panel: revisa el cupo y
+                // recalcula precio, anticipo y fecha límite con las fechas
+                // nuevas. Se intenta primero en su misma habitación.
+                $payload = [
+                    'rate_plan_id' => $reservation->rate_plan_id,
+                    'starts_at' => $start,
+                    'ends_at' => $end,
+                    'guest_id' => $reservation->guest_id,
+                ];
+
+                try {
+                    app(UpdateReservation::class)->handle($reservation, $payload + ['room_id' => $data['room_id'] ?? $reservation->room_id], $user);
+                } catch (NoAvailabilityException $e) {
+                    if (! empty($data['room_id'])) {
+                        throw $e;
+                    }
+
+                    app(UpdateReservation::class)->handle($reservation, $payload + ['room_id' => null], $user);
+                }
+
+                $reservation->refresh();
+            } else {
+                // Mismas fechas: el precio pactado se respeta tal cual; solo
+                // hace falta una habitación libre (la suya, si sigue libre).
+                $reservation->room_id = $this->reopenRoom($reservation, $start, $end)->id;
+            }
+
+            $holdMinutes = (int) ($data['hold_minutes'] ?? app(\App\Services\ReservationPolicy::class)->holdMinutes());
+
+            $reservation->update([
+                'room_id' => $reservation->room_id,
+                'status' => ReservationStatus::Pending,
+                'hold_expires_at' => now()->addMinutes(max(1, $holdMinutes)),
+                'cancellation_reason' => null,
+            ]);
+
+            activity('reservation')
+                ->performedOn($reservation)
+                ->causedBy($user)
+                ->log($datesChanged ? 'Reserva reabierta y reagendada' : 'Reserva reabierta');
+
+            return $reservation;
+        });
+
+        if ((bool) ($data['confirmed'] ?? false)) {
+            $reservation = $this->confirm($reservation->refresh(), $user);
+        }
+
+        return $reservation;
+    }
+
+    /**
+     * Habitación para reabrir en las mismas fechas: la suya si sigue libre;
+     * si ya se vendió, otra libre del mismo tipo.
+     *
+     * @throws NoAvailabilityException
+     */
+    protected function reopenRoom(Reservation $reservation, CarbonInterface $start, CarbonInterface $end): Room
+    {
+        if ($reservation->room_id) {
+            $room = Room::query()->whereKey($reservation->room_id)->lockForUpdate()->first();
+
+            if ($room && $this->availability->isRoomAvailable($room, $start, $end, $reservation->id)) {
+                return $room;
+            }
+        }
+
+        $room = $this->availability
+            ->availableRooms($reservation->room_type_id, $start, $end, $reservation->id, lock: true)
+            ->first();
+
+        if (! $room) {
+            throw NoAvailabilityException::forRoomType();
+        }
+
+        return $room;
     }
 
     /**
@@ -341,25 +473,7 @@ class TransitionReservation
      */
     protected function redeemCoupon(Reservation $reservation): void
     {
-        if (! $reservation->coupon_code) {
-            return;
-        }
-
-        \App\Models\Coupon::query()
-            ->where('code', $reservation->coupon_code)
-            ->increment('used_count');
-
-        // Bitácora del canje: el increment de arriba es query builder (sin
-        // eventos de modelo), así que sin esta línea el uso del cupón no
-        // dejaría rastro de cuándo ni en qué reserva se consumió. El causer
-        // lo resuelve spatie (usuario autenticado; null = huésped web).
-        activity('coupon')
-            ->performedOn($reservation)
-            ->withProperties([
-                'code' => $reservation->coupon_code,
-                'discount' => (float) $reservation->discount_amount,
-            ])
-            ->log(sprintf('Cupón %s canjeado al confirmarse la reserva', $reservation->coupon_code));
+        $this->coupons->redeem($reservation);
     }
 
     /**

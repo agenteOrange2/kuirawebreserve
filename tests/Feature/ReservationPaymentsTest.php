@@ -4,6 +4,7 @@ use App\Actions\Reservations\CreateReservation;
 use App\Actions\Reservations\RegisterReservationPayment;
 use App\Actions\Reservations\TransitionReservation;
 use App\Enums\PaymentStatus;
+use App\Enums\ReservationStatus;
 use App\Events\RoomStatusChanged;
 use App\Models\Property;
 use App\Models\RatePlan;
@@ -95,12 +96,21 @@ it('rechaza abonos que exceden el pendiente', function () {
     app(RegisterReservationPayment::class)->handle($reservation, ['amount' => 1200, 'method' => 'cash']);
 })->throws(InvalidArgumentException::class, 'excede');
 
-it('rechaza pagos en reservas canceladas', function () {
+it('un pago sobre una reserva cancelada la revive en vez de rechazarse', function () {
+    // Antes se rechazaba el dinero ("La reserva está cancelada"). Caso real
+    // cabañas 2026-09-12: la huésped depositó, el sistema ya la había
+    // cancelado y en mostrador no había dónde meter ese pago. Si su cuarto
+    // sigue libre, la reserva vuelve a la vida; si no, se rechaza diciendo
+    // qué hacer (ver PaidReservationSurvivesTest).
     $reservation = reservar();
     app(TransitionReservation::class)->cancel($reservation);
 
     app(RegisterReservationPayment::class)->handle($reservation->refresh(), ['amount' => 100, 'method' => 'cash']);
-})->throws(InvalidArgumentException::class, 'cancelada');
+
+    expect($reservation->refresh()->status)->toBe(ReservationStatus::Pending)
+        ->and($reservation->cancellation_reason)->toBeNull()
+        ->and($reservation->paidTotal())->toEqual(100.0);
+});
 
 it('marca pago vencido cuando pasa la fecha límite sin liquidar', function () {
     $reservation = reservar();

@@ -209,7 +209,7 @@ class TiktokWebhookController extends Controller
             // El open_id de TikTok NO es un teléfono: no ligar reservas por
             // coincidencia numérica accidental (mismo criterio que PSID).
 
-            $conversation->messages()->create([
+            $message = $conversation->messages()->create([
                 'direction' => 'in',
                 'sender_type' => 'visitor',
                 'body' => $body,
@@ -221,10 +221,10 @@ class TiktokWebhookController extends Controller
             $brain = app(AgentBrain::class);
 
             if ($channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
-                $reply = $brain->reply($conversation);
+                $reply = $brain->replyTo($conversation, $message);
 
-                if ($reply?->body) {
-                    $this->api->sendText($link, $from, $reply->body);
+                if ($reply?->body && ! $this->api->sendText($link, $from, $reply->body)) {
+                    app(\App\Services\Channels\OutboundMessenger::class)->flagUndelivered($conversation, $reply);
                 }
             } else {
                 if ($conversation->status !== Conversation::STATUS_PENDING) {

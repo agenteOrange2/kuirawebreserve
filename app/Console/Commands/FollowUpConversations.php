@@ -79,16 +79,21 @@ class FollowUpConversations extends Command
             ->get();
 
         foreach ($conversations as $conversation) {
-            if ($conversation->followupSent('hold_reminder')) {
+            if ($conversation->followupSent('hold_reminder') || $this->staffTookOver($conversation)) {
                 continue;
             }
 
-            $reservation = $conversation->reservation;
-            $this->send($conversation, 'hold_reminder', sprintf(
-                'Recuerda: tu apartado %s vence a las %s. Si sigues interesado responde este mensaje y aviso a recepción para que lo confirmen.',
-                $reservation->displayCode(),
-                $reservation->hold_expires_at->format('H:i'),
-            ));
+            // La verdad, con la misma frase que dicen el bot y solicitar_pago.
+            // Antes decía "responde y aviso a recepción para que lo
+            // confirmen": no existía ningún aviso, y a las 8 de la noche
+            // nadie de recepción iba a confirmar nada (cabañas 2026-09-13).
+            $notice = app(\App\Services\ReservationPolicy::class)->holdDeadlineNotice($conversation->reservation);
+
+            if ($notice === null) {
+                continue;
+            }
+
+            $this->send($conversation, 'hold_reminder', 'Recuerda: '.lcfirst($notice));
             $sent++;
         }
 
@@ -110,12 +115,24 @@ class FollowUpConversations extends Command
         foreach ($conversations as $conversation) {
             $conversation->markLead(Conversation::LEAD_LOST);
 
-            if (! $conversation->bot_enabled || $conversation->followupSent('hold_expired')) {
+            // Solo un apartado que venció solo lleva este aviso: una reserva
+            // que canceló el hotel (o un "no llegó") no "venció", y decírselo
+            // al huésped es darle información falsa.
+            // Tampoco si una persona del hotel ya habló con el huésped de este
+            // apartado. Caso real cabañas conv. 605 (2026-09-12): el personal
+            // escribió "si depositas mañana se te confirma" a las 23:03 y a
+            // las 23:05 el aviso automático le dijo que venció.
+            if (! $conversation->reservation->isExpiredHold()
+                || ! $conversation->bot_enabled
+                || $conversation->followupSent('hold_expired')
+                || $this->staffTookOver($conversation)) {
                 continue;
             }
 
+            // El asistente puede reactivarlo con el mismo código
+            // (reactivar_apartado): se le ofrece eso, no "hacer uno nuevo".
             $this->send($conversation, 'hold_expired', sprintf(
-                'Tu apartado %s venció y la habitación se liberó. Si aún te interesa, dime y con gusto te ayudo a hacer uno nuevo (las fechas pueden seguir disponibles).',
+                'Tu apartado %s venció y la habitación se liberó. Si ya hiciste tu depósito o aún te interesa, respóndeme y lo reactivo con el mismo código si la habitación sigue libre.',
                 $conversation->reservation->displayCode(),
             ));
             $sent++;
@@ -125,8 +142,24 @@ class FollowUpConversations extends Command
     }
 
     /**
-     * Cotizó y dejó de responder (el último mensaje es nuestro, 20 min–3 h
-     * de silencio) → un solo reenganche amable.
+     * ¿Una persona del hotel ya habló con el huésped desde que se hizo el
+     * apartado? Entonces el apartado es suyo: los avisos automáticos no
+     * contradicen lo que el personal le prometió.
+     */
+    protected function staffTookOver(Conversation $conversation): bool
+    {
+        $since = $conversation->reservation?->created_at;
+
+        return $conversation->messages()
+            ->where('sender_type', 'staff')
+            ->when($since !== null, fn ($query) => $query->where('created_at', '>=', $since))
+            ->exists();
+    }
+
+    /**
+     * Cotizó y dejó de responder (el último mensaje es nuestro) → un solo
+     * reenganche amable. Cuánto silencio se espera y a quién vale la pena
+     * perseguir los decide cada hotel (ReservationPolicy).
      */
     protected function coldQuotes(): int
     {
@@ -141,15 +174,41 @@ class FollowUpConversations extends Command
             return 0;
         }
 
+        $policy = app(\App\Services\ReservationPolicy::class);
+        $silence = $policy->nudgeSilenceMinutes();
+        $minMessages = $policy->nudgeMinVisitorMessages();
+
         $conversations = Conversation::query()
             ->where('lead_status', Conversation::LEAD_QUOTING)
             ->where('status', Conversation::STATUS_OPEN)
             ->where('bot_enabled', true)
-            ->whereBetween('last_message_at', [now()->subHours(3), now()->subMinutes(20)])
+            // La ventana conserva su ancho de 3 h por encima del silencio
+            // exigido: el comando corre cada 5 minutos, pero el horario de
+            // atención puede cerrar en medio y tragarse la oportunidad.
+            ->whereBetween('last_message_at', [now()->subMinutes($silence + 180), now()->subMinutes($silence)])
+            // Una sola consulta para todas: contar mensajes por fila sería
+            // un N+1 en la lista completa de cotizaciones abiertas.
+            ->withCount(['messages as visitor_messages_count' => fn ($query) => $query->where('direction', 'in')])
             ->get();
 
         foreach ($conversations as $conversation) {
             if ($conversation->followupSent('quote_nudge')) {
+                continue;
+            }
+
+            // Solo se reengancha a quien llegó a una COTIZACIÓN REAL: la
+            // herramienta confirmó una habitación libre para fechas
+            // concretas. Contar mensajes no servía —aquí se escribe en
+            // fragmentos, y "Buenas tardes"/"Para 2 personas"/"Mañana" ya
+            // son tres— así que el filtro por conteo seguía persiguiendo a
+            // quien solo preguntó (cabañas 2026-09-12, conv. 550 y 569).
+            if (! $conversation->followupSent(\App\Services\Agent\AgentBrain::REAL_QUOTE)) {
+                continue;
+            }
+
+            // Tope opcional por hotel; sirve además de apagador (un número
+            // alto deja el reenganche sin nadie a quien escribirle).
+            if ($minMessages > 0 && $conversation->visitor_messages_count < $minMessages) {
                 continue;
             }
 
@@ -182,17 +241,25 @@ class FollowUpConversations extends Command
                 continue;
             }
 
-            // Si lo último que le dijimos fue que NO hay disponibilidad,
-            // ofrecerle apartar "la habitación" es contradictorio: se
-            // reengancha por la puerta correcta, que son otras fechas.
+            // Si lo último que le dijimos fue que NO hay disponibilidad, no
+            // se le escribe: insistirle a quien acabamos de rechazar es lo
+            // que más molesta (cabañas 2026-09-12, conv. 550 — se le dijo
+            // dos veces que no había nada y el bot volvió a tocarle la
+            // puerta dos horas después). Si el hotel quiere recuperar esas
+            // fechas, es trabajo de una persona, no de una plantilla.
             $noVacancy = (bool) preg_match(
                 '/no (hay|tenemos|contamos con|queda|quedan)[^.]{0,40}disponib|sin disponibilidad|todas[^.]{0,40}(reservadas|ocupadas)/iu',
                 $last->body,
             );
 
-            $this->send($conversation, 'quote_nudge', $noVacancy
-                ? '¿Sigues por ahí? Para esas fechas no me quedó nada libre, pero con gusto reviso otras: dime qué días te acomodan y te digo lo que hay disponible.'
-                : '¿Sigues por ahí? Quedé pendiente de ayudarte con tu reserva. Si me dices la fecha y la habitación que te interesó, reviso la disponibilidad y te ayudo a apartarla.',
+            if ($noVacancy) {
+                continue;
+            }
+
+            $this->send(
+                $conversation,
+                'quote_nudge',
+                '¿Sigues por ahí? Quedé pendiente de ayudarte con tu reserva. Si me dices la fecha y la habitación que te interesó, reviso la disponibilidad y te ayudo a apartarla.',
             );
             $sent++;
         }

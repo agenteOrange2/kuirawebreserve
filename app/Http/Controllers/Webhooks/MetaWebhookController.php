@@ -105,6 +105,13 @@ class MetaWebhookController extends Controller
                         // InboundVoiceService (transcribir o pedir texto).
                         // Todos bajan su binario por la Graph API.
                         $type = (string) ($message['type'] ?? 'text');
+
+                        // Una reacción (👍) no es un mensaje: contestarla con
+                        // "¿algo más?" es ruido (caso cabañas 2026-09-13, conv. 635).
+                        if ($type === 'reaction') {
+                            continue;
+                        }
+
                         $kind = self::MEDIA_KINDS[$type] ?? null;
                         $mediaInfo = $kind !== null ? ($message[$type] ?? null) : null;
 
@@ -524,17 +531,22 @@ class MetaWebhookController extends Controller
 
             // El bot no ve imágenes: una foto sin texto espera a un humano
             // (el servicio ya dejó la conversación en pendiente).
-            $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true);
+            // Salvo que se haya leído y NO sea comprobante: el bot ya sabe
+            // qué se ve y puede contestar.
+            $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true)
+                && $mediaOutcome !== \App\Services\Channels\InboundMediaService::OUTCOME_DESCRIBED;
 
             if (! $noCaption && $channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
                 // "escribiendo..." antes de pensar: la respuesta tarda de 3
                 // a 8 segundos y ese hueco se lee como que nadie contestó.
                 $this->api->sendTyping($link, $from, $externalId);
 
-                $reply = $brain->reply($conversation);
+                $reply = $brain->replyTo($conversation, $message);
 
-                if ($reply?->body) {
-                    $this->api->sendText($link, $from, $reply->body);
+                // Si el canal la rechaza, el huésped no la recibe aunque la
+                // bandeja la muestre: que alguien del hotel lo sepa.
+                if ($reply?->body && ! $this->api->sendText($link, $from, $reply->body)) {
+                    app(\App\Services\Channels\OutboundMessenger::class)->flagUndelivered($conversation, $reply);
                 }
             } else {
                 if ($conversation->status !== Conversation::STATUS_PENDING) {

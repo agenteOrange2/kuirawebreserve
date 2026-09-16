@@ -131,3 +131,15 @@ it('las tarifas viejas en minutos siguen funcionando (compat)', function () {
     expect($legacy->unitsFor(now(), now()->addHours(4)))->toBe(2)
         ->and($legacy->durationLabel())->toBe('180 minutos');
 });
+
+it('la antelación en días cuenta fechas de calendario, no horas (cabañas 2026-09-11)', function () {
+    $tarifa = plan(['min_advance_unit' => 'day', 'min_advance_value' => 2]);
+
+    // Escribe a las 3 PM: faltan menos de 48 horas para la entrada de las
+    // 2 PM de pasado mañana, pero "con 2 días de anticipación" ya se cumple.
+    $this->travelTo(now()->setTime(15, 0));
+
+    expect($tarifa->violatesMinAdvance(now()->addDays(2)->setTime(14, 0)))->toBeFalse()
+        ->and($tarifa->violatesMinAdvance(now()->addDay()->setTime(14, 0)))->toBeTrue()
+        ->and($tarifa->violatesMinAdvance(now()->setTime(18, 0)))->toBeTrue();
+});

@@ -139,6 +139,27 @@ class CollectBalancePayments extends Command
             return false;
         }
 
+        $conversation = $this->conversationFor($reservation);
+
+        // Nadie pierde su habitación sin que se le haya pedido el saldo. Si
+        // la fecha límite ya estaba vencida al crearse la reserva (tarifa con
+        // "una semana antes" y un huésped que reserva con tres días de
+        // anticipación), este barrido nunca alcanzó a avisarle: cancelarla
+        // sería quitársela sin una sola palabra. Caso real cabañas
+        // 2026-09-12 (RES-2026-1718): depositó su anticipo a las 19:51 y a
+        // las 20:00 este comando la canceló — y otra vez a las 21:00.
+        $warned = $conversation !== null
+            && ($conversation->followupSent('balance_request') || $conversation->followupSent('balance_reminder'));
+
+        if (! $warned) {
+            $this->warn(sprintf(
+                'Reserva %s con saldo vencido pero sin aviso previo: no se cancela, queda para recepción.',
+                $reservation->displayCode(),
+            ));
+
+            return false;
+        }
+
         try {
             $transition->cancel($reservation, null, reason: 'Saldo no cubierto en la fecha límite (cancelación automática).');
         } catch (Throwable $e) {
@@ -146,8 +167,6 @@ class CollectBalancePayments extends Command
 
             return false;
         }
-
-        $conversation = $this->conversationFor($reservation);
 
         if ($conversation && ! $conversation->followupSent('balance_cancelled')) {
             $this->send($conversation, 'balance_cancelled', sprintf(

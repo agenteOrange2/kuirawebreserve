@@ -107,11 +107,22 @@ class Message extends Model implements HasMedia
     /** @return array<int, array{id: int, url: string, name: string, is_image: bool}> */
     public function attachmentsPayload(): array
     {
+        // Lo que se leyó en la imagen (InboundMediaService): la bandeja lo
+        // pone junto a la foto — "Transferencia por $3,000 · coincide" o "No
+        // es comprobante" — sin abrirla.
+        $reading = $this->meta['media_reading'] ?? null;
+
         return $this->getMedia('attachments')->map(fn (Media $media) => [
             'id' => $media->id,
             'url' => route('tenant.inbox.attachment', [$this->conversation_id, $media->id]),
             'name' => $media->file_name,
             'is_image' => str_starts_with((string) $media->mime_type, 'image/'),
+            'reading' => is_array($reading) ? [
+                'verdict' => $reading['check']['verdict'] ?? null,
+                'summary' => $reading['check']['summary'] ?? null,
+                'warnings' => $reading['check']['warnings'] ?? [],
+                'description' => $reading['description'] ?? null,
+            ] : null,
         ])->values()->all();
     }
 

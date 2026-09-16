@@ -372,7 +372,7 @@ const cellClass =
                             v-for="hold in expiringHolds"
                             :key="hold.id"
                             :href="
-                                route('tenant.reservations', {
+                                route('tenant.reservations.operation', {
                                     reservation: hold.id,
                                 })
                             "

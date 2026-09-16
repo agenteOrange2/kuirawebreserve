@@ -26,6 +26,8 @@ interface CouponRow {
     min_visits: number | null;
     room_type_id: number | null;
     birthday: boolean;
+    weekdays: number[] | null;
+    weekdays_label: string | null;
     conditions: string[];
     starts_at: string | null;
     ends_at: string | null;
@@ -43,6 +45,34 @@ const props = defineProps<{
 
 const toast = useToasts();
 const coupons = ref<CouponRow[]>([...props.coupons]);
+
+// Chips de días empezando en lunes (valores 0=domingo..6=sábado, misma
+// convención que el backend).
+const WEEKDAY_CHIPS = [
+    { value: 1, label: 'L', title: 'Lunes' },
+    { value: 2, label: 'M', title: 'Martes' },
+    { value: 3, label: 'M', title: 'Miércoles' },
+    { value: 4, label: 'J', title: 'Jueves' },
+    { value: 5, label: 'V', title: 'Viernes' },
+    { value: 6, label: 'S', title: 'Sábado' },
+    { value: 0, label: 'D', title: 'Domingo' },
+];
+
+const WEEKDAY_SHORT = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+// Atajos para las combinaciones que más se piden.
+const WEEKDAY_PRESETS = [
+    { label: 'Entre semana', days: [1, 2, 3, 4] },
+    { label: 'Fin de semana', days: [0, 5, 6] },
+];
+
+const weekdaysShort = (weekdays: number[] | null) =>
+    weekdays && weekdays.length
+        ? [...weekdays]
+              .sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7))
+              .map((day) => WEEKDAY_SHORT[day])
+              .join(', ')
+        : null;
 
 const vigencyLabel = (coupon: CouponRow) => {
     if (!coupon.starts_at && !coupon.ends_at) return 'Siempre';
@@ -73,6 +103,7 @@ const form = reactive({
     min_visits: '' as string | number,
     room_type_id: '' as string | number,
     birthday: false,
+    weekdays: [] as number[],
     active: true,
 });
 
@@ -88,9 +119,25 @@ function openForm(coupon: CouponRow | null = null) {
     form.min_visits = coupon?.min_visits ?? '';
     form.room_type_id = coupon?.room_type_id ?? '';
     form.birthday = coupon?.birthday ?? false;
+    form.weekdays = [...(coupon?.weekdays ?? [])];
     form.active = coupon?.active ?? true;
     Object.keys(errors).forEach((k) => delete errors[k]);
     showForm.value = true;
+}
+
+function toggleWeekday(day: number) {
+    form.weekdays = form.weekdays.includes(day)
+        ? form.weekdays.filter((d) => d !== day)
+        : [...form.weekdays, day].sort((a, b) => a - b);
+}
+
+const presetActive = (days: number[]) =>
+    form.weekdays.length === days.length &&
+    days.every((day) => form.weekdays.includes(day));
+
+// Tocar el atajo ya elegido lo quita (vuelve a toda la semana).
+function applyPreset(days: number[]) {
+    form.weekdays = presetActive(days) ? [] : [...days].sort((a, b) => a - b);
 }
 
 async function submit() {
@@ -110,6 +157,8 @@ async function submit() {
         room_type_id:
             form.room_type_id === '' ? null : Number(form.room_type_id),
         birthday: form.birthday,
+        // Noches en que vale; vacío = toda la semana.
+        weekdays: form.weekdays.length ? form.weekdays : null,
         active: form.active,
     };
     try {
@@ -258,6 +307,10 @@ async function destroy() {
                                     coupon.label
                                 }}</span>
                                 <span>{{ vigencyLabel(coupon) }}</span>
+                                <span v-if="coupon.weekdays?.length"
+                                    >Solo
+                                    {{ weekdaysShort(coupon.weekdays) }}</span
+                                >
                                 <span>{{ usesLabel(coupon) }}</span>
                             </div>
                             <div
@@ -371,9 +424,16 @@ async function destroy() {
                                             </span>
                                         </div>
                                     </Table.Td>
-                                    <Table.Td class="whitespace-nowrap">{{
-                                        vigencyLabel(coupon)
-                                    }}</Table.Td>
+                                    <Table.Td class="whitespace-nowrap">
+                                        {{ vigencyLabel(coupon) }}
+                                        <span
+                                            v-if="coupon.weekdays?.length"
+                                            class="block text-xs text-slate-500"
+                                        >
+                                            Solo
+                                            {{ weekdaysShort(coupon.weekdays) }}
+                                        </span>
+                                    </Table.Td>
                                     <Table.Td class="whitespace-nowrap">
                                         {{ usesLabel(coupon) }}
                                         <span
@@ -660,9 +720,61 @@ async function destroy() {
                                     </FormHelp>
                                 </div>
                             </div>
+                            <div class="mt-3">
+                                <FormLabel>Días de la estancia</FormLabel>
+                                <div
+                                    class="flex flex-wrap items-center gap-1.5"
+                                >
+                                    <button
+                                        v-for="chip in WEEKDAY_CHIPS"
+                                        :key="chip.value"
+                                        type="button"
+                                        :title="chip.title"
+                                        class="flex h-9 w-9 items-center justify-center rounded-full border text-xs font-medium transition"
+                                        :class="
+                                            form.weekdays.includes(chip.value)
+                                                ? 'border-primary bg-primary text-white'
+                                                : 'border-slate-200/80 text-slate-500 hover:border-primary/40 hover:text-primary dark:border-darkmode-400'
+                                        "
+                                        @click="toggleWeekday(chip.value)"
+                                    >
+                                        {{ chip.label }}
+                                    </button>
+                                    <span
+                                        class="mx-1 hidden h-5 w-px bg-slate-200 sm:block dark:bg-darkmode-400"
+                                    />
+                                    <button
+                                        v-for="preset in WEEKDAY_PRESETS"
+                                        :key="preset.label"
+                                        type="button"
+                                        class="h-8 rounded-full border px-3 text-[11px] font-medium transition"
+                                        :class="
+                                            presetActive(preset.days)
+                                                ? 'border-primary/30 bg-primary/10 text-primary'
+                                                : 'border-slate-200/80 text-slate-500 hover:border-primary/40 hover:text-primary dark:border-darkmode-400'
+                                        "
+                                        @click="applyPreset(preset.days)"
+                                    >
+                                        {{ preset.label }}
+                                    </button>
+                                </div>
+                                <FormHelp>
+                                    Sin días marcados vale toda la semana.
+                                    Cuentan las noches de la estancia, no el día
+                                    de salida: con viernes, sábado y domingo, de
+                                    viernes a lunes aplica y de jueves a sábado
+                                    no.
+                                </FormHelp>
+                                <FormHelp
+                                    v-if="errors.weekdays"
+                                    class="text-danger"
+                                >
+                                    {{ errors.weekdays }}
+                                </FormHelp>
+                            </div>
                             <FormHelp class="mt-1.5">
-                                Las tres son opcionales. El uso se descuenta
-                                cuando la reserva se confirma, no al apartar.
+                                Todo es opcional. El uso se descuenta cuando la
+                                reserva se confirma, no al apartar.
                             </FormHelp>
                         </div>
 

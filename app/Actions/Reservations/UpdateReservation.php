@@ -12,6 +12,7 @@ use App\Models\Reservation;
 use App\Models\Room;
 use App\Models\User;
 use App\Services\AvailabilityService;
+use App\Services\CouponService;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -20,6 +21,7 @@ class UpdateReservation
     public function __construct(
         protected AvailabilityService $availability,
         protected ChangeRoomStatus $changeRoomStatus,
+        protected CouponService $coupons,
     ) {}
 
     /**
@@ -96,6 +98,15 @@ class UpdateReservation
                 2,
             );
 
+            // Cupón congelado: el total se rearma desde cero, así que sin esto
+            // el descuento ya prometido desaparecía en silencio en cuanto
+            // mostrador le movía algo a la reserva — el huésped llegaba con un
+            // saldo más alto del que se le dijo. Se recalcula sobre el total
+            // nuevo y se vuelve a juzgar SOLO lo que la edición pudo mover
+            // (fechas, noches, tipo de habitación).
+            [$couponCode, $discount] = $this->frozenDiscount($reservation, $ratePlan, $start, $end, $total);
+            $total = round(max(0, $total - $discount), 2);
+
             $reservation->update([
                 'property_id' => $room->property_id,
                 'room_type_id' => $ratePlan->room_type_id,
@@ -115,6 +126,8 @@ class UpdateReservation
                 'ends_at' => $end,
                 'source_channel' => $data['source_channel'] ?? $reservation->source_channel,
                 'total_amount' => $total,
+                'coupon_code' => $couponCode,
+                'discount_amount' => $discount,
                 'extra_charges' => $extraCharges ?: null,
                 // Cambiar tarifa/fechas recalcula anticipo y fecha límite.
                 'deposit_amount' => $ratePlan->depositAmountFor($total)
@@ -156,6 +169,63 @@ class UpdateReservation
 
             return $reservation;
         });
+    }
+
+    /**
+     * El descuento del cupón que la reserva ya traía, recalculado sobre el
+     * total nuevo.
+     *
+     * Las condiciones del huésped (cliente frecuente, cumpleaños) no se
+     * vuelven a exigir: se juzgaron al aplicarlo y sus visitas cambian con el
+     * tiempo — volver a pedirlas le quitaría en silencio un descuento ya
+     * prometido. Las de la estancia sí, porque editar puede mover las fechas
+     * a días que el cupón no cubre.
+     *
+     * @return array{0: ?string, 1: float}
+     */
+    protected function frozenDiscount(
+        Reservation $reservation,
+        RatePlan $ratePlan,
+        Carbon $start,
+        Carbon $end,
+        float $total,
+    ): array {
+        if (! $reservation->coupon_code) {
+            return [null, 0.0];
+        }
+
+        $coupon = $this->coupons->find($reservation->coupon_code);
+
+        // Cupón borrado o cambiado después de aplicarse: se respeta el monto
+        // congelado tal cual, sin pasarse del total nuevo.
+        if ($coupon === null) {
+            return [
+                $reservation->coupon_code,
+                round(min((float) $reservation->discount_amount, max(0, $total)), 2),
+            ];
+        }
+
+        $reason = $coupon->stayRejectionReason(
+            $start,
+            $ratePlan->unitsFor($start, $end),
+            $ratePlan->room_type_id,
+            $end,
+        );
+
+        if ($reason !== null) {
+            // Reagendar a fechas que el cupón no cubre lo retira, pero queda
+            // dicho por qué: el saldo sube y alguien va a preguntar.
+            activity('coupon')
+                ->performedOn($reservation)
+                ->withProperties(['code' => $reservation->coupon_code])
+                ->log(sprintf('Cupón %s retirado al editar la reserva: %s', $reservation->coupon_code, $reason));
+
+            $this->coupons->release($reservation);
+
+            return [null, 0.0];
+        }
+
+        return [$coupon->code, $coupon->discountFor($total)];
     }
 
     /**
@@ -211,10 +281,18 @@ class UpdateReservation
             return null;
         }
 
-        return $this->fillMissingEmail(Guest::firstOrCreate(
-            $phone ? ['phone' => $phone] : ['email' => $email],
-            ['first_name' => $data['guest_name'] ?? null, 'email' => $email, 'phone' => $phone],
-        ), $email);
+        // Por los últimos 10 dígitos: ver Guest::findByContact().
+        $guest = Guest::findByContact($phone, $email) ?? Guest::create([
+            'first_name' => $data['guest_name'] ?? null,
+            'email' => $email,
+            'phone' => $phone,
+        ]);
+
+        if ($phone && ! $guest->phone) {
+            $guest->update(['phone' => $phone]);
+        }
+
+        return $this->fillMissingEmail($guest, $email);
     }
 
     /**

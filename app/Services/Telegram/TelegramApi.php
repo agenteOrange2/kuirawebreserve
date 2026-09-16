@@ -20,6 +20,26 @@ class TelegramApi
 
     public function sendText(TelegramChannelLink $link, string $chatId, string $text): bool
     {
+        $trozos = \App\Services\Channels\MessageChunker::split(
+            $text,
+            \App\Services\Channels\MessageChunker::limitFor('telegram'),
+        );
+
+        if ($trozos === []) {
+            return false;
+        }
+
+        foreach ($trozos as $trozo) {
+            if (! $this->sendTextChunk($link, $chatId, $trozo)) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    protected function sendTextChunk(TelegramChannelLink $link, string $chatId, string $text): bool
+    {
         try {
             $response = $this->http()->post($this->url($link, 'sendMessage'), [
                 'chat_id' => $chatId,

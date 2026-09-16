@@ -286,7 +286,17 @@ class RatePlan extends Model
             return null;
         }
 
-        return $this->min_advance_unit->addTo(now(), $this->min_advance_value);
+        $earliest = $this->min_advance_unit->addTo(now(), $this->min_advance_value);
+
+        // En días o semanas la antelación se cuenta por FECHAS de calendario,
+        // no por el reloj: "con 2 días de anticipación" es que hoy, a
+        // cualquier hora, se puede reservar para pasado mañana (cabañas,
+        // 2026-09-11). Con 48 h exactas, quien escribía a las 3 PM no podía
+        // apartar la llegada de las 2 PM de pasado mañana. En horas sí manda
+        // el reloj.
+        return in_array($this->min_advance_unit, [RateDurationUnit::Day, RateDurationUnit::Week], true)
+            ? $earliest->startOfDay()
+            : $earliest;
     }
 
     public function violatesMinAdvance(CarbonInterface $start): bool

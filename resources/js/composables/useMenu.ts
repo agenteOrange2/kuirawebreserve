@@ -126,6 +126,18 @@ const tenantMenu: Array<MenuItem | string> = [
                 permission: 'reservations.view',
             },
             {
+                icon: 'ClipboardList',
+                pageName: 'tenant.reservations.operation',
+                title: 'Operación del día',
+                permission: 'reservations.view',
+            },
+            {
+                icon: 'AlarmClock',
+                pageName: 'tenant.reservations.pending',
+                title: 'Pendientes',
+                permission: 'reservations.view',
+            },
+            {
                 icon: 'CalendarRange',
                 pageName: 'tenant.reservations.calendar',
                 title: 'Calendario',

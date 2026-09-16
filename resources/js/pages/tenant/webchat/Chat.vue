@@ -241,7 +241,7 @@ onBeforeUnmount(() => {
                         v-model="draft"
                         rows="1"
                         placeholder="Escribe tu mensaje…"
-                        class="max-h-28 flex-1 resize-none rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm transition outline-none focus:border-theme-2 focus:ring-2 focus:ring-theme-2/20"
+                        class="max-h-28 min-w-0 flex-1 resize-none rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm transition outline-none focus:border-theme-2 focus:ring-2 focus:ring-theme-2/20"
                         @keydown.enter.exact.prevent="send"
                     />
                     <button

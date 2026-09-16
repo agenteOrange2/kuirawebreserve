@@ -164,6 +164,9 @@ class GuestsPageController extends Controller
 
                 return [
                     'key' => 'r'.$r->id,
+                    // Con el id la fila es un enlace a la reserva: antes se
+                    // pintaba como tarjeta y no llevaba a ningún lado.
+                    'id' => $r->id,
                     'code' => $r->displayCode(),
                     'kind' => 'reservation',
                     'room' => $stay?->room?->number ?? $r->room?->number,
@@ -189,6 +192,8 @@ class GuestsPageController extends Controller
             })
             ->concat($walkIns->map(fn (Stay $stay) => [
                 'key' => 's'.$stay->id,
+                // Llegó sin reserva: no hay ficha de reserva que abrir.
+                'id' => null,
                 'code' => null,
                 'kind' => 'walk_in',
                 'room' => $stay->room?->number,

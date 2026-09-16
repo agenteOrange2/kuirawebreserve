@@ -10,6 +10,7 @@ import type { Icon } from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import ReopenDialog from './ReopenDialog.vue';
 
 interface PriceLine {
     concept: string;
@@ -40,7 +41,9 @@ interface HistoryRow {
     room_type: string | null;
     rate_plan: string | null;
     starts_at: string;
+    starts_at_input: string;
     ends_at: string;
+    ends_at_input: string;
     status: string;
     status_label: string;
     total_amount: string;
@@ -79,9 +82,13 @@ const props = defineProps<{
         links: PaginationLink[];
         total: number;
     };
-    filters: { q: string; status: string };
+    filters: { q: string; status: string; guest?: number | null };
+    /** Con huésped a la vista el archivo muestra TODAS sus reservas. */
+    guest?: { id: number; full_name: string; is_archived: boolean } | null;
     statusOptions: { value: string; label: string }[];
     canManage: boolean;
+    /** Plazo del apartado del hotel (para el modal de reabrir). */
+    holdMinutes: number;
 }>();
 
 const toast = useToasts();
@@ -105,6 +112,8 @@ watch([q, status], () => {
             {
                 q: q.value || undefined,
                 status: status.value || undefined,
+                // Buscar dentro del historial de un huésped no lo saca de él.
+                guest: props.guest?.id || undefined,
             },
             {
                 preserveState: true,
@@ -123,6 +132,10 @@ const statusMeta: Record<string, { class: string; icon: Icon }> = {
     },
     cancelled: { class: 'bg-danger/10 text-danger', icon: 'Ban' },
     no_show: { class: 'bg-pending/10 text-pending', icon: 'UserX' },
+    // Con un huésped a la vista también salen sus reservas vigentes.
+    pending: { class: 'bg-pending/10 text-pending', icon: 'Clock' },
+    confirmed: { class: 'bg-success/10 text-success', icon: 'CircleCheck' },
+    checked_in: { class: 'bg-info/10 text-info', icon: 'DoorOpen' },
 };
 const statusFor = (s: string) =>
     statusMeta[s] ?? {
@@ -183,10 +196,35 @@ const deleteIds = ref<number[]>([]);
 const deleteOpen = ref(false);
 const deleteBusy = ref(false);
 
+// ── Reabrir / reagendar (mismo modal que /reservas) ──
+const reopenTarget = ref<HistoryRow | null>(null);
+
+const isReopenable = (r: HistoryRow) =>
+    ['cancelled', 'no_show'].includes(r.status);
+
+// Borrar es solo para lo que ya salió del flujo. Con un huésped a la vista
+// la lista trae también sus reservas vigentes, y esas no se tocan desde
+// aquí (el backend tampoco las acepta): se administran en /reservas.
+const isDeletable = (r: HistoryRow) =>
+    ['completed', 'cancelled', 'no_show'].includes(r.status);
+
+function openReopen(r: HistoryRow) {
+    reopenTarget.value = r;
+    detail.value = null;
+}
+
+function onReopened() {
+    reopenTarget.value = null;
+    router.reload({ preserveScroll: true } as any);
+}
+
+const deletableRows = computed(() =>
+    props.reservations.data.filter((r) => isDeletable(r)),
+);
 const allSelected = computed(
     () =>
-        props.reservations.data.length > 0 &&
-        props.reservations.data.every((r) => selectedIds.value.includes(r.id)),
+        deletableRows.value.length > 0 &&
+        deletableRows.value.every((r) => selectedIds.value.includes(r.id)),
 );
 const deleteRows = computed(() =>
     props.reservations.data.filter((r) => deleteIds.value.includes(r.id)),
@@ -200,7 +238,7 @@ function toggleRow(id: number) {
 function toggleAll() {
     selectedIds.value = allSelected.value
         ? []
-        : props.reservations.data.map((r) => r.id);
+        : deletableRows.value.map((r) => r.id);
 }
 
 function askDelete(ids: number[]) {
@@ -305,6 +343,26 @@ async function submitDelete() {
                             }}
                         </option>
                     </FormSelect>
+                    <!-- De quién es este historial: se llega desde su ficha. -->
+                    <div
+                        v-if="guest"
+                        class="flex items-center gap-1.5 rounded-full bg-primary/5 py-1 pr-1.5 pl-3 text-xs text-primary"
+                    >
+                        <Lucide icon="User" class="h-3.5 w-3.5" />
+                        <Link
+                            :href="route('tenant.guests.show', guest.id)"
+                            class="font-medium hover:underline"
+                        >
+                            {{ guest.full_name }}
+                        </Link>
+                        <Link
+                            :href="route('tenant.reservations.history')"
+                            class="rounded-full p-1 text-primary/60 hover:bg-primary/10 hover:text-primary"
+                            title="Ver el historial completo del hotel"
+                        >
+                            <Lucide icon="X" class="h-3.5 w-3.5" />
+                        </Link>
+                    </div>
                     <template v-if="canManage && selectedIds.length">
                         <span class="ml-auto text-xs text-slate-500"
                             >{{ selectedIds.length }} seleccionada(s)</span
@@ -327,7 +385,108 @@ async function submitDelete() {
                     </template>
                 </div>
 
-                <div class="overflow-auto p-4 lg:overflow-visible">
+                <!-- Móvil: tarjetas apiladas. La tabla de ocho columnas se
+                     arrastraba de lado en el celular. -->
+                <div
+                    v-if="reservations.data.length"
+                    class="space-y-2 p-4 sm:hidden"
+                >
+                    <div
+                        v-for="r in reservations.data"
+                        :key="`card-${r.id}`"
+                        class="rounded-lg border border-slate-200/70 bg-white p-3 dark:border-darkmode-400 dark:bg-darkmode-600"
+                    >
+                        <div class="flex items-start gap-2">
+                            <FormCheck.Input
+                                v-if="canManage && isDeletable(r)"
+                                type="checkbox"
+                                class="mt-1 shrink-0"
+                                :checked="selectedIds.includes(r.id)"
+                                @change="toggleRow(r.id)"
+                            />
+                            <div class="min-w-0 flex-1">
+                                <div class="truncate text-sm font-medium">
+                                    {{ r.guest_name ?? 'Anónimo' }}
+                                </div>
+                                <div class="mt-0.5 text-xs text-slate-500">
+                                    {{ r.code }} · Hab. {{ r.room ?? '—' }}
+                                </div>
+                            </div>
+                            <span
+                                class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                :class="statusFor(r.status).class"
+                            >
+                                <Lucide
+                                    :icon="statusFor(r.status).icon"
+                                    class="h-3 w-3"
+                                />
+                                {{
+                                    friendlyStatusLabel(
+                                        r.status,
+                                        r.status_label,
+                                    )
+                                }}
+                            </span>
+                        </div>
+
+                        <div
+                            class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
+                        >
+                            <span>{{ r.starts_at }} → {{ r.ends_at }}</span>
+                            <span class="font-medium text-slate-600"
+                                >${{ r.total_amount }}</span
+                            >
+                            <span
+                                class="rounded-full px-2 py-0.5 text-[11px]"
+                                :class="paymentBadge(r)"
+                            >
+                                {{ r.payment_status_label }}
+                            </span>
+                        </div>
+                        <p
+                            v-if="r.cancellation_reason"
+                            class="mt-1 text-[11px] text-slate-400"
+                        >
+                            {{ r.cancellation_reason }}
+                        </p>
+
+                        <div
+                            class="mt-2.5 flex items-center gap-2 border-t border-dashed border-slate-200/70 pt-2.5 dark:border-darkmode-400"
+                        >
+                            <button
+                                type="button"
+                                class="inline-flex h-8 items-center gap-1.5 rounded-[0.5rem] border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                @click="detail = r"
+                            >
+                                <Lucide icon="Eye" class="h-3.5 w-3.5" />
+                                Ver detalle
+                            </button>
+                            <button
+                                v-if="canManage && isReopenable(r)"
+                                type="button"
+                                class="inline-flex h-8 items-center gap-1.5 rounded-[0.5rem] border border-primary/30 bg-white px-3 text-xs font-medium text-primary dark:bg-darkmode-600"
+                                @click="openReopen(r)"
+                            >
+                                <Lucide icon="RotateCcw" class="h-3.5 w-3.5" />
+                                Reabrir
+                            </button>
+                            <button
+                                v-if="canManage && isDeletable(r)"
+                                type="button"
+                                class="ml-auto flex h-8 w-8 items-center justify-center rounded-full text-danger transition hover:bg-danger/10"
+                                title="Eliminar definitivamente"
+                                @click="askDelete([r.id])"
+                            >
+                                <Lucide icon="Trash2" class="h-4 w-4" />
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Escritorio: tabla -->
+                <div
+                    class="hidden overflow-auto p-4 sm:block lg:overflow-visible"
+                >
                     <Table v-if="reservations.data.length" striped>
                         <Table.Thead>
                             <Table.Tr>
@@ -355,6 +514,7 @@ async function submitDelete() {
                             >
                                 <Table.Td v-if="canManage" class="w-10">
                                     <FormCheck.Input
+                                        v-if="isDeletable(r)"
                                         type="checkbox"
                                         :checked="selectedIds.includes(r.id)"
                                         @change="toggleRow(r.id)"
@@ -419,6 +579,17 @@ async function submitDelete() {
                                 <Table.Td>
                                     <div class="flex justify-end gap-1">
                                         <button
+                                            v-if="canManage && isReopenable(r)"
+                                            class="rounded-md p-1.5 text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                            title="Reabrir o reagendar"
+                                            @click="openReopen(r)"
+                                        >
+                                            <Lucide
+                                                icon="RotateCcw"
+                                                class="h-4 w-4"
+                                            />
+                                        </button>
+                                        <button
                                             class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-darkmode-400"
                                             title="Ver detalle"
                                             @click="detail = r"
@@ -429,7 +600,7 @@ async function submitDelete() {
                                             />
                                         </button>
                                         <button
-                                            v-if="canManage"
+                                            v-if="canManage && isDeletable(r)"
                                             class="rounded-md p-1.5 text-danger hover:bg-danger/10"
                                             title="Eliminar definitivamente"
                                             @click="askDelete([r.id])"
@@ -444,51 +615,56 @@ async function submitDelete() {
                             </Table.Tr>
                         </Table.Tbody>
                     </Table>
-                    <div v-else class="py-10 text-center text-slate-500">
-                        {{
-                            filters.q || filters.status
-                                ? 'Nada coincide con la búsqueda.'
-                                : 'Aún no hay historial.'
-                        }}
-                    </div>
+                </div>
 
-                    <!-- Paginación -->
-                    <div
-                        v-if="reservations.links.length > 3"
-                        class="mt-4 flex flex-wrap justify-center gap-1"
-                    >
-                        <template
-                            v-for="(link, i) in reservations.links"
-                            :key="i"
+                <!-- El vacío y la paginación viven FUERA del bloque de
+                     escritorio: si no, en el celular no se veían. -->
+                <div
+                    v-if="!reservations.data.length"
+                    class="px-4 py-10 text-center text-slate-500"
+                >
+                    {{
+                        filters.q || filters.status
+                            ? 'Nada coincide con la búsqueda.'
+                            : guest
+                              ? 'Este huésped todavía no tiene reservas.'
+                              : 'Aún no hay historial.'
+                    }}
+                </div>
+
+                <!-- Paginación -->
+                <div
+                    v-if="reservations.links.length > 3"
+                    class="flex flex-wrap justify-center gap-1 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                >
+                    <template v-for="(link, i) in reservations.links" :key="i">
+                        <Link
+                            v-if="link.url"
+                            :href="link.url"
+                            preserve-state
+                            class="rounded-md px-3 py-1.5 text-sm"
+                            :class="
+                                link.active
+                                    ? 'bg-primary text-white'
+                                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                            "
                         >
-                            <Link
-                                v-if="link.url"
-                                :href="link.url"
-                                preserve-state
-                                class="rounded-md px-3 py-1.5 text-sm"
-                                :class="
-                                    link.active
-                                        ? 'bg-primary text-white'
-                                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
-                                "
-                            >
-                                <span v-html="link.label" />
-                            </Link>
-                            <span
-                                v-else
-                                class="px-3 py-1.5 text-sm text-slate-400"
-                                v-html="link.label"
-                            />
-                        </template>
-                    </div>
+                            <span v-html="link.label" />
+                        </Link>
+                        <span
+                            v-else
+                            class="px-3 py-1.5 text-sm text-slate-400"
+                            v-html="link.label"
+                        />
+                    </template>
                 </div>
             </div>
         </div>
 
         <!-- Detalle de la reserva -->
         <Dialog :open="detail !== null" size="lg" @close="detail = null">
-            <Dialog.Panel v-if="detail">
-                <div class="flex max-h-[85vh] flex-col">
+            <Dialog.Panel v-if="detail" class="sm:w-[94vw] lg:w-[640px]">
+                <div class="flex max-h-[calc(100dvh-6rem)] flex-col">
                     <div class="flex items-start gap-3.5 p-6 pb-4">
                         <div
                             class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
@@ -662,20 +838,37 @@ async function submitDelete() {
                         </div>
                     </div>
                     <div
-                        class="flex justify-between gap-2 border-t border-slate-200/60 p-5 dark:border-darkmode-400"
+                        class="flex flex-wrap items-center justify-between gap-2 border-t border-slate-200/60 px-4 py-3.5 dark:border-darkmode-400"
                     >
                         <Button
-                            v-if="canManage"
+                            v-if="canManage && isDeletable(detail)"
                             variant="outline-danger"
-                            class="rounded-[0.5rem]"
+                            class="h-9 rounded-[0.5rem] text-xs"
                             @click="askDelete([detail.id])"
                         >
                             <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                             Eliminar
                         </Button>
                         <Button
+                            v-if="canManage && isReopenable(detail)"
+                            variant="primary"
+                            class="ml-auto h-9 rounded-[0.5rem] text-xs"
+                            @click="openReopen(detail)"
+                        >
+                            <Lucide
+                                icon="RotateCcw"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Reabrir o reagendar
+                        </Button>
+                        <Button
                             variant="outline-secondary"
-                            class="ml-auto rounded-[0.5rem]"
+                            class="h-9 rounded-[0.5rem] text-xs"
+                            :class="
+                                canManage && isReopenable(detail)
+                                    ? ''
+                                    : 'ml-auto'
+                            "
                             @click="detail = null"
                         >
                             Cerrar
@@ -685,10 +878,17 @@ async function submitDelete() {
             </Dialog.Panel>
         </Dialog>
 
+        <ReopenDialog
+            :reservation="reopenTarget"
+            :hold-minutes="holdMinutes"
+            @close="reopenTarget = null"
+            @done="onReopened"
+        />
+
         <!-- Confirmación de borrado -->
         <Dialog :open="deleteOpen" @close="deleteOpen = false">
-            <Dialog.Panel>
-                <div class="flex max-h-[85vh] flex-col">
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[560px]">
+                <div class="flex max-h-[calc(100dvh-6rem)] flex-col">
                     <div class="flex items-start gap-3.5 p-6 pb-4">
                         <div
                             class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"

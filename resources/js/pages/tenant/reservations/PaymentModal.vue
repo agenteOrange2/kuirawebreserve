@@ -1,8 +1,13 @@
 <script setup lang="ts">
 import axios from 'axios';
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormInput, FormLabel, FormSelect } from '@/components/Base/Form';
+import {
+    FormInput,
+    FormLabel,
+    FormSelect,
+    FormSwitch,
+} from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import { useCounterMethods } from '@/composables/useCounterMethods';
@@ -42,12 +47,25 @@ const payingReservation = ref<ReservationRow | null>(null);
 // aquí — tiene su propio flujo con comprobante.
 const { subset } = useCounterMethods();
 const chargeMethods = subset(['cash', 'card']);
+// Más la transferencia YA VERIFICADA, con su folio: el dinero que llegó al
+// banco sin un cobro vivo que aprobar en Pagos (caso real cabañas
+// 2026-09-11: el cobro había vencido a los 20 minutos).
+const paymentMethods = computed<{ key: string; label: string }[]>(() => [
+    ...chargeMethods.value.map((m) => ({
+        key: m.key,
+        label: m.key === 'card' ? 'Tarjeta (terminal)' : m.label,
+    })),
+    { key: 'transfer', label: 'Transferencia ya verificada' },
+]);
 
 const paymentForm = reactive({
     amount: '' as string | number,
     method: 'cash',
     reference: '',
     notes: '',
+    // El huésped recibe su comprobante por el mismo hilo (o WhatsApp/correo):
+    // antes el mostrador registraba y él no se enteraba de nada.
+    notify: true,
 });
 const paymentError = ref<string | null>(null);
 const payingBusy = ref(false);
@@ -64,6 +82,7 @@ function openPayment(r: ReservationRow) {
     paymentForm.method = chargeMethods.value[0]?.key ?? 'cash';
     paymentForm.reference = '';
     paymentForm.notes = '';
+    paymentForm.notify = true;
     paymentError.value = null;
 }
 
@@ -79,6 +98,7 @@ async function submitPayment() {
                 method: paymentForm.method,
                 reference: paymentForm.reference || null,
                 notes: paymentForm.notes || null,
+                notify_guest: paymentForm.notify,
             },
         );
         payingReservation.value = null;
@@ -213,10 +233,10 @@ defineExpose({ open: openPayment });
         :open="payingReservation !== null"
         @close="payingReservation = null"
     >
-        <Dialog.Panel>
+        <Dialog.Panel class="sm:w-[94vw] lg:w-[640px]">
             <form
                 v-if="payingReservation"
-                class="flex max-h-[85vh] flex-col"
+                class="flex max-h-[calc(100dvh-6rem)] flex-col"
                 @submit.prevent="submitPayment"
             >
                 <!-- Header -->
@@ -330,9 +350,7 @@ defineExpose({ open: openPayment });
                         >
                             <Lucide
                                 :icon="
-                                    props.gatewayAvailable
-                                        ? 'Link'
-                                        : 'Landmark'
+                                    props.gatewayAvailable ? 'Link' : 'Landmark'
                                 "
                                 class="h-3.5 w-3.5 text-primary"
                             />
@@ -437,9 +455,7 @@ defineExpose({ open: openPayment });
                             >
                                 <Lucide
                                     :icon="
-                                        props.gatewayAvailable
-                                            ? 'Link'
-                                            : 'Send'
+                                        props.gatewayAvailable ? 'Link' : 'Send'
                                     "
                                     class="mr-1.5 h-3.5 w-3.5"
                                 />
@@ -500,15 +516,11 @@ defineExpose({ open: openPayment });
                                     class="pl-9"
                                 >
                                     <option
-                                        v-for="m in chargeMethods"
+                                        v-for="m in paymentMethods"
                                         :key="m.key"
                                         :value="m.key"
                                     >
-                                        {{
-                                            m.key === 'card'
-                                                ? 'Tarjeta (terminal)'
-                                                : m.label
-                                        }}
+                                        {{ m.label }}
                                     </option>
                                 </FormSelect>
                             </div>
@@ -520,20 +532,12 @@ defineExpose({ open: openPayment });
                                 icon="Info"
                                 class="mt-0.5 h-3.5 w-3.5 shrink-0"
                             />
-                            <span v-if="props.gatewayAvailable">
-                                Aquí solo va dinero recibido en persona. Una
-                                transferencia no se registra directo: genera el
-                                cobro de arriba y confírmala con su comprobante
-                                en la página Pagos; un link de pasarela se
-                                registra y confirma solo cuando el huésped
-                                paga.
-                            </span>
-                            <span v-else>
-                                Aquí solo va dinero recibido en persona,
-                                efectivo o terminal. Una transferencia no se
-                                registra directo: manda los datos con el botón
-                                de arriba y confírmala con su comprobante en la
-                                página Pagos.
+                            <span>
+                                Efectivo y terminal se registran al momento. Una
+                                transferencia se registra aquí solo cuando ya la
+                                viste reflejada en el banco, con su folio; si
+                                todavía no llega, genera el cobro de arriba y
+                                apruébala en Pagos cuando mande el comprobante.
                             </span>
                         </p>
                         <div
@@ -551,6 +555,9 @@ defineExpose({ open: openPayment });
                                 <FormInput
                                     id="pay-ref"
                                     v-model="paymentForm.reference"
+                                    :required="
+                                        paymentForm.method === 'transfer'
+                                    "
                                     type="text"
                                     class="pl-9"
                                     placeholder="Voucher de la terminal"
@@ -570,6 +577,26 @@ defineExpose({ open: openPayment });
                                 type="text"
                                 placeholder="Ej. pago parcial, cambio pendiente…"
                             />
+                        </div>
+                    </div>
+
+                    <div
+                        class="flex items-center gap-2.5 border-t border-dashed border-slate-200/70 pt-3 dark:border-darkmode-400"
+                    >
+                        <FormSwitch>
+                            <FormSwitch.Input
+                                v-model="paymentForm.notify"
+                                type="checkbox"
+                            />
+                        </FormSwitch>
+                        <div class="min-w-0">
+                            <div class="text-xs font-medium">
+                                Avisar al huésped
+                            </div>
+                            <p class="text-[11px] text-slate-500">
+                                Recibe el monto, si queda confirmada y el saldo
+                                pendiente por su propio canal.
+                            </p>
                         </div>
                     </div>
 

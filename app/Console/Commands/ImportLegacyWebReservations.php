@@ -926,16 +926,11 @@ class ImportLegacyWebReservations extends Command
 
         $generico = $correo !== null && $this->correoGenerico($correo);
 
-        $huesped = $telefono
-            ? Guest::query()->where('phone', $telefono)->first()
-            : ($generico ? null : Guest::query()->where('email', $correo)->first());
-
-        if ($huesped === null && $telefono && $correo && ! $generico) {
-            $huesped = Guest::query()
-                ->where('email', $correo)
-                ->where(fn ($q) => $q->whereNull('phone')->orWhere('phone', ''))
-                ->first();
-        }
+        // Por los últimos 10 dígitos y por correo sin mayúsculas: el mismo
+        // número escrito distinto abría una ficha nueva (ver
+        // Guest::findByContact). Los correos genéricos del sitio viejo
+        // (varios huéspedes compartían uno) siguen sin servir de llave.
+        $huesped = Guest::findByContact($telefono, $generico ? null : $correo);
 
         if ($huesped === null) {
             $huesped = Guest::create([

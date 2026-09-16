@@ -49,6 +49,8 @@ class Reservation extends Model
         'notes',
         'guest_notes',
         'cancellation_reason',
+        'settlement_closed_at',
+        'settlement_note',
         'created_by',
     ];
 
@@ -70,6 +72,9 @@ class Reservation extends Model
             'discount_amount' => 'decimal:2',
             'payment_status' => \App\Enums\PaymentStatus::class,
             'payment_due_at' => 'datetime',
+            // Alguien resolvió la cuenta sin cobrarla, con el porqué en
+            // settlement_note.
+            'settlement_closed_at' => 'datetime',
         ];
     }
 
@@ -261,6 +266,60 @@ class Reservation extends Model
     public function displayCode(): string
     {
         return $this->code ?: self::formatCode($this->id, $this->created_at);
+    }
+
+    /** Motivo con el que el barrido de apartados (ExpireReservationHolds) cancela. */
+    public const EXPIRED_HOLD_REASON = 'Apartado vencido sin pago';
+
+    /**
+     * Apartado que se canceló SOLO porque se le acabó el plazo. El barrido
+     * deja puesto hold_expires_at y una cancelación a mano lo borra
+     * (TransitionReservation::cancel), así que esto distingue también las
+     * reservas que vencieron antes de que existiera el motivo.
+     */
+    /**
+     * ¿Esta reserva está VIVA ahora mismo? Confirmada, en casa, o un
+     * apartado cuyo plazo no ha llegado. Es la pregunta que hay que hacerse
+     * antes de decirle a un huésped que ya no tiene nada.
+     */
+    public function isLiveHold(): bool
+    {
+        return in_array($this->status, [ReservationStatus::Confirmed, ReservationStatus::CheckedIn], true)
+            || ($this->status === ReservationStatus::Pending
+                && $this->hold_expires_at !== null
+                && $this->hold_expires_at->isFuture());
+    }
+
+    public function isExpiredHold(): bool
+    {
+        return $this->status === ReservationStatus::Cancelled
+            && $this->hold_expires_at !== null
+            && $this->hold_expires_at->isPast();
+    }
+
+    /**
+     * Cuentas por cerrar SIN estancia: la reserva terminó (casi siempre por
+     * el cierre de día, que completa sin preguntarle a nadie) y le quedó
+     * dinero sin registrar.
+     *
+     * Las reservas que sí tienen estancia no entran: esas las cubre
+     * Stay::pendingSettlement(), donde el saldo además incluye los consumos
+     * del folio. Contarlas aquí las mostraría dos veces con cifras
+     * distintas.
+     *
+     * La fianza no es pago del hospedaje: es un pasivo que se devuelve.
+     */
+    public function scopePendingSettlement(Builder $query): Builder
+    {
+        return $query
+            ->where('reservations.status', ReservationStatus::Completed)
+            ->whereNull('reservations.settlement_closed_at')
+            ->whereNotExists(fn ($q) => $q
+                ->selectRaw('1')
+                ->from('stays')
+                ->whereColumn('stays.reservation_id', 'reservations.id'))
+            ->whereRaw('reservations.total_amount > (select coalesce(sum(p.amount), 0) from payments p'
+                ." where p.reservation_id = reservations.id and (p.kind is null or p.kind <> 'guarantee'))");
     }
 
     /**

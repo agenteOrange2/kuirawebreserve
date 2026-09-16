@@ -199,9 +199,24 @@ Route::middleware([
                 ->name('incidents.photos.show');
         });
 
-        Route::get('/reservas', ReservationsPageController::class)
+        // Tablero de la sección: cuatro accesos (próximas, en casa,
+        // pendientes e historial). Solo cuenta, no lista.
+        Route::get('/reservas', \App\Http\Controllers\Tenant\ReservationsHubController::class)
             ->middleware('can:reservations.view')
             ->name('reservations');
+
+        // Operación del día: la pantalla de siempre (listas, nueva reserva,
+        // llegada exprés, registrar salida y cobros). Los enlaces con
+        // ?intent=, ?reservation=, ?stay= o ?edit= llegan aquí — el tablero
+        // los reenvía para no romper los que ya andan circulando.
+        Route::get('/reservas/operacion', ReservationsPageController::class)
+            ->middleware('can:reservations.view')
+            ->name('reservations.operation');
+
+        // Pendientes: lo que espera confirmación y lo que quedó sin cobrar.
+        Route::get('/reservas/pendientes', \App\Http\Controllers\Tenant\PendingReservationsPageController::class)
+            ->middleware('can:reservations.view')
+            ->name('reservations.pending');
 
         // Calendario de ocupación (rack) como vista propia.
         Route::get('/reservas/calendario', ReservationsPageController::class)
@@ -225,6 +240,13 @@ Route::middleware([
         Route::get('/reservas/alojados', \App\Http\Controllers\Tenant\InHouseStaysPageController::class)
             ->middleware('can:reservations.view')
             ->name('reservations.in-house');
+
+        // Ficha propia de una reserva: cobrar, registrar pago, confirmar y
+        // reabrir. Solo números: /reservas/historial, /proximas... ganan.
+        Route::get('/reservas/{reservation}', [\App\Http\Controllers\Tenant\ReservationShowPageController::class, 'show'])
+            ->whereNumber('reservation')
+            ->middleware('can:reservations.view')
+            ->name('reservations.detail');
 
         // Cuentas por cerrar: estancias que ya se cerraron (casi siempre por
         // el reloj) y a las que les quedó dinero sin registrar. Antes esto no
@@ -760,6 +782,10 @@ Route::middleware([
         Route::middleware(['can:reservations.manage', 'module:grupos'])->group(function () {
             Route::post('group-reservations', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'store'])->name('group-reservations.store');
             Route::post('group-reservations/{group}/cancel', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'cancel'])->name('group-reservations.cancel');
+            // Reabrir el grupo completo (mismos códigos) y registrar el
+            // dinero que entregó el responsable, parcial o total.
+            Route::patch('group-reservations/{group}/reopen', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'reopen'])->name('group-reservations.reopen');
+            Route::post('group-reservations/{group}/payments', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'registerPayment'])->name('group-reservations.payments');
             Route::patch('group-reservations/{group}', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'update'])->name('group-reservations.update');
             Route::delete('group-reservations/{group}', [\App\Http\Controllers\Tenant\GroupReservationController::class, 'destroy'])->name('group-reservations.destroy');
             // Edición real del grupo: agregar habitaciones/recorridos y
@@ -888,6 +914,8 @@ Route::middleware([
             Route::patch('reservations/{reservation}', [ReservationController::class, 'update'])->name('reservations.update');
             Route::patch('reservations/{reservation}/confirm', [ReservationController::class, 'confirm'])->name('reservations.confirm');
             Route::patch('reservations/{reservation}/cancel', [ReservationController::class, 'cancel'])->name('reservations.cancel');
+            // Reabrir / reagendar una cancelada o un "no llegó" (mismo código).
+            Route::patch('reservations/{reservation}/reopen', [ReservationController::class, 'reopen'])->name('reservations.reopen');
             Route::patch('reservations/{reservation}/check-in', [ReservationController::class, 'checkIn'])->name('reservations.check-in');
             // Borrado en masa desde el Historial (solo estados terminales).
             Route::delete('reservations', [ReservationController::class, 'destroyBulk'])->name('reservations.destroy-bulk');
@@ -897,6 +925,13 @@ Route::middleware([
             Route::delete('reservations/{reservation}/payment-request/{paymentRequest}', [ReservationController::class, 'cancelPayment'])->name('reservations.payment-request.cancel');
             // Reembolsos (spec-pagos F4): siempre decisión humana.
             Route::post('reservations/{reservation}/payments/{payment}/refund', [ReservationController::class, 'refundPayment'])->name('reservations.payments.refund');
+            // Cupón sobre una reserva ya creada (módulo cupones): el descuento
+            // prometido que no se escribió al reservar se aplica desde su ficha.
+            Route::post('reservations/{reservation}/coupon', [ReservationController::class, 'applyCoupon'])
+                ->middleware('module:cupones')
+                ->name('reservations.coupon.apply');
+            Route::delete('reservations/{reservation}/coupon', [ReservationController::class, 'removeCoupon'])
+                ->name('reservations.coupon.remove');
             Route::post('stays', [StayController::class, 'store'])->name('stays.store');
             // Foto del documento del huésped a pie (registro exprés motel):
             // se sube tras crear la estancia, con el id devuelto.
@@ -929,6 +964,14 @@ Route::middleware([
                 ->name('stays.settlement.close');
             Route::patch('stays/{stay}/settlement/reopen', [\App\Http\Controllers\Tenant\StaySettlementController::class, 'reopen'])
                 ->name('stays.settlement.reopen');
+
+            // Y las cuentas SIN estancia: la reserva se cobra desde su
+            // ficha (ahí vive el aparato de pagos), así que aquí solo se
+            // resuelve la que no se va a cobrar.
+            Route::patch('reservations/{reservation}/settlement/close', [\App\Http\Controllers\Tenant\StaySettlementController::class, 'closeReservation'])
+                ->name('reservations.settlement.close');
+            Route::patch('reservations/{reservation}/settlement/reopen', [\App\Http\Controllers\Tenant\StaySettlementController::class, 'reopenReservation'])
+                ->name('reservations.settlement.reopen');
         });
 
         // Inventario (fase 3): catálogo y stock.
@@ -1332,4 +1375,24 @@ Route::middleware([
     Route::post('holds/{code}/pay-later', [\App\Http\Controllers\Tenant\GroupWizardController::class, 'payLater'])
         ->middleware('throttle:20,1')
         ->name('pay-later');
+});
+
+/*
+|--------------------------------------------------------------------------
+| Respaldo: dirección inexistente en el subdominio de un hotel
+|--------------------------------------------------------------------------
+|
+| El gemelo del fallback de routes/web.php, para los dominios de tenant.
+| Lleva la inicialización de tenancy porque la pantalla necesita saber en
+| qué hotel está para ofrecer el regreso correcto, y el chequeo de hotel
+| activo para que un hotel suspendido vea su aviso y no un 404.
+|
+*/
+Route::middleware([
+    'web',
+    InitializeTenancyByDomain::class,
+    PreventAccessFromCentralDomains::class,
+    App\Http\Middleware\EnsureTenantIsActive::class,
+])->group(function () {
+    Route::fallback(\App\Http\Controllers\NotFoundController::class);
 });

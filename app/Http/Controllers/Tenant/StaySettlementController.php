@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Tenant;
 use App\Actions\Reservations\SettleStay;
 use App\Http\Controllers\Controller;
 use App\Models\Property;
+use App\Models\Reservation;
 use App\Models\Stay;
 use App\Services\ReservationPolicy;
 use Illuminate\Http\JsonResponse;
@@ -26,6 +27,12 @@ use Inertia\Response;
  * agregando lo que faltó capturar, corrigiendo la hora real de salida o
  * cerrándolas con un motivo escrito. Cerrar con motivo NO finge un cobro:
  * deja de aparecer, pero el dinero nunca entra al corte.
+ *
+ * Y las cuentas SIN estancia, que son la mayoría en un hotel que vende por
+ * chat: ahí nadie abre el plano, el cierre de día completa la reserva y el
+ * saldo no tenía dónde aparecer. Van en su propia lista porque el trabajo
+ * es distinto —una reserva no tiene folio ni hora real de salida, se cobra
+ * desde su ficha— y porque así cada una conserva su paginación.
  */
 class StaySettlementController extends Controller
 {
@@ -60,9 +67,11 @@ class StaySettlementController extends Controller
         return Inertia::render('tenant/reservations/Settlements', [
             'property' => $property->only(['id', 'name']),
             'stays' => $paginator,
+            'reservations' => $this->reservations($search, $showClosed),
             'filters' => ['q' => $search, 'cerradas' => $showClosed],
             // El total no depende del filtro: es el trabajo que queda.
             'pendingCount' => Stay::query()->pendingSettlement()->count(),
+            'reservationsPendingCount' => Reservation::query()->pendingSettlement()->count(),
             'canManage' => $request->user()->can('reservations.manage'),
             'counterMethods' => app(ReservationPolicy::class)->counterMethods(),
         ]);
@@ -190,6 +199,99 @@ class StaySettlementController extends Controller
         $stay->update(['settlement_closed_at' => null, 'settlement_note' => null]);
 
         return response()->json(['closed' => false]);
+    }
+
+    /**
+     * Las cuentas sin estancia. Paginador propio (?rpage=) para que pasar de
+     * página en una lista no reinicie la otra.
+     *
+     * @return \Illuminate\Contracts\Pagination\LengthAwarePaginator<int, array<string, mixed>>
+     */
+    protected function reservations(string $search, bool $showClosed): \Illuminate\Contracts\Pagination\LengthAwarePaginator
+    {
+        $query = $showClosed
+            ? Reservation::query()
+                ->where('status', \App\Enums\ReservationStatus::Completed)
+                ->whereNotNull('settlement_closed_at')
+            : Reservation::query()->pendingSettlement();
+
+        $paginator = $query
+            ->with(['room:id,number', 'guest:id,first_name,last_name,phone'])
+            // La suma de abonos de una vez, no una consulta por renglón.
+            ->withSum('payments', 'amount')
+            ->when($search !== '', fn ($q) => $q->where(function ($inner) use ($search) {
+                $inner->where('reservations.guest_name', 'like', "%{$search}%")
+                    ->orWhere('reservations.code', 'like', "%{$search}%")
+                    ->orWhereHas('room', fn ($r) => $r->where('number', 'like', "%{$search}%"));
+            }))
+            // Primero la salida más vieja: el saldo más frío es el más
+            // difícil de cobrar, y es el que nadie va a perseguir solo.
+            ->orderBy('reservations.ends_at')
+            ->paginate(self::PER_PAGE, ['*'], 'rpage')
+            ->withQueryString();
+
+        return $paginator->through(fn (Reservation $r) => $this->serializeReservation($r));
+    }
+
+    /**
+     * Resolver sin cobrar una cuenta sin estancia. Mismo trato que en las
+     * estancias: el motivo es obligatorio y el dinero no entra al corte.
+     */
+    public function closeReservation(Request $request, Reservation $reservation): JsonResponse
+    {
+        if ($reservation->settlement_closed_at !== null) {
+            return response()->json([
+                'message' => 'Esa cuenta ya se cerró con un motivo; reábrela si vas a cobrarla.',
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'note' => ['required', 'string', 'min:4', 'max:255'],
+        ], [
+            'note.required' => 'Escribe por qué esta cuenta se cierra sin cobrarse.',
+        ]);
+
+        $reservation->update([
+            'settlement_closed_at' => now(),
+            'settlement_note' => trim($data['note']),
+        ]);
+
+        return response()->json(['closed' => true]);
+    }
+
+    /** Reabrir: la cerraron con motivo y resultó que sí se va a cobrar. */
+    public function reopenReservation(Reservation $reservation): JsonResponse
+    {
+        $reservation->update(['settlement_closed_at' => null, 'settlement_note' => null]);
+
+        return response()->json(['closed' => false]);
+    }
+
+    /** @return array<string, mixed> */
+    protected function serializeReservation(Reservation $reservation): array
+    {
+        return [
+            'id' => $reservation->id,
+            'code' => $reservation->displayCode(),
+            'room' => $reservation->room?->number,
+            'guest_name' => $reservation->guest?->full_name ?? $reservation->guest_name ?? 'Anónimo',
+            'guest_phone' => $reservation->guest?->phone,
+            'starts_at' => $reservation->starts_at->format('d/m/Y'),
+            'ends_at' => $reservation->ends_at->format('d/m/Y'),
+            'amount' => (float) $reservation->total_amount,
+            'paid' => $reservation->paidTotal(),
+            'pending' => $reservation->pendingBalance(),
+            // Sin un solo abono no es seguro que sea una deuda: en un hotel
+            // que cobra al llegar, casi siempre es alguien que no llegó y el
+            // cierre de día lo asumió ocupado. La pantalla lo pregunta en vez
+            // de afirmarlo.
+            'unpaid' => $reservation->paidTotal() <= 0,
+            // Nadie registró la llegada: la reserva la cerró el cierre de
+            // día, y eso cambia a quién se le pregunta qué pasó esa noche.
+            'auto_closed' => str_contains((string) $reservation->cancellation_reason, 'Cierre de día automático'),
+            'settlement_closed_at' => $reservation->settlement_closed_at?->format('d/m/Y H:i'),
+            'settlement_note' => $reservation->settlement_note,
+        ];
     }
 
     /** Solo se toca la cuenta de una estancia cerrada y sin resolver. */

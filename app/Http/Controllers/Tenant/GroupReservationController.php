@@ -56,6 +56,135 @@ class GroupReservationController extends Controller
     }
 
     /**
+     * Reabre un grupo cancelado con los MISMOS códigos: todo-o-nada, como
+     * el alta. Si alguna cabaña ya no tiene cupo, no se reabre ninguna —
+     * medio grupo revivido es peor que ninguno (pedido del hotel de
+     * cabañas 2026-09-11 con el grupo GRP2026-0145).
+     */
+    public function reopen(Request $request, ReservationGroup $group, TransitionReservation $action): JsonResponse
+    {
+        $dead = $group->reservations()
+            ->whereIn('status', [ReservationStatus::Cancelled, ReservationStatus::NoShow])
+            ->get();
+
+        if ($dead->isEmpty()) {
+            return response()->json(['message' => 'Este grupo no tiene habitaciones canceladas que reabrir.'], 422);
+        }
+
+        $confirm = $request->boolean('confirmed');
+
+        try {
+            DB::transaction(function () use ($dead, $request, $action, $confirm) {
+                $first = true;
+
+                foreach ($dead as $reservation) {
+                    $action->reopen($reservation, $request->user());
+
+                    if ($confirm) {
+                        // Un solo aviso al huésped por grupo, no uno por cabaña.
+                        $action->confirm($reservation->refresh(), $request->user(), $first);
+                        $first = false;
+                    }
+                }
+            });
+        } catch (NoAvailabilityException|InvalidArgumentException $e) {
+            return response()->json([
+                'message' => 'No se pudo reabrir el grupo completo: '.$e->getMessage().' No se reabrió ninguna habitación.',
+            ], 422);
+        }
+
+        return response()->json(self::serialize($group->fresh()->load('reservations.roomType', 'reservations.room', 'experienceBookings.session.experience')));
+    }
+
+    /**
+     * Registra un pago del grupo (parcial o total) con el método que aceptó
+     * la recepción, repartido entre sus habitaciones vivas en proporción a
+     * lo que debe cada una: así cada reserva refleja su parte y los cortes
+     * cuadran. Caso real: $4,500 en efectivo por 4 cabañas.
+     */
+    public function registerPayment(Request $request, ReservationGroup $group, \App\Actions\Reservations\RegisterReservationPayment $action): JsonResponse
+    {
+        $methods = app(\App\Services\ReservationPolicy::class)->counterMethods();
+
+        $data = $request->validate([
+            'amount' => ['required', 'numeric', 'gt:0'],
+            'method' => ['required', Rule::in($methods)],
+            // El folio es lo que se concilia con el banco.
+            'reference' => ['nullable', 'required_if:method,transfer', 'string', 'max:100'],
+            'notes' => ['nullable', 'string', 'max:255'],
+            'notify_guest' => ['sometimes', 'boolean'],
+        ], [
+            'reference.required_if' => 'Anota el folio o la referencia de la transferencia.',
+        ]);
+
+        $live = $group->reservations()
+            ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed, ReservationStatus::CheckedIn])
+            ->get();
+
+        $pendings = $live->mapWithKeys(fn (Reservation $r) => [$r->id => round($r->pendingBalance(), 2)])
+            ->filter(fn (float $pending) => $pending > 0);
+
+        $totalPending = round($pendings->sum(), 2);
+
+        if ($totalPending <= 0) {
+            return response()->json(['message' => 'El grupo no tiene saldo pendiente.'], 422);
+        }
+
+        $amount = round((float) $data['amount'], 2);
+
+        if ($amount > $totalPending) {
+            return response()->json([
+                'message' => 'El pago ($'.number_format($amount, 2).') excede el saldo del grupo ($'.number_format($totalPending, 2).').',
+            ], 422);
+        }
+
+        try {
+            DB::transaction(function () use ($pendings, $live, $amount, $totalPending, $data, $group, $request, $action) {
+                $left = $amount;
+                $index = 0;
+                $count = $pendings->count();
+
+                foreach ($pendings as $id => $pending) {
+                    $index++;
+
+                    // La última se lleva el centavo del redondeo.
+                    $share = $index === $count
+                        ? $left
+                        : round($amount * ($pending / $totalPending), 2);
+                    $share = round(min($share, $pending, $left), 2);
+
+                    if ($share <= 0) {
+                        continue;
+                    }
+
+                    $action->handle($live->firstWhere('id', $id), [
+                        'amount' => $share,
+                        'method' => $data['method'],
+                        'reference' => $data['reference'] ?? null,
+                        'notes' => trim(($data['notes'] ?? '').' Pago del grupo '.$group->displayCode()),
+                    ], $request->user());
+
+                    $left = round($left - $share, 2);
+                }
+            });
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        // Un solo aviso por el GRP-, no uno por cabaña.
+        if ($request->boolean('notify_guest', true)) {
+            try {
+                app(\App\Services\Payments\PaymentGuestNotifier::class)
+                    ->groupPaymentReceived($group->fresh(), $amount, $data['method']);
+            } catch (\Throwable $e) {
+                report($e);
+            }
+        }
+
+        return response()->json(self::serialize($group->fresh()->load('reservations.roomType', 'reservations.room', 'experienceBookings.session.experience')));
+    }
+
+    /**
      * Edita los datos propios del grupo (responsable y notas). Las
      * habitaciones se siguen operando una por una en /reservas.
      */
