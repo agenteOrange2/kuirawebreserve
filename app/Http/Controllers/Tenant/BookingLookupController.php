@@ -190,6 +190,8 @@ class BookingLookupController extends Controller
                     'banco' => $a['bank'] ?? '',
                     'titular' => $a['holder'] ?? '',
                     'cuenta' => $a['clabe'] ?? '',
+                    'tipo' => \App\Support\BankAccountNumber::label($a['clabe'] ?? ''),
+                    'aviso' => \App\Support\BankAccountNumber::guestHint($a['clabe'] ?? ''),
                 ])
                 ->values()
             : collect();

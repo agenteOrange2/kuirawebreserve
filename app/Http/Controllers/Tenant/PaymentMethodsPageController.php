@@ -165,6 +165,10 @@ class PaymentMethodsPageController extends Controller
                     ? (float) $settings['cancel_penalty_percent']
                     : 100.0,
                 'cancel_policy_text' => $settings['cancel_policy_text'] ?? '',
+                // Contrato de hospedaje que se adjunta en PDF al correo de
+                // confirmación. Vacío = no se adjunta nada (ver
+                // App\Services\Guests\ReservationContract).
+                'contract_text' => $settings['contract_text'] ?? '',
                 // Walk-ins: cuenta final al salir (default) o cobro al llegar.
                 'walkin_charge' => $settings['walkin_charge'] ?? 'checkout',
                 // Formas de cobro que acepta la recepción. Es lo que ofrecen

@@ -2,7 +2,6 @@
 
 namespace App\Actions\Payments;
 
-use App\Enums\PaymentStatus;
 use App\Enums\ReservationStatus;
 use App\Models\Central\PaymentGatewayLink;
 use App\Models\PaymentRequest;
@@ -152,8 +151,10 @@ class IssueGroupPayment
         $pending = $reservation->pendingBalance();
         $deposit = (float) $reservation->deposit_amount;
 
-        if (! $preferFull && $deposit > 0 && $deposit < (float) $reservation->total_amount && $reservation->payment_status === PaymentStatus::Unpaid) {
-            return round(min($deposit, $pending), 2);
+        if (! $preferFull && $deposit > 0 && $deposit < (float) $reservation->total_amount && ! $reservation->payment_status->coversDeposit()) {
+            // Con un abono previo que no llegó al anticipo, se pide lo que le
+            // falta al anticipo, no el anticipo completo otra vez.
+            return round(min(max($deposit - $reservation->paidTotal(), 0), $pending), 2);
         }
 
         return round($pending, 2);

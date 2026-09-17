@@ -281,21 +281,51 @@ class ReservationController extends Controller
             // (/ajustes/metodos-pago → Políticas): un hotel sin terminal no
             // debe poder registrar un cobro con tarjeta ni por descuido.
             'method' => ['required', Rule::in($counterMethods)],
-            'reference' => ['nullable', 'required_if:method,transfer', 'string', 'max:100'],
+            'reference' => ['nullable', 'string', 'max:100'],
             'notes' => ['nullable', 'string', 'max:255'],
+            // El comprobante del huésped, aquí mismo: o se sube el archivo, o
+            // se reusa el que ya llegó por el chat (su id de adjunto). Sin
+            // esto había que emitir un cobro y aprobarlo en /pagos solo para
+            // dejar la foto pegada al dinero.
+            'receipt' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
+            'receipt_media_id' => ['nullable', 'integer'],
             // Por defecto el huésped recibe su comprobante por el mismo hilo
             // (o WhatsApp/correo directo). Se apaga para un cobro que no le
             // interesa ver, p. ej. un ajuste interno.
             'notify_guest' => ['sometimes', 'boolean'],
         ], [
             'method.in' => 'Ese método de cobro no está habilitado en la recepción; revísalo en Ajustes, Métodos de pago.',
-            'reference.required_if' => 'Anota el folio o la referencia de la transferencia: es lo que se concilia con el banco.',
         ]);
+
+        $receiptMedia = $this->chatReceiptMedia($reservation, $request->integer('receipt_media_id'));
+
+        // El folio sigue siendo lo que se concilia con el banco, pero si viene
+        // el comprobante, ahí está: no se bloquea el registro por teclearlo.
+        if ($data['method'] === 'transfer' && blank($data['reference'] ?? null)
+            && ! $request->hasFile('receipt') && $receiptMedia === null) {
+            return response()->json([
+                'message' => 'Anota el folio de la transferencia o adjunta el comprobante: algo tiene que respaldar ese dinero.',
+            ], 422);
+        }
 
         try {
             $payment = $action->handle($reservation, $data, $request->user());
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        try {
+            if ($file = $request->file('receipt')) {
+                $payment->addMedia($file)->toMediaCollection('receipt');
+            } elseif ($receiptMedia !== null) {
+                $payment->addMedia($receiptMedia->getPath())
+                    ->preservingOriginal()
+                    ->usingFileName($receiptMedia->file_name)
+                    ->toMediaCollection('receipt');
+            }
+        } catch (\Throwable $e) {
+            // El dinero ya quedó registrado: la foto no puede tumbarlo.
+            report($e);
         }
 
         if ($request->boolean('notify_guest', true)) {
@@ -311,6 +341,104 @@ class ReservationController extends Controller
         return response()->json($this->serialize(
             $reservation->refresh()->load(['room:id,number', 'roomType:id,name', 'ratePlan:id,name,type']),
         ));
+    }
+
+    /**
+     * Lee un comprobante SIN registrar nada: el archivo que el staff va a
+     * subir, o el que el huésped ya mandó por el chat. Devuelve monto, folio
+     * y las diferencias para llenar el formulario y no teclear a mano lo que
+     * la imagen ya dice.
+     */
+    public function readReceipt(Request $request, Reservation $reservation): JsonResponse
+    {
+        $request->validate([
+            'receipt' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
+            'receipt_media_id' => ['nullable', 'integer'],
+        ]);
+
+        $reader = app(\App\Services\Payments\ReceiptReader::class);
+
+        if (! $reader->isConfigured()) {
+            return response()->json(['message' => 'La lectura de comprobantes no está disponible; captura el monto a mano.'], 422);
+        }
+
+        $media = $this->chatReceiptMedia($reservation, $request->integer('receipt_media_id'));
+        $file = $request->file('receipt');
+
+        if ($file === null && $media === null) {
+            return response()->json(['message' => 'Manda el comprobante que quieres leer.'], 422);
+        }
+
+        $reading = $file !== null
+            ? $reader->read((string) file_get_contents($file->getRealPath()), (string) $file->getMimeType())
+            : $reader->read((string) file_get_contents($media->getPath()), (string) $media->mime_type);
+
+        if ($reading === null) {
+            return response()->json(['message' => 'No se pudo leer ese archivo; captura el monto a mano.'], 422);
+        }
+
+        $check = app(\App\Services\Payments\ReceiptCheck::class)->evaluate(
+            $reading,
+            $reservation->paymentRequests()
+                ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
+                ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)
+                ->latest('id')
+                ->first(),
+        );
+
+        return response()->json([
+            'kind' => $reading['kind'],
+            'amount' => $reading['amount'],
+            'reference' => $reading['tracking_key'] ?? $reading['reference'],
+            'date' => $reading['date'],
+            'summary' => $check['summary'],
+            'verdict' => $check['verdict'],
+            'warnings' => $check['warnings'],
+        ]);
+    }
+
+    /** El comprobante pegado a un abono (privado, como los del huésped). */
+    public function paymentReceipt(Reservation $reservation, \App\Models\Payment $payment): \Symfony\Component\HttpFoundation\BinaryFileResponse
+    {
+        abort_unless($payment->reservation_id === $reservation->id, 404);
+
+        $media = $payment->getFirstMedia('receipt');
+
+        abort_unless($media !== null, 404);
+
+        return response()->file($media->getPath());
+    }
+
+    /**
+     * El adjunto que el huésped mandó por el chat de ESTA reserva. Se valida
+     * la pertenencia: nadie pega aquí la foto de otra conversación.
+     */
+    protected function chatReceiptMedia(Reservation $reservation, ?int $mediaId): ?\Spatie\MediaLibrary\MediaCollections\Models\Media
+    {
+        if (! $mediaId) {
+            return null;
+        }
+
+        $conversationIds = \App\Models\Conversation::query()
+            ->where('reservation_id', $reservation->id)
+            ->when($reservation->reservation_group_id, fn ($query, $group) => $query->orWhereIn(
+                'reservation_id',
+                Reservation::query()->where('reservation_group_id', $group)->pluck('id'),
+            ))
+            ->pluck('id');
+
+        $media = \Spatie\MediaLibrary\MediaCollections\Models\Media::query()->find($mediaId);
+
+        if (! $media || $media->collection_name !== 'attachments') {
+            return null;
+        }
+
+        $pertenece = \App\Models\Message::query()
+            ->whereKey($media->model_id)
+            ->whereIn('conversation_id', $conversationIds)
+            ->exists();
+
+        return $pertenece ? $media : null;
     }
 
     protected function transition(callable $fn, Reservation $reservation): JsonResponse

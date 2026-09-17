@@ -58,9 +58,13 @@ it('distribuye la ficha del grupo y usa acciones con texto legible', function ()
     $show = groupCrudSource('Show.vue');
 
     expect($show)
-        ->toContain('Habitaciones activas')
-        ->toContain('Personas registradas')
+        // El resumen del grupo dejó de ser tres tarjetas y es una tira de
+        // una línea (habitaciones · personas · total · saldo). La cifra que
+        // importa sigue estando; lo que cambió es el espacio que ocupa.
+        ->toContain('habitaciones activas')
+        ->toContain('{{ totalGuests }}')
         ->toContain('Saldo pendiente')
+        ->toContain('Grupo liquidado')
         ->toContain('Habitaciones del grupo')
         ->toContain('Editar ocupación')
         ->toContain('Cancelar esta habitación')

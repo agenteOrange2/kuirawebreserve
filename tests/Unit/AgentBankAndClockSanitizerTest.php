@@ -50,7 +50,7 @@ it('el número de cuenta inventado no sale, y en su lugar van los datos reales',
         ->and($limpio)->not->toContain('pide al personal')
         ->and($limpio)->toContain('- Banco: BBVA Bancomer')
         ->and($limpio)->toContain('- Titular: Jatziry Sofía Salazar Salazar')
-        ->and($limpio)->toContain('- Cuenta: 4152314577952941')
+        ->and($limpio)->toContain('- Tarjeta de débito: 4152314577952941')
         // Lo que no es dato bancario se respeta.
         ->and($limpio)->toContain('envíame el comprobante por este chat')
         // Y en su lugar: los datos van ANTES de "Después de hacer la
@@ -69,10 +69,42 @@ it('fuera del horario de transferencias no se da ninguna cuenta, ni real ni inve
         ->and($limpio)->not->toContain('los datos son:');
 });
 
-it('un bloque con los datos reales no se toca', function () use ($cuentas) {
+it('aun bien escrito, el bloque del modelo se cambia por el bloque fijo con la etiqueta correcta', function () use ($cuentas) {
+    // Caso real 2026-09-16: el número es una TARJETA de 16 dígitos y el bot
+    // la anunciaba como "Cuenta:". El huésped la capturaba como cuenta en su
+    // app y la transferencia no pasaba. El bot ya no redacta estos datos.
     $bueno = "Datos para transferencia:\n- Banco: BBVA Bancomer\n- Titular: Jatziry Sofia Salazar Salazar\n- Cuenta: 4152 3145 7795 2941\n\nMonto: $6,750.00 MXN";
 
-    expect(limpiarBanco($bueno, $cuentas))->toBe($bueno);
+    $limpio = limpiarBanco($bueno, $cuentas);
+
+    expect($limpio)->toStartWith('Datos para transferencia:')
+        ->and($limpio)->toContain('- Banco: BBVA Bancomer')
+        ->and($limpio)->toContain('- Titular: Jatziry Sofía Salazar Salazar')
+        ->and($limpio)->toContain('- Tarjeta de débito: 4152314577952941')
+        ->and($limpio)->toContain('elige transferir a tarjeta, no a CLABE ni a número de cuenta')
+        ->and($limpio)->not->toContain('- Cuenta:')
+        ->and($limpio)->toContain('Monto: $6,750.00 MXN');
+});
+
+it('fuera de horario tampoco sale la cuenta aunque el modelo la escriba bien', function () use ($cuentas) {
+    $bueno = "Datos para transferencia:\n- Banco: BBVA Bancomer\n- Titular: Jatziry Sofía Salazar Salazar\n- Cuenta: 4152314577952941";
+
+    $limpio = limpiarBanco($bueno, $cuentas, abierto: false);
+
+    expect($limpio)->not->toContain('4152314577952941')
+        ->and($limpio)->toContain('Las transferencias se reciben de 9:00 AM a 5:00 PM');
+});
+
+it('una CLABE de verdad se anuncia como CLABE y sin la advertencia de tarjeta', function () {
+    $limpio = limpiarBanco('- Clabe: 032180000118359719', [[
+        'bank' => 'Santander',
+        'holder' => 'Hotel Prueba',
+        'clabe' => '032180000118359719',
+        'active' => true,
+    ]]);
+
+    expect($limpio)->toContain('- CLABE interbancaria: 032180000118359719')
+        ->and($limpio)->not->toContain('tarjeta');
 });
 
 it('la cuenta correcta con un titular inventado también se corrige', function () use ($cuentas) {
@@ -90,7 +122,7 @@ it('un número inventado en prosa se quita, pero el teléfono del hotel no', fun
 
     expect($limpio)->not->toContain('0119870255')
         ->and($limpio)->toContain('Manda el comprobante de la transferencia al 656 850 8818.')
-        ->and($limpio)->toContain('- Cuenta: 4152314577952941');
+        ->and($limpio)->toContain('- Tarjeta de débito: 4152314577952941');
 });
 
 it('no confunde folios, fechas ni ligas con cuentas', function () use ($cuentas) {
@@ -107,7 +139,7 @@ it('quita el "Banco: Por confirmar" que deja al huésped sin datos', function ()
 
     expect($limpio)->not->toContain('Por confirmar')
         ->and($limpio)->toContain('- Banco: BBVA Bancomer')
-        ->and($limpio)->toContain('- Cuenta: 4152314577952941');
+        ->and($limpio)->toContain('- Tarjeta de débito: 4152314577952941');
 });
 
 it('sin cuentas configuradas solo quita el relleno, no inventa nada', function () {

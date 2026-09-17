@@ -1439,6 +1439,81 @@ class AgentToolsController extends Controller
         return strlen(preg_replace('/\D+/', '', $phone)) >= 10 ? $phone : null;
     }
 
+    /**
+     * Apuntar al huésped en la lista de espera cuando no hay lugar.
+     *
+     * En 2.5 días de septiembre, más de 40 conversaciones de cabañas
+     * chocaron con "no hay disponibilidad" para el 18-19 y el 25-26 y ahí se
+     * acabaron: el módulo existía, la pantalla existía, pero el bot no tenía
+     * con qué apuntarlos y esa gente se fue sin dejar rastro.
+     */
+    public function joinWaitlist(Request $request): JsonResponse
+    {
+        if (! $this->waitlistPublic()) {
+            return response()->json(['error' => 'Este hotel no maneja lista de espera.'], 422);
+        }
+
+        $conversation = \App\Models\Conversation::find($request->input('conversation_id'));
+
+        // El teléfono del chat manda sobre lo que el huésped teclee: es el
+        // que de verdad recibe el aviso.
+        $phone = $this->conversationPhone($conversation) ?: trim((string) $request->input('guest_phone'));
+
+        $request->merge(['guest_phone' => $phone ?: null]);
+
+        $data = $request->validate([
+            'guest_name' => ['required', 'string', 'max:255'],
+            'guest_phone' => ['nullable', 'string', 'max:30'],
+            'guest_email' => ['nullable', 'email', 'max:255'],
+            'starts_at' => ['required', 'date', 'after_or_equal:today'],
+            'ends_at' => ['required', 'date', 'after:starts_at'],
+            'room_type_id' => ['nullable', 'integer', 'exists:room_types,id'],
+        ]);
+
+        if (blank($data['guest_phone'] ?? null) && blank($data['guest_email'] ?? null)) {
+            return response()->json([
+                'error' => 'Necesito un teléfono o un correo para poder avisarle. Pídeselo.',
+            ], 422);
+        }
+
+        // Mismo contacto y mismas fechas no se apunta dos veces (el huésped
+        // insiste, el modelo reintenta).
+        $existing = \App\Models\WaitlistEntry::query()
+            ->waiting()
+            ->whereDate('starts_at', $data['starts_at'])
+            ->whereDate('ends_at', $data['ends_at'])
+            ->where(fn ($q) => $q
+                ->when($data['guest_phone'] ?? null, fn ($qq, $value) => $qq->orWhere('guest_phone', $value))
+                ->when($data['guest_email'] ?? null, fn ($qq, $value) => $qq->orWhere('guest_email', $value)))
+            ->first();
+
+        $entry = $existing ?? \App\Models\WaitlistEntry::create([
+            ...$data,
+            'conversation_id' => $conversation?->id,
+            'status' => \App\Models\WaitlistEntry::STATUS_WAITING,
+        ]);
+
+        $roomType = $entry->room_type_id ? RoomType::find($entry->room_type_id)?->name : null;
+
+        return response()->json([
+            'ok' => true,
+            'id' => $entry->id,
+            'ya_estaba' => $existing !== null,
+            'habitacion' => $roomType,
+            'message' => 'Quedó apuntado en la lista de espera para esas fechas'
+                .($roomType ? " ({$roomType})" : '')
+                .'. Si se libera lugar, el hotel le avisa por este medio. No promete lugar: es un aviso si se desocupa.',
+        ]);
+    }
+
+    /** ¿El hotel tiene el módulo de lista de espera encendido? */
+    public function waitlistPublic(): bool
+    {
+        $tenant = tenant();
+
+        return ! $tenant instanceof \App\Models\Tenant || $tenant->hasModule('lista-espera');
+    }
+
     protected function couponsAllowed(): bool
     {
         return app(\App\Services\CouponService::class)->enabled();
@@ -1578,6 +1653,10 @@ class AgentToolsController extends Controller
                 'banco' => $account['bank'] ?? '',
                 'titular' => $account['holder'] ?? '',
                 'cuenta' => $account['clabe'] ?? '',
+                // Qué ES el número (tarjeta, CLABE o cuenta) y el bloque tal
+                // cual se le pega al huésped: el modelo lo copia, no lo redacta.
+                'tipo' => \App\Support\BankAccountNumber::label($account['clabe'] ?? ''),
+                'bloque' => implode("\n", \App\Support\BankAccountNumber::blockLines($account)),
             ])
             ->values();
 
@@ -1722,6 +1801,8 @@ class AgentToolsController extends Controller
                 'banco' => $account['bank'] ?? '',
                 'titular' => $account['holder'] ?? '',
                 'cuenta' => $account['clabe'] ?? '',
+                'tipo' => \App\Support\BankAccountNumber::label($account['clabe'] ?? ''),
+                'bloque' => implode("\n", \App\Support\BankAccountNumber::blockLines($account)),
             ])
             ->values();
 

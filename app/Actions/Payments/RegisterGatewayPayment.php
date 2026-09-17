@@ -4,9 +4,9 @@ namespace App\Actions\Payments;
 
 use App\Actions\Reservations\ReviveCancelledReservation;
 use App\Actions\Reservations\TransitionReservation;
-use App\Enums\PaymentStatus;
 use App\Enums\ReservationStatus;
 use App\Exceptions\NoAvailabilityException;
+use App\Exceptions\PaymentNeedsConfirmation;
 use App\Models\Payment;
 use App\Models\PaymentRequest;
 use App\Models\Reservation;
@@ -59,6 +59,35 @@ class RegisterGatewayPayment
             }
 
             $reservation = Reservation::whereKey($request->reservation_id)->lockForUpdate()->firstOrFail();
+
+            // Una PERSONA aprobando una transferencia (las pasarelas y sus
+            // webhooks no pasan por aquí: ese dinero ya entró). Caso real
+            // cabañas 2026-09-15: se capturaron a mano cinco transferencias
+            // y luego se aprobaron sus comprobantes en /pagos; cada
+            // aprobación creó OTRO pago por el mismo dinero. Iris quedó
+            // "pagada" debiendo $1,750 y el corte subió $7,500 de aire.
+            if ($verifier !== null && $request->method === PaymentRequest::METHOD_TRANSFER) {
+                $depositAlreadyCovered = $request->concept === PaymentRequest::CONCEPT_DEPOSIT
+                    && $reservation->payment_status->coversDeposit();
+                $exceedsPending = (float) $request->amount > $reservation->pendingBalance() + 0.01;
+
+                if ($depositAlreadyCovered || $exceedsPending) {
+                    // Lo más probable: es el mismo depósito que ya se capturó.
+                    if ($captured = $this->capturedTransfer($reservation, $request)) {
+                        return $this->linkCaptured($request, $captured);
+                    }
+
+                    if (empty($data['confirm_overpay'])) {
+                        throw new PaymentNeedsConfirmation(sprintf(
+                            'Esta reserva ya tiene registrados $%s de $%s%s. Aprobar este comprobante sumaría $%s más. Si es el mismo depósito que ya se capturó, no lo apruebes; si de verdad entró dinero de más, confírmalo.',
+                            number_format($reservation->paidTotal(), 2),
+                            number_format((float) $reservation->total_amount, 2),
+                            $depositAlreadyCovered ? ' y el anticipo ya está cubierto' : '',
+                            number_format((float) $request->amount, 2),
+                        ));
+                    }
+                }
+            }
 
             $anomalies = [];
 
@@ -123,6 +152,25 @@ class RegisterGatewayPayment
         $breakdown = $request->meta['breakdown'] ?? [];
         $anomalies = [];
         $first = null;
+
+        // Misma regla que una reserva suelta: si una persona aprueba una
+        // transferencia que suma más de lo que el grupo aún debe, se pide
+        // confirmación antes de registrar dinero de más.
+        if ($verifier !== null && $request->method === PaymentRequest::METHOD_TRANSFER && empty($data['confirm_overpay'])) {
+            $owed = Reservation::query()
+                ->whereIn('id', array_keys($breakdown))
+                ->get()
+                ->sum(fn (Reservation $member) => $member->pendingBalance());
+            $shares = array_sum(array_map('floatval', $breakdown));
+
+            if ($shares > $owed + 0.01) {
+                throw new PaymentNeedsConfirmation(sprintf(
+                    'Al grupo solo le faltan $%s y este comprobante registraría $%s. Si es un depósito que ya se capturó, no lo apruebes; si de verdad entró dinero de más, confírmalo.',
+                    number_format($owed, 2),
+                    number_format($shares, 2),
+                ));
+            }
+        }
 
         foreach ($breakdown as $reservationId => $share) {
             $reservation = Reservation::whereKey((int) $reservationId)->lockForUpdate()->first();
@@ -263,6 +311,43 @@ class RegisterGatewayPayment
     }
 
     /**
+     * La transferencia que ya se capturó a mano por este mismo dinero: mismo
+     * monto, sin comprobante ligado y registrada desde un día antes de que
+     * naciera el cobro. Si el cobro se canceló por ese pago, ese va primero.
+     */
+    protected function capturedTransfer(Reservation $reservation, PaymentRequest $request): ?Payment
+    {
+        $supersededBy = (int) ($request->meta['superseded_by_payment_id'] ?? 0);
+
+        return $reservation->payments()
+            ->whereNull('payment_request_id')
+            ->where('method', 'transfer')
+            ->where('amount', $request->amount)
+            ->where('created_at', '>=', $request->created_at->copy()->subDay())
+            ->get()
+            ->sortBy(fn (Payment $payment) => [$payment->id === $supersededBy ? 0 : 1, $payment->id])
+            ->first();
+    }
+
+    /** El comprobante se cierra con el pago que ya existía: no se crea otro. */
+    protected function linkCaptured(PaymentRequest $request, Payment $payment): Payment
+    {
+        $payment->update(['payment_request_id' => $request->id]);
+
+        $request->update([
+            'status' => PaymentRequest::STATUS_PAID,
+            'payment_id' => $payment->id,
+            'meta' => array_merge($request->meta ?? [], ['linked_to_captured_payment' => $payment->id]),
+        ]);
+
+        activity('payment')
+            ->performedOn($payment)
+            ->log('Comprobante ligado al pago que ya estaba capturado en mostrador: no se duplicó el dinero.');
+
+        return $payment;
+    }
+
+    /**
      * @return array<string, mixed>
      */
     protected function reviveOrFlag(Reservation $reservation, ?User $user): array
@@ -287,7 +372,7 @@ class RegisterGatewayPayment
             return false;
         }
 
-        if ($reservation->payment_status === PaymentStatus::Unpaid) {
+        if (! $reservation->payment_status->coversDeposit()) {
             return false; // aún no cubre ni el anticipo
         }
 

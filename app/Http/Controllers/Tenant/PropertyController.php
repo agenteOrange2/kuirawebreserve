@@ -152,7 +152,14 @@ class PropertyController extends Controller
             'settings.bank_accounts' => ['sometimes', 'array', 'max:10'],
             'settings.bank_accounts.*.bank' => ['required', 'string', 'max:80'],
             'settings.bank_accounts.*.holder' => ['required', 'string', 'max:120'],
-            'settings.bank_accounts.*.clabe' => ['required', 'string', 'max:30'],
+            // Un número mal capturado es dinero del huésped que se va a otra
+            // parte: solo se acepta una CLABE (18, con dígito verificador),
+            // una tarjeta (16, Luhn) o una cuenta (10 u 11).
+            'settings.bank_accounts.*.clabe' => ['required', 'string', 'max:30', function (string $attribute, mixed $value, \Closure $fail) {
+                if (! \App\Support\BankAccountNumber::isValid((string) $value)) {
+                    $fail('Revisa el número: debe ser una CLABE de 18 dígitos, una tarjeta de débito de 16 o un número de cuenta de 10 u 11. Si lo copiaste, verifica que no le falte, sobre ni se haya cambiado un dígito.');
+                }
+            }],
             'settings.bank_accounts.*.active' => ['sometimes', 'boolean'],
             'settings.auto_confirm_on_payment' => ['sometimes', 'boolean'],
             // Saldos automáticos: con cuánta anticipación pedirlos y si el
@@ -191,6 +198,10 @@ class PropertyController extends Controller
             'settings.cancel_free_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['hour', 'day', 'week'])],
             'settings.cancel_penalty_percent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'settings.cancel_policy_text' => ['sometimes', 'nullable', 'string', 'max:2000'],
+            // Contrato de hospedaje del hotel: se adjunta en PDF al correo de
+            // confirmación con los datos de la reserva. "## " abre un
+            // apartado y "- " es una regla de la lista.
+            'settings.contract_text' => ['sometimes', 'nullable', 'string', 'max:20000'],
             // Reenganche del asistente ("¿sigues por ahí?"): cuánto silencio
             // del huésped se espera, y desde cuántos mensajes suyos vale la
             // pena escribirle. 0 mensajes = sin filtro (comportamiento de

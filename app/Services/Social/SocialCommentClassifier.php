@@ -27,8 +27,8 @@ class SocialCommentClassifier
 
     /**
      * @return array{clasificacion: string, respuesta_publica: string, mensaje_privado: string, meta: array<string, mixed>}|null
-     *                                                                                                                            null si ningún proveedor respondió o la salida no se pudo interpretar:
-     *                                                                                                                            en ese caso el comentario va a manos del staff, nunca se adivina.
+     *                                                                                                                           null si ningún proveedor respondió o la salida no se pudo interpretar:
+     *                                                                                                                           en ese caso el comentario va a manos del staff, nunca se adivina.
      */
     public function classify(SocialPost $post, SocialComment $comment): ?array
     {
@@ -88,6 +88,8 @@ class SocialCommentClassifier
         - spam: publicidad ajena, ligas sospechosas, texto sin relación u ofensas.
 
         REGLAS DE REDACCIÓN:
+        - NUNCA AFIRMES DISPONIBILIDAD. No tienes forma de consultarla: no digas "tenemos lugar", "hay cabañas disponibles" ni "sí hay para ese fin de semana". Invita a decir sus fechas y ofrece confirmárselo. (Caso real: se contestó "varias cabañas disponibles este fin de semana" con el hotel lleno.)
+        - SI PREGUNTAN PRECIO, DA EL PRECIO. Está en room_types y rate_plans de los datos del hotel, con lo que incluye y el costo de la persona extra. "Depende de la cabaña y la temporada" no es una respuesta: es perder al cliente.
         - respuesta_publica: máximo 140 caracteres, cálida y breve. NUNCA incluyas precios, teléfonos, ligas ni datos personales: eso va en el privado. No prometas nada que no esté en los datos del hotel.
         - mensaje_privado: 2 o 3 oraciones. Retoma lo que preguntó, ofrece ayuda concreta con tarifas o disponibilidad y deja abierta la conversación. Si en los datos del hotel está la respuesta (por ejemplo en faqs), dala.
         - Escribe en el idioma del comentario (español por defecto). NUNCA mezcles palabras ni caracteres de otro alfabeto.
@@ -106,7 +108,7 @@ class SocialCommentClassifier
             : '(sin texto)';
 
         return "PUBLICACIÓN ({$post->networkLabel()}): {$publication}\n\n"
-            ."COMENTARIO de ".($comment->author_name ?: 'un usuario').": ".trim((string) $comment->body);
+            .'COMENTARIO de '.($comment->author_name ?: 'un usuario').': '.trim((string) $comment->body);
     }
 
     /**
@@ -147,8 +149,58 @@ class SocialCommentClassifier
         // emojis antes de que el texto llegue a una red pública.
         return [
             'clasificacion' => $classification,
-            'respuesta_publica' => $this->brain->sanitizeChatText((string) ($decoded['respuesta_publica'] ?? '')),
-            'mensaje_privado' => $this->brain->sanitizeChatText((string) ($decoded['mensaje_privado'] ?? '')),
+            'respuesta_publica' => $this->withoutAvailabilityClaims(
+                $this->brain->sanitizeChatText((string) ($decoded['respuesta_publica'] ?? '')),
+            ),
+            'mensaje_privado' => $this->withoutAvailabilityClaims(
+                $this->brain->sanitizeChatText((string) ($decoded['mensaje_privado'] ?? '')),
+            ),
         ];
+    }
+
+    /**
+     * Aquí no hay herramientas: este servicio NO puede consultar el
+     * calendario, así que cualquier afirmación de disponibilidad es
+     * inventada. Caso real cabañas 2026-09-14 (comentario 642): "varias
+     * cabañas disponibles este fin de semana" con el hotel lleno.
+     *
+     * La oración que la afirma se cambia por la pregunta que sí corresponde;
+     * el resto del texto se respeta.
+     */
+    protected function withoutAvailabilityClaims(string $text): string
+    {
+        if (trim($text) === '') {
+            return $text;
+        }
+
+        $claim = '/(tenemos|hay|quedan|contamos con|s[íi] hay|a[úu]n hay|todav[íi]a hay|est[áa]n? libres?|disponibles?\s+(?:este|ese|el)|disponibilidad\s+(?:para|este|ese|el))/iu';
+        $safe = '¿Para qué fechas te interesa? Con gusto te confirmo si tenemos lugar.';
+        $changed = false;
+
+        $sentences = preg_split('/(?<=[.!?\n])/u', $text) ?: [];
+
+        $kept = array_filter(array_map(function (string $sentence) use ($claim, &$changed): string {
+            if (trim($sentence) === '' || ! preg_match($claim, $sentence)) {
+                return $sentence;
+            }
+
+            // Preguntar por disponibilidad no es afirmarla, y ofrecer
+            // revisarla ("con gusto reviso si tenemos lugar") tampoco.
+            if (str_contains($sentence, '?') || preg_match('/\b(si\s+(?:tenemos|hay|queda|contamos)|confirm\w*|revis\w*|verific\w*|checa\w*)/iu', $sentence)) {
+                return $sentence;
+            }
+
+            $changed = true;
+
+            return '';
+        }, $sentences), fn (string $sentence) => trim($sentence) !== '');
+
+        if (! $changed) {
+            return $text;
+        }
+
+        $rebuilt = trim(implode(' ', array_map('trim', $kept)));
+
+        return trim($rebuilt.' '.$safe);
     }
 }

@@ -1587,6 +1587,8 @@ const statusFor = (status: string) =>
 function paymentBadge(r: ReservationRow): string {
     if (r.payment_overdue) return 'bg-danger/10 text-danger';
     if (r.payment_status === 'paid') return 'bg-success/10 text-success';
+    // Abonó algo pero no llegó al anticipo: que se note, no "sin pago".
+    if (r.payment_status === 'partial') return 'bg-pending/10 text-pending';
     if (r.payment_status === 'deposit_paid') return 'bg-info/10 text-info';
     return 'bg-slate-100 text-slate-500 dark:bg-darkmode-400';
 }

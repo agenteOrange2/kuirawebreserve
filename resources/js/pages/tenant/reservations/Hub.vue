@@ -337,10 +337,18 @@ const cards = computed<HubCard[]>(() => [
                                     {{ row.status_label }}
                                 </span>
                                 <Link
-                                    :href="route(areaRoutes[row.area])"
-                                    class="ml-auto text-[11px] font-medium text-primary hover:underline"
+                                    :href="
+                                        route('tenant.reservations.detail', {
+                                            reservation: row.id,
+                                        })
+                                    "
+                                    class="ml-auto inline-flex items-center gap-1 text-[11px] font-medium text-primary hover:underline"
                                 >
-                                    {{ row.area_label }}
+                                    Ver reserva
+                                    <Lucide
+                                        icon="ChevronRight"
+                                        class="h-3 w-3"
+                                    />
                                 </Link>
                             </div>
                         </div>
@@ -365,7 +373,7 @@ const cards = computed<HubCard[]>(() => [
                                         >Total</Table.Th
                                     >
                                     <Table.Th>Estado</Table.Th>
-                                    <Table.Th class="text-right">Área</Table.Th>
+                                    <Table.Th class="text-right">Reserva</Table.Th>
                                 </Table.Tr>
                             </Table.Thead>
                             <Table.Tbody>
@@ -449,16 +457,31 @@ const cards = computed<HubCard[]>(() => [
                                             {{ row.status_label }}
                                         </span>
                                     </Table.Td>
+                                    <!-- Abre LA reserva: antes llevaba a la
+                                         lista del área (Próximas, Historial) y
+                                         había que buscarla otra vez. -->
                                     <Table.Td class="text-right">
                                         <Link
-                                            :href="route(areaRoutes[row.area])"
+                                            :href="
+                                                route(
+                                                    'tenant.reservations.detail',
+                                                    { reservation: row.id },
+                                                )
+                                            "
                                             class="inline-flex items-center gap-1 text-xs font-medium text-primary hover:underline"
                                         >
-                                            {{ row.area_label }}
+                                            Ver reserva
                                             <Lucide
                                                 icon="ChevronRight"
                                                 class="h-3.5 w-3.5"
                                             />
+                                        </Link>
+                                        <Link
+                                            :href="route(areaRoutes[row.area])"
+                                            class="mt-0.5 block text-[11px] text-slate-400 hover:text-primary"
+                                            title="Ir a la lista donde vive esta reserva"
+                                        >
+                                            en {{ row.area_label }}
                                         </Link>
                                     </Table.Td>
                                 </Table.Tr>

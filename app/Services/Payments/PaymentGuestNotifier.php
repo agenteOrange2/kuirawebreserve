@@ -78,7 +78,7 @@ class PaymentGuestNotifier
 
         $confirmed = $reservation->status === ReservationStatus::Confirmed;
 
-        $this->push($request->reservation_id, $body, wonLead: $confirmed, subject: 'Pago recibido', withCalendar: $confirmed);
+        $this->push($request->reservation_id, $body, wonLead: $confirmed, subject: 'Pago recibido', withCalendar: $confirmed, withContract: $confirmed);
     }
 
     /**
@@ -317,6 +317,15 @@ class PaymentGuestNotifier
      */
     public function reservationConfirmed(Reservation $reservation): void
     {
+        // Parte de un grupo: un solo aviso por el folio GRP- y con TODAS las
+        // habitaciones. Caso real cabañas 2026-09-14 (Nancy, GRP-2026-0151):
+        // apartó 3 cabañas y el aviso decía "Tu reserva RES-2026-1743 está
+        // confirmada: Cabaña Sencilla 2" — una sola, con folio de reserva
+        // suelta, y encima se repetía por cada habitación del grupo.
+        if ($reservation->reservation_group_id !== null && $this->groupConfirmed($reservation)) {
+            return;
+        }
+
         $arrival = $reservation->starts_at->locale('es')->isoFormat('dddd D [de] MMMM [a las] HH:mm');
 
         $body = "Tu reserva {$reservation->displayCode()} está confirmada: {$reservation->roomType?->name}, llegada el {$arrival}. Te esperamos — para tu registro, trae una identificación oficial."
@@ -336,6 +345,9 @@ class PaymentGuestNotifier
             wonLead: true,
             subject: 'Reserva confirmada',
             withCalendar: true,
+            // El contrato de hospedaje va aquí: es el momento en que el bot
+            // lleva meses prometiéndolo.
+            withContract: true,
         );
     }
 
@@ -424,7 +436,76 @@ class PaymentGuestNotifier
         return "{$scheme}://{$domain}{$relative}";
     }
 
-    protected function push(int $reservationId, string $body, bool $wonLead = false, string $subject = 'Sobre tu reserva', bool $withCalendar = false): void
+    /**
+     * Confirmación de un grupo: un aviso, el folio GRP- y las habitaciones
+     * por su nombre. Devuelve false si todavía no aplica (falta confirmar
+     * alguna) para que el aviso suelto siga su curso.
+     */
+    protected function groupConfirmed(Reservation $reservation): bool
+    {
+        $group = $reservation->group()->with(['reservations.roomType', 'reservations.room'])->first();
+
+        if (! $group) {
+            return false;
+        }
+
+        $live = $group->reservations->filter(fn (Reservation $r) => in_array($r->status, [
+            ReservationStatus::Pending, ReservationStatus::Confirmed, ReservationStatus::CheckedIn,
+        ], true));
+
+        // Todo o nada: mientras alguna siga pendiente, el grupo no está
+        // confirmado y decir que sí sería mentira.
+        if ($live->isEmpty() || $live->contains(fn (Reservation $r) => $r->status === ReservationStatus::Pending)) {
+            return false;
+        }
+
+        // Las habitaciones se confirman uno a uno en el mismo segundo: sin
+        // esto el huésped recibiría el mismo aviso tres veces.
+        if (! \Illuminate\Support\Facades\Cache::add('group-confirmed:'.tenant('id').':'.$group->id, true, now()->addDay())) {
+            return true;
+        }
+
+        $rooms = $live
+            ->map(fn (Reservation $r) => $r->room?->name ?: $r->roomType?->name)
+            ->filter()
+            ->unique()
+            ->values();
+
+        $arrival = $live->min('starts_at');
+        $arrival = $arrival instanceof \Carbon\CarbonInterface
+            ? $arrival->locale('es')->isoFormat('dddd D [de] MMMM [a las] HH:mm')
+            : $reservation->starts_at->locale('es')->isoFormat('dddd D [de] MMMM [a las] HH:mm');
+
+        $code = $group->displayCode();
+        $body = "Tu grupo {$code} está confirmado: {$live->count()} habitaciones"
+            .($rooms->isNotEmpty() ? ' ('.$rooms->join(', ', ' y ').')' : '')
+            .", llegada el {$arrival}. Te esperamos — para tu registro, trae una identificación oficial."
+            .$this->guaranteeNotice($live->first());
+
+        if ($lookup = $this->bookingLookupUrl()) {
+            $body .= " Puedes consultar tu reserva y adelantar tu registro de llegada en {$lookup}: entra con tu folio {$code} y tu número de teléfono.";
+        }
+
+        // El hilo puede estar colgado de cualquiera de las habitaciones del
+        // grupo; se avisa por esa, no por la que disparó la confirmación.
+        $threaded = Conversation::query()
+            ->whereIn('reservation_id', $live->pluck('id'))
+            ->latest('id')
+            ->first();
+
+        $this->push(
+            $threaded?->reservation_id ?: $reservation->id,
+            $body,
+            wonLead: true,
+            subject: 'Reserva confirmada',
+            withCalendar: true,
+            withContract: true,
+        );
+
+        return true;
+    }
+
+    protected function push(int $reservationId, string $body, bool $wonLead = false, string $subject = 'Sobre tu reserva', bool $withCalendar = false, bool $withContract = false): void
     {
         $conversation = Conversation::query()
             ->where('reservation_id', $reservationId)
@@ -436,7 +517,7 @@ class PaymentGuestNotifier
             $reservation = Reservation::find($reservationId);
 
             if ($reservation) {
-                $this->direct->send($reservation, $body, $subject, $withCalendar);
+                $this->direct->send($reservation, $body, $subject, $withCalendar, $withContract);
             }
 
             return;
@@ -464,7 +545,21 @@ class PaymentGuestNotifier
             $reservation = Reservation::find($reservationId);
 
             if ($reservation) {
-                $this->direct->send($reservation, $body, $subject, $withCalendar);
+                $this->direct->send($reservation, $body, $subject, $withCalendar, $withContract);
+            }
+
+            return;
+        }
+
+        // Entregado por el chat, pero la confirmación TAMBIÉN va por correo:
+        // ahí viaja el contrato y el respaldo escrito. Antes, quien apartaba
+        // por WhatsApp no recibía ningún correo y lo reclamaba (cabañas
+        // 2026-09-13 Montserrat, 2026-09-15 Damaris).
+        if ($withContract) {
+            $reservation = Reservation::find($reservationId);
+
+            if ($reservation) {
+                $this->direct->mailTo($reservation, $body, $subject, $withCalendar, true);
             }
         }
     }

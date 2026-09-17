@@ -22,6 +22,7 @@ const props = defineProps<{
         cancel_free_unit: string;
         cancel_penalty_percent: number;
         cancel_policy_text: string;
+        contract_text: string;
         walkin_charge: 'checkout' | 'checkin';
         counter_methods: string[];
         guarantee_enabled: boolean;
@@ -42,6 +43,7 @@ const form = reactive({
     cancel_free_unit: props.settings.cancel_free_unit,
     cancel_penalty_percent: props.settings.cancel_penalty_percent,
     cancel_policy_text: props.settings.cancel_policy_text,
+    contract_text: props.settings.contract_text,
     walkin_charge: props.settings.walkin_charge,
     counter_methods: [...props.settings.counter_methods],
     guarantee_enabled: props.settings.guarantee_enabled,
@@ -162,6 +164,7 @@ async function submit() {
                 cancel_free_unit: form.cancel_free_unit,
                 cancel_penalty_percent: form.cancel_penalty_percent,
                 cancel_policy_text: form.cancel_policy_text,
+                contract_text: form.contract_text,
                 walkin_charge: form.walkin_charge,
                 counter_methods: form.counter_methods,
                 guarantee_enabled: form.guarantee_enabled,
@@ -401,6 +404,58 @@ async function submit() {
                             {{ ratePlansWithCancelPolicy }}
                             tarifa(s) activa(s) definen su propia política de
                             cancelación y mandan sobre esta para sus reservas.
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="box box--stacked mt-4">
+                <div
+                    class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                >
+                    <div class="flex items-center gap-2">
+                        <Lucide
+                            icon="FileText"
+                            class="h-4 w-4 stroke-[1.5] text-primary"
+                        />
+                        <h2 class="text-sm font-medium">
+                            Contrato de hospedaje
+                        </h2>
+                    </div>
+                    <p class="mt-1 text-xs text-slate-500">
+                        Las reglas de la casa que el huésped acepta al reservar.
+                        Si lo capturas, el correo de confirmación lleva un PDF
+                        con estas condiciones y los datos de esa reserva (folio,
+                        fechas, personas e importes). Si lo dejas vacío, no se
+                        adjunta nada.
+                    </p>
+                </div>
+                <div class="px-5 py-4">
+                    <div class="max-w-2xl min-w-0">
+                        <div class="text-sm font-medium">
+                            Condiciones del contrato
+                        </div>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Un renglón por regla. Una línea que empiece con
+                            <span class="font-mono">##</span> se vuelve título
+                            de sección y una que empiece con
+                            <span class="font-mono">-</span> se vuelve viñeta.
+                        </p>
+                        <FormTextarea
+                            v-model="form.contract_text"
+                            class="mt-2 font-mono text-xs"
+                            rows="12"
+                            maxlength="20000"
+                            placeholder="## Seguridad&#10;- Prohibido fumar dentro de las cabañas.&#10;## Orden&#10;- Cancelación con al menos 20 días de anticipación. Multa del 30%."
+                        />
+                        <FormHelp
+                            v-if="errors.contract_text"
+                            class="text-danger"
+                            >{{ errors.contract_text }}</FormHelp
+                        >
+                        <p class="mt-2 text-xs text-slate-500">
+                            {{ form.contract_text.length }} de 20,000
+                            caracteres.
                         </p>
                     </div>
                 </div>

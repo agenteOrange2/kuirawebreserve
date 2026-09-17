@@ -21,7 +21,13 @@ interface PendingRequest {
     amount_label: string;
     checkout_url: string | null;
     expires_at: string | null;
-    bank_accounts: { banco: string; titular: string; cuenta: string }[];
+    bank_accounts: {
+        banco: string;
+        titular: string;
+        cuenta: string;
+        tipo?: string;
+        aviso?: string | null;
+    }[];
 }
 
 interface PreRegistration {
@@ -451,8 +457,8 @@ const holdCountdown = computed(() => {
                                 v-if="result.guarantee"
                                 class="border-t border-slate-100 pt-2 text-xs text-slate-400"
                             >
-                                Aparte del total, al llegar se cobra un
-                                depósito en garantía de
+                                Aparte del total, al llegar se cobra un depósito
+                                en garantía de
                                 {{ money(result.guarantee.amount) }}, que se te
                                 devuelve al registrar tu salida.
                             </p>
@@ -514,10 +520,24 @@ const holdCountdown = computed(() => {
                                         <div class="text-slate-500">
                                             {{ acc.titular }}
                                         </div>
+                                        <!-- Qué es el número: una tarjeta capturada como cuenta no pasa. -->
                                         <div
-                                            class="mt-1 font-mono text-slate-700"
+                                            v-if="acc.tipo"
+                                            class="mt-1 text-xs text-slate-500"
+                                        >
+                                            {{ acc.tipo }}
+                                        </div>
+                                        <div
+                                            class="font-mono text-slate-700"
+                                            :class="acc.tipo ? '' : 'mt-1'"
                                         >
                                             {{ acc.cuenta }}
+                                        </div>
+                                        <div
+                                            v-if="acc.aviso"
+                                            class="mt-1.5 text-xs text-pending"
+                                        >
+                                            {{ acc.aviso }}
                                         </div>
                                     </div>
                                 </div>

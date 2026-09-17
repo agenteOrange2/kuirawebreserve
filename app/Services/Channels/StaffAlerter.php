@@ -27,6 +27,14 @@ class StaffAlerter
     /** Alguien cotizó cuando ya no hay quien atienda. */
     public const KIND_AFTER_HOURS = 'after_hours_quote';
 
+    /**
+     * El traspaso ya se avisó, pero nadie lo atendió y el huésped lleva
+     * una hora esperando. Tiene su propio tipo a propósito: comparte
+     * conversación con KIND_HANDOFF y, con la misma llave, el "un aviso por
+     * día" del traspaso se habría tragado el recordatorio.
+     */
+    public const KIND_WAITING = 'handoff_waiting';
+
     public function __construct(
         protected DirectGuestMessenger $messenger,
         protected SupportHours $hours,
@@ -49,16 +57,18 @@ class StaffAlerter
 
         $conversation->markFollowup($key);
 
-        $title = $kind === self::KIND_HANDOFF
-            ? 'El asistente pasó una conversación a recepción'
-            : 'Cotización fuera de horario';
+        $title = match ($kind) {
+            self::KIND_HANDOFF => 'El asistente pasó una conversación a recepción',
+            self::KIND_WAITING => 'Un huésped lleva rato esperando respuesta',
+            default => 'Cotización fuera de horario',
+        };
 
         try {
             $result['bell'] = (bool) app(StaffNotifier::class)->notify(
                 type: StaffNotification::TYPE_MESSAGE,
                 title: $title,
                 body: $this->who($conversation).($reason !== '' ? ' — '.$reason : ''),
-                url: '/bandeja',
+                url: $kind === self::KIND_WAITING ? '/bandeja?esperando=1' : '/bandeja',
                 subject: $conversation,
             );
         } catch (Throwable $e) {
@@ -94,9 +104,11 @@ class StaffAlerter
             ->value('body');
 
         $lines = [
-            $kind === self::KIND_HANDOFF
-                ? 'El asistente pasó una conversación a recepción.'
-                : 'Entró una cotización fuera del horario de atención.',
+            match ($kind) {
+                self::KIND_HANDOFF => 'El asistente pasó una conversación a recepción.',
+                self::KIND_WAITING => 'Una conversación sigue esperando a alguien del hotel.',
+                default => 'Entró una cotización fuera del horario de atención.',
+            },
             '',
             'Huésped: '.$this->who($conversation),
         ];

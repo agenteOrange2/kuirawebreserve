@@ -31,9 +31,26 @@ const props = withDefaults(
          * prometer un link de pago que nunca va a existir.
          */
         gatewayAvailable?: boolean;
+        /**
+         * Comprobantes que el huésped ya mandó por el chat: se pueden usar
+         * aquí sin ir a buscarlos a la bandeja.
+         */
+        chatReceipts?: ChatReceipt[];
     }>(),
-    { gatewayAvailable: false },
+    { gatewayAvailable: false, chatReceipts: () => [] },
 );
+
+interface ChatReceipt {
+    media_id: number;
+    name: string;
+    is_image: boolean;
+    url: string;
+    at: string;
+    verdict: string | null;
+    summary: string | null;
+    amount: number | null;
+    reference: string | null;
+}
 
 const emit = defineEmits<{
     (e: 'saved'): void;
@@ -70,6 +87,87 @@ const paymentForm = reactive({
 const paymentError = ref<string | null>(null);
 const payingBusy = ref(false);
 
+// El comprobante del huésped, pegado al abono: el archivo que suba el staff
+// o el que ya llegó por el chat. Antes había que emitir un cobro y aprobarlo
+// en /pagos solo para dejar la foto junto al dinero.
+const receiptFile = ref<File | null>(null);
+const receiptMediaId = ref<number | null>(null);
+const receiptLabel = ref<string | null>(null);
+const receiptReading = ref<{
+    summary: string | null;
+    warnings: string[];
+} | null>(null);
+const readingBusy = ref(false);
+
+function clearReceipt() {
+    receiptFile.value = null;
+    receiptMediaId.value = null;
+    receiptLabel.value = null;
+    receiptReading.value = null;
+}
+
+/** Lo que diga la imagen llena el formulario; el staff corrige si hace falta. */
+async function readReceipt(payload: FormData) {
+    if (!payingReservation.value) return;
+    readingBusy.value = true;
+    receiptReading.value = null;
+    try {
+        const { data } = await axios.post(
+            `/api/reservations/${payingReservation.value.id}/receipt-reading`,
+            payload,
+        );
+        if (data.amount) paymentForm.amount = Number(data.amount);
+        if (data.reference) paymentForm.reference = String(data.reference);
+        if (data.kind !== 'not_receipt') paymentForm.method = 'transfer';
+        receiptReading.value = {
+            summary:
+                data.kind === 'not_receipt'
+                    ? 'Ese archivo no parece un comprobante de pago.'
+                    : data.summary,
+            warnings: data.warnings ?? [],
+        };
+    } catch (error: any) {
+        receiptReading.value = {
+            summary:
+                error.response?.data?.message ??
+                'No se pudo leer; captura el monto a mano.',
+            warnings: [],
+        };
+    } finally {
+        readingBusy.value = false;
+    }
+}
+
+function onReceiptFile(event: Event) {
+    const file = (event.target as HTMLInputElement).files?.[0] ?? null;
+    if (!file) return;
+    clearReceipt();
+    receiptFile.value = file;
+    receiptLabel.value = file.name;
+    const form = new FormData();
+    form.append('receipt', file);
+    readReceipt(form);
+}
+
+function useChatReceipt(receipt: ChatReceipt) {
+    clearReceipt();
+    receiptMediaId.value = receipt.media_id;
+    receiptLabel.value = `${receipt.name} · del chat ${receipt.at}`;
+
+    // Si ya se leyó al llegar, no se vuelve a gastar la lectura.
+    if (receipt.amount || receipt.reference) {
+        if (receipt.amount) paymentForm.amount = Number(receipt.amount);
+        if (receipt.reference) paymentForm.reference = receipt.reference;
+        paymentForm.method = 'transfer';
+        receiptReading.value = { summary: receipt.summary, warnings: [] };
+        return;
+    }
+
+    const form = new FormData();
+    form.append('receipt_media_id', String(receipt.media_id));
+    readReceipt(form);
+}
+
 function openPayment(r: ReservationRow) {
     payingReservation.value = r;
     // Default inteligente: primero el anticipo pendiente, luego el resto.
@@ -84,6 +182,7 @@ function openPayment(r: ReservationRow) {
     paymentForm.notes = '';
     paymentForm.notify = true;
     paymentError.value = null;
+    clearReceipt();
 }
 
 async function submitPayment() {
@@ -91,15 +190,19 @@ async function submitPayment() {
     payingBusy.value = true;
     paymentError.value = null;
     try {
+        const form = new FormData();
+        form.append('amount', String(paymentForm.amount));
+        form.append('method', paymentForm.method);
+        if (paymentForm.reference) form.append('reference', paymentForm.reference);
+        if (paymentForm.notes) form.append('notes', paymentForm.notes);
+        form.append('notify_guest', paymentForm.notify ? '1' : '0');
+        if (receiptFile.value) form.append('receipt', receiptFile.value);
+        else if (receiptMediaId.value)
+            form.append('receipt_media_id', String(receiptMediaId.value));
+
         await axios.post(
             `/api/reservations/${payingReservation.value.id}/payments`,
-            {
-                amount: paymentForm.amount,
-                method: paymentForm.method,
-                reference: paymentForm.reference || null,
-                notes: paymentForm.notes || null,
-                notify_guest: paymentForm.notify,
-            },
+            form,
         );
         payingReservation.value = null;
         emit('saved');
@@ -556,7 +659,8 @@ defineExpose({ open: openPayment });
                                     id="pay-ref"
                                     v-model="paymentForm.reference"
                                     :required="
-                                        paymentForm.method === 'transfer'
+                                        paymentForm.method === 'transfer' &&
+                                        !receiptLabel
                                     "
                                     type="text"
                                     class="pl-9"
@@ -577,6 +681,121 @@ defineExpose({ open: openPayment });
                                 type="text"
                                 placeholder="Ej. pago parcial, cambio pendiente…"
                             />
+                        </div>
+
+                        <!-- El comprobante, aquí mismo: el que suba el staff o
+                             el que el huésped ya mandó por el chat. -->
+                        <div class="sm:col-span-2">
+                            <FormLabel htmlFor="pay-receipt"
+                                >Comprobante
+                                <span class="text-slate-400"
+                                    >(opcional)</span
+                                ></FormLabel
+                            >
+                            <div class="flex flex-wrap items-center gap-2">
+                                <label
+                                    class="inline-flex h-9 cursor-pointer items-center gap-1.5 rounded-[0.5rem] border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
+                                >
+                                    <Lucide
+                                        icon="Paperclip"
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    Subir archivo
+                                    <input
+                                        id="pay-receipt"
+                                        type="file"
+                                        accept="image/*,application/pdf"
+                                        class="hidden"
+                                        @change="onReceiptFile"
+                                    />
+                                </label>
+                                <span
+                                    v-if="receiptLabel"
+                                    class="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-1 text-[11px] text-slate-600 dark:bg-darkmode-400"
+                                >
+                                    {{ receiptLabel }}
+                                    <button
+                                        type="button"
+                                        class="text-slate-400 hover:text-danger"
+                                        @click="clearReceipt"
+                                    >
+                                        <Lucide icon="X" class="h-3 w-3" />
+                                    </button>
+                                </span>
+                                <span
+                                    v-if="readingBusy"
+                                    class="inline-flex items-center gap-1.5 text-[11px] text-slate-500"
+                                >
+                                    <Lucide
+                                        icon="RefreshCw"
+                                        class="h-3 w-3 animate-spin"
+                                    />
+                                    Leyendo el comprobante…
+                                </span>
+                            </div>
+
+                            <p
+                                v-if="receiptReading?.summary"
+                                class="mt-1.5 text-[11px] text-slate-500"
+                            >
+                                {{ receiptReading.summary }}
+                            </p>
+                            <p
+                                v-for="(aviso, i) in receiptReading?.warnings ??
+                                []"
+                                :key="i"
+                                class="mt-1 inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
+                            >
+                                <Lucide icon="TriangleAlert" class="h-3 w-3" />
+                                {{ aviso }}
+                            </p>
+
+                            <!-- Lo que ya llegó por el chat: un clic y queda
+                                 pegado al abono, con su monto y su folio. -->
+                            <div
+                                v-if="props.chatReceipts.length"
+                                class="mt-2 rounded-lg border border-slate-200/70 dark:border-darkmode-400"
+                            >
+                                <div
+                                    class="border-b border-slate-200/60 px-3 py-1.5 text-[11px] font-medium tracking-wide text-slate-400 uppercase dark:border-darkmode-400"
+                                >
+                                    Llegó por el chat
+                                </div>
+                                <div
+                                    v-for="c in props.chatReceipts"
+                                    :key="c.media_id"
+                                    class="flex flex-wrap items-center gap-2 px-3 py-2 text-xs"
+                                >
+                                    <a
+                                        :href="c.url"
+                                        target="_blank"
+                                        class="inline-flex items-center gap-1.5 text-slate-600 hover:text-primary dark:text-slate-300"
+                                    >
+                                        <Lucide
+                                            :icon="
+                                                c.is_image
+                                                    ? 'Image'
+                                                    : 'FileText'
+                                            "
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        {{ c.at }}
+                                    </a>
+                                    <span
+                                        v-if="c.summary"
+                                        class="truncate text-[11px] text-slate-500"
+                                        >{{ c.summary }}</span
+                                    >
+                                    <Button
+                                        type="button"
+                                        variant="outline-secondary"
+                                        class="ml-auto h-7 rounded-[0.5rem] bg-white text-[11px]"
+                                        @click="useChatReceipt(c)"
+                                    >
+                                        Usar este
+                                    </Button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 

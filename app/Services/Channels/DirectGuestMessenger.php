@@ -30,10 +30,10 @@ class DirectGuestMessenger
         protected MetaApi $meta,
     ) {}
 
-    public function send(Reservation $reservation, string $body, string $subject = 'Sobre tu reserva', bool $withCalendar = false): bool
+    public function send(Reservation $reservation, string $body, string $subject = 'Sobre tu reserva', bool $withCalendar = false, bool $withContract = false): bool
     {
         $whatsapp = $this->sendWhatsApp($reservation, $body);
-        $correo = $this->sendEmail($reservation, $body, $subject, $withCalendar);
+        $correo = $this->sendEmail($reservation, $body, $subject, $withCalendar, $withContract);
 
         if (! $whatsapp && ! $correo) {
             $this->alertUndelivered(
@@ -253,7 +253,16 @@ class DirectGuestMessenger
         };
     }
 
-    protected function sendEmail(Reservation $reservation, string $body, string $subject, bool $withCalendar = false): bool
+    /**
+     * Solo correo, sin WhatsApp: el aviso ya salió por el chat y lo que falta
+     * es el respaldo escrito con su contrato adjunto.
+     */
+    public function mailTo(Reservation $reservation, string $body, string $subject, bool $withCalendar = false, bool $withContract = false): bool
+    {
+        return $this->sendEmail($reservation, $body, $subject, $withCalendar, $withContract);
+    }
+
+    protected function sendEmail(Reservation $reservation, string $body, string $subject, bool $withCalendar = false, bool $withContract = false): bool
     {
         $email = $reservation->guest?->email;
 
@@ -265,7 +274,7 @@ class DirectGuestMessenger
             // SMTP propio del hotel si lo configuró; si no, el default.
             $mailer = app(\App\Services\TenantMailer::class)->mailer();
 
-            ($mailer ?? Mail::mailer())->to($email)->send(new GuestReservationMail($reservation, $body, $subject, $withCalendar));
+            ($mailer ?? Mail::mailer())->to($email)->send(new GuestReservationMail($reservation, $body, $subject, $withCalendar, $withContract));
 
             return true;
         } catch (Throwable $e) {

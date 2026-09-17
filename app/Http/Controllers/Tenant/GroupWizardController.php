@@ -242,6 +242,8 @@ class GroupWizardController extends Controller
                 'banco' => $account['bank'] ?? '',
                 'titular' => $account['holder'] ?? '',
                 'cuenta' => $account['clabe'] ?? '',
+                'tipo' => \App\Support\BankAccountNumber::label($account['clabe'] ?? ''),
+                'aviso' => \App\Support\BankAccountNumber::guestHint($account['clabe'] ?? ''),
             ])
             ->values();
 

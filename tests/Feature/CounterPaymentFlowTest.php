@@ -69,8 +69,16 @@ function hiloDe(int $reservationId): Conversation
 
 function cobrarEnMostrador(Reservation $reservation, array $params): \Illuminate\Http\JsonResponse
 {
+    // Los archivos van por su propio carril en Request::create.
+    $files = [];
+
+    if (isset($params['receipt'])) {
+        $files['receipt'] = $params['receipt'];
+        unset($params['receipt']);
+    }
+
     return app(ReservationController::class)->registerPayment(
-        Request::create("/api/reservations/{$reservation->id}/payments", 'POST', $params),
+        Request::create("/api/reservations/{$reservation->id}/payments", 'POST', $params, [], $files),
         $reservation,
         app(RegisterReservationPayment::class),
     );
@@ -143,4 +151,86 @@ it('el pago de un grupo avisa UNA vez, con el folio GRP-', function () {
         ->toContain($group->displayCode())
         ->toContain('Saldo pendiente: $3,000.00')
         ->and($group->reservations()->where('status', ReservationStatus::Confirmed)->count())->toBe(2);
+});
+
+// --------------------- el comprobante, pegado al abono desde la ficha
+
+it('registra el anticipo con el comprobante que se sube en la ficha', function () {
+    \Illuminate\Support\Facades\Storage::fake('local');
+
+    $reservation = reservaPendiente();
+
+    $response = cobrarEnMostrador($reservation, [
+        'amount' => 2250,
+        'method' => 'transfer',
+        // Sin folio: el respaldo es la foto.
+        'receipt' => \Illuminate\Http\UploadedFile::fake()->image('spei.jpg'),
+    ]);
+
+    $pago = \App\Models\Payment::latest('id')->first();
+
+    expect($response->getStatusCode())->toBe(200)
+        ->and((float) $pago->amount)->toEqual(2250.0)
+        ->and($pago->getFirstMedia('receipt'))->not->toBeNull()
+        ->and($pago->receiptPayload()['is_image'])->toBeTrue();
+});
+
+it('usa el comprobante que ya había llegado por el chat', function () {
+    \Illuminate\Support\Facades\Storage::fake('local');
+
+    $reservation = reservaPendiente();
+    $conversation = hiloDe($reservation->id);
+
+    $mensaje = $conversation->messages()->create([
+        'direction' => 'in',
+        'sender_type' => 'visitor',
+        'body' => '[Imagen]',
+        'created_at' => now(),
+    ]);
+    $media = $mensaje->addMediaFromString(base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='))
+        ->usingFileName('spei-chat.png')
+        ->toMediaCollection('attachments');
+
+    cobrarEnMostrador($reservation, [
+        'amount' => 2250,
+        'method' => 'transfer',
+        'receipt_media_id' => $media->id,
+    ]);
+
+    $pago = \App\Models\Payment::latest('id')->first();
+
+    expect($pago->getFirstMedia('receipt')?->file_name)->toBe('spei-chat.png');
+});
+
+it('una transferencia sin folio ni comprobante no se registra', function () {
+    $reservation = reservaPendiente();
+
+    $response = cobrarEnMostrador($reservation, ['amount' => 1000, 'method' => 'transfer']);
+
+    expect($response->getStatusCode())->toBe(422)
+        ->and($response->getData(true)['message'])->toContain('folio')
+        ->and(\App\Models\Payment::count())->toBe(0);
+});
+
+it('no se puede pegar el comprobante de la conversación de otra reserva', function () {
+    \Illuminate\Support\Facades\Storage::fake('local');
+
+    $ajena = reservaPendiente();
+    $otroHilo = hiloDe($ajena->id);
+    $mensaje = $otroHilo->messages()->create([
+        'direction' => 'in', 'sender_type' => 'visitor', 'body' => '[Imagen]', 'created_at' => now(),
+    ]);
+    $media = $mensaje->addMediaFromString('x')->usingFileName('ajeno.png')->toMediaCollection('attachments');
+
+    $mia = reservaPendiente();
+
+    $response = cobrarEnMostrador($mia, [
+        'amount' => 500,
+        'method' => 'transfer',
+        'receipt_media_id' => $media->id,
+    ]);
+
+    // Sin folio y sin comprobante válido: no pasa.
+    expect($response->getStatusCode())->toBe(422)
+        ->and(\App\Models\Payment::count())->toBe(0);
 });

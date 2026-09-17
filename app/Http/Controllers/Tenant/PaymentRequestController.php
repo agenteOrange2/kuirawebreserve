@@ -137,10 +137,15 @@ class PaymentRequestController extends Controller
             // Foto o PDF del comprobante que mandó el huésped: queda
             // adjunto a la solicitud como evidencia de la verificación.
             'receipt' => ['nullable', 'file', 'mimes:jpg,jpeg,png,webp,pdf', 'max:8192'],
+            // "Sí, entró dinero de más": sin esto, un comprobante que la
+            // reserva ya tiene cubierto no se registra.
+            'confirm_overpay' => ['sometimes', 'boolean'],
         ]);
 
         try {
             $action->handle($paymentRequest, $data, $request->user());
+        } catch (\App\Exceptions\PaymentNeedsConfirmation $e) {
+            return response()->json(['message' => $e->getMessage(), 'needs_confirmation' => true], 422);
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
@@ -154,6 +159,8 @@ class PaymentRequestController extends Controller
 
         return response()->json([
             'ok' => true,
+            // El comprobante se cerró con un pago que ya estaba capturado.
+            'linked' => isset($paymentRequest->meta['linked_to_captured_payment']),
             'reservation_status' => $paymentRequest->reservation()->value('status'),
             'requires_attention' => (bool) ($paymentRequest->meta['requires_attention'] ?? false),
         ]);

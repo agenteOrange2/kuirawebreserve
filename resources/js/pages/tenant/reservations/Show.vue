@@ -37,6 +37,18 @@ const props = defineProps<{
     manualCheckinAllowed: boolean;
     gatewayAvailable: boolean;
     holdMinutes: number;
+    /** Comprobantes que el huésped mandó por el chat de esta reserva. */
+    chatReceipts?: {
+        media_id: number;
+        name: string;
+        is_image: boolean;
+        url: string;
+        at: string;
+        verdict: string | null;
+        summary: string | null;
+        amount: number | null;
+        reference: string | null;
+    }[];
 }>();
 
 const toast = useToasts();
@@ -102,6 +114,8 @@ const toneBadge: Record<string, string> = {
 const paymentTone = computed(() => {
     if (r.value.payment_status === 'paid') return toneBadge.success;
     if (r.value.payment_overdue) return toneBadge.danger;
+    if (r.value.payment_status === 'partial')
+        return 'bg-pending/10 text-pending';
     if (r.value.payment_status === 'deposit_paid') return toneBadge.primary;
     return toneBadge.slate;
 });
@@ -1115,6 +1129,7 @@ const cardHeader =
         <PaymentModal
             ref="paymentModal"
             :gateway-available="gatewayAvailable"
+            :chat-receipts="chatReceipts ?? []"
             @saved="reload"
         />
 

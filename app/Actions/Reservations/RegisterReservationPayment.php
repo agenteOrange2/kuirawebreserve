@@ -2,7 +2,6 @@
 
 namespace App\Actions\Reservations;
 
-use App\Enums\PaymentStatus;
 use App\Enums\ReservationStatus;
 use App\Exceptions\NoAvailabilityException;
 use App\Models\Payment;
@@ -101,7 +100,7 @@ class RegisterReservationPayment
     protected function supersedeRequests(Reservation $reservation, Payment $payment): void
     {
         $pending = $reservation->pendingBalance();
-        $depositCovered = $reservation->payment_status !== PaymentStatus::Unpaid;
+        $depositCovered = $reservation->payment_status->coversDeposit();
 
         $stale = PaymentRequest::query()
             ->where('status', PaymentRequest::STATUS_PENDING)
@@ -143,7 +142,7 @@ class RegisterReservationPayment
     /** Misma regla que la verificación en /pagos (RegisterGatewayPayment). */
     protected function shouldAutoConfirm(Reservation $reservation): bool
     {
-        if ($reservation->status !== ReservationStatus::Pending || $reservation->payment_status === PaymentStatus::Unpaid) {
+        if ($reservation->status !== ReservationStatus::Pending || ! $reservation->payment_status->coversDeposit()) {
             return false;
         }
 

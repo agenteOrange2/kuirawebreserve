@@ -2,7 +2,6 @@
 
 namespace App\Actions\Payments;
 
-use App\Enums\PaymentStatus;
 use App\Enums\ReservationStatus;
 use App\Models\Central\PaymentGatewayLink;
 use App\Models\PaymentRequest;
@@ -160,7 +159,7 @@ class IssuePaymentRequest
             return [PaymentRequest::CONCEPT_FULL, $pending];
         }
 
-        if (! $preferFull && $reservation->payment_status === PaymentStatus::Unpaid && $paid < $deposit) {
+        if (! $preferFull && ! $reservation->payment_status->coversDeposit() && $paid < $deposit) {
             return [PaymentRequest::CONCEPT_DEPOSIT, round($deposit - $paid, 2)];
         }
 

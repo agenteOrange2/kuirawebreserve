@@ -75,6 +75,76 @@ class Conversation extends Model
     }
 
     /** ¿Ya se envió este follow-up? (cada uno se manda una sola vez). */
+    /**
+     * Desde cuándo esta conversación espera a una persona del hotel.
+     *
+     * No es "el último mensaje": si el huésped vuelve a escribir mientras
+     * espera, el reloj no se reinicia — sería premiar al hotel por dejarlo
+     * esperando. Se mide desde el primer mensaje que quedó sin contestar
+     * después de la última respuesta del personal.
+     *
+     * Esperas reales de cabañas del 13 al 15 de septiembre: 16 min, 41 min,
+     * 1 h 12, 2 h 47, 5 h, 9.6 h y 22 h.
+     *
+     * @param  array<int, int>  $ids
+     * @return array<int, \Illuminate\Support\Carbon>
+     */
+    public static function waitingSinceFor(array $ids): array
+    {
+        if ($ids === []) {
+            return [];
+        }
+
+        $staff = Message::query()
+            ->selectRaw('conversation_id, max(id) as staff_id')
+            ->whereIn('conversation_id', $ids)
+            ->where('sender_type', 'staff')
+            ->groupBy('conversation_id')
+            ->pluck('staff_id', 'conversation_id');
+
+        $rows = collect();
+
+        // Hilos donde ya contestó alguien: se mide desde el primer mensaje
+        // posterior a esa respuesta.
+        if ($staff->isNotEmpty()) {
+            $rows = Message::query()
+                ->selectRaw('conversation_id, min(created_at) as since')
+                ->whereIn('conversation_id', $staff->keys()->all())
+                ->where(function ($query) use ($staff) {
+                    foreach ($staff as $conversationId => $staffId) {
+                        $query->orWhere(fn ($q) => $q->where('conversation_id', $conversationId)->where('id', '>', $staffId));
+                    }
+                })
+                ->groupBy('conversation_id')
+                ->pluck('since', 'conversation_id');
+        }
+
+        // Hilos donde nadie del hotel ha escrito nunca: desde el principio.
+        $sinStaff = array_values(array_diff($ids, $staff->keys()->all()));
+
+        if ($sinStaff !== []) {
+            $primeros = Message::query()
+                ->selectRaw('conversation_id, min(created_at) as since')
+                ->whereIn('conversation_id', $sinStaff)
+                ->groupBy('conversation_id')
+                ->pluck('since', 'conversation_id');
+
+            foreach ($primeros as $conversationId => $since) {
+                $rows[$conversationId] = $since;
+            }
+        }
+
+        return collect($rows)
+            ->map(fn ($since) => $since instanceof \Illuminate\Support\Carbon ? $since : \Illuminate\Support\Carbon::parse($since))
+            ->all();
+    }
+
+    /** Lo mismo para una sola conversación. */
+    public function waitingSince(): ?\Illuminate\Support\Carbon
+    {
+        return self::waitingSinceFor([$this->id])[$this->id] ?? null;
+    }
+
     public function followupSent(string $key): bool
     {
         return array_key_exists($key, $this->followups ?? []);

@@ -237,6 +237,7 @@ class Reservation extends Model
         $this->payment_status = match (true) {
             $paid >= (float) $this->total_amount && (float) $this->total_amount > 0 => \App\Enums\PaymentStatus::Paid,
             (float) $this->deposit_amount > 0 && $paid >= (float) $this->deposit_amount => \App\Enums\PaymentStatus::DepositPaid,
+            $paid > 0 => \App\Enums\PaymentStatus::Partial,
             default => \App\Enums\PaymentStatus::Unpaid,
         };
 

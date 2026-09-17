@@ -23,6 +23,9 @@ interface ConversationRow {
     guest_id: number | null;
     status: string;
     archived: boolean;
+    // Minutos esperando a una persona del hotel (solo las pendientes).
+    waiting_minutes?: number | null;
+    waiting_label?: string | null;
     lead_status: string;
     summary: string | null;
     bot_enabled: boolean;
@@ -100,8 +103,13 @@ const props = defineProps<{
     tenantId: string;
     property: { id: number; name: string };
     conversations: ConversationRow[];
-    filters: { archived: boolean };
-    counts: { active: number; resolved: number; archived: number };
+    filters: { archived: boolean; esperando: boolean };
+    counts: {
+        active: number;
+        resolved: number;
+        archived: number;
+        waiting: number;
+    };
     channels: ChannelRow[];
     staff: { id: number; name: string }[];
     canManage: boolean;
@@ -179,6 +187,7 @@ const leadMeta: Record<string, { label: string; tone: string }> = {
 // Chip de pago de la reserva ligada (spec-pagos §9.3).
 const paymentMeta: Record<string, { tone: string }> = {
     unpaid: { tone: 'bg-slate-100 text-slate-500 dark:bg-darkmode-400' },
+    partial: { tone: 'bg-pending/10 text-pending' },
     deposit_paid: { tone: 'bg-info/10 text-info' },
     paid: { tone: 'bg-success/10 text-success' },
 };
@@ -205,6 +214,28 @@ function setTab(t: InboxTab): void {
             },
         );
     }
+}
+
+// Traspasos sin dueño: el bot pasa el hilo a una persona y se apaga. Este
+// filtro va al servidor (?esperando=1) porque el que lleva 22 horas
+// esperando ya no cabe en las 100 conversaciones más recientes.
+function toggleEsperando(): void {
+    router.get(
+        route('tenant.inbox'),
+        props.filters.esperando ? {} : { esperando: 1 },
+        {
+            preserveState: true,
+            replace: true,
+            only: ['conversations', 'filters', 'counts'],
+        },
+    );
+}
+
+function esperaTono(minutes?: number | null): string {
+    if (!minutes) return 'bg-slate-100 text-slate-500 dark:bg-darkmode-400';
+    if (minutes >= 60) return 'bg-danger/10 text-danger';
+    if (minutes >= 15) return 'bg-warning/10 text-warning';
+    return 'bg-slate-100 text-slate-500 dark:bg-darkmode-400';
 }
 
 const filtered = computed(() => {
@@ -408,7 +439,9 @@ async function sendReply() {
         // vez de dejar creer que el huésped ya lo tiene.
         if (data?.delivered === false) {
             toast.error(
-                attachment.value ? 'El archivo no salió' : 'El mensaje no salió',
+                attachment.value
+                    ? 'El archivo no salió'
+                    : 'El mensaje no salió',
                 attachment.value
                     ? 'Quedó en el hilo, pero este canal todavía no manda adjuntos. Por ahora solo WhatsApp.'
                     : 'El canal lo rechazó (puede ser la ventana de 24 horas o el número). Quedó en el hilo marcado como no entregado: búscalo por otra vía.',
@@ -873,6 +906,24 @@ onBeforeUnmount(() => {
                                 <option value="lost">Perdidos</option>
                             </FormSelect>
                         </div>
+                        <button
+                            v-if="counts.waiting > 0 || filters.esperando"
+                            type="button"
+                            class="mb-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-[0.5rem] border px-2 text-xs font-medium transition"
+                            :class="
+                                filters.esperando
+                                    ? 'border-warning bg-warning/10 text-warning'
+                                    : 'border-slate-200/70 text-slate-500 hover:border-warning/60 hover:text-warning dark:border-darkmode-400'
+                            "
+                            title="Conversaciones que el asistente pasó a una persona y siguen sin respuesta"
+                            @click="toggleEsperando"
+                        >
+                            <Lucide icon="Hourglass" class="h-3.5 w-3.5" />
+                            Esperando al personal
+                            <span class="font-semibold">{{
+                                counts.waiting
+                            }}</span>
+                        </button>
                         <div
                             class="inline-flex w-full gap-1 rounded-[0.6rem] bg-slate-100/80 p-1 dark:bg-darkmode-700"
                         >
@@ -1093,6 +1144,21 @@ onBeforeUnmount(() => {
                                                     leadMeta[c.lead_status]
                                                         .label
                                                 }}</span
+                                            >
+                                            <span
+                                                v-if="
+                                                    c.waiting_label &&
+                                                    c.status === 'pending'
+                                                "
+                                                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                :class="
+                                                    esperaTono(
+                                                        c.waiting_minutes,
+                                                    )
+                                                "
+                                                title="Lleva este tiempo esperando a una persona del hotel"
+                                                >Espera
+                                                {{ c.waiting_label }}</span
                                             >
                                             <span
                                                 v-if="c.from_social"
@@ -1728,9 +1794,8 @@ onBeforeUnmount(() => {
                                     >Sin comprobante todavía</span
                                 >
                                 <span
-                                    v-for="(
-                                        aviso, i
-                                    ) in reservationCard.request.warnings"
+                                    v-for="(aviso, i) in reservationCard.request
+                                        .warnings"
                                     :key="i"
                                     class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
                                 >

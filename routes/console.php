@@ -72,6 +72,12 @@ Schedule::command('tenants:run conversations:follow-up')
     ->withoutOverlapping();
 
 // Resumen rodante de conversaciones inactivas (memoria del bot).
+// Traspasos sin dueño: a los 15 min campana, a los 60 aviso al hotel. Cada
+// 5 minutos porque una espera de media hora ya cuesta la venta.
+Schedule::command('tenants:run conversations:escalate-handoffs')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();
+
 Schedule::command('tenants:run conversations:summarize')
     ->everyFifteenMinutes()
     ->withoutOverlapping();

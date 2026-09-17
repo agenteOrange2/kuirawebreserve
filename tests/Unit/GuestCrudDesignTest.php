@@ -18,12 +18,20 @@ it('mantiene el directorio de huéspedes ordenado y fácil de filtrar', function
         ->toContain('Directorio de huéspedes')
         ->toContain('Encuentra un huésped')
         ->toContain('Nombre, teléfono o correo')
-        ->toContain('Resultados del directorio')
+        // El buscador y la lista se unieron en una caja: el encabezado de
+        // los resultados ahora dice a secas "Huéspedes" (o "Archivados") con
+        // el total al lado, en vez de "Resultados del directorio".
+        ->toContain("archived ? 'Archivados' : 'Huéspedes'")
+        ->toContain('{{ guests.total }}')
         ->toContain('Ver ficha')
         ->toContain('Archivar o eliminar')
         ->toContain('Eliminar definitivamente')
         ->toContain('Restaurar huésped')
-        ->toContain('class="h-7 w-7"')
+        // El directorio dejó de ser tabla con botones de icono (de ahí el
+        // viejo h-7 w-7): hoy es una lista de tarjetas con las acciones
+        // escritas, que es lo que estas mismas expectativas comprueban
+        // arriba. Lo que se conserva es que no haya una columna "Acciones"
+        // muda y que los diálogos sean grandes.
         ->toContain('size="lg"')
         ->not->toContain('>Acciones</Table.Th');
 });

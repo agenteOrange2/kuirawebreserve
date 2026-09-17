@@ -144,10 +144,12 @@ it('la operación de caseta y la revisión de daños son solo de motel', functio
     );
 
     expect($plan)
-        // La revisión de la habitación al salir es un paso de motel; en hotel
-        // puro no existe y el diálogo de salida no debe ofrecerla.
-        ->toContain(':can-review="hasMotel"')
-        // Y el cobro lo hace el encargado solo en motel PURO: en "ambos"
+        // La revisión de la habitación al salir ya NO es exclusiva de motel:
+        // un hotel que retiene depósito en garantía la necesita igual (el
+        // contrato de cabañas retiene $1,500 por cabaña). Por eso el diálogo
+        // de salida la ofrece siempre y el prop :can-review desapareció.
+        ->not->toContain(':can-review=')
+        // El cobro sí lo hace el encargado solo en motel PURO: en "ambos"
         // decide quien atiende, así que arranca como el hotel de siempre.
         ->toContain(":collector-default=\"isMotel ? 'encargado' : 'caseta'\"");
 });

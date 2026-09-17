@@ -6,6 +6,8 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Spatie\Activitylog\LogOptions;
 use Spatie\Activitylog\Traits\LogsActivity;
+use Spatie\MediaLibrary\HasMedia;
+use Spatie\MediaLibrary\InteractsWithMedia;
 
 /**
  * Abono registrado a una reserva o a una estancia (folio): el libro de
@@ -15,8 +17,9 @@ use Spatie\Activitylog\Traits\LogsActivity;
  * `kind`: null = abono normal de reserva · 'lodging' = hospedaje liquidado
  * en el folio (walk-in) · 'consumption' = consumos POS del folio.
  */
-class Payment extends Model
+class Payment extends Model implements HasMedia
 {
+    use InteractsWithMedia;
     use LogsActivity;
     public const UPDATED_AT = null;
 
@@ -40,6 +43,29 @@ class Payment extends Model
      * CashCutService la excluyen de los totales de hospedaje/venta.
      */
     public const KIND_GUARANTEE = 'guarantee';
+
+    /**
+     * El comprobante del huésped pegado al abono. Antes solo podía vivir en
+     * un cobro de /pagos: si el dinero se capturaba desde la reserva (el bot
+     * no lo detectó, o la transferencia llegó sin cobro emitido), la foto se
+     * quedaba en la bandeja y el pago nacía sin respaldo.
+     */
+    public function registerMediaCollections(): void
+    {
+        $this->addMediaCollection('receipt')->useDisk('local')->singleFile();
+    }
+
+    /** @return array{url: string, name: string, is_image: bool}|null */
+    public function receiptPayload(): ?array
+    {
+        $media = $this->getFirstMedia('receipt');
+
+        return $media ? [
+            'url' => route('tenant.reservations.payments.receipt', [$this->reservation_id, $this->id]),
+            'name' => $media->file_name,
+            'is_image' => str_starts_with((string) $media->mime_type, 'image/'),
+        ] : null;
+    }
 
     protected $fillable = [
         'reservation_id',

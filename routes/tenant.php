@@ -920,6 +920,11 @@ Route::middleware([
             // Borrado en masa desde el Historial (solo estados terminales).
             Route::delete('reservations', [ReservationController::class, 'destroyBulk'])->name('reservations.destroy-bulk');
             Route::post('reservations/{reservation}/payments', [ReservationController::class, 'registerPayment'])->name('reservations.payments.store');
+            // El comprobante pegado a un abono capturado en la ficha.
+            Route::get('reservations/{reservation}/payments/{payment}/receipt', [ReservationController::class, 'paymentReceipt'])->name('reservations.payments.receipt');
+            // Lee un comprobante (archivo o el que llegó por el chat) SIN
+            // registrar nada: devuelve monto y folio para llenar el formulario.
+            Route::post('reservations/{reservation}/receipt-reading', [ReservationController::class, 'readReceipt'])->name('reservations.receipt-reading');
             // Cobros en línea desde el panel (spec-pagos §7.5): link/transferencia.
             Route::post('reservations/{reservation}/payment-request', [ReservationController::class, 'issuePayment'])->name('reservations.payment-request');
             Route::delete('reservations/{reservation}/payment-request/{paymentRequest}', [ReservationController::class, 'cancelPayment'])->name('reservations.payment-request.cancel');

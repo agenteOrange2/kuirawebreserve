@@ -262,15 +262,22 @@ it('el comprobante deja un cobro por transferencia pendiente para aprobarlo en P
         ->and($request->expires_at->gt(now()->addHours(23)))->toBeTrue();
 });
 
-it('una transferencia ya verificada se registra desde la reserva, con folio obligatorio', function () {
+it('una transferencia ya verificada se registra desde la reserva, con folio o comprobante', function () {
     $reservation = reopenHoldFor(['confirmed' => true]);
     $controller = app(ReservationController::class);
 
-    expect(fn () => $controller->registerPayment(
+    // Sin folio Y sin comprobante no pasa: algo tiene que respaldar el dinero.
+    // (Desde 2026-09-16 el comprobante sirve de respaldo, así que el rechazo
+    // es una respuesta 422 con el motivo, no una excepción de validación.)
+    $sinRespaldo = $controller->registerPayment(
         Request::create('/x', 'POST', ['amount' => 250, 'method' => 'transfer']),
         $reservation,
         app(RegisterReservationPayment::class),
-    ))->toThrow(ValidationException::class);
+    );
+
+    expect($sinRespaldo->getStatusCode())->toBe(422)
+        ->and($sinRespaldo->getData(true)['message'])->toContain('comprobante')
+        ->and($reservation->payments()->count())->toBe(0);
 
     $response = $controller->registerPayment(
         Request::create('/x', 'POST', ['amount' => 250, 'method' => 'transfer', 'reference' => 'SPEI-99']),

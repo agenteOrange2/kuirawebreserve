@@ -26,6 +26,8 @@ class GuestReservationMail extends Mailable
         public string $bodyText,
         public string $subjectLine,
         public bool $withCalendar = false,
+        /** Contrato de hospedaje del hotel con los datos de ESTA reserva. */
+        public bool $withContract = false,
     ) {}
 
     public function envelope(): Envelope
@@ -55,14 +57,26 @@ class GuestReservationMail extends Mailable
      */
     public function attachments(): array
     {
-        if (! $this->withCalendar) {
-            return [];
+        $attachments = [];
+
+        if ($this->withCalendar) {
+            $attachments[] = Attachment::fromData(fn () => $this->calendarEvent(), 'reserva-'.$this->reservation->displayCode().'.ics')
+                ->withMime('text/calendar');
         }
 
-        return [
-            Attachment::fromData(fn () => $this->calendarEvent(), 'reserva-'.$this->reservation->displayCode().'.ics')
-                ->withMime('text/calendar'),
-        ];
+        // El contrato que el bot lleva prometiendo desde siempre: se adjunta
+        // solo si el hotel capturó su texto (ver ReservationContract).
+        if ($this->withContract) {
+            $contract = app(\App\Services\Guests\ReservationContract::class);
+            $pdf = $contract->pdf($this->reservation);
+
+            if ($pdf !== null) {
+                $attachments[] = Attachment::fromData(fn () => $pdf, $contract->filename($this->reservation))
+                    ->withMime('application/pdf');
+            }
+        }
+
+        return $attachments;
     }
 
     protected function calendarEvent(): string

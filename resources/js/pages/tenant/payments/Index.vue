@@ -216,6 +216,16 @@ function rejectFromDetail() {
     closeQueueDetail();
 }
 
+// La reserva ya tiene cubierto este dinero: el servidor no lo registra hasta
+// que alguien confirme que de verdad entró de más. Caso real cabañas
+// 2026-09-15: cinco comprobantes aprobados sobre transferencias ya
+// capturadas a mano duplicaron $7,500.
+const overpayWarning = ref<string | null>(null);
+
+watch(verifying, () => {
+    overpayWarning.value = null;
+});
+
 async function approvePayment() {
     if (!verifying.value || paymentBusy.value) return;
     paymentBusy.value = true;
@@ -224,21 +234,36 @@ async function approvePayment() {
         if (verifyReference.value.trim())
             form.append('reference', verifyReference.value.trim());
         if (receiptFile.value) form.append('receipt', receiptFile.value);
+        if (overpayWarning.value) form.append('confirm_overpay', '1');
         const { data } = await axios.post(
             `/api/payment-requests/${verifying.value.id}/approve`,
             form,
         );
-        toast.success(
-            'Pago verificado',
-            data.requires_attention
-                ? 'El pago quedó registrado pero la reserva requiere atención (revisa disponibilidad).'
-                : 'Se registró el pago y se avisó al huésped.',
-        );
+        if (data.linked) {
+            toast.success(
+                'Comprobante ligado',
+                'Ese dinero ya estaba capturado: el comprobante quedó ligado a ese pago, sin duplicarlo.',
+            );
+        } else {
+            toast.success(
+                'Pago verificado',
+                data.requires_attention
+                    ? 'El pago quedó registrado pero la reserva requiere atención (revisa disponibilidad).'
+                    : 'Se registró el pago y se avisó al huésped.',
+            );
+        }
         verifying.value = null;
         verifyReference.value = '';
         clearReceipt();
         router.reload();
     } catch (e: any) {
+        if (
+            e.response?.status === 422 &&
+            e.response?.data?.needs_confirmation
+        ) {
+            overpayWarning.value = e.response.data.message;
+            return;
+        }
         toast.error(
             'No se pudo aprobar',
             e.response?.data?.message ?? 'Ocurrió un error.',
@@ -537,9 +562,8 @@ watch(paymentsMethod, () => fetchPayments(1));
                                 class="mt-1 flex flex-wrap gap-1.5"
                             >
                                 <span
-                                    v-for="(
-                                        aviso, i
-                                    ) in item.receipt_check.warnings"
+                                    v-for="(aviso, i) in item.receipt_check
+                                        .warnings"
                                     :key="i"
                                     class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
                                 >
@@ -1148,6 +1172,18 @@ watch(paymentsMethod, () => fetchPayments(1));
                         registra el pago, la reserva se confirma si cubre el
                         anticipo y se avisa al huésped por su canal.
                     </div>
+                    <!-- Dinero que la reserva ya tiene cubierto: se detiene y
+                         se pide confirmar antes de registrarlo. -->
+                    <div
+                        v-if="overpayWarning"
+                        class="mt-4 flex items-start gap-2 rounded-lg border border-pending/30 bg-pending/10 px-3 py-2.5 text-xs text-pending"
+                    >
+                        <Lucide
+                            icon="TriangleAlert"
+                            class="mt-0.5 h-4 w-4 shrink-0"
+                        />
+                        <span>{{ overpayWarning }}</span>
+                    </div>
                     <div class="mt-6 flex justify-end gap-2">
                         <Button
                             variant="outline-secondary"
@@ -1155,12 +1191,18 @@ watch(paymentsMethod, () => fetchPayments(1));
                             >Cancelar</Button
                         >
                         <Button
-                            variant="primary"
+                            :variant="overpayWarning ? 'warning' : 'primary'"
                             :disabled="paymentBusy"
                             @click="approvePayment"
                         >
                             <Lucide icon="Check" class="mr-2 h-4 w-4" />
-                            {{ paymentBusy ? 'Registrando…' : 'Aprobar pago' }}
+                            {{
+                                paymentBusy
+                                    ? 'Registrando…'
+                                    : overpayWarning
+                                      ? 'Sí, entró dinero de más'
+                                      : 'Aprobar pago'
+                            }}
                         </Button>
                     </div>
                 </div>

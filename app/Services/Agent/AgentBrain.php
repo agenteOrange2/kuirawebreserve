@@ -291,6 +291,13 @@ class AgentBrain
             return null;
         }
 
+        // ¿Contesta sobre la fecha que el huésped acaba de pedir? Si no,
+        // se regenera una vez; si vuelve a fallar, $text queda vacío y el
+        // traspaso de abajo se hace cargo.
+        if (! $handoff && $text !== '' && $answeredBy !== null) {
+            $text = $this->reanswerOffTargetDate($conversation, $text, $answeredBy, $used, $meta, $handoffReason);
+        }
+
         $hours = app(SupportHours::class);
 
         if ($handoff || $text === '') {
@@ -307,9 +314,9 @@ class AgentBrain
 
         // Solo español o inglés: una respuesta en otro alfabeto se vuelve a
         // redactar ANTES de sanearla (el saneador solo recorta letras sueltas).
-        $text = $this->enforceLanguage($text, $answeredBy);
+        $text = $this->enforceLanguage($text, $answeredBy, $conversation);
 
-        $body = $this->sanitizeChatText($this->sanitizeClockClaims($this->sanitizeBankBlocks($this->sanitizeBankNumbers($this->sanitizeGatewayLinks(
+        $body = $this->sanitizeWeekdays($this->sanitizeChatText($this->sanitizeClockClaims($this->sanitizeBankBlocks($this->sanitizeBankNumbers($this->sanitizeGatewayLinks(
             $this->enforceLiveReservationClaims(
                 $this->enforcePaymentClaims(
                     $this->enforceHoldDeadlineClaims(
@@ -327,7 +334,7 @@ class AgentBrain
                 $conversation,
             ),
             $conversation,
-        )))));
+        ))))));
 
         // Teléfonos, correos y ligas: solo los del hotel, los del huésped o
         // los del propio sistema. Va al final, sobre el texto ya saneado.
@@ -1219,6 +1226,10 @@ class AgentBrain
 
         $kept = [];
         $suspicious = [];
+        // ¿El modelo escribió renglones "Campo: valor" de banco? Se
+        // reemplazan SIEMPRE por el bloque fijo, aunque parezcan correctos:
+        // el bot no redacta datos bancarios, los pega desde la configuración.
+        $structured = false;
         // Donde iba el primer dato bancario: ahí se pone el bloque rehecho, no
         // al final del mensaje (quedaba después de "Después de hacer la
         // transferencia…").
@@ -1227,6 +1238,7 @@ class AgentBrain
         foreach (preg_split('/\R/u', $text) ?: [] as $line) {
             if (preg_match('/^\s*[-*•]?\s*(clabe|n[uú]mero de cuenta|no\.?\s*de\s*cuenta|cuenta|tarjeta|banco|titular|beneficiario)\s*:(.*)$/iu', $line, $m)) {
                 $insertAt ??= count($kept);
+                $structured = true;
                 $field = mb_strtolower($m[1]);
                 $value = trim($m[2]);
 
@@ -1269,13 +1281,15 @@ class AgentBrain
             $kept[] = $line;
         }
 
-        if ($suspicious === []) {
+        if ($suspicious === [] && ! $structured) {
             return $text;
         }
 
-        rescue(fn () => \Illuminate\Support\Facades\Log::warning('Agente: datos bancarios inventados o incompletos, se rehízo el bloque', [
-            'renglones' => $suspicious,
-        ]), null, false);
+        if ($suspicious !== []) {
+            rescue(fn () => \Illuminate\Support\Facades\Log::warning('Agente: datos bancarios inventados o incompletos, se rehízo el bloque', [
+                'renglones' => $suspicious,
+            ]), null, false);
+        }
 
         $insertAt ??= count($kept);
         $replacement = [];
@@ -1284,11 +1298,12 @@ class AgentBrain
             $transferOpen ??= app(\App\Services\ReservationPolicy::class)->transferOpenNow();
 
             if ($transferOpen) {
-                $replacement = explode("\n", $active->map(fn (array $account) => implode("\n", array_filter([
-                    ! empty($account['bank']) ? '- Banco: '.$account['bank'] : null,
-                    ! empty($account['holder']) ? '- Titular: '.$account['holder'] : null,
-                    '- Cuenta: '.($account['clabe'] ?? $account['account'] ?? $account['cuenta'] ?? ''),
-                ])))->implode("\n\n"));
+                // Etiqueta según lo que ES el número: una tarjeta de 16
+                // dígitos anunciada como "Cuenta" hacía fallar la
+                // transferencia en la app del huésped.
+                $replacement = explode("\n", $active
+                    ->map(fn (array $account) => implode("\n", \App\Support\BankAccountNumber::blockLines($account)))
+                    ->implode("\n\n"));
             } else {
                 $hoursLabel ??= app(\App\Services\ReservationPolicy::class)->transferHoursLabel();
 
@@ -1541,6 +1556,104 @@ class AgentBrain
     }
 
     /**
+     * Marcas con mayúscula a media palabra que SÍ son correctas. Sin esta
+     * lista, "WhatsApp" se vería igual de roto que "díasWould".
+     */
+    protected const BRAND_WORDS = [
+        'WhatsApp', 'PayPal', 'MercadoPago', 'OpenPay', 'TikTok', 'YouTube', 'iPhone',
+        'KuiraWeb', 'Kuirawebreserve', 'AirBnB', 'Airbnb', 'McAllen', 'PayU', 'BanCoppel',
+    ];
+
+    /**
+     * Palabras que no existen ni en español ni en inglés: portugués,
+     * italiano y francés que se le escapan al modelo.
+     */
+    protected const FOREIGN_WORDS = [
+        'então', 'entao', 'você', 'voce', 'obrigad', 'não', 'quarto disponível', 'desculpe',
+        'sarebbe', 'vorrei', 'grazie', 'prego', 'disponibilità',
+        'accueillir', 'bonjour', 'merci', 'aujourd', 'voudrais', 'pouvez', 'nous sommes',
+    ];
+
+    /**
+     * Basura del modelo que el huésped no debería ver nunca. 14 mensajes en
+     * 2.5 días de cabañas: "¿Qué díasWould you like…" (conv. 648), "Hello!
+     * I\'d be happy" a quien escribía en español (660), "[Asistente
+     * Virtual]" (614) y "[nombre del asistente]" (745) sin llenar, y fugas
+     * de portugués, italiano y francés.
+     *
+     * Tres señales, todas deterministas: un marcador entre corchetes sin
+     * llenar, dos palabras pegadas con mayúscula en medio, o vocabulario de
+     * un idioma que este hotel no habla. Lo cuarto —contestar en inglés a
+     * quien escribe en español— se mide con palabras funcionales, que es lo
+     * que de verdad distingue un idioma del otro.
+     */
+    public function garbledReply(string $text, bool $guestInSpanish = true): bool
+    {
+        $clean = trim($text);
+
+        if ($clean === '') {
+            return false;
+        }
+
+        // 1. Marcador sin llenar: "[Asistente Virtual]", "[nombre del hotel]".
+        if (preg_match('/\[[^\]\n]{2,60}\]/u', $clean)) {
+            return true;
+        }
+
+        $sinMarcas = str_ireplace(self::BRAND_WORDS, '', $clean);
+
+        // 2. Dos palabras pegadas: "díasWould", "gustaWe".
+        if (preg_match('/\p{Ll}{3}\p{Lu}\p{Ll}{2}/u', $sinMarcas)) {
+            return true;
+        }
+
+        $plain = $this->plain($clean);
+
+        // 3. Vocabulario de otro idioma.
+        foreach (self::FOREIGN_WORDS as $word) {
+            if (str_contains($plain, $this->plain($word))) {
+                return true;
+            }
+        }
+
+        if (! $guestInSpanish) {
+            return false;
+        }
+
+        // 4. Inglés a quien escribe en español. Se cuentan palabras
+        // funcionales (las que no se pueden evitar al hablar), no
+        // sustantivos: "check-in" o "spa" son español de hotel.
+        $ingles = preg_match_all('/\b(the|you|your|would|like|please|we|our|is|are|for|with|have|how|what|when|thank|hello|help|about|there|and|can)\b/iu', $plain);
+        $espanol = preg_match_all('/\b(que|para|con|los|las|una|por|del|est[aá]|son|tiene|gusto|puede|le|su|te|hola|gracias|noche|fecha|cabaña|habitaci[oó]n|disponib\w*)\b/iu', $plain);
+
+        return $ingles >= 3 && $espanol <= 1;
+    }
+
+    /** ¿El huésped viene escribiendo en español? */
+    protected function guestWritesSpanish(?Conversation $conversation): bool
+    {
+        if ($conversation === null) {
+            return true;
+        }
+
+        $said = (string) $conversation->messages()
+            ->where('direction', 'in')
+            ->latest('id')
+            ->limit(3)
+            ->pluck('body')
+            ->implode(' ');
+
+        if (trim($said) === '') {
+            return true;
+        }
+
+        $ingles = preg_match_all('/\b(the|you|your|would|like|please|we|our|is|are|hello|hi|thanks|available|room|cabin|night)\b/iu', $said);
+        $espanol = preg_match_all('/\b(que|qué|para|con|los|las|una|por|del|hola|gracias|cu[aá]nto|precio|fecha|cabaña|habitaci[oó]n|disponib\w*|buenas|buenos)\b/iu', $said);
+
+        return $espanol >= $ingles;
+    }
+
+    /**
      * Candado de idioma DETERMINISTA. Caso real cabañas 2026-09-10 (conv.
      * 69): a un huésped que escribía en español, MiniMax le contestó "He
      * передал ваш запрос..." — entero en ruso. El prompt ya lo prohibía; con
@@ -1549,31 +1662,54 @@ class AgentBrain
      * proveedor la traducción al español; si tampoco sale bien, va una frase
      * segura en vez del mensaje en otro idioma.
      */
-    protected function enforceLanguage(string $text, ?AiProvider $provider): string
+    protected function enforceLanguage(string $text, ?AiProvider $provider, ?Conversation $conversation = null): string
     {
-        if (! $this->needsTranslation($text)) {
+        $otroAlfabeto = $this->needsTranslation($text);
+        $enEspanol = $this->guestWritesSpanish($conversation);
+        $basura = ! $otroAlfabeto && $this->garbledReply($text, $enEspanol);
+
+        if (! $otroAlfabeto && ! $basura) {
             return $text;
         }
 
-        \Illuminate\Support\Facades\Log::warning('Agente: respuesta en otro idioma, se traduce al español', [
+        \Illuminate\Support\Facades\Log::warning('Agente: respuesta mal redactada, se rehace', [
+            'motivo' => $otroAlfabeto ? 'otro alfabeto' : 'idioma o marcador sin llenar',
+            'conversation_id' => $conversation?->id,
             'text' => mb_substr($text, 0, 300),
         ]);
 
-        if ($provider !== null) {
-            try {
-                $translated = trim($this->run($provider, fn ($request) => $request
-                    ->withSystemPrompt('Traduce al español el siguiente mensaje que un asistente de hotel le escribe a su huésped. Responde SOLO con la traducción, en texto plano, sin comillas ni comentarios.')
-                    ->withPrompt($text))->text);
+        $instruccion = $otroAlfabeto
+            ? 'Traduce al español el siguiente mensaje que un asistente de hotel le escribe a su huésped. Responde SOLO con la traducción, en texto plano, sin comillas ni comentarios.'
+            : 'Reescribe este mensaje de un asistente de hotel a su huésped. Déjalo ENTERO en '.($enEspanol ? 'español' : 'inglés')
+                .', en texto plano, sin marcadores entre corchetes, sin palabras de otros idiomas y sin comillas ni comentarios. No agregues ni quites información.';
 
-                if ($translated !== '' && ! $this->needsTranslation($translated)) {
-                    return $translated;
-                }
+        // El mismo proveedor primero y, si su reescritura vuelve a salir
+        // mal, el siguiente de la cadena: la basura es del modelo, así que
+        // insistirle al mismo tiene poco caso.
+        $candidatos = array_values(array_filter(
+            [$provider, ...$this->providers()],
+            fn (?AiProvider $p) => $p !== null,
+        ));
+
+        foreach (array_slice($candidatos, 0, 2) as $candidato) {
+            try {
+                $rehecho = trim($this->run($candidato, fn ($request) => $request
+                    ->withSystemPrompt($instruccion)
+                    ->withPrompt($text))->text);
             } catch (Throwable $e) {
                 report($e);
+
+                continue;
+            }
+
+            if ($rehecho !== '' && ! $this->needsTranslation($rehecho) && ! $this->garbledReply($rehecho, $enEspanol)) {
+                return $rehecho;
             }
         }
 
-        return 'Disculpe, tuve un problema al redactar mi respuesta. ¿Me puede repetir su mensaje, por favor?';
+        return $enEspanol
+            ? 'Disculpe, tuve un problema al redactar mi respuesta. ¿Me puede repetir su mensaje, por favor?'
+            : 'Sorry, I had trouble writing my reply. Could you send your message again, please?';
     }
 
     /**
@@ -1621,6 +1757,8 @@ class AgentBrain
         $instructionsBlock = $this->instructionsBlock();
         $guidelinesBlock = $this->guidelinesBlock();
         $couponBlock = $this->couponBlock($conversation);
+        $datesBlock = $this->requestedDatesBlock($conversation);
+        $reservationsBlock = $this->reservationsBlock($conversation);
         $nowBlock = "\nAHORA MISMO son las ".now()->locale('es')->isoFormat('HH:mm')
             .' del '.$this->today().".\n";
 
@@ -1644,6 +1782,7 @@ REGLAS ESTRICTAS:
 - Usa las herramientas para tarifas, disponibilidad y reservas; NUNCA inventes precios, fechas, políticas ni cantidades de habitaciones.
 - INVENTARIO: cada tipo tiene un número FIJO de habitaciones, el campo "units" de room_types. Ese es el tope absoluto: si units es 1, JAMÁS ofrezcas dos ("2 Cabañas Reales" cuando solo existe una es el peor error que puedes cometer). Para ofrecer varias, usa consultar_disponibilidad_general y no pases de "units_available" por tipo.
 - NO AFIRMES DISPONIBILIDAD SIN VERIFICARLA: nunca digas que una habitación está libre —ni la ofrezcas como alternativa— sin haberla consultado con consultar_disponibilidad o consultar_disponibilidad_general para ESAS fechas exactas. Si un tipo salió ocupado, consulta el resto con consultar_disponibilidad_general ANTES de nombrar alternativas; si no queda nada libre, dilo tal cual y ofrece las fechas de alternative_dates (ya vienen verificadas, con su etiqueta en español) para no perder al huésped.
+- SIN LUGAR NO ES ADIÓS: cuando no haya disponibilidad y el huésped no acepte las fechas alternativas, ofrécele que lo apuntes en la lista de espera para avisarle si se libera, y si acepta llama apuntar_lista_espera con sus fechas originales. Solo si tienes esa herramienta; nunca prometas que se va a liberar ni le guardes lugar.
 - GRUPOS: si el grupo no cabe en una sola habitación, llama consultar_disponibilidad_general con las fechas y "personas", y ofrece TAL CUAL lo que devuelva suggested_combination (qué tipos, cuántas de cada uno y el total). Si combination_covers_guests viene en false, dilo con claridad y ofrece otras fechas o usa transferir_a_humano; nunca completes el grupo con habitaciones que no aparecen libres. No le pidas al huésped que él arme la combinación: propónsela tú.
 - No inventes política comercial: nunca afirmes descuentos, mínimos de noches, ni que "el precio es fijo todo el año" si no está en los datos del hotel. Si una tarifa trae seasonal en true, el precio cambia por fechas y solo consultar_disponibilidad te da el correcto.
 - FECHAS: al repetir la llegada y la salida usa exactamente las que devolvió la herramienta (starts_at/ends_at); no cambies día, mes ni año al redactarlas.
@@ -1680,7 +1819,7 @@ REGLAS ESTRICTAS:
 - Nunca menciones duraciones en horas, horarios de entrada/salida ni vigencias que las herramientas o estos datos no indiquen explícitamente.
 - Sé breve, cálido y profesional; máximo 2-3 oraciones por respuesta salvo que listes opciones. No uses emojis.
 - No saludes de nuevo si la conversación ya empezó: continúa el hilo donde va.
-{$guestBlock}{$hoursBlock}{$summaryBlock}{$couponBlock}{$nowBlock}
+{$guestBlock}{$hoursBlock}{$summaryBlock}{$couponBlock}{$nowBlock}{$reservationsBlock}{$datesBlock}
 PROMPT;
     }
 
@@ -1783,15 +1922,10 @@ BLOCK;
      *
      * @return array<string, \Carbon\CarbonImmutable>
      */
-    protected function datesMentioned(string $text): array
+    protected function datesMentioned(string $text, bool $loose = false): array
     {
-        $months = [
-            'enero' => 1, 'febrero' => 2, 'marzo' => 3, 'abril' => 4, 'mayo' => 5, 'junio' => 6,
-            'julio' => 7, 'agosto' => 8, 'septiembre' => 9, 'setiembre' => 9, 'octubre' => 10,
-            'noviembre' => 11, 'diciembre' => 12,
-        ];
-        $plain = mb_strtolower((string) preg_replace('/\s+/u', ' ', $text));
-        $plain = strtr($plain, ['á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u']);
+        $months = $this->monthNames();
+        $plain = $this->plain((string) preg_replace('/\s+/u', ' ', $text));
         $found = [];
 
         $add = function (int $day, int $month, ?int $year) use (&$found) {
@@ -1828,7 +1962,456 @@ BLOCK;
             }
         }
 
+        // Modo suelto: el huésped que ELIGE de una lista no repite el mes.
+        // "El domingo 27" es una fecha exacta —el próximo 27 que caiga en
+        // domingo— y sin esto el sistema no veía ninguna fecha en su
+        // mensaje. Caso real cabañas 2026-09-16 (conv. 937): eligió "el
+        // domingo 27" de las alternativas que el propio bot le ofreció y el
+        // bot le contestó del sábado 26, la fecha vieja, y volvió a
+        // ofrecerle la lista con el domingo 27 dentro.
+        if ($loose) {
+            $weekdays = 'domingo|lunes|martes|miercoles|jueves|viernes|sabado';
+
+            // "(el) domingo 27", nunca "domingo 27 de septiembre" (ese ya lo
+            // resolvió el paso de arriba, con su mes).
+            if (preg_match_all('/\b('.$weekdays.')\s+(?:el\s+)?(\d{1,2})\b(?!\s*(?:de\s*)?(?:'.$names.'))/u', $plain, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as $match) {
+                    $date = $this->nextDateWith((int) $match[2], $match[1]);
+
+                    if ($date !== null) {
+                        $found[$date->toDateString()] = $date;
+                    }
+                }
+            }
+
+            // "para el 27", "el día 27". Se descartan los números que son
+            // otra cosa ("el 27 personas" no existe, pero "el 2 noches" sí).
+            if (preg_match_all('/\b(?:el|del|dia)\s+(\d{1,2})\b(?!\s*(?:de\s*)?(?:'.$names.')|\s*(?:personas?|pax|adultos?|ni[nñ]os?|noches?|dias?|anos?|grados?|pesos?|%))/u', $plain, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as $match) {
+                    $date = $this->nextDateWith((int) $match[1]);
+
+                    if ($date !== null) {
+                        $found[$date->toDateString()] = $date;
+                    }
+                }
+            }
+        }
+
         return array_slice($found, 0, 5, true);
+    }
+
+    /**
+     * @return array<string, int>
+     */
+    protected function monthNames(): array
+    {
+        return [
+            'enero' => 1, 'febrero' => 2, 'marzo' => 3, 'abril' => 4, 'mayo' => 5, 'junio' => 6,
+            'julio' => 7, 'agosto' => 8, 'septiembre' => 9, 'setiembre' => 9, 'octubre' => 10,
+            'noviembre' => 11, 'diciembre' => 12,
+        ];
+    }
+
+    /** Minúsculas y sin acentos: así se comparan nombres de días y meses. */
+    protected function plain(string $text): string
+    {
+        return strtr(mb_strtolower($text), [
+            'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u',
+        ]);
+    }
+
+    /**
+     * El próximo día N (opcionalmente, el próximo N que caiga en ese día de
+     * la semana). Nadie reserva para ayer: siempre hacia adelante.
+     */
+    protected function nextDateWith(int $day, ?string $weekday = null): ?\Carbon\CarbonImmutable
+    {
+        if ($day < 1 || $day > 31) {
+            return null;
+        }
+
+        $indexes = ['domingo' => 0, 'lunes' => 1, 'martes' => 2, 'miercoles' => 3, 'jueves' => 4, 'viernes' => 5, 'sabado' => 6];
+        $target = $weekday !== null ? ($indexes[$this->plain($weekday)] ?? null) : null;
+
+        if ($weekday !== null && $target === null) {
+            return null;
+        }
+
+        $today = \Carbon\CarbonImmutable::now()->startOfDay();
+
+        // Dos años de margen: el mismo número en el mismo día de la semana
+        // se repite cada 5 o 6 meses en el peor caso.
+        for ($i = 0; $i < 24; $i++) {
+            $cursor = $today->addMonths($i);
+
+            if (! checkdate($cursor->month, $day, $cursor->year)) {
+                continue;
+            }
+
+            $date = \Carbon\CarbonImmutable::create($cursor->year, $cursor->month, $day)->startOfDay();
+
+            if ($date->lt($today)) {
+                continue;
+            }
+
+            if ($target === null || (int) $date->dayOfWeek === $target) {
+                return $date;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Las reservas vivas de quien está escribiendo, sin que tenga que
+     * teclear su código.
+     *
+     * En WhatsApp el número del chat ES su identidad (lo verificó el canal),
+     * así que basta para reconocerlo. Casos reales cabañas del 13 al 15 de
+     * septiembre: el huésped daba su teléfono y el bot contestaba "ya te
+     * encontré, pero necesito tu código" — y minutos después el propio
+     * sistema le mandaba "tu apartado RES-2026-1748 vence...", o sea que el
+     * dato estaba ahí.
+     *
+     * @return \Illuminate\Support\Collection<int, \App\Models\Reservation>
+     */
+    protected function guestReservations(?Conversation $conversation): \Illuminate\Support\Collection
+    {
+        if ($conversation === null) {
+            return collect();
+        }
+
+        $guestIds = array_filter([$conversation->guest_id]);
+
+        if ($conversation->phoneIsIdentity()) {
+            $byPhone = \App\Models\Guest::findByContact($conversation->contact_phone);
+
+            if ($byPhone !== null) {
+                $guestIds[] = $byPhone->id;
+            }
+        }
+
+        $linked = array_filter([$conversation->reservation_id]);
+
+        if ($guestIds === [] && $linked === []) {
+            return collect();
+        }
+
+        return \App\Models\Reservation::query()
+            ->with(['roomType:id,name', 'group'])
+            ->where(function ($query) use ($guestIds, $linked) {
+                if ($linked !== []) {
+                    $query->orWhereIn('id', $linked);
+                }
+
+                if ($guestIds !== []) {
+                    // Vivas: lo que todavía puede pasar. Una estancia
+                    // terminada hace meses solo sería ruido en el prompt.
+                    $query->orWhere(fn ($active) => $active
+                        ->whereIn('guest_id', $guestIds)
+                        ->whereIn('status', [
+                            \App\Enums\ReservationStatus::Pending,
+                            \App\Enums\ReservationStatus::Confirmed,
+                            \App\Enums\ReservationStatus::CheckedIn,
+                        ])
+                        ->where('ends_at', '>=', now()->subDay()));
+                }
+            })
+            ->orderBy('starts_at')
+            ->limit(3)
+            ->get();
+    }
+
+    /**
+     * Las reservas de quien escribe, en el prompt. Sin esto el bot pedía un
+     * código que el sistema ya tenía.
+     */
+    protected function reservationsBlock(?Conversation $conversation): string
+    {
+        $reservations = $this->guestReservations($conversation);
+
+        if ($reservations->isEmpty()) {
+            return '';
+        }
+
+        $lines = $reservations
+            ->map(function (\App\Models\Reservation $reservation): string {
+                $pending = $reservation->pendingBalance();
+
+                return '- '.$reservation->displayCode()
+                    .($reservation->group?->code ? ' (parte del grupo '.$reservation->group->code.')' : '')
+                    .': '.($reservation->roomType?->name ?? 'habitación')
+                    .', llegada '.$reservation->starts_at?->format('Y-m-d H:i')
+                    .', estado '.$reservation->status->value
+                    .', pago '.$reservation->payment_status->value
+                    .($pending > 0 ? ', saldo pendiente $'.number_format($pending, 2) : '');
+            })
+            ->implode("\n");
+
+        return "\nRESERVAS DE QUIEN TE ESCRIBE (el sistema las encontró por su número de este chat; son SUYAS):\n{$lines}\nSi pregunta por \"su reserva\" o \"su apartado\", es una de estas: NO le pidas el código, ya lo tienes. Para el detalle o el estado de pago llama consultar_reserva con ese código.\n";
+    }
+
+    /**
+     * La fecha que el huésped pidió EN SU ÚLTIMO MENSAJE. Solo el último:
+     * cuando cambia de fecha, la anterior deja de importar, y ese cambio es
+     * justo donde el bot se pierde.
+     *
+     * @return array<string, \Carbon\CarbonImmutable>
+     */
+    protected function requestedDates(Conversation $conversation): array
+    {
+        $last = $conversation->messages()
+            ->where('direction', 'in')
+            ->latest('id')
+            ->first();
+
+        $said = trim((string) $last?->body);
+
+        // Los adjuntos llegan como "[adjuntó un comprobante: ...]": ahí no
+        // hay fecha pedida, hay un archivo.
+        if ($said === '' || str_starts_with($said, '[')) {
+            return [];
+        }
+
+        return $this->datesMentioned($said, loose: true);
+    }
+
+    /**
+     * La fecha pedida, ya resuelta por el servidor, al final del prompt.
+     * Prevención antes que corrección: si el modelo la tiene escrita con
+     * todas sus letras, no tiene que deducirla del hilo.
+     */
+    protected function requestedDatesBlock(?Conversation $conversation): string
+    {
+        if ($conversation === null) {
+            return '';
+        }
+
+        $dates = $this->requestedDates($conversation);
+
+        if ($dates === []) {
+            return '';
+        }
+
+        $list = implode('; ', array_map(
+            fn (\Carbon\CarbonImmutable $date) => $date->locale('es')->isoFormat('dddd D [de] MMMM [de] YYYY').' ('.$date->toDateString().')',
+            $dates,
+        ));
+
+        return "\nFECHA QUE PIDIÓ EL HUÉSPED EN SU ÚLTIMO MENSAJE: {$list}. Contesta sobre ESA fecha y consulta la disponibilidad con ESA fecha. Si antes se habló de otra, ya no aplica: el huésped acaba de elegir esta. Y si esta fecha la sacaste de una lista de alternativas que tú le ofreciste, NO se la vuelvas a ofrecer como alternativa: es la que eligió.\n";
+    }
+
+    /**
+     * ¿El veredicto de la respuesta es sobre la fecha que pidió el huésped?
+     *
+     * Solo se revisan las oraciones que dictan disponibilidad ("no hay",
+     * "sí está disponible"): el resto puede nombrar otras fechas con toda
+     * razón —la salida del día siguiente, alternativas verificadas— y
+     * marcarlas sería romper respuestas correctas.
+     *
+     * @param  array<string, \Carbon\CarbonImmutable>  $requested
+     */
+    protected function answersRequestedDates(string $text, array $requested): bool
+    {
+        if ($requested === [] || trim($text) === '') {
+            return true;
+        }
+
+        // Cómo dicta el bot de verdad, sacado del corpus: "lamento
+        // informarle que...", "tampoco hay disponibilidad", "confirmo la
+        // disponibilidad". Sin "lamento"/"tampoco" se escapaba justo la
+        // frase que perdió al huésped de la conversación 937.
+        $verdict = '/(lamento|lamentablemente|tampoco\s+(?:hay|queda|est[áa])|no\s+hay\s+(?:disponibilidad|lugar|cupo)|no\s+queda|no\s+est[áa]\s+disponible|no\s+tenemos\s+disponib|sin\s+disponibilidad|s[íi]\s+hay\s+disponibilidad|s[íi]\s+est[áa]\s+disponible|confirmo\s+(?:la\s+)?disponibilidad|est[áa]\s+disponible|tenemos\s+disponible)/iu';
+
+        foreach (preg_split('/(?<=[.!?\n])/u', $text) ?: [] as $sentence) {
+            if (trim($sentence) === '' || ! preg_match($verdict, $sentence)) {
+                continue;
+            }
+
+            $dates = $this->datesMentioned($sentence, loose: true);
+
+            if ($dates !== [] && array_intersect_key($dates, $requested) === []) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    /**
+     * El huésped eligió una fecha y la respuesta dictamina sobre otra.
+     *
+     * Caso real cabañas 2026-09-16 (conv. 937): tras ofrecerle "Domingo 27
+     * de septiembre" como alternativa, el huésped escribió "El domingo 27" y
+     * el bot contestó "el sábado 26 tampoco hay disponibilidad" y le repitió
+     * la lista con el domingo 27 dentro. El huésped ya no volvió a escribir.
+     *
+     * Aquí no se puede corregir el texto —el servidor no sabe qué contestar
+     * por él—, así que se vuelve a generar UNA vez con la fecha dictada. Si
+     * a la segunda sigue hablando de otra fecha, contesta una persona: decir
+     * la fecha equivocada es peor que tardarse.
+     *
+     * @param  array<int, string>  $used
+     * @param  array<string, mixed>  $meta
+     */
+    protected function reanswerOffTargetDate(
+        Conversation $conversation,
+        string $text,
+        AiProvider $provider,
+        array $used,
+        array &$meta,
+        string &$handoffReason,
+    ): string {
+        $requested = $this->requestedDates($conversation);
+
+        if ($requested === [] || $this->answersRequestedDates($text, $requested)) {
+            return $text;
+        }
+
+        // Si esta corrida ya apartó o cobró, no se repite: volvería a
+        // hacerlo. La respuesta sale como está y queda en la bitácora.
+        if (array_intersect($used, ['hold', 'group_hold', 'payment', 'reopen_hold']) !== []) {
+            \Illuminate\Support\Facades\Log::warning('Agente: respuesta sobre otra fecha, no se reintenta (ya escribió)', [
+                'conversation_id' => $conversation->id,
+                'pedida' => array_keys($requested),
+            ]);
+
+            return $text;
+        }
+
+        $list = implode(' y ', array_map(
+            fn (\Carbon\CarbonImmutable $date) => $date->locale('es')->isoFormat('dddd D [de] MMMM [de] YYYY'),
+            $requested,
+        ));
+
+        \Illuminate\Support\Facades\Log::warning('Agente: respuesta sobre otra fecha, se regenera', [
+            'conversation_id' => $conversation->id,
+            'pedida' => array_keys($requested),
+            'descartada' => mb_substr($text, 0, 160),
+        ]);
+
+        try {
+            $handoff = false;
+            $usedAgain = [];
+            $reason = '';
+
+            $aviso = "CORRECCIÓN: tu respuesta anterior dictaminó sobre una fecha que el huésped NO pidió. Él pidió {$list}. Vuelve a contestar SOLO sobre esa fecha, consultándola con las herramientas si hace falta. No dictamines sobre ninguna otra fecha ni se la ofrezcas como alternativa.";
+
+            $response = $this->run($provider, fn ($request) => $request
+                ->withSystemPrompt($this->systemPrompt($conversation)."\n\n".$aviso)
+                ->withMessages($this->history($conversation))
+                // Solo lectura: el segundo intento consulta, nunca aparta.
+                ->withTools($this->toolset($handoff, $conversation, true, $usedAgain, $reason))
+                ->withMaxSteps(6));
+
+            $second = trim($response->text);
+        } catch (Throwable $e) {
+            report($e);
+
+            return $text;
+        }
+
+        $meta['date_retry'] = true;
+
+        if ($second !== '' && $this->answersRequestedDates($second, $requested)) {
+            return $second;
+        }
+
+        $meta['date_handoff'] = true;
+        $handoffReason = 'El asistente contestó dos veces sobre una fecha distinta a la que pidió el huésped ('.$list.').';
+
+        return '';
+    }
+
+    /**
+     * Días de la semana que no cuadran con la fecha. Casos reales cabañas:
+     * "sábado 18 de septiembre" (era viernes) dos veces —en una la venta se
+     * perdió entre "disponible / no disponible / hubo un error"—, "mañana
+     * martes 22" dicho un lunes 14 y "lunes 21 de octubre". Contar días no
+     * es trabajo del modelo: el nombre lo pone el servidor.
+     *
+     * Si el día de la semana cuadra con el año pasado, este o el siguiente,
+     * se deja tal cual: hablar de una estancia pasada es legítimo.
+     */
+    public function sanitizeWeekdays(string $text): string
+    {
+        if (trim($text) === '') {
+            return $text;
+        }
+
+        $names = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
+        $plainNames = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+        $months = $this->monthNames();
+        $monthNames = implode('|', array_keys($months));
+
+        $fixed = preg_replace_callback(
+            '/\b(domingos?|lunes|martes|mi[eé]rcoles|jueves|viernes|s[áa]bados?)(\s+(?:el\s+)?)(\d{1,2})(\s*(?:de\s*)?)('.$monthNames.')((?:\s+(?:de|del)\s+(\d{4}))?)/iu',
+            function (array $m) use ($names, $plainNames, $months) {
+                // "domingos"/"sábados" son los únicos con plural; los
+                // demás ya terminan en s (lunes, martes, miércoles...).
+                $said = $this->plain($m[1]);
+                $said = in_array($said, ['domingos', 'sabados'], true) ? rtrim($said, 's') : $said;
+                $index = array_search($said, $plainNames, true);
+                $month = $months[$this->plain($m[5])] ?? null;
+                $day = (int) $m[3];
+
+                if ($index === false || $month === null || $day < 1 || $day > 31) {
+                    return $m[0];
+                }
+
+                $today = \Carbon\CarbonImmutable::now()->startOfDay();
+                $written = isset($m[7]) && $m[7] !== '' ? (int) $m[7] : null;
+
+                // Con año escrito no hay nada que adivinar.
+                if ($written !== null) {
+                    if (! checkdate($month, $day, $written)) {
+                        return $m[0];
+                    }
+
+                    $date = \Carbon\CarbonImmutable::create($written, $month, $day)->startOfDay();
+
+                    if ((int) $date->dayOfWeek === $index) {
+                        return $m[0];
+                    }
+                } else {
+                    if (! checkdate($month, $day, $today->year)) {
+                        return $m[0];
+                    }
+
+                    $date = \Carbon\CarbonImmutable::create($today->year, $month, $day)->startOfDay();
+
+                    // Fecha ya pasada: puede ser una estancia anterior, así
+                    // que si el día cuadra con este año o con el pasado se
+                    // respeta. Hacia adelante no hay excusa: la fecha es la
+                    // próxima vez que llega ese día.
+                    if ($date->lt($today)) {
+                        foreach ([$today->year, $today->year - 1] as $year) {
+                            if (checkdate($month, $day, $year) && (int) \Carbon\CarbonImmutable::create($year, $month, $day)->dayOfWeek === $index) {
+                                return $m[0];
+                            }
+                        }
+
+                        if (checkdate($month, $day, $today->year + 1)) {
+                            $date = \Carbon\CarbonImmutable::create($today->year + 1, $month, $day)->startOfDay();
+                        }
+                    } elseif ((int) $date->dayOfWeek === $index) {
+                        return $m[0];
+                    }
+                }
+
+                $correct = $names[(int) $date->dayOfWeek];
+
+                // Se respeta la mayúscula con la que venía escrito.
+                if (mb_substr($m[1], 0, 1) === mb_strtoupper(mb_substr($m[1], 0, 1))) {
+                    $correct = mb_strtoupper(mb_substr($correct, 0, 1)).mb_substr($correct, 1);
+                }
+
+                return $correct.$m[2].$m[3].$m[4].$m[5].($m[6] ?? '');
+            },
+            $text,
+        );
+
+        return $fixed ?? $text;
     }
 
     /**
@@ -2302,6 +2885,7 @@ BLOCK;
                 'availability_overview' => $respond($this->tools->availabilityOverview($request, app(\App\Services\AvailabilityService::class))),
                 'reservation' => $respond($this->tools->showReservation((string) ($params['code'] ?? ''))),
                 'coupon' => $respond($this->tools->checkCoupon($request)),
+                'waitlist' => $respond($this->tools->joinWaitlist($request)),
                 'reopen_hold' => $respond($this->tools->reopenHold(
                     tap($request, fn ($r) => $r->setUserResolver(fn () => \App\Http\Controllers\Tenant\AgentTokenController::ensureAgentUser())),
                     app(\App\Actions\Reservations\TransitionReservation::class),
@@ -2502,10 +3086,51 @@ BLOCK;
                     'conversation_id' => $conversation?->id,
                 ]))),
 
+            // Más de 40 conversaciones de cabañas (13 al 15 de septiembre)
+            // chocaron con "no hay disponibilidad" y ahí murieron. El módulo
+            // de lista de espera ya existía; lo que faltaba era que el bot
+            // pudiera apuntarlos.
+            Tool::as('apuntar_lista_espera')
+                ->for('Apunta al huésped en la lista de espera para unas fechas SIN lugar, para avisarle si se libera. Úsala cuando consultar_disponibilidad o consultar_disponibilidad_general no den lugar y el huésped no acepte las fechas alternativas. No promete habitación: es un aviso si se desocupa. Dile exactamente lo que devuelva "message".')
+                ->withStringParameter('nombre', 'Nombre del huésped')
+                ->withStringParameter('fecha_llegada', 'Fecha de llegada que quería, YYYY-MM-DD')
+                ->withStringParameter('fecha_salida', 'Fecha de salida que quería, YYYY-MM-DD')
+                ->withNumberParameter('room_type_id', 'ID del tipo de habitación que quería (opcional: déjalo vacío si le sirve cualquiera)', false)
+                ->withStringParameter('correo', 'Correo del huésped (opcional si el chat es de WhatsApp, porque ahí ya tenemos su número)', false)
+                ->withStringParameter('telefono', 'Teléfono del huésped (opcional: en WhatsApp se usa el del chat)', false)
+                ->using(fn (string $nombre, string $fecha_llegada, string $fecha_salida, ?float $room_type_id = null, ?string $correo = null, ?string $telefono = null): string => $call('waitlist', array_filter([
+                    'guest_name' => $nombre,
+                    'starts_at' => $fecha_llegada,
+                    'ends_at' => $fecha_salida,
+                    'room_type_id' => $room_type_id !== null ? (int) $room_type_id : null,
+                    'guest_email' => $correo,
+                    'guest_phone' => $telefono,
+                    'conversation_id' => $conversation?->id,
+                ]))),
+
             Tool::as('consultar_reserva')
                 ->for('Consulta el estado de una reserva por su código (ej. RES-2026-0001) O de un grupo completo por su folio (ej. GRP-2026-0149), incluido su estado de pago y saldo pendiente. Los folios GRP- son los que tú mismo repartes al apartar varias habitaciones, así que son los que el huésped te va a teclear de vuelta.')
-                ->withStringParameter('code', 'Código de la reserva (RES-) o folio del grupo (GRP-)')
-                ->using(fn (string $code): string => $call('reservation', ['code' => $code])),
+                ->withStringParameter('code', 'Código de la reserva (RES-) o folio del grupo (GRP-). Opcional: si el huésped ya está identificado por su número, déjalo vacío y se consulta la suya.', false)
+                ->using(function (?string $code = null) use ($call, $conversation): string {
+                    $code = trim((string) $code);
+
+                    // Sin código, la del huésped que escribe: el número del
+                    // chat ya lo identifica y pedirle su folio para algo que
+                    // el sistema tiene a la mano es hacerlo trabajar.
+                    if ($code === '') {
+                        $mine = $this->guestReservations($conversation)->first();
+
+                        if ($mine === null) {
+                            return json_encode([
+                                'error' => 'No encontré ninguna reserva ligada a este chat. Pídele su código (RES- o GRP-) con amabilidad.',
+                            ], JSON_UNESCAPED_UNICODE);
+                        }
+
+                        $code = $mine->group?->code ?: $mine->displayCode();
+                    }
+
+                    return $call('reservation', ['code' => $code]);
+                }),
 
             // Regla del hotel (cabañas 2026-09-11): "si el usuario se tardó en
             // depositar y se venció, volver a reservar la habitación y darle su
@@ -2643,7 +3268,7 @@ BLOCK;
         if ($readOnly) {
             $tools = array_values(array_filter(
                 $tools,
-                fn ($tool) => ! in_array($tool->name(), ['crear_apartado', 'crear_apartado_grupo', 'reactivar_apartado', 'solicitar_pago', 'transferir_a_humano'], true),
+                fn ($tool) => ! in_array($tool->name(), ['crear_apartado', 'crear_apartado_grupo', 'reactivar_apartado', 'solicitar_pago', 'transferir_a_humano', 'apuntar_lista_espera'], true),
             ));
         }
 
@@ -2660,6 +3285,8 @@ BLOCK;
             'solicitar_pago' => $this->tools->paymentMethodsPublic(),
             // Cupones: módulo `cupones` y al menos un cupón activo.
             'validar_cupon' => $this->tools->couponsPublic(),
+            // Lista de espera: módulo `lista-espera`.
+            'apuntar_lista_espera' => $this->tools->waitlistPublic(),
         ];
 
         return array_values(array_filter(

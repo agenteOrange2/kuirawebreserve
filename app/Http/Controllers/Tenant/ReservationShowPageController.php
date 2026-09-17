@@ -84,6 +84,9 @@ class ReservationShowPageController extends ReservationsPageController
         return Inertia::render('tenant/reservations/Show', [
             'reservation' => $row,
             'conversationId' => $conversationId,
+            // Los comprobantes que el huésped ya mandó por el chat: se pueden
+            // usar al capturar el pago sin ir a buscarlos a la bandeja.
+            'chatReceipts' => $this->chatReceipts($conversationId),
             'proofReceivedAt' => $proofAt ? \Illuminate\Support\Carbon::parse($proofAt)->format('d/m/Y H:i') : null,
             'canManage' => $request->user()->can('reservations.manage'),
             // En check-in "automático" puro la llegada la registra el reloj.
@@ -92,6 +95,47 @@ class ReservationShowPageController extends ReservationsPageController
                 ->activeGatewayLink((string) tenant('id')) !== null,
             'holdMinutes' => $this->policy()->holdMinutes(),
         ]);
+    }
+
+    /**
+     * Últimos archivos que mandó el huésped por el chat, con lo que el
+     * sistema leyó en ellos. Sirven para capturar el pago desde la ficha
+     * cuando el bot no alcanzó a registrarlo: el monto y el folio ya vienen
+     * leídos y la foto queda pegada al abono.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    protected function chatReceipts(?int $conversationId): array
+    {
+        if (! $conversationId) {
+            return [];
+        }
+
+        return Message::query()
+            ->where('conversation_id', $conversationId)
+            ->where('direction', 'in')
+            ->whereHas('media')
+            ->with('media')
+            ->latest('id')
+            ->limit(5)
+            ->get()
+            ->flatMap(function (Message $message) use ($conversationId) {
+                $lectura = is_array($message->meta['media_reading'] ?? null) ? $message->meta['media_reading'] : null;
+
+                return $message->getMedia('attachments')->map(fn ($media) => [
+                    'media_id' => $media->id,
+                    'name' => $media->file_name,
+                    'is_image' => str_starts_with((string) $media->mime_type, 'image/'),
+                    'url' => route('tenant.inbox.attachment', [$conversationId, $media->id]),
+                    'at' => $message->created_at->format('d/m H:i'),
+                    'verdict' => $lectura['check']['verdict'] ?? null,
+                    'summary' => $lectura['check']['summary'] ?? null,
+                    'amount' => $lectura['amount'] ?? null,
+                    'reference' => $lectura['tracking_key'] ?? ($lectura['reference'] ?? null),
+                ]);
+            })
+            ->values()
+            ->all();
     }
 
     /**

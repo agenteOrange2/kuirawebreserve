@@ -30,29 +30,46 @@ class InboxController extends Controller
         // archivo (histórico consultable, restaurable).
         $archived = $request->boolean('archived');
 
+        // Traspasos sin dueño: el asistente pasa el hilo a una persona, se
+        // apaga, y el huésped se queda esperando. En cabañas hubo esperas de
+        // 1 h 12, 5 h, 9.6 h y 22 h (13 al 15 de septiembre) sin que nada en
+        // la pantalla las hiciera visibles.
+        $waiting = $request->boolean('esperando');
+
         $conversations = $this->conversationQuery()
             ->when(
                 $archived,
                 fn ($q) => $q->whereNotNull('archived_at'),
                 fn ($q) => $q->whereNull('archived_at'),
             )
+            ->when($waiting, fn ($q) => $q->where('status', Conversation::STATUS_PENDING))
             ->orderByDesc('last_message_at')
             ->take(100)
-            ->get()
-            ->map(fn (Conversation $c) => $this->serializeConversation($c));
+            ->get();
+
+        $esperas = Conversation::waitingSinceFor(
+            $conversations->where('status', Conversation::STATUS_PENDING)->pluck('id')->all(),
+        );
+
+        $conversations = $conversations
+            ->map(fn (Conversation $c) => $this->serializeConversation($c, $esperas[$c->id] ?? null))
+            // Esperando: primero el que lleva más tiempo colgado.
+            ->when($waiting, fn ($rows) => $rows->sortByDesc('waiting_minutes')->values());
 
         return Inertia::render('tenant/inbox/Index', [
             // Para suscribirse al canal privado de la bandeja (Reverb).
             'tenantId' => tenant('id'),
             'property' => $property->only(['id', 'name']),
             'conversations' => $conversations,
-            'filters' => ['archived' => $archived],
+            'filters' => ['archived' => $archived, 'esperando' => $waiting],
             'counts' => [
                 'active' => Conversation::query()->whereNull('archived_at')
                     ->whereIn('status', [Conversation::STATUS_OPEN, Conversation::STATUS_PENDING])->count(),
                 'resolved' => Conversation::query()->whereNull('archived_at')
                     ->where('status', Conversation::STATUS_RESOLVED)->count(),
                 'archived' => Conversation::query()->whereNotNull('archived_at')->count(),
+                'waiting' => Conversation::query()->whereNull('archived_at')
+                    ->where('status', Conversation::STATUS_PENDING)->count(),
             ],
             // Solo canales vivos: los desconectados conservan su historial en
             // la lista, pero no ofrecen selector de modo que "desconfigurar".
@@ -83,7 +100,10 @@ class InboxController extends Controller
         $refreshed = $this->conversationQuery()->findOrFail($conversation->getKey());
 
         return response()->json([
-            'conversation' => $this->serializeConversation($refreshed),
+            'conversation' => $this->serializeConversation(
+                $refreshed,
+                $refreshed->status === Conversation::STATUS_PENDING ? $refreshed->waitingSince() : null,
+            ),
             // La reserva y su dinero en la misma pantalla donde se contesta:
             // antes había que salir a /reservas o /pagos para saber si el
             // huésped ya había pagado o hasta qué hora se le sostiene.
@@ -441,7 +461,7 @@ class InboxController extends Controller
         ];
     }
 
-    protected function serializeConversation(Conversation $c): array
+    protected function serializeConversation(Conversation $c, ?\Illuminate\Support\Carbon $waitingSince = null): array
     {
         return [
             'id' => $c->id,
@@ -469,6 +489,24 @@ class InboxController extends Controller
             'payment_status' => $c->reservation?->payment_status?->value,
             'payment_status_label' => $c->reservation?->payment_status?->label(),
             'payment_pending_verification' => (bool) ($c->payment_pending_verification ?? false),
+            // Cuánto lleva esperando a una persona del hotel (solo pendientes).
+            'waiting_minutes' => $waitingSince ? (int) $waitingSince->diffInMinutes(now()) : null,
+            'waiting_label' => $waitingSince ? $this->waitingLabel((int) $waitingSince->diffInMinutes(now())) : null,
         ];
+    }
+
+    /** "1 h 12 min" se lee de un vistazo; "72 minutos", no. */
+    protected function waitingLabel(int $minutes): string
+    {
+        if ($minutes < 60) {
+            return max($minutes, 1).' min';
+        }
+
+        $hours = intdiv($minutes, 60);
+        $rest = $minutes % 60;
+
+        return $hours >= 24
+            ? intdiv($hours, 24).' d '.($hours % 24).' h'
+            : $hours.' h'.($rest > 0 ? ' '.$rest.' min' : '');
     }
 }

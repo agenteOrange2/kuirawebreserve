@@ -386,6 +386,10 @@ class BookingController extends Controller
                 'banco' => $account['bank'] ?? '',
                 'titular' => $account['holder'] ?? '',
                 'cuenta' => $account['clabe'] ?? '',
+                // Qué ES el número: una tarjeta anunciada como cuenta hacía
+                // fallar la transferencia en la app del huésped.
+                'tipo' => \App\Support\BankAccountNumber::label($account['clabe'] ?? ''),
+                'aviso' => \App\Support\BankAccountNumber::guestHint($account['clabe'] ?? ''),
             ])
             ->values();
 
