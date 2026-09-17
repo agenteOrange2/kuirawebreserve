@@ -214,4 +214,16 @@ class PaymentRequest extends Model implements HasMedia
     {
         return '$'.number_format((float) $this->amount, 2).' '.$this->currency;
     }
+
+    /** Cuánto le queda al cobro, dicho en palabras ("1 hora"), o null sin vencimiento. */
+    public function validityLabel(): ?string
+    {
+        if ($this->expires_at === null) {
+            return null;
+        }
+
+        return \App\Services\ReservationPolicy::durationLabel(
+            (int) ceil(max(0, now()->diffInMinutes($this->expires_at))),
+        );
+    }
 }

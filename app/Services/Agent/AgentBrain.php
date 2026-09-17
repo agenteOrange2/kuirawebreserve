@@ -1210,9 +1210,11 @@ class AgentBrain
             ->filter(fn ($account) => is_array($account) && ! empty($account['active']))
             ->values();
 
+        // Solo lo que el huésped PUDO recibir (CLABE y tarjeta): si el número
+        // de cuenta interno entrara a la lista de válidos, un mensaje que lo
+        // trajera pasaría el filtro y se le filtraría al huésped.
         $validNumbers = $active
-            ->flatMap(fn (array $account) => collect(['clabe', 'account', 'card', 'number', 'cuenta'])
-                ->map(fn (string $key) => preg_replace('/\D/', '', (string) ($account[$key] ?? ''))))
+            ->flatMap(fn (array $account) => \App\Support\BankAccountNumber::normalize($account)['guestDigits'])
             ->filter(fn (string $digits) => strlen($digits) >= 8)
             ->unique()
             ->values()
@@ -1462,8 +1464,9 @@ class AgentBrain
 
         return collect($accounts)
             ->filter(fn ($account) => is_array($account) && ! empty($account['active']))
-            ->flatMap(fn (array $account) => collect(['clabe', 'account', 'card', 'number', 'cuenta'])
-                ->map(fn (string $key) => preg_replace('/\D/', '', (string) ($account[$key] ?? ''))))
+            // guestDigits, no todos: la cuenta interna debe poder borrarse de
+            // un mensaje al huésped, no quedar en la lista blanca.
+            ->flatMap(fn (array $account) => \App\Support\BankAccountNumber::normalize($account)['guestDigits'])
             ->filter(fn (string $digits) => strlen($digits) >= 10)
             ->unique()
             ->values()

@@ -71,14 +71,26 @@ class PaymentRequestController extends Controller
             ];
         }
 
-        // Las cuentas activas del hotel: contra cuál comparar el depósito.
+        // Las cuentas activas del hotel: contra cuál comparar el depósito. El
+        // personal ve los TRES números (el depósito pudo llegar a cualquiera),
+        // cada uno con su etiqueta y marcando el que es solo interno.
         $accounts = collect(Property::firstOrFail()->settings['bank_accounts'] ?? [])
             ->filter(fn (array $a) => ! empty($a['active']))
-            ->map(fn (array $a) => [
-                'bank' => $a['bank'] ?? '',
-                'holder' => $a['holder'] ?? '',
-                'clabe' => $a['clabe'] ?? '',
-            ])
+            ->map(function (array $a) {
+                $datos = \App\Support\BankAccountNumber::normalize($a);
+
+                $numeros = collect([...$datos['guest'], $datos['internal']])
+                    ->filter()
+                    ->map(fn (array $numero) => [
+                        'number' => $numero['number'],
+                        'label' => $numero['label'],
+                        'internal' => $datos['internal'] !== null && $numero['number'] === $datos['internal']['number'],
+                    ])
+                    ->values()
+                    ->all();
+
+                return ['bank' => $datos['bank'], 'holder' => $datos['holder'], 'numbers' => $numeros];
+            })
             ->values();
 
         return response()->json([

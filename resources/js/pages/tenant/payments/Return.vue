@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
-import { onBeforeUnmount, onMounted } from 'vue';
+import { computed, onBeforeUnmount, onMounted } from 'vue';
 import Button from '@/components/Base/Button';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
@@ -35,13 +35,27 @@ const props = defineProps<{
         reservation_code: string | null;
         reservation_confirmed: boolean;
         checkout_url: string | null;
+        /** Cómo terminó el checkout, si la pasarela lo dijo. */
+        outcome: 'processing' | 'failed' | 'abandoned' | null;
+        /** Regresar al wizard a elegir otro método (solo habitación suelta). */
+        change_method_url: string | null;
     };
 }>();
+
+// Volvió del checkout sin pagar (o se lo rechazaron): no hay nada que
+// "confirmar". Antes caía en el giro de "Confirmando tu pago…" para siempre.
+const notPaid = computed(
+    () =>
+        props.payment.status === 'pending' &&
+        !props.payment.reservation_confirmed &&
+        (props.payment.outcome === 'abandoned' ||
+            props.payment.outcome === 'failed'),
+);
 
 let poller: ReturnType<typeof setInterval> | null = null;
 
 onMounted(() => {
-    if (props.payment.status === 'pending') {
+    if (props.payment.status === 'pending' && !notPaid.value) {
         poller = setInterval(() => router.reload(), 7000);
     }
 });
@@ -160,6 +174,56 @@ onBeforeUnmount(() => {
                     >
                         <Lucide icon="CreditCard" class="mr-2 h-4 w-4" />
                         Completar mi pago
+                    </Button>
+                </div>
+            </template>
+
+            <template v-else-if="notPaid">
+                <div
+                    class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
+                >
+                    <Lucide icon="Wallet" class="h-7 w-7 text-warning" />
+                </div>
+                <h1 class="mt-4 text-lg font-medium">
+                    {{
+                        payment.outcome === 'failed'
+                            ? 'El pago no se aprobó'
+                            : 'No se completó tu pago'
+                    }}
+                </h1>
+                <p class="mt-2 text-sm text-slate-500">
+                    No se hizo ningún cargo. Tu apartado
+                    {{ payment.reservation_code }} sigue vigente: puedes
+                    intentarlo de nuevo
+                    <template v-if="payment.change_method_url"
+                        >o elegir otro método de pago</template
+                    >.
+                </p>
+                <div class="mt-5 flex flex-col gap-2">
+                    <Button
+                        v-if="payment.change_method_url"
+                        as="a"
+                        :href="payment.change_method_url"
+                        variant="primary"
+                        class="rounded-[0.5rem]"
+                    >
+                        <Lucide icon="ArrowLeftRight" class="mr-2 h-4 w-4" />
+                        Elegir otro método de pago
+                    </Button>
+                    <Button
+                        v-if="payment.checkout_url"
+                        as="a"
+                        :href="payment.checkout_url"
+                        :variant="
+                            payment.change_method_url
+                                ? 'outline-secondary'
+                                : 'primary'
+                        "
+                        class="rounded-[0.5rem]"
+                        :class="payment.change_method_url ? 'bg-white' : ''"
+                    >
+                        <Lucide icon="CreditCard" class="mr-2 h-4 w-4" />
+                        Intentar de nuevo
                     </Button>
                 </div>
             </template>

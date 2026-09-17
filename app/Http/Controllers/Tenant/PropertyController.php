@@ -53,6 +53,19 @@ class PropertyController extends Controller
 
     public function update(Request $request, Property $property): JsonResponse
     {
+        // Las cuentas llegan con el número en el campo que le toca. Los
+        // registros viejos traen "cualquier número" en `clabe`: se reclasifican
+        // aquí, así que reenviarlos tal cual no los rechaza la validación y, de
+        // paso, quedan ya separados en disco. Es la migración sin migración.
+        if (is_array($request->input('settings.bank_accounts'))) {
+            $request->merge(['settings' => array_replace($request->input('settings', []), [
+                'bank_accounts' => array_values(array_map(
+                    fn ($account) => is_array($account) ? \App\Support\BankAccountNumber::formFields($account) : $account,
+                    $request->input('settings.bank_accounts'),
+                )),
+            ])]);
+        }
+
         $data = $request->validate([
             'name' => ['sometimes', 'string', 'max:255'],
             'timezone' => ['sometimes', 'timezone'],
@@ -150,14 +163,33 @@ class PropertyController extends Controller
             'settings.damage_catalog.*.concept' => ['required', 'string', 'max:80'],
             'settings.damage_catalog.*.amount' => ['required', 'numeric', 'min:0', 'max:1000000'],
             'settings.bank_accounts' => ['sometimes', 'array', 'max:10'],
+            // Cada número se valida por lo que ES. Un número mal capturado es
+            // dinero del huésped que se va a otra parte.
+            'settings.bank_accounts.*' => ['array', function (string $attribute, mixed $value, \Closure $fail) {
+                $numeros = array_filter(array_map(
+                    fn (string $campo) => \App\Support\BankAccountNumber::digits(is_array($value) ? (string) ($value[$campo] ?? '') : ''),
+                    ['clabe', 'card', 'account'],
+                ));
+
+                if ($numeros === []) {
+                    $fail('Captura al menos un número de esta cuenta: la CLABE, la tarjeta o el número de cuenta.');
+                }
+            }],
             'settings.bank_accounts.*.bank' => ['required', 'string', 'max:80'],
             'settings.bank_accounts.*.holder' => ['required', 'string', 'max:120'],
-            // Un número mal capturado es dinero del huésped que se va a otra
-            // parte: solo se acepta una CLABE (18, con dígito verificador),
-            // una tarjeta (16, Luhn) o una cuenta (10 u 11).
-            'settings.bank_accounts.*.clabe' => ['required', 'string', 'max:30', function (string $attribute, mixed $value, \Closure $fail) {
-                if (! \App\Support\BankAccountNumber::isValid((string) $value)) {
-                    $fail('Revisa el número: debe ser una CLABE de 18 dígitos, una tarjeta de débito de 16 o un número de cuenta de 10 u 11. Si lo copiaste, verifica que no le falte, sobre ni se haya cambiado un dígito.');
+            'settings.bank_accounts.*.clabe' => ['nullable', 'string', 'max:30', function (string $attribute, mixed $value, \Closure $fail) {
+                if (\App\Support\BankAccountNumber::digits((string) $value) !== '' && ! \App\Support\BankAccountNumber::isClabe((string) $value)) {
+                    $fail('La CLABE debe tener 18 dígitos y su dígito verificador no cuadra. Si la copiaste, revisa que no le falte, sobre ni se haya cambiado un dígito.');
+                }
+            }],
+            'settings.bank_accounts.*.card' => ['nullable', 'string', 'max:30', function (string $attribute, mixed $value, \Closure $fail) {
+                if (\App\Support\BankAccountNumber::digits((string) $value) !== '' && ! \App\Support\BankAccountNumber::isCard((string) $value)) {
+                    $fail('La tarjeta debe tener 16 dígitos y el número no pasa la verificación. Revísalo dígito por dígito: uno mal capturado manda el dinero del huésped a otra parte.');
+                }
+            }],
+            'settings.bank_accounts.*.account' => ['nullable', 'string', 'max:30', function (string $attribute, mixed $value, \Closure $fail) {
+                if (\App\Support\BankAccountNumber::digits((string) $value) !== '' && ! \App\Support\BankAccountNumber::isAccountNumber((string) $value)) {
+                    $fail('El número de cuenta debe tener 10 u 11 dígitos. Si tiene 18 es una CLABE y va en su campo; si tiene 16 es una tarjeta.');
                 }
             }],
             'settings.bank_accounts.*.active' => ['sometimes', 'boolean'],

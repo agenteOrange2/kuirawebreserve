@@ -106,9 +106,17 @@ interface PaymentResult {
         cuenta: string;
         tipo?: string;
         aviso?: string | null;
+        /** La tarjeta, para quien en su app solo puede transferir a tarjeta. */
+        alternativa?: {
+            cuenta: string;
+            tipo: string;
+            aviso?: string | null;
+        } | null;
     }[];
     whatsapps?: string[];
     valid_hours?: number;
+    // "1 hora", "20 minutos": en horas enteras un cobro de 60 min decía "0 horas".
+    valid_label?: string | null;
     return_url: string;
 }
 
@@ -967,6 +975,35 @@ function stayLabel(startIso: string, endIso: string): string {
                                                 >
                                                     {{ acc.aviso }}
                                                 </div>
+                                                <!-- Muchos bancos solo dejan
+                                                     transferir a tarjeta desde
+                                                     la app: ahí va la otra. -->
+                                                <div
+                                                    v-if="acc.alternativa"
+                                                    class="mt-2 border-t border-slate-200 pt-2"
+                                                >
+                                                    <div
+                                                        class="text-xs text-slate-500"
+                                                    >
+                                                        Si tu app solo permite
+                                                        transferir a tarjeta:
+                                                    </div>
+                                                    <div
+                                                        class="text-xs text-slate-500"
+                                                    >
+                                                        {{
+                                                            acc.alternativa.tipo
+                                                        }}
+                                                    </div>
+                                                    <div
+                                                        class="font-mono text-slate-700"
+                                                    >
+                                                        {{
+                                                            acc.alternativa
+                                                                .cuenta
+                                                        }}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -1037,7 +1074,11 @@ function stayLabel(startIso: string, endIso: string): string {
                                 </div>
                             </div>
                             <p class="mt-3 text-xs text-slate-400">
-                                Vigente por {{ payment.valid_hours }} horas.
+                                Vigente por
+                                {{
+                                    payment.valid_label ??
+                                    `${payment.valid_hours} horas`
+                                }}.
                             </p>
                         </template>
 

@@ -111,8 +111,14 @@ it('el panel rechaza registrar una transferencia directa; efectivo sí pasa', fu
         'method' => 'transfer',
     ]);
 
-    expect(fn () => app(ReservationController::class)->registerPayment($transfer, $reservation, app(RegisterReservationPayment::class)))
-        ->toThrow(ValidationException::class);
+    // Desde 2026-09-16 el respaldo puede ser el folio O el comprobante, así
+    // que el rechazo llega como respuesta 422 con el motivo, no como
+    // excepción de validación.
+    $rechazo = app(ReservationController::class)->registerPayment($transfer, $reservation, app(RegisterReservationPayment::class));
+
+    expect($rechazo->getStatusCode())->toBe(422)
+        ->and($rechazo->getData(true)['message'])->toContain('comprobante')
+        ->and($reservation->refresh()->paidTotal())->toEqual(0.0);
 
     $cash = Request::create('/api/reservations/x/payments', 'POST', [
         'amount' => 200,

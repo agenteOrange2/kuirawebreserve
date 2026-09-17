@@ -141,9 +141,13 @@ class ReceiptCheck
      */
     protected function accountEndings(): array
     {
+        // Los TRES números de cada cuenta: el huésped pudo transferir a la
+        // CLABE, a la tarjeta o al número de cuenta. Mirando solo uno, un
+        // depósito legítimo salía marcado como "la cuenta no coincide".
         return collect(Property::query()->first()?->settings['bank_accounts'] ?? [])
             ->filter(fn ($account) => is_array($account) && ($account['active'] ?? true))
-            ->map(fn (array $account) => substr((string) preg_replace('/\D/', '', (string) ($account['clabe'] ?? '')), -4))
+            ->flatMap(fn (array $account) => \App\Support\BankAccountNumber::normalize($account)['digits'])
+            ->map(fn (string $number) => substr($number, -4))
             ->filter(fn (string $ending) => strlen($ending) === 4)
             ->unique()
             ->values()

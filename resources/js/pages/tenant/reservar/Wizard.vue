@@ -178,9 +178,17 @@ interface PaymentResult {
         cuenta: string;
         tipo?: string;
         aviso?: string | null;
+        /** La tarjeta, para quien en su app solo puede transferir a tarjeta. */
+        alternativa?: {
+            cuenta: string;
+            tipo: string;
+            aviso?: string | null;
+        } | null;
     }[];
     whatsapps?: string[];
     valid_hours?: number;
+    // "1 hora", "20 minutos": en horas enteras un cobro de 60 min decía "0 horas".
+    valid_label?: string | null;
     return_url: string;
 }
 
@@ -1037,6 +1045,33 @@ async function requestPayment(
         paymentLoading.value = false;
     }
 }
+
+// ── Retomar el pago al volver de la pasarela sin pagar (?retomar=uuid) ──
+// Al irse al checkout el wizard pierde todo lo que tenía en memoria. Quien
+// entraba a Mercado Pago por error ya no podía regresar a elegir
+// transferencia: la página de retorno lo manda aquí, al mismo paso de pago
+// con el mismo apartado (cabañas, 17-sep-2026).
+onMounted(async () => {
+    const uuid = new URLSearchParams(window.location.search).get('retomar');
+    if (!uuid) return;
+    try {
+        const { data } = await axios.get<
+            HoldResult & { mode: 'block' | 'night' }
+        >(`/api/booking/resume/${encodeURIComponent(uuid)}`);
+        mode.value = data.mode;
+        hold.value = data;
+        step.value = 'confirm';
+        if (data.requires_prepayment) {
+            preparePayment();
+        }
+    } catch (error: any) {
+        // Apartado vencido o ya pagado: se dice en el primer paso, donde el
+        // huésped puede empezar una reserva nueva.
+        searchError.value =
+            error.response?.data?.message ??
+            'No pudimos retomar tu apartado. Puedes hacer una reserva nueva.';
+    }
+});
 
 // ── Cuenta regresiva del hold ──
 const nowMs = ref(Date.now());
@@ -3446,6 +3481,35 @@ async function copyCode() {
                                                 >
                                                     {{ acc.aviso }}
                                                 </div>
+                                                <!-- Muchos bancos solo dejan
+                                                     transferir a tarjeta desde
+                                                     la app: ahí va la otra. -->
+                                                <div
+                                                    v-if="acc.alternativa"
+                                                    class="mt-2 border-t border-slate-200 pt-2"
+                                                >
+                                                    <div
+                                                        class="text-xs text-slate-500"
+                                                    >
+                                                        Si tu app solo permite
+                                                        transferir a tarjeta:
+                                                    </div>
+                                                    <div
+                                                        class="text-xs text-slate-500"
+                                                    >
+                                                        {{
+                                                            acc.alternativa.tipo
+                                                        }}
+                                                    </div>
+                                                    <div
+                                                        class="font-mono text-slate-700"
+                                                    >
+                                                        {{
+                                                            acc.alternativa
+                                                                .cuenta
+                                                        }}
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -3516,7 +3580,11 @@ async function copyCode() {
                                 </div>
                             </div>
                             <p class="mt-3 text-xs text-slate-400">
-                                Vigente por {{ payment.valid_hours }} horas.
+                                Vigente por
+                                {{
+                                    payment.valid_label ??
+                                    `${payment.valid_hours} horas`
+                                }}.
                             </p>
                             <a
                                 :href="payment.return_url"

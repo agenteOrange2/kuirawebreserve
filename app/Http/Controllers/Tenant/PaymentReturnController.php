@@ -24,7 +24,7 @@ class PaymentReturnController extends Controller
     {
         $request = PaymentRequest::query()
             ->with([
-                'reservation:id,code,status,created_at,guest_id', 'reservation.guest:id,email,phone',
+                'reservation:id,code,status,created_at,guest_id,reservation_group_id,hold_expires_at', 'reservation.guest:id,email,phone',
                 'experienceBooking:id,experience_session_id,status,code,created_at,guest_id', 'experienceBooking.guest:id,email,phone',
                 'group:id,code,guest_id', 'group.guest:id,email,phone',
             ])
@@ -38,9 +38,11 @@ class PaymentReturnController extends Controller
             $request->status === PaymentRequest::STATUS_PENDING
             && $request->provider === 'paypal'
             && $httpRequest->query('token')
+            // PayPal también manda el token al cancelar: no hay nada que capturar.
+            && ! $httpRequest->boolean('cancelado')
         ) {
             $this->capturePayPal($request, (string) $httpRequest->query('token'));
-            $request->refresh()->load(['reservation:id,code,status,created_at', 'experienceBooking:id,experience_session_id,status,code,created_at']);
+            $request->refresh()->load(['reservation:id,code,status,created_at,guest_id,reservation_group_id,hold_expires_at', 'experienceBooking:id,experience_session_id,status,code,created_at']);
         }
 
         $property = Property::query()->first();
@@ -83,8 +85,63 @@ class PaymentReturnController extends Controller
                 'reservation_confirmed' => $request->reservation?->status === \App\Enums\ReservationStatus::Confirmed
                     || $request->experienceBooking?->status === \App\Models\ExperienceBooking::STATUS_CONFIRMED,
                 'checkout_url' => $request->isPayable() ? $request->checkout_url : null,
+                // Cómo terminó el checkout, cuando la pasarela lo dice:
+                // processing | failed | abandoned, o null si no se sabe.
+                'outcome' => $this->checkoutOutcome($httpRequest, $request),
+                // Volver al wizard a elegir otro método (p. ej. transferencia).
+                'change_method_url' => $this->changeMethodUrl($request),
             ],
         ]);
+    }
+
+    /**
+     * Cómo regresó el huésped del checkout. Las tres pasarelas regresan a
+     * esta misma página pague o no, y la página suponía siempre que había un
+     * pago en camino: quien se arrepentía veía "Confirmando tu pago…" girando
+     * para siempre (cabañas, 17-sep-2026).
+     */
+    protected function checkoutOutcome(HttpRequest $http, PaymentRequest $request): ?string
+    {
+        if ($request->status !== PaymentRequest::STATUS_PENDING) {
+            return null;
+        }
+
+        // Mercado Pago escribe el resultado en la liga de regreso; "null"
+        // es que volvió a la tienda sin pagar.
+        $status = $http->query('collection_status') ?? $http->query('status');
+
+        if ($status !== null) {
+            return match (strtolower((string) $status)) {
+                'approved', 'authorized', 'pending', 'in_process', 'in_mediation' => 'processing',
+                'rejected', 'cancelled', 'canceled', 'refunded', 'charged_back' => 'failed',
+                default => 'abandoned',
+            };
+        }
+
+        // Stripe y PayPal regresan por su cancel_url, que trae la marca.
+        return $http->boolean('cancelado') ? 'abandoned' : null;
+    }
+
+    /**
+     * Liga para regresar al paso de pago del wizard, solo cuando cambiar de
+     * método no pone en riesgo nada: habitación suelta, apartado vivo y cobro
+     * sin pagar. Grupos y experiencias no se retoman todavía.
+     */
+    protected function changeMethodUrl(PaymentRequest $request): ?string
+    {
+        $reservation = $request->reservation;
+
+        if (
+            $request->status !== PaymentRequest::STATUS_PENDING
+            || ! $reservation
+            || $reservation->reservation_group_id !== null
+            || $reservation->status !== \App\Enums\ReservationStatus::Pending
+            || ! $reservation->hold_expires_at?->isFuture()
+        ) {
+            return null;
+        }
+
+        return route('tenant.booking.wizard', ['retomar' => $request->uuid], false);
     }
 
     /**

@@ -111,7 +111,12 @@ class PaymentMethodsPageController extends Controller
         return Inertia::render('tenant/settings/payments/Transfers', [
             'property' => $property->only(['id', 'name']),
             'settings' => [
-                'bank_accounts' => array_values($settings['bank_accounts'] ?? []),
+                // Ya separadas: el hotel abre una cuenta vieja y ve su tarjeta
+                // en el campo "Tarjeta", no en el de CLABE.
+                'bank_accounts' => array_values(array_map(
+                    fn (array $account) => \App\Support\BankAccountNumber::formFields($account),
+                    array_values($settings['bank_accounts'] ?? []),
+                )),
                 'transfer_whatsapps' => $this->transferWhatsapps($settings),
             ],
             'enabledMethods' => app(PaymentMethodGate::class)->methodsFor((string) tenant('id')),

@@ -17,7 +17,12 @@ import RazeLayout from '@/layouts/RazeLayout.vue';
 interface BankAccount {
     bank: string;
     holder: string;
+    /** CLABE de 18 dígitos: lo primero que se le da al huésped. */
     clabe: string;
+    /** Tarjeta de débito: la alternativa para quien solo puede transferir ahí. */
+    card: string;
+    /** Número de cuenta: dato INTERNO, nunca se le comparte al huésped. */
+    account: string;
     active: boolean;
 }
 
@@ -53,6 +58,17 @@ const draft = reactive<BankAccount>({
     bank: '',
     holder: '',
     clabe: '',
+    card: '',
+    account: '',
+    active: true,
+});
+
+const cuentaVacia = (): BankAccount => ({
+    bank: '',
+    holder: '',
+    clabe: '',
+    card: '',
+    account: '',
     active: true,
 });
 
@@ -61,8 +77,8 @@ function openAccount(index: number | null) {
     Object.assign(
         draft,
         index === null
-            ? { bank: '', holder: '', clabe: '', active: true }
-            : { ...form.bank_accounts[index] },
+            ? cuentaVacia()
+            : { ...cuentaVacia(), ...form.bank_accounts[index] },
     );
     Object.keys(errors).forEach((k) => delete errors[k]);
     accountModal.value = true;
@@ -71,10 +87,13 @@ function openAccount(index: number | null) {
 // Cada acción persiste sola: no hay un botón "Guardar" al final que el
 // hotel pueda olvidar después de capturar una cuenta.
 async function saveAccount() {
-    if (!draft.bank.trim() || !draft.holder.trim() || !draft.clabe.trim()) {
+    const algunNumero =
+        draft.clabe.trim() || draft.card.trim() || draft.account.trim();
+
+    if (!draft.bank.trim() || !draft.holder.trim() || !algunNumero) {
         toast.error(
             'Faltan datos',
-            'Banco, titular y CLABE son necesarios para compartir la cuenta.',
+            'Banco, titular y al menos un número (CLABE, tarjeta o cuenta) son necesarios para compartir la cuenta.',
         );
         return;
     }
@@ -168,12 +187,23 @@ const prettyPhone = (code: string, number: string) => {
         : `+${code} ${d}`;
 };
 
-// Últimos 4 dígitos: la CLABE completa no tiene por qué estar a la vista
+// Últimos 4 dígitos: el número completo no tiene por qué estar a la vista
 // de quien pase junto a la pantalla de recepción.
-const maskedClabe = (clabe: string) => {
-    const digits = clabe.replace(/\D/g, '');
+const masked = (numero: string) => {
+    const digits = (numero ?? '').replace(/\D/g, '');
 
-    return digits.length > 4 ? `•••• ${digits.slice(-4)}` : clabe;
+    return digits.length > 4 ? `•••• ${digits.slice(-4)}` : numero;
+};
+
+/** Lo capturado, enmascarado y con su nombre: "CLABE •••• 3025 · Tarjeta …". */
+const resumenNumeros = (account: BankAccount) => {
+    const partes = [
+        account.clabe ? `CLABE ${masked(account.clabe)}` : null,
+        account.card ? `Tarjeta ${masked(account.card)}` : null,
+        account.account ? `Cuenta ${masked(account.account)} (interna)` : null,
+    ].filter(Boolean);
+
+    return partes.length ? partes.join(' · ') : 'Sin número capturado';
 };
 
 async function submit(): Promise<boolean> {
@@ -299,7 +329,7 @@ async function submit(): Promise<boolean> {
                             </div>
                             <p class="mt-0.5 text-xs text-slate-500">
                                 {{ account.holder || 'Sin titular' }} ·
-                                {{ maskedClabe(account.clabe) }}
+                                {{ resumenNumeros(account) }}
                             </p>
                         </div>
                         <FormSwitch
@@ -473,7 +503,7 @@ async function submit(): Promise<boolean> {
                         </div>
                         <div>
                             <label class="mb-1 block text-sm"
-                                >CLABE / cuenta</label
+                                >CLABE interbancaria</label
                             >
                             <FormInput
                                 v-model="draft.clabe"
@@ -482,8 +512,40 @@ async function submit(): Promise<boolean> {
                                 class="h-9 text-xs"
                             />
                             <FormHelp>
-                                Es lo que se le comparte al huésped para que
-                                haga su transferencia: revísalo con cuidado.
+                                Es lo primero que se le comparte al huésped: con
+                                la CLABE puede transferir desde cualquier banco.
+                            </FormHelp>
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Tarjeta de débito
+                                <span class="text-slate-400">(opcional)</span>
+                            </label>
+                            <FormInput
+                                v-model="draft.card"
+                                type="text"
+                                placeholder="16 dígitos"
+                                class="h-9 text-xs"
+                            />
+                            <FormHelp>
+                                Se ofrece como alternativa, para quien en su app
+                                solo puede transferir a tarjeta.
+                            </FormHelp>
+                        </div>
+                        <div>
+                            <label class="mb-1 block text-sm"
+                                >Número de cuenta
+                                <span class="text-slate-400">(opcional)</span>
+                            </label>
+                            <FormInput
+                                v-model="draft.account"
+                                type="text"
+                                placeholder="10 u 11 dígitos"
+                                class="h-9 text-xs"
+                            />
+                            <FormHelp>
+                                Solo para tu equipo: sirve para reconocer el
+                                comprobante. Nunca se le comparte al huésped.
                             </FormHelp>
                         </div>
                         <FormSwitch>

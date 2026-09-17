@@ -183,17 +183,10 @@ class BookingLookupController extends Controller
         $pending = $reservation->paymentRequests()->active()->latest('id')->first();
 
         $settings = Property::firstOrFail()->settings ?? [];
+        // Mismo mapeo que el wizard (ReservationPolicy): duplicarlo aquí a
+        // mano era la vía segura de que esta pantalla se quedara atrás.
         $accounts = $pending?->method === PaymentRequest::METHOD_TRANSFER
-            ? collect($settings['bank_accounts'] ?? [])
-                ->filter(fn (array $a) => ! empty($a['active']))
-                ->map(fn (array $a) => [
-                    'banco' => $a['bank'] ?? '',
-                    'titular' => $a['holder'] ?? '',
-                    'cuenta' => $a['clabe'] ?? '',
-                    'tipo' => \App\Support\BankAccountNumber::label($a['clabe'] ?? ''),
-                    'aviso' => \App\Support\BankAccountNumber::guestHint($a['clabe'] ?? ''),
-                ])
-                ->values()
+            ? app(\App\Services\ReservationPolicy::class)->guestAccounts()
             : collect();
 
         return response()->json([

@@ -235,17 +235,10 @@ class GroupWizardController extends Controller
         $gate = app(\App\Services\Payments\PaymentMethodGate::class);
         $enabled = $gate->methodsFor((string) tenant('id'));
 
-        $settings = Property::firstOrFail()->settings ?? [];
-        $accounts = ! $enabled['transfer'] ? collect() : collect($settings['bank_accounts'] ?? [])
-            ->filter(fn (array $account) => ! empty($account['active']))
-            ->map(fn (array $account) => [
-                'banco' => $account['bank'] ?? '',
-                'titular' => $account['holder'] ?? '',
-                'cuenta' => $account['clabe'] ?? '',
-                'tipo' => \App\Support\BankAccountNumber::label($account['clabe'] ?? ''),
-                'aviso' => \App\Support\BankAccountNumber::guestHint($account['clabe'] ?? ''),
-            ])
-            ->values();
+        // Mismo horario que habitaciones: aquí no se miraba y de noche se
+        // emitía un cobro por transferencia que nadie iba a verificar.
+        $policy = app(\App\Services\ReservationPolicy::class);
+        $accounts = $policy->guestTransferAccounts($enabled['transfer']);
 
         $enabledProviders = array_keys(array_filter([
             'stripe' => $enabled['stripe'],
@@ -269,12 +262,16 @@ class GroupWizardController extends Controller
 
         if (! $link && $accounts->isEmpty()) {
             return response()->json([
-                'message' => 'El hotel aún no tiene métodos de cobro en línea; te contactará para coordinar el pago.',
+                'message' => $policy->transferClosedNotice()
+                    ?? 'El hotel aún no tiene métodos de cobro en línea; te contactará para coordinar el pago.',
             ], 422);
         }
 
         if ($preferred === 'transfer' && $accounts->isEmpty()) {
-            return response()->json(['message' => 'La transferencia bancaria ya no está disponible; vuelve a consultar las opciones de pago.'], 422);
+            return response()->json([
+                'message' => $policy->transferClosedNotice()
+                    ?? 'La transferencia bancaria ya no está disponible; vuelve a consultar las opciones de pago.',
+            ], 422);
         }
 
         try {
@@ -307,8 +304,9 @@ class GroupWizardController extends Controller
             'amount' => (float) $paymentRequest->amount,
             'amount_label' => $paymentRequest->amountLabel(),
             'bank_accounts' => $accounts,
-            'whatsapps' => app(\App\Services\ReservationPolicy::class)->transferWhatsapps(),
-            'valid_hours' => (int) now()->diffInHours($paymentRequest->expires_at ?? now()),
+            'whatsapps' => $policy->transferWhatsapps(),
+            'valid_hours' => (int) ceil(now()->diffInMinutes($paymentRequest->expires_at ?? now()) / 60),
+            'valid_label' => $paymentRequest->validityLabel(),
             'return_url' => route('tenant.payment.return', $paymentRequest->uuid),
         ], 201);
     }

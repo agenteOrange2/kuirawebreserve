@@ -188,9 +188,11 @@ class CollectBalancePayments extends Command
 
     protected function transferInstructions(): string
     {
+        // Misma etiqueta que en el resto del sistema (tarjeta, CLABE o
+        // cuenta), no la palabra "cuenta" fija.
         $accounts = collect(Property::query()->first()?->settings['bank_accounts'] ?? [])
             ->filter(fn (array $account) => ! empty($account['active']))
-            ->map(fn (array $account) => sprintf('%s, titular %s, cuenta %s', $account['bank'] ?? '', $account['holder'] ?? '', $account['clabe'] ?? ''))
+            ->map(fn (array $account) => \App\Support\BankAccountNumber::inlineSummary($account))
             ->implode(' | ');
 
         return $accounts === ''

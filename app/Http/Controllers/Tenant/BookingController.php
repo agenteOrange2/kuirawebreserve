@@ -285,15 +285,36 @@ class BookingController extends Controller
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        $requiresPrepayment = $this->requiresPrepaymentFor($ratePlan);
+        $payload = $this->holdPayload($reservation, $ratePlan, $type);
 
+        if ($key !== '') {
+            DB::table('booking_idempotency_keys')->where('created_at', '<', now()->subDays(config('booking.idempotency_key_days', 7)))->delete();
+            DB::table('booking_idempotency_keys')->insertOrIgnore([
+                'key' => $key,
+                'status' => 201,
+                'response' => json_encode($payload),
+                'created_at' => now(),
+            ]);
+        }
+
+        return response()->json($payload, 201);
+    }
+
+    /**
+     * Lo que el wizard necesita para pintar la confirmación y el paso de
+     * pago de un apartado: lo usan crear el apartado y retomarlo.
+     *
+     * @return array<string, mixed>
+     */
+    protected function holdPayload(Reservation $reservation, RatePlan $ratePlan, RoomType $type): array
+    {
         // Desglose para la confirmación: cuánto es la habitación, cuánto
         // los productos, add-ons y experiencias — no solo el total plano.
         $productsTotal = round(array_sum(array_column($reservation->products ?? [], 'total')), 2);
         $extrasTotal = round(array_sum(array_column($reservation->extras ?? [], 'total')), 2);
         $experiencesTotal = round(array_sum(array_column($reservation->experiences ?? [], 'total')), 2);
 
-        $payload = [
+        return [
             'code' => $reservation->displayCode(),
             'room_type' => $type->name,
             'starts_at' => $reservation->starts_at->toIso8601String(),
@@ -314,25 +335,54 @@ class BookingController extends Controller
             'coupon_code' => $reservation->coupon_code,
             'discount' => (float) ($reservation->discount_amount ?? 0),
             'total' => (float) $reservation->total_amount,
-            'requires_prepayment' => $requiresPrepayment,
+            'requires_prepayment' => $this->requiresPrepaymentFor($ratePlan),
             // Efectivo activo: el paso de pago ofrece también "pagar en el hotel".
             'payment_optional' => $this->paymentIsOptional(),
             'deposit' => (float) $reservation->deposit_amount,
             'hold_expires_at' => $reservation->hold_expires_at?->toIso8601String(),
             'hold_minutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
         ];
+    }
 
-        if ($key !== '') {
-            DB::table('booking_idempotency_keys')->where('created_at', '<', now()->subDays(config('booking.idempotency_key_days', 7)))->delete();
-            DB::table('booking_idempotency_keys')->insertOrIgnore([
-                'key' => $key,
-                'status' => 201,
-                'response' => json_encode($payload),
-                'created_at' => now(),
-            ]);
+    /**
+     * Retoma el paso de pago de un apartado desde la página de retorno de la
+     * pasarela. Al irse al checkout el wizard pierde todo lo que tenía en
+     * memoria: quien entraba a Mercado Pago por error y regresaba ya no podía
+     * elegir transferencia, se quedaba en "Confirmando tu pago…" girando sin
+     * que existiera ningún pago (cabañas, 17-sep-2026).
+     *
+     * La llave es el uuid del cobro, no el folio: RES-2026-1763 se adivina
+     * contando, el uuid solo lo tiene quien pasó por el checkout.
+     */
+    public function resume(string $uuid): JsonResponse
+    {
+        $paymentRequest = PaymentRequest::query()->where('uuid', $uuid)->first();
+        $reservation = $paymentRequest?->reservation()->with(['ratePlan', 'room'])->first();
+
+        // Solo habitaciones sueltas: grupos y experiencias tienen su propio
+        // wizard y su propio cobro.
+        if (! $reservation || ! $reservation->ratePlan || $reservation->reservation_group_id !== null) {
+            return response()->json(['message' => 'Este pago no corresponde a un apartado que se pueda retomar aquí.'], 404);
         }
 
-        return response()->json($payload, 201);
+        if ($paymentRequest->status === PaymentRequest::STATUS_PAID) {
+            return response()->json(['message' => 'Este pago ya quedó registrado; no hace falta elegir otro método.'], 409);
+        }
+
+        if (
+            $reservation->status !== \App\Enums\ReservationStatus::Pending
+            || ! $reservation->hold_expires_at?->isFuture()
+        ) {
+            return response()->json(['message' => "Tu apartado {$reservation->displayCode()} ya no está vigente. Puedes hacer una reserva nueva."], 410);
+        }
+
+        $type = RoomType::findOrFail($reservation->ratePlan->room_type_id);
+
+        return response()->json($this->holdPayload($reservation, $reservation->ratePlan, $type) + [
+            // El wizard arranca en "por noche"; sin esto pintaría fechas de un
+            // bloque por horas como si fueran noches.
+            'mode' => $reservation->ratePlan->type->value,
+        ]);
     }
 
     /**
@@ -379,19 +429,8 @@ class BookingController extends Controller
         $gate = app(PaymentMethodGate::class);
         $enabled = $gate->methodsFor((string) tenant('id'));
 
-        $settings = Property::firstOrFail()->settings ?? [];
-        $accounts = (! $enabled['transfer'] || ! app(\App\Services\ReservationPolicy::class)->transferOpenNow()) ? collect() : collect($settings['bank_accounts'] ?? [])
-            ->filter(fn (array $account) => ! empty($account['active']))
-            ->map(fn (array $account) => [
-                'banco' => $account['bank'] ?? '',
-                'titular' => $account['holder'] ?? '',
-                'cuenta' => $account['clabe'] ?? '',
-                // Qué ES el número: una tarjeta anunciada como cuenta hacía
-                // fallar la transferencia en la app del huésped.
-                'tipo' => \App\Support\BankAccountNumber::label($account['clabe'] ?? ''),
-                'aviso' => \App\Support\BankAccountNumber::guestHint($account['clabe'] ?? ''),
-            ])
-            ->values();
+        $policy = app(\App\Services\ReservationPolicy::class);
+        $accounts = $policy->guestTransferAccounts($enabled['transfer']);
 
         $enabledProviders = array_keys(array_filter([
             'stripe' => $enabled['stripe'],
@@ -423,7 +462,10 @@ class BookingController extends Controller
 
         if (! $link && $accounts->isEmpty()) {
             return response()->json([
-                'message' => 'El hotel aún no tiene métodos de cobro en línea; contáctalo directamente para confirmar tu reserva.',
+                // Un hotel que solo cobra por transferencia, de noche, SÍ
+                // tiene cómo cobrar: decirle "no tiene métodos" era falso.
+                'message' => $policy->transferClosedNotice()
+                    ?? 'El hotel aún no tiene métodos de cobro en línea; contáctalo directamente para confirmar tu reserva.',
             ], 422);
         }
 
@@ -431,7 +473,8 @@ class BookingController extends Controller
         // rechazar que emitir un cobro sin ningún dato bancario que mostrar.
         if ($preferred === 'transfer' && $accounts->isEmpty()) {
             return response()->json([
-                'message' => 'La transferencia bancaria ya no está disponible; vuelve a consultar las opciones de pago.',
+                'message' => $policy->transferClosedNotice()
+                    ?? 'La transferencia bancaria ya no está disponible; vuelve a consultar las opciones de pago.',
             ], 422);
         }
 
@@ -465,7 +508,8 @@ class BookingController extends Controller
             'amount_label' => $paymentRequest->amountLabel(),
             'bank_accounts' => $accounts,
             'whatsapps' => app(\App\Services\ReservationPolicy::class)->transferWhatsapps(),
-            'valid_hours' => (int) now()->diffInHours($paymentRequest->expires_at ?? now()),
+            'valid_hours' => (int) ceil(now()->diffInMinutes($paymentRequest->expires_at ?? now()) / 60),
+            'valid_label' => $paymentRequest->validityLabel(),
             'return_url' => route('tenant.payment.return', $paymentRequest->uuid),
         ], 201);
     }

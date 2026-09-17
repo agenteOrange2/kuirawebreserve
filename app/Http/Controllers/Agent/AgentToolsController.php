@@ -1647,18 +1647,7 @@ class AgentToolsController extends Controller
         $enabled = $gate->methodsFor((string) tenant('id'));
 
         $settings = Property::firstOrFail()->settings ?? [];
-        $accounts = (! $enabled['transfer'] || ! app(\App\Services\ReservationPolicy::class)->transferOpenNow()) ? collect() : collect($settings['bank_accounts'] ?? [])
-            ->filter(fn (array $account) => ! empty($account['active']))
-            ->map(fn (array $account) => [
-                'banco' => $account['bank'] ?? '',
-                'titular' => $account['holder'] ?? '',
-                'cuenta' => $account['clabe'] ?? '',
-                // Qué ES el número (tarjeta, CLABE o cuenta) y el bloque tal
-                // cual se le pega al huésped: el modelo lo copia, no lo redacta.
-                'tipo' => \App\Support\BankAccountNumber::label($account['clabe'] ?? ''),
-                'bloque' => implode("\n", \App\Support\BankAccountNumber::blockLines($account)),
-            ])
-            ->values();
+        $accounts = $this->transferAccountsPayload((bool) $enabled['transfer']);
 
         // Con pasarela activa el cobro sale como LINK (se confirma solo por
         // webhook); la transferencia queda de respaldo (spec-pagos §7.1/7.4).
@@ -1795,16 +1784,7 @@ class AgentToolsController extends Controller
         $enabled = $gate->methodsFor((string) tenant('id'));
 
         $settings = Property::firstOrFail()->settings ?? [];
-        $accounts = (! $enabled['transfer'] || ! app(\App\Services\ReservationPolicy::class)->transferOpenNow()) ? collect() : collect($settings['bank_accounts'] ?? [])
-            ->filter(fn (array $account) => ! empty($account['active']))
-            ->map(fn (array $account) => [
-                'banco' => $account['bank'] ?? '',
-                'titular' => $account['holder'] ?? '',
-                'cuenta' => $account['clabe'] ?? '',
-                'tipo' => \App\Support\BankAccountNumber::label($account['clabe'] ?? ''),
-                'bloque' => implode("\n", \App\Support\BankAccountNumber::blockLines($account)),
-            ])
-            ->values();
+        $accounts = $this->transferAccountsPayload((bool) $enabled['transfer']);
 
         $enabledProviders = ! $this->gatewaysAllowed() ? [] : array_keys(array_filter([
             'stripe' => $enabled['stripe'],
@@ -2364,6 +2344,30 @@ class AgentToolsController extends Controller
     protected function noPaymentMethodsNote(): string
     {
         return 'El hotel NO tiene cobros configurados: di que recepción se comunica para confirmar y cerrar el pago. NO prometas ninguna forma de pago (ni efectivo al llegar, ni transferencia, ni link): no sabes cuál acepta.';
+    }
+
+    /**
+     * Las cuentas para transferir, listas para el bot: lo mismo que ve el
+     * huésped en el wizard más el `bloque` que el modelo copia tal cual. El
+     * número de cuenta interno nunca entra aquí.
+     *
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    protected function transferAccountsPayload(bool $transferEnabled): \Illuminate\Support\Collection
+    {
+        if (! $transferEnabled || ! app(\App\Services\ReservationPolicy::class)->transferOpenNow()) {
+            return collect();
+        }
+
+        return collect(Property::firstOrFail()->settings['bank_accounts'] ?? [])
+            ->filter(fn (array $account) => ! empty($account['active']))
+            ->map(function (array $account) {
+                $payload = \App\Services\ReservationPolicy::guestAccountPayload($account);
+                $payload['bloque'] = implode("\n", \App\Support\BankAccountNumber::blockLines($account));
+
+                return $payload;
+            })
+            ->values();
     }
 
     /** ¿Este hotel vende reservas de grupo? */

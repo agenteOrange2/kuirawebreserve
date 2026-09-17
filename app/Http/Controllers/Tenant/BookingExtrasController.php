@@ -170,9 +170,11 @@ class BookingExtrasController extends Controller
         $gate = app(PaymentMethodGate::class);
         $enabled = $gate->methodsFor((string) tenant('id'));
 
-        $settings = Property::firstOrFail()->settings ?? [];
-        $accountsCount = ! $enabled['transfer'] ? 0 : collect($settings['bank_accounts'] ?? [])
-            ->filter(fn (array $a) => ! empty($a['active']))
+        // Fuera del horario de transferencias la opción no se ofrece: antes se
+        // pintaba "Transferencia bancaria" a cualquier hora y al tocarla el
+        // cobro se rechazaba.
+        $accountsCount = app(\App\Services\ReservationPolicy::class)
+            ->guestTransferAccounts($enabled['transfer'])
             ->count();
 
         $enabledProviders = array_keys(array_filter([

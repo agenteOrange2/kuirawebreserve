@@ -35,7 +35,9 @@ class StripeGateway implements PaymentGateway
             'line_items[0][price_data][product_data][name]' => "{$request->subjectLabel()} — {$request->conceptLabel()}",
             'line_items[0][quantity]' => 1,
             'success_url' => $returnUrl,
-            'cancel_url' => $returnUrl,
+            // Marcado: sin esto, regresar sin pagar caía en "Confirmando tu
+            // pago…" igual que un pago de verdad.
+            'cancel_url' => $returnUrl.'?cancelado=1',
             'expires_at' => $expiresAt,
             'metadata[payment_request]' => $request->uuid,
         ];

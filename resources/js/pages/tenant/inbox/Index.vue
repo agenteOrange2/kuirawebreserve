@@ -103,12 +103,25 @@ const props = defineProps<{
     tenantId: string;
     property: { id: number; name: string };
     conversations: ConversationRow[];
-    filters: { archived: boolean; esperando: boolean };
+    filters: {
+        archived: boolean;
+        esperando: boolean;
+        resueltas: boolean;
+        q: string;
+        ver: number;
+    };
     counts: {
         active: number;
         resolved: number;
         archived: number;
         waiting: number;
+    };
+    /** Cuántas se ven de cuántas hay, y si falta por cargar. */
+    pagination: {
+        loaded: number;
+        total: number;
+        has_more: boolean;
+        step: number;
     };
     channels: ChannelRow[];
     staff: { id: number; name: string }[];
@@ -195,40 +208,95 @@ const paymentMeta: Record<string, { tone: string }> = {
 // ── Pestañas de la lista: activas (abiertas + esperan), resueltas y
 // archivo. El archivo se carga del servidor con ?archived=1. ──
 type InboxTab = 'active' | 'resolved' | 'archived';
-const tab = ref<InboxTab>(props.filters.archived ? 'archived' : 'active');
+const tab = ref<InboxTab>(
+    props.filters.archived
+        ? 'archived'
+        : props.filters.resueltas
+          ? 'resolved'
+          : 'active',
+);
 const leadFilter = ref('all');
-const search = ref('');
+const search = ref(props.filters.q ?? '');
+
+/** Hay búsqueda vigente (la que ya aplicó el servidor). */
+const searching = computed(() => (props.filters.q ?? '') !== '');
+
+const loadingMore = ref(false);
+
+/**
+ * Todo lo que el servidor decide (pestaña, esperando, búsqueda y tamaño de
+ * la ventana) viaja junto en la URL: así el repaso de cada minuto y los
+ * avisos de Reverb no tiran los filtros ni encogen lo ya cargado.
+ */
+type ListParam = string | number | undefined;
+
+function goList(
+    overrides: Record<string, ListParam> = {},
+    onFinish?: () => void,
+): void {
+    const params: Record<string, ListParam> = {
+        ...(tab.value === 'archived' ? { archived: 1 } : {}),
+        ...(tab.value === 'resolved' ? { estado: 'resolved' } : {}),
+        ...(props.filters.esperando ? { esperando: 1 } : {}),
+        ...(search.value.trim().length >= 2 ? { q: search.value.trim() } : {}),
+        ...(props.filters.ver > 100 ? { ver: props.filters.ver } : {}),
+        ...overrides,
+    };
+    for (const key of Object.keys(params)) {
+        if (params[key] === undefined) delete params[key];
+    }
+
+    router.get(
+        route('tenant.inbox'),
+        params as Record<string, string | number>,
+        {
+            preserveState: true,
+            preserveScroll: true,
+            replace: true,
+            only: ['conversations', 'filters', 'counts', 'pagination'],
+            onFinish,
+        },
+    );
+}
 
 function setTab(t: InboxTab): void {
     if (tab.value === t) return;
     tab.value = t;
-    const wantsArchived = t === 'archived';
-    if (wantsArchived !== props.filters.archived) {
-        router.get(
-            route('tenant.inbox'),
-            wantsArchived ? { archived: 1 } : {},
-            {
-                preserveState: true,
-                replace: true,
-                only: ['conversations', 'filters', 'counts'],
-            },
-        );
-    }
+    // Cambiar de pestaña empieza de nuevo: la ventana vuelve a 100.
+    goList({ ver: undefined });
 }
 
 // Traspasos sin dueño: el bot pasa el hilo a una persona y se apaga. Este
 // filtro va al servidor (?esperando=1) porque el que lleva 22 horas
 // esperando ya no cabe en las 100 conversaciones más recientes.
 function toggleEsperando(): void {
-    router.get(
-        route('tenant.inbox'),
-        props.filters.esperando ? {} : { esperando: 1 },
-        {
-            preserveState: true,
-            replace: true,
-            only: ['conversations', 'filters', 'counts'],
-        },
-    );
+    goList({
+        esperando: props.filters.esperando ? undefined : 1,
+        ver: undefined,
+    });
+}
+
+// La búsqueda se manda al servidor (con respiro entre teclas) y mira toda
+// la bandeja, no solo lo que está en pantalla.
+let searchDebounce: ReturnType<typeof setTimeout> | null = null;
+
+function onSearchInput(): void {
+    if (searchDebounce) clearTimeout(searchDebounce);
+    searchDebounce = setTimeout(() => {
+        const term = search.value.trim();
+        // Menos de dos letras no es una búsqueda; el servidor la ignora.
+        const wanted = term.length >= 2 ? term : '';
+        if (wanted === (props.filters.q ?? '')) return;
+        goList({ q: wanted || undefined, ver: undefined });
+    }, 350);
+}
+
+function loadMore(): void {
+    if (loadingMore.value) return;
+    loadingMore.value = true;
+    goList({ ver: props.filters.ver + props.pagination.step }, () => {
+        loadingMore.value = false;
+    });
 }
 
 function esperaTono(minutes?: number | null): string {
@@ -238,34 +306,17 @@ function esperaTono(minutes?: number | null): string {
     return 'bg-slate-100 text-slate-500 dark:bg-darkmode-400';
 }
 
-const filtered = computed(() => {
-    const term = search.value.trim().toLowerCase();
-    return props.conversations
-        .filter((c) =>
-            tab.value === 'archived'
-                ? true
-                : tab.value === 'resolved'
-                  ? c.status === 'resolved'
-                  : c.status !== 'resolved',
-        )
-        .filter(
-            (c) =>
-                leadFilter.value === 'all' ||
-                c.lead_status === leadFilter.value,
-        )
-        .filter(
-            (c) =>
-                !term ||
-                c.name.toLowerCase().includes(term) ||
-                (c.preview ?? '').toLowerCase().includes(term) ||
-                (c.reservation_code ?? '').toLowerCase().includes(term) ||
-                (c.assignee ?? '').toLowerCase().includes(term),
-        );
-});
+// La pestaña ya la resolvió el servidor (activas, resueltas o archivo, y
+// buscando se enseña todo). Aquí solo queda el embudo.
+const filtered = computed(() =>
+    props.conversations.filter(
+        (c) => leadFilter.value === 'all' || c.lead_status === leadFilter.value,
+    ),
+);
 
 // En Activas la lista se agrupa: primero lo que espera a un humano.
 const groups = computed(() => {
-    if (tab.value !== 'active') {
+    if (tab.value !== 'active' || searching.value) {
         return [
             {
                 key: tab.value,
@@ -390,6 +441,29 @@ async function open(c: ConversationRow) {
     maybeAutoSuggest();
 }
 
+/**
+ * Abre un hilo por id aunque no esté en la lista cargada. La lista es una
+ * ventana de las más recientes: un enlace a una conversación de hace unos
+ * días caía fuera y la pantalla decía que no existía.
+ */
+async function openById(id: number) {
+    const found = props.conversations.find((c) => c.id === id);
+    if (found) {
+        await open(found);
+        return;
+    }
+
+    try {
+        const { data } = await axios.get(`/api/inbox/${id}`);
+        await open(data.conversation as ConversationRow);
+    } catch {
+        toast.error(
+            'No encontramos esa conversación',
+            'Puede haberse eliminado de la bandeja.',
+        );
+    }
+}
+
 async function refreshThread() {
     if (!selected.value) return;
     try {
@@ -472,7 +546,7 @@ async function patchConversation(
         await axios.patch(`/api/inbox/${selected.value.id}`, payload);
         toast.success(message);
         await refreshThread();
-        router.reload({ only: ['conversations', 'counts'] });
+        router.reload({ only: ['conversations', 'counts', 'pagination'] });
     } catch (e: any) {
         toast.error(
             'No se pudo actualizar',
@@ -564,7 +638,7 @@ async function submitDelete() {
             'Conversación eliminada',
             'El hilo y sus mensajes se borraron definitivamente.',
         );
-        router.reload({ only: ['conversations', 'counts'] });
+        router.reload({ only: ['conversations', 'counts', 'pagination'] });
     } catch (e: any) {
         toast.error(
             'No se pudo eliminar',
@@ -595,7 +669,7 @@ async function setArchived(c: ConversationRow, value: boolean) {
                 ? 'Se elimina sola en 30 días; vuelve a la bandeja si el huésped escribe.'
                 : `${c.name} regresó a la bandeja.`,
         );
-        router.reload({ only: ['conversations', 'counts'] });
+        router.reload({ only: ['conversations', 'counts', 'pagination'] });
     } catch (e: any) {
         toast.error(
             'No se pudo actualizar',
@@ -617,7 +691,7 @@ async function archiveAllResolved() {
         );
         if (selected.value?.status === 'resolved')
             selected.value.archived = true;
-        router.reload({ only: ['conversations', 'counts'] });
+        router.reload({ only: ['conversations', 'counts', 'pagination'] });
     } catch (e: any) {
         toast.error(
             'No se pudo archivar',
@@ -647,7 +721,7 @@ async function emptyArchive() {
             'Archivo vaciado',
             `${data.deleted} conversación(es) se eliminaron definitivamente.`,
         );
-        router.reload({ only: ['conversations', 'counts'] });
+        router.reload({ only: ['conversations', 'counts', 'pagination'] });
     } catch (e: any) {
         toast.error(
             'No se pudo vaciar',
@@ -679,7 +753,7 @@ function refreshInbox(conversationId?: number) {
     if (refreshDebounce) clearTimeout(refreshDebounce);
 
     refreshDebounce = setTimeout(async () => {
-        router.reload({ only: ['conversations', 'counts'] });
+        router.reload({ only: ['conversations', 'counts', 'pagination'] });
 
         // El hilo abierto solo se recarga si el mensaje es suyo (o si no
         // sabemos de cuál venía, como en el refresco de respaldo).
@@ -742,28 +816,18 @@ onMounted(() => {
     document.addEventListener('visibilitychange', onVisibilityChange);
 
     // Enlace directo a un hilo (?conversation=ID): lo usa la lista de
-    // espera para enseñar el aviso que mandó el asistente. Si el hilo no
-    // está en la carga actual (archivado, muy viejo), no se abre nada.
+    // espera para enseñar el aviso que mandó el asistente. Si no está en la
+    // lista cargada se pide al servidor: el enlace siempre abre el hilo.
     const wanted = Number(
         new URLSearchParams(window.location.search).get('conversation'),
     );
 
-    if (wanted) {
-        const found = props.conversations.find((c) => c.id === wanted);
-
-        if (found) {
-            open(found);
-        } else {
-            toast.error(
-                'No encontramos esa conversación',
-                'Puede estar archivada o fuera de la lista actual.',
-            );
-        }
-    }
+    if (wanted) openById(wanted);
 });
 onBeforeUnmount(() => {
     if (poller) clearInterval(poller);
     if (refreshDebounce) clearTimeout(refreshDebounce);
+    if (searchDebounce) clearTimeout(searchDebounce);
     document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 </script>
@@ -891,8 +955,10 @@ onBeforeUnmount(() => {
                                 <input
                                     v-model="search"
                                     type="search"
-                                    placeholder="Buscar nombre, mensaje o folio"
+                                    placeholder="Buscar nombre, teléfono, folio o mensaje"
                                     class="h-9 w-full rounded-lg border border-slate-200 pr-3 pl-9 text-xs transition outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                    @input="onSearchInput"
+                                    @search="onSearchInput"
                                 />
                             </div>
                             <FormSelect
@@ -906,6 +972,17 @@ onBeforeUnmount(() => {
                                 <option value="lost">Perdidos</option>
                             </FormSelect>
                         </div>
+                        <p
+                            v-if="searching"
+                            class="flex items-center gap-1.5 text-[11px] text-slate-500"
+                        >
+                            <Lucide
+                                icon="Info"
+                                class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                            />
+                            Se busca en toda la bandeja, incluidas resueltas y
+                            archivadas.
+                        </p>
                         <button
                             v-if="counts.waiting > 0 || filters.esperando"
                             type="button"
@@ -1268,16 +1345,43 @@ onBeforeUnmount(() => {
                             </div>
                             <p class="px-6 text-sm text-slate-500">
                                 {{
-                                    search.trim() || leadFilter !== 'all'
-                                        ? 'Sin resultados con estos filtros.'
-                                        : tab === 'archived'
-                                          ? 'El archivo está vacío; archiva las resueltas para despejar la bandeja.'
-                                          : tab === 'resolved'
-                                            ? 'No hay conversaciones resueltas pendientes de archivar.'
-                                            : 'Sin conversaciones activas todavía. Comparte el webchat de tu hotel para empezar.'
+                                    searching
+                                        ? 'Ninguna conversación coincide con esa búsqueda, en toda la bandeja.'
+                                        : leadFilter !== 'all'
+                                          ? 'Sin resultados con estos filtros.'
+                                          : tab === 'archived'
+                                            ? 'El archivo está vacío; archiva las resueltas para despejar la bandeja.'
+                                            : tab === 'resolved'
+                                              ? 'No hay conversaciones resueltas pendientes de archivar.'
+                                              : 'Sin conversaciones activas todavía. Comparte el webchat de tu hotel para empezar.'
                                 }}
                             </p>
                         </div>
+                    </div>
+
+                    <!-- Cuántas se ven de cuántas hay: la lista es una
+                         ventana de las más recientes, no la bandeja entera. -->
+                    <div
+                        v-if="pagination.total > pagination.loaded"
+                        class="flex items-center justify-between gap-3 border-t border-slate-200/60 px-4 py-2.5 dark:border-darkmode-400"
+                    >
+                        <span class="text-xs text-slate-500">
+                            Mostrando {{ pagination.loaded }} de
+                            {{ pagination.total }}
+                        </span>
+                        <Button
+                            v-if="pagination.has_more"
+                            variant="outline-secondary"
+                            class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
+                            :disabled="loadingMore"
+                            @click="loadMore"
+                        >
+                            <Lucide
+                                icon="ChevronDown"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            {{ loadingMore ? 'Cargando…' : 'Cargar más' }}
+                        </Button>
                     </div>
                 </div>
 

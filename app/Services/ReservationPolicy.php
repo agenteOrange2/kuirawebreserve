@@ -61,6 +61,111 @@ class ReservationPolicy
             && $minutes < $this->clockMinutes((string) ($settings['transfer_hours_close'] ?? '17:00'));
     }
 
+    /**
+     * Las cuentas que se le pueden enseñar al huésped EN ESTE MOMENTO, listas
+     * para pintar. Vacías si el hotel apagó la transferencia o si está fuera
+     * de su horario.
+     *
+     * Antes cada wizard armaba su propia lista y solo el de habitaciones, al
+     * cobrar, miraba el horario: las opciones de pago enseñaban
+     * "Transferencia bancaria" a medianoche en los tres wizards, y grupos y
+     * experiencias hasta la aceptaban (cabañas, 17-sep-2026).
+     *
+     * @return \Illuminate\Support\Collection<int, array{banco: string, titular: string, cuenta: string, tipo: string, aviso: ?string, alternativa: ?array}>
+     */
+    public function guestTransferAccounts(bool $transferEnabled): \Illuminate\Support\Collection
+    {
+        if (! $transferEnabled || ! $this->transferOpenNow()) {
+            return collect();
+        }
+
+        return $this->guestAccounts();
+    }
+
+    /**
+     * Las cuentas activas como las lee el huésped, SIN mirar el horario: la
+     * consulta de reserva las enseña mientras su cobro por transferencia siga
+     * vivo, aunque sea de noche.
+     *
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    public function guestAccounts(): \Illuminate\Support\Collection
+    {
+        return collect($this->settings()['bank_accounts'] ?? [])
+            ->filter(fn (array $account) => ! empty($account['active']))
+            ->map(fn (array $account) => self::guestAccountPayload($account))
+            ->values();
+    }
+
+    /**
+     * Una cuenta contada al huésped: el número que se le da PRIMERO (la CLABE
+     * si la hay), qué es, cómo usarlo, y la tarjeta como alternativa para
+     * quien en su app solo puede transferir a tarjeta. El número de cuenta
+     * capturado aparte es interno y NUNCA sale por aquí.
+     *
+     * @param  array<string, mixed>  $account
+     * @return array{banco: string, titular: string, cuenta: string, tipo: string, aviso: ?string, alternativa: ?array{cuenta: string, tipo: string, aviso: ?string}}
+     */
+    public static function guestAccountPayload(array $account): array
+    {
+        $datos = \App\Support\BankAccountNumber::normalize($account);
+
+        return [
+            'banco' => $datos['bank'],
+            'titular' => $datos['holder'],
+            'cuenta' => $datos['primary']['number'] ?? '',
+            'tipo' => $datos['primary']['label'] ?? 'Cuenta',
+            'aviso' => $datos['primary']['hint'] ?? null,
+            'alternativa' => $datos['alternate'] === null ? null : [
+                'cuenta' => $datos['alternate']['number'],
+                'tipo' => $datos['alternate']['label'],
+                'aviso' => $datos['alternate']['hint'],
+            ],
+        ];
+    }
+
+    /**
+     * Por qué no hay transferencia ahora, dicho al huésped, o null si no es
+     * cuestión de horario (el hotel la apagó o no tiene cuentas). Sin esto el
+     * wizard respondía "el hotel aún no tiene métodos de cobro" a quien
+     * llegaba de noche a un hotel que sí cobra por transferencia de día.
+     */
+    public function transferClosedNotice(): ?string
+    {
+        $hasAccounts = collect($this->settings()['bank_accounts'] ?? [])
+            ->contains(fn (array $account) => ! empty($account['active']));
+
+        if (! $hasAccounts || $this->transferOpenNow() || ($label = $this->transferHoursLabel()) === null) {
+            return null;
+        }
+
+        // Sin prometer "paga en línea": un hotel sin pasarela no lo permite.
+        return "Las transferencias se reciben {$label}.";
+    }
+
+    /**
+     * Un plazo dicho como lo diría una persona: "20 minutos", "1 hora",
+     * "1 h 30 min", "3 horas". Convertirlo a horas enteras decía "Vigente por
+     * 0 horas" a un cobro de 20 o 60 minutos.
+     */
+    public static function durationLabel(int $minutes): string
+    {
+        $minutes = max(0, $minutes);
+
+        if ($minutes < 60) {
+            return $minutes === 1 ? '1 minuto' : "{$minutes} minutos";
+        }
+
+        $hours = intdiv($minutes, 60);
+        $rest = $minutes % 60;
+
+        if ($rest > 0) {
+            return "{$hours} h {$rest} min";
+        }
+
+        return $hours === 1 ? '1 hora' : "{$hours} horas";
+    }
+
     /** "de 9:00 AM a 5:00 PM", o null si el hotel no tiene horario. */
     public function transferHoursLabel(): ?string
     {

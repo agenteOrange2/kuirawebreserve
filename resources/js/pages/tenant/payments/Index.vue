@@ -101,7 +101,12 @@ interface QueueDetail {
     subject_code: string;
     guest: { name: string; phone: string | null; email: string | null };
     details: { label: string; value: string }[];
-    bank_accounts: { bank: string; holder: string; clabe: string }[];
+    bank_accounts: {
+        bank: string;
+        holder: string;
+        /** Los tres: el depósito pudo llegar a cualquiera. */
+        numbers: { number: string; label: string; internal: boolean }[];
+    }[];
     receipt: ReceiptInfo | null;
     conversation_id: number | null;
 }
@@ -1406,19 +1411,35 @@ watch(paymentsMethod, () => fetchPayments(1));
                             >
                                 Cuentas del hotel
                             </div>
-                            <div class="space-y-1.5 px-4 py-3 text-sm">
+                            <div class="space-y-2.5 px-4 py-3 text-sm">
                                 <div
-                                    v-for="account in queueDetail.bank_accounts"
-                                    :key="account.clabe"
-                                    class="flex justify-between gap-3"
+                                    v-for="(
+                                        account, i
+                                    ) in queueDetail.bank_accounts"
+                                    :key="i"
                                 >
-                                    <span class="text-slate-500"
-                                        >{{ account.bank }} ·
-                                        {{ account.holder }}</span
+                                    <div class="text-slate-500">
+                                        {{ account.bank }} ·
+                                        {{ account.holder }}
+                                    </div>
+                                    <div
+                                        v-for="n in account.numbers"
+                                        :key="n.number"
+                                        class="mt-0.5 flex justify-between gap-3"
+                                        :class="
+                                            n.internal ? 'text-slate-400' : ''
+                                        "
                                     >
-                                    <span class="font-mono text-xs">{{
-                                        account.clabe
-                                    }}</span>
+                                        <span class="text-xs"
+                                            >{{ n.label
+                                            }}<template v-if="n.internal">
+                                                (interna)</template
+                                            ></span
+                                        >
+                                        <span class="font-mono text-xs">{{
+                                            n.number
+                                        }}</span>
+                                    </div>
                                 </div>
                             </div>
                         </div>

@@ -36,7 +36,9 @@ class PayPalGateway implements PaymentGateway
                 ]],
                 'application_context' => [
                     'return_url' => $returnUrl,
-                    'cancel_url' => $returnUrl,
+                    // Marcado: sin esto, regresar sin pagar caía en
+                    // "Confirmando tu pago…" igual que un pago de verdad.
+                    'cancel_url' => $returnUrl.'?cancelado=1',
                     'user_action' => 'PAY_NOW',
                     'shipping_preference' => 'NO_SHIPPING',
                 ],

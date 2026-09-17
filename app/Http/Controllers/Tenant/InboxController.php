@@ -21,6 +21,18 @@ use Inertia\Response;
  */
 class InboxController extends Controller
 {
+    /** Conversaciones por tanda en la lista, y paso del "Cargar más". */
+    protected const PAGE = 100;
+
+    /** Tope duro de la ventana: más que esto no se navega con la vista. */
+    protected const MAX_WINDOW = 1000;
+
+    /**
+     * Dígitos de un teléfono guardado "como se escribió" (con espacios,
+     * guiones o paréntesis): la ficha del huésped no lo normaliza.
+     */
+    protected const PHONE_DIGITS = "replace(replace(replace(replace(replace(phone, ' ', ''), '-', ''), '(', ''), ')', ''), '+', '')";
+
     public function index(Request $request): Response
     {
         $property = Property::firstOrFail();
@@ -36,16 +48,55 @@ class InboxController extends Controller
         // la pantalla las hiciera visibles.
         $waiting = $request->boolean('esperando');
 
-        $conversations = $this->conversationQuery()
-            ->when(
-                $archived,
-                fn ($q) => $q->whereNotNull('archived_at'),
-                fn ($q) => $q->whereNull('archived_at'),
-            )
-            ->when($waiting, fn ($q) => $q->where('status', Conversation::STATUS_PENDING))
+        // Pestaña de la lista (activas | resueltas). También es del
+        // servidor: filtrarla en pantalla enseñaba solo las resueltas que
+        // cupieran en la tanda, y con la bandeja llena no cabía casi ninguna.
+        $onlyResolved = $request->string('estado')->toString() === 'resolved';
+
+        // Buscar es del servidor. La caja filtraba SOLO las filas ya
+        // cargadas, así que un hilo fuera de la ventana no aparecía ni
+        // escribiendo el nombre completo y parecía borrado: el 17-sep
+        // cabañas tenía 957 conversaciones activas y la lista llegaba
+        // apenas al día anterior.
+        $term = trim((string) $request->string('q'));
+        $term = mb_strlen($term) >= 2 ? $term : '';
+
+        // Ventana de la lista, de 100 en 100. Viaja en la URL (?ver=) para
+        // que los refrescos automáticos (Reverb y el repaso cada minuto)
+        // conserven lo que el staff ya había cargado.
+        $limit = max(self::PAGE, min(self::MAX_WINDOW, (int) $request->integer('ver', self::PAGE)));
+
+        // Buscando se mira TODA la bandeja —resueltas y archivo incluidos—:
+        // quien escribe un nombre quiere el hilo, no la pestaña.
+        $scope = function ($query) use ($term, $archived, $waiting, $onlyResolved) {
+            if ($term !== '') {
+                $this->applySearch($query, $term);
+            } elseif ($archived) {
+                $query->whereNotNull('archived_at');
+            } else {
+                $query->whereNull('archived_at')
+                    ->when(
+                        $onlyResolved,
+                        fn ($q) => $q->where('status', Conversation::STATUS_RESOLVED),
+                        fn ($q) => $q->whereIn('status', [Conversation::STATUS_OPEN, Conversation::STATUS_PENDING]),
+                    );
+            }
+
+            if ($waiting) {
+                $query->where('status', Conversation::STATUS_PENDING);
+            }
+
+            return $query;
+        };
+
+        $rows = $scope($this->conversationQuery())
             ->orderByDesc('last_message_at')
-            ->take(100)
+            // La de más solo contesta si queda algo por cargar.
+            ->take($limit + 1)
             ->get();
+
+        $hasMore = $rows->count() > $limit;
+        $conversations = $rows->take($limit)->values();
 
         $esperas = Conversation::waitingSinceFor(
             $conversations->where('status', Conversation::STATUS_PENDING)->pluck('id')->all(),
@@ -61,7 +112,21 @@ class InboxController extends Controller
             'tenantId' => tenant('id'),
             'property' => $property->only(['id', 'name']),
             'conversations' => $conversations,
-            'filters' => ['archived' => $archived, 'esperando' => $waiting],
+            'filters' => [
+                'archived' => $archived,
+                'esperando' => $waiting,
+                'resueltas' => $onlyResolved,
+                'q' => $term,
+                'ver' => $limit,
+            ],
+            // Cuántas se están viendo de cuántas hay: sin esto la lista
+            // mentía por omisión (100 filas de 957).
+            'pagination' => [
+                'loaded' => $conversations->count(),
+                'total' => $scope(Conversation::query())->count(),
+                'has_more' => $hasMore,
+                'step' => self::PAGE,
+            ],
             'counts' => [
                 'active' => Conversation::query()->whereNull('archived_at')
                     ->whereIn('status', [Conversation::STATUS_OPEN, Conversation::STATUS_PENDING])->count(),
@@ -346,6 +411,45 @@ class InboxController extends Controller
                 // De dónde salió la conversación: saber que nació de un
                 // comentario cambia el tono con el que se contesta.
                 'socialComments as from_social']);
+    }
+
+    /**
+     * Búsqueda de la bandeja, del lado del servidor: nombre del contacto o
+     * del huésped, teléfono escrito como sea, folio de la reserva o del
+     * grupo, quién la atiende, el último mensaje y el texto del hilo.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<Conversation>  $query
+     * @return \Illuminate\Database\Eloquent\Builder<Conversation>
+     */
+    protected function applySearch(\Illuminate\Database\Eloquent\Builder $query, string $term): \Illuminate\Database\Eloquent\Builder
+    {
+        $like = '%'.addcslashes($term, '%_\\').'%';
+        $digits = (string) preg_replace('/\D+/', '', $term);
+
+        return $query->where(function ($q) use ($like, $digits) {
+            $q->where('contact_name', 'like', $like)
+                ->orWhere('last_message_preview', 'like', $like)
+                ->orWhereHas('guest', fn ($g) => $g
+                    ->where('first_name', 'like', $like)
+                    ->orWhere('last_name', 'like', $like)
+                    // "Alonso Jurado" escrito completo no cae en ninguna de
+                    // las dos columnas por separado.
+                    ->orWhereRaw("concat(first_name, ' ', last_name) like ?", [$like]))
+                ->orWhereHas('assignee', fn ($u) => $u->where('name', 'like', $like))
+                ->orWhereHas('reservation', fn ($r) => $r
+                    ->where('code', 'like', $like)
+                    ->orWhereHas('group', fn ($g) => $g->where('code', 'like', $like)))
+                ->orWhereHas('messages', fn ($m) => $m->where('body', 'like', $like));
+
+            // Teléfono: se teclea con espacios, guiones o sin lada, así que
+            // se comparan solo los dígitos de los dos lados. Menos de seis
+            // no es un teléfono, es cualquier cosa.
+            if (strlen($digits) >= 6) {
+                $q->orWhere('contact_phone', 'like', '%'.$digits.'%')
+                    ->orWhereHas('guest', fn ($g) => $g
+                        ->whereRaw(self::PHONE_DIGITS.' like ?', ['%'.$digits.'%']));
+            }
+        });
     }
 
     /**

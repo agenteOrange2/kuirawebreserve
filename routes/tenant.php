@@ -1284,6 +1284,12 @@ Route::middleware([
     Route::post('holds/{code}/pay-later', [\App\Http\Controllers\Tenant\BookingController::class, 'payLater'])
         ->middleware('throttle:20,1')
         ->name('holds.pay-later');
+    // Retomar el paso de pago al volver de la pasarela sin pagar (para
+    // cambiar a transferencia). Por uuid del cobro, no por folio.
+    Route::get('resume/{uuid}', [\App\Http\Controllers\Tenant\BookingController::class, 'resume'])
+        ->whereUuid('uuid')
+        ->middleware('throttle:20,1')
+        ->name('resume');
     // Catálogo de extras (POS) y opciones de pago — /ajustes/wizard.
     Route::get('products', [\App\Http\Controllers\Tenant\BookingExtrasController::class, 'products'])
         ->middleware('throttle:60,1')

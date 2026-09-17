@@ -233,9 +233,11 @@ class PaymentGuestNotifier
      */
     protected function transferInstructions(): string
     {
+        // Con la etiqueta correcta: decirle "cuenta" a una tarjeta hace que
+        // la transferencia falle en la app del huésped.
         $accounts = collect(\App\Models\Property::query()->first()?->settings['bank_accounts'] ?? [])
             ->filter(fn (array $account) => ! empty($account['active']))
-            ->map(fn (array $account) => sprintf('%s, titular %s, cuenta %s', $account['bank'] ?? '', $account['holder'] ?? '', $account['clabe'] ?? ''))
+            ->map(fn (array $account) => \App\Support\BankAccountNumber::inlineSummary($account))
             ->implode(' | ');
 
         return $accounts === ''
