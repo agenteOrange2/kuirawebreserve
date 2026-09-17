@@ -300,6 +300,20 @@ class AgentBrain
 
         $hours = app(SupportHours::class);
 
+        // Traspasar por una pregunta que el bot SÍ puede contestar es perder
+        // al cliente por nada. Caso real cabañas 2026-09-17 (conv. 992): tras
+        // dos fechas llenas, el huésped escribió "para el 26 de septiembre?"
+        // y el bot lo transfirió; un minuto después, preguntado otra vez,
+        // contestó la disponibilidad correcta él solo.
+        if ($handoff && $answeredBy !== null && $this->handoffIsPremature($conversation, $handoffReason)) {
+            $retry = $this->answerInsteadOfHandoff($conversation, $answeredBy, $meta);
+
+            if ($retry !== null) {
+                $text = $retry;
+                $handoff = false;
+            }
+        }
+
         if ($handoff || $text === '') {
             $this->markHandoff($conversation, $handoffReason);
 
@@ -375,6 +389,88 @@ class AgentBrain
      * hotel se entera. De noche nadie tiene el panel abierto, así que el
      * aviso sale por WhatsApp y no al otro día.
      */
+    /**
+     * ¿El traspaso es por algo que el bot podía contestar solo?
+     *
+     * Transferir está bien cuando el huésped lo pide, se queja, reclama un
+     * pago o pregunta algo que no está en las herramientas (un evento, una
+     * factura). NO está bien cuando solo preguntó por una fecha, un precio o
+     * la disponibilidad: para eso tiene herramientas, y el hotel acaba
+     * atendiendo a mano lo que el bot ya sabía.
+     */
+    protected function handoffIsPremature(Conversation $conversation, string $reason): bool
+    {
+        $last = (string) $conversation->messages()
+            ->where('direction', 'in')
+            ->latest('id')
+            ->value('body');
+
+        if (trim($last) === '') {
+            return false;
+        }
+
+        // Motivos que SIEMPRE se respetan, aunque el huésped haya nombrado una
+        // fecha: la restricción interna de recepción y el pago reclamado.
+        if (preg_match('/revisi[óo]n de recepci[óo]n|restricci[óo]n|pag[óo]|pago|comprobante|transferí|dep[óo]sito/iu', $reason) === 1) {
+            return false;
+        }
+
+        // Lo que el huésped pide y no se contesta con herramientas.
+        $humano = '/hablar con|con una persona|un humano|alguien m[áa]s|encargad|gerente|due[ñn]o|queja|reclamo|molest|inconform|factura|evento|boda|xv|graduaci[óo]n|cotizaci[óo]n especial|ya pagu|ya transfer|mand[ée] el comprobante/iu';
+
+        if (preg_match($humano, $last) === 1) {
+            return false;
+        }
+
+        // Y lo que sí: fechas, precios, disponibilidad.
+        $consultable = '/disponib|hay (lugar|cabaña|espacio)|tienes?\b|queda[n]?\b|precio|costo|cu[áa]nto|tarifa|libre/iu';
+
+        return $this->datesMentioned($last) !== [] || preg_match($consultable, $last) === 1;
+    }
+
+    /**
+     * Segundo intento SIN poder transferir (el juego de solo lectura no
+     * incluye transferir_a_humano): contesta la pregunta con las
+     * herramientas. Si tampoco sale texto, el traspaso sigue su curso.
+     *
+     * @param  array<string, mixed>  $meta
+     */
+    protected function answerInsteadOfHandoff(Conversation $conversation, AiProvider $provider, array &$meta): ?string
+    {
+        \Illuminate\Support\Facades\Log::warning('Agente: iba a transferir algo que podía contestar, se reintenta', [
+            'conversation_id' => $conversation->id,
+        ]);
+
+        try {
+            $handoff = false;
+            $used = [];
+            $reason = '';
+
+            $aviso = 'CORRECCIÓN: ibas a transferir al huésped con una persona del hotel, pero lo que preguntó lo puedes contestar TÚ con tus herramientas (disponibilidad, precios, políticas). Consúltalo y contéstale con los datos reales. No transfieras, no prometas que alguien más lo atenderá y no le pidas que espere.';
+
+            $response = $this->run($provider, fn ($request) => $request
+                ->withSystemPrompt($this->systemPrompt($conversation)."\n\n".$aviso)
+                ->withMessages($this->history($conversation))
+                ->withTools($this->toolset($handoff, $conversation, true, $used, $reason))
+                ->withMaxSteps(6));
+
+            $text = trim($response->text);
+
+            if ($text === '') {
+                return null;
+            }
+
+            $meta['retry'] = 'handoff_evitado';
+            $meta['completion_tokens'] = ($meta['completion_tokens'] ?? 0) + ($response->usage->completionTokens ?? 0);
+
+            return $text;
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
     protected function markHandoff(Conversation $conversation, string $reason = ''): void
     {
         $conversation->update(['bot_enabled' => false, 'status' => Conversation::STATUS_PENDING]);
@@ -556,35 +652,59 @@ class AgentBrain
 
         $availability = app(\App\Services\AvailabilityService::class);
         $mine = $this->ownHeldTypeIds($conversation);
-        $sentences = preg_split('/(?<=[.!?:\n])\s*/u', $text, -1, PREG_SPLIT_NO_EMPTY) ?: [];
+        // Se trabaja por RENGLONES, no por frases sueltas: el divisor corta
+        // también en los dos puntos, así que "- Cabaña Real: $4,500" eran dos
+        // pedazos. Se borraba el del nombre y quedaba el precio huérfano
+        // ("hasta 6 personas, $4,500"), y el renglón siguiente apagaba el modo
+        // lista, así que solo se atrapaba la PRIMERA cabaña de la lista y las
+        // demás se ofrecían igual (cabañas, conv. 17-sep-2026).
+        $lines = preg_split('/\R/u', $text) ?: [];
 
         $date = null;
-        $offending = [];
         $wrong = [];
         $freeLabels = [];
+        // Renglones que se caen enteros, y frases sueltas dentro de un
+        // renglón de prosa.
+        $dropLine = [];
+        $dropSentence = [];
         // "Para el 27 tenemos estas cabañas disponibles:" y abajo la lista.
         // El nombre de la habitación va en su propio renglón, sin fecha ni
         // la palabra "disponible": la promesa la hereda del encabezado.
         $listing = false;
+        $header = null;
+        $itemsKept = [];
 
-        foreach ($sentences as $sentence) {
-            $dates = $this->datesMentioned($sentence);
-            $date = $dates !== [] ? reset($dates) : $date;
-            $bullet = preg_match('/^\s*[-•*\d]/u', $sentence) === 1;
-            $claims = $this->claimsAvailability($sentence);
-            $named = $this->roomTypesMentioned($sentence, $types);
+        foreach ($lines as $i => $line) {
+            if (trim($line) === '') {
+                continue;
+            }
 
+            $bullet = preg_match('/^\s*[-•*\d]/u', $line) === 1;
+            $lineDates = $this->datesMentioned($line);
+            $date = $lineDates !== [] ? reset($lineDates) : $date;
+            $claims = $this->claimsAvailability($line);
+            $named = $this->roomTypesMentioned($line, $types);
+
+            // Encabezado de lista ("Para el 27 tenemos estas disponibles:").
             if ($claims && $named->isEmpty()) {
                 $listing = $date !== null;
+                $header = $listing ? $i : null;
+
+                if ($header !== null) {
+                    $itemsKept[$header] = 0;
+                }
 
                 continue;
             }
 
             if (! $bullet && ! $claims) {
                 $listing = false;
+                $header = null;
             }
 
-            if ($date === null || $named->isEmpty() || ! ($claims || ($listing && $bullet))) {
+            $isItem = $listing && $bullet;
+
+            if ($date === null || $named->isEmpty() || ! ($claims || $isItem)) {
                 continue;
             }
 
@@ -592,10 +712,32 @@ class AgentBrain
                 && ! $this->typeIsFree($type, $date, $availability));
 
             if ($busy->isEmpty()) {
+                if ($isItem && $header !== null) {
+                    $itemsKept[$header]++;
+                }
+
                 continue;
             }
 
-            $offending[] = $sentence;
+            if ($bullet) {
+                // Renglón de lista: se cae completo, con precio y todo.
+                $dropLine[$i] = true;
+            } else {
+                // Prosa: solo las frases que ofrecen lo ocupado; lo demás del
+                // párrafo (una pregunta, un dato) se respeta.
+                foreach ($this->sentencesOf($line) as $sentence) {
+                    if ($this->roomTypesMentioned($sentence, $types)->isEmpty()) {
+                        continue;
+                    }
+
+                    $dropSentence[$i][] = $sentence;
+                }
+
+                if (($dropSentence[$i] ?? []) === []) {
+                    $dropLine[$i] = true;
+                }
+            }
+
             $key = $date->toDateString();
             $wrong[$key] = array_values(array_unique([...($wrong[$key] ?? []), ...$busy->pluck('name')->all()]));
             $freeLabels[$key] ??= $types
@@ -605,8 +747,16 @@ class AgentBrain
                 ->all();
         }
 
-        if ($offending === []) {
+        if ($dropLine === [] && $dropSentence === []) {
             return $text;
+        }
+
+        // Un encabezado de lista al que se le cayeron TODOS los renglones
+        // deja un "Tenemos:" colgando de la nada.
+        foreach ($itemsKept as $headerLine => $kept) {
+            if ($kept === 0) {
+                $dropLine[$headerLine] = true;
+            }
         }
 
         \Illuminate\Support\Facades\Log::warning('Agente: ofreció habitaciones que no están libres', [
@@ -620,19 +770,57 @@ class AgentBrain
             $label = \Carbon\CarbonImmutable::parse($day)->locale('es')->isoFormat('dddd D [de] MMMM');
             $free = $freeLabels[$day] ?? [];
 
-            $truth[] = 'Para el '.$label.', '.implode(' y ', $names).(count($names) === 1 ? ' ya no está disponible' : ' ya no están disponibles').'. '
-                .($free === []
-                    ? 'Ese día no queda ninguna habitación libre: dile la verdad y ofrécele otra fecha.'
-                    : 'Lo que sí queda libre ese día: '.implode(', ', $free).'.');
+            // Esto lo LEE EL HUÉSPED: nunca una instrucción para el modelo.
+            // "dile la verdad y ofrécele otra fecha" se le mandó tal cual a un
+            // huésped el 17-sep-2026.
+            $truth[] = $free === []
+                ? 'Para el '.$label.' no queda ninguna habitación libre. Con gusto reviso otra fecha.'
+                : 'Para el '.$label.', '.implode(' y ', $names)
+                    .(count($names) === 1 ? ' ya no está disponible' : ' ya no están disponibles').'. '
+                    .'Lo que sí queda libre ese día: '.implode(', ', $free).'.';
         }
 
-        $kept = collect($sentences)
-            ->reject(fn (string $sentence) => in_array($sentence, $offending, true))
-            ->map(fn (string $sentence) => trim($sentence))
-            ->filter()
-            ->implode(' ');
+        // Se rearma respetando los renglones: juntarlo todo con espacios era
+        // lo que dejaba el mensaje amontonado en un solo párrafo.
+        $kept = [];
 
-        return trim(implode(' ', $truth)."\n\n".$kept);
+        foreach ($lines as $i => $line) {
+            if (isset($dropLine[$i])) {
+                continue;
+            }
+
+            if (isset($dropSentence[$i])) {
+                $line = collect($this->sentencesOf($line))
+                    ->reject(fn (string $sentence) => in_array($sentence, $dropSentence[$i], true))
+                    ->map(fn (string $sentence) => trim($sentence))
+                    ->filter()
+                    ->implode(' ');
+
+                if (trim($line) === '') {
+                    continue;
+                }
+            }
+
+            // Sin renglones en blanco pegados donde se cayó algo.
+            if (trim($line) === '' && ($kept === [] || trim((string) end($kept)) === '')) {
+                continue;
+            }
+
+            $kept[] = $line;
+        }
+
+        return trim(implode(' ', $truth)."\n\n".trim(implode("\n", $kept)));
+    }
+
+    /**
+     * Frases de un renglón. Corta en dos puntos además del punto final
+     * porque un encabezado ("Tenemos:") también cierra una idea.
+     *
+     * @return array<int, string>
+     */
+    protected function sentencesOf(string $line): array
+    {
+        return preg_split('/(?<=[.!?:])\s+/u', trim($line), -1, PREG_SPLIT_NO_EMPTY) ?: [];
     }
 
     /** ¿Esta frase ofrece algo como libre? (y no lo contrario) */
@@ -1238,7 +1426,16 @@ class AgentBrain
         $insertAt = null;
 
         foreach (preg_split('/\R/u', $text) ?: [] as $line) {
-            if (preg_match('/^\s*[-*•]?\s*(clabe|n[uú]mero de cuenta|no\.?\s*de\s*cuenta|cuenta|tarjeta|banco|titular|beneficiario)\s*:(.*)$/iu', $line, $m)) {
+            // La línea de la alternativa es parte del bloque: si se deja
+            // pasar, al rehacer el bloque sale DOS veces (RES-2026-1767).
+            if (preg_match('/^\s*[-*•]?\s*si tu app solo permite transferir a tarjeta\s*:/iu', $line)) {
+                $insertAt ??= count($kept);
+                $structured = true;
+
+                continue;
+            }
+
+            if (preg_match('/^\s*[-*•]?\s*(clabe(?:\s+interbancaria)?|n[uú]mero de cuenta|no\.?\s*de\s*cuenta|cuenta|tarjeta(?:\s+de\s+d[ée]bito)?|banco|titular|beneficiario)\s*:(.*)$/iu', $line, $m)) {
                 $insertAt ??= count($kept);
                 $structured = true;
                 $field = mb_strtolower($m[1]);
@@ -1326,6 +1523,26 @@ class AgentBrain
                     ? "Las transferencias se reciben {$hoursLabel}, así que en este momento no puedo darte los datos de la cuenta. Puedes hacer la transferencia dentro de ese horario o pedirme otra forma de pago."
                     : 'En este momento no puedo darte los datos de la cuenta. Pídeme otra forma de pago.'];
             }
+        }
+
+        // Cinturón contra duplicados: si el modelo copió bien un renglón del
+        // bloque y aquí no se reconoció, no puede quedarse además del rehecho.
+        $delBloque = collect($replacement)->map(fn (string $line) => trim($line))->filter()->all();
+
+        if ($delBloque !== []) {
+            $antes = count($kept);
+            $kept = array_values(array_filter(
+                $kept,
+                fn (string $line, int $i) => $i >= $insertAt || ! in_array(trim($line), $delBloque, true),
+                ARRAY_FILTER_USE_BOTH,
+            ));
+            $insertAt -= $antes - count($kept);
+
+            $kept = array_values(array_filter(
+                $kept,
+                fn (string $line, int $i) => $i < $insertAt || ! in_array(trim($line), $delBloque, true),
+                ARRAY_FILTER_USE_BOTH,
+            ));
         }
 
         array_splice($kept, $insertAt, 0, $replacement);
@@ -2495,11 +2712,17 @@ BLOCK;
             ->unique()
             ->implode(' ');
 
-        $kept = collect(preg_split('/(?<=[.!?])\s+|\R/u', $text) ?: [])
-            ->reject(fn (string $frase) => $this->promisesDiscount($frase))
-            ->map(fn (string $frase) => trim($frase))
-            ->filter()
-            ->implode(' ');
+        // Por renglones: juntar todo con espacios dejaba la lista de precios
+        // amontonada en un párrafo (mismo defecto que el guardián de
+        // disponibilidad, 17-sep-2026).
+        $kept = collect(preg_split('/\R/u', $text) ?: [])
+            ->map(fn (string $line) => collect(preg_split('/(?<=[.!?])\s+/u', trim($line)) ?: [])
+                ->reject(fn (string $frase) => $this->promisesDiscount($frase))
+                ->map(fn (string $frase) => trim($frase))
+                ->filter()
+                ->implode(' '))
+            ->filter(fn (string $line) => trim($line) !== '')
+            ->implode("\n");
 
         return trim($verdad.' Puedes apartar sin el descuento, o elegir una fecha en la que sí aplique.'
             .($kept !== '' ? "\n\n".$kept : ''));

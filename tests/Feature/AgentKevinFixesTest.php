@@ -345,3 +345,141 @@ it('el apartado de UNA cabaña cobra la persona extra y respeta el cupo', functi
     expect($con9->getStatusCode())->toBe(422)
         ->and(Reservation::count())->toBe(1);
 });
+
+// ------------------------- Conversación del 17-sep-2026 (sábado 19 lleno)
+//
+// El huésped pidió el sábado; con las ocho cabañas ocupadas el guardián
+// reescribió la respuesta y salió esto, tal cual, al WhatsApp del huésped:
+//
+//   "Para el sábado 19 de septiembre, Cabaña Real ya no está disponible. Ese
+//    día no queda ninguna habitación libre: dile la verdad y ofrécele otra
+//    fecha. [...] ¿Qué tipo de cabaña le interesa? Tenemos: hasta 6 personas,
+//    $4,500 - Cabaña Luxury: hasta 4 personas, $3,500 - Cabaña Prisma: ..."
+//
+// Tres fallas en un mensaje: una instrucción interna filtrada, la
+// contradicción (no hay nada / aquí está la lista) y todo amontonado.
+
+function listaDelDia(string $dicho): string
+{
+    return "Para el {$dicho} le comparto las opciones. ¿Qué tipo de cabaña le interesa? Tenemos:\n"
+        ."- Cabaña Luxury: hasta 4 personas, \$3,500\n"
+        ."- Cabaña Sencilla 1: hasta 4 personas, \$3,000\n"
+        .'- Cabaña Sencilla 2: hasta 4 personas, $3,000';
+}
+
+it('nunca le manda al huésped una instrucción para el modelo', function () {
+    [$date, $dicho] = diaDicho();
+    $this->tipos->keys()->each(fn (string $tipo) => ocupar($tipo, $date));
+
+    $salida = sanear(listaDelDia($dicho));
+
+    expect($salida)->not->toContain('dile la verdad')
+        ->and($salida)->not->toContain('ofrécele')
+        ->and($salida)->not->toContain('no inventes')
+        ->and($salida)->toContain('no queda ninguna habitación libre');
+});
+
+it('con el día lleno no deja ni una cabaña ofrecida abajo', function () {
+    [$date, $dicho] = diaDicho();
+    $this->tipos->keys()->each(fn (string $tipo) => ocupar($tipo, $date));
+
+    $salida = sanear(listaDelDia($dicho));
+
+    // La contradicción del caso real: decía "no queda ninguna" y enseguida
+    // listaba las tres.
+    expect($salida)->not->toContain('Cabaña Luxury')
+        ->and($salida)->not->toContain('Cabaña Sencilla 1')
+        ->and($salida)->not->toContain('Cabaña Sencilla 2')
+        // Y sin el encabezado colgando de la nada.
+        ->and($salida)->not->toContain('Tenemos:');
+});
+
+it('no deja pedazos huérfanos del renglón que borró', function () {
+    [$date, $dicho] = diaDicho();
+    ocupar('Cabaña Luxury', $date);
+
+    $salida = sanear(listaDelDia($dicho));
+
+    // Antes borraba "- Cabaña Luxury:" y dejaba suelto "hasta 4 personas,
+    // $3,500", que el huésped leía como si fuera de otra cabaña. El nombre
+    // sigue apareciendo una vez, en la frase que dice que ya no está.
+    expect($salida)->not->toContain('- Cabaña Luxury')
+        ->and($salida)->not->toContain('hasta 4 personas, $3,500')
+        ->and($salida)->toContain('Cabaña Luxury ya no está disponible')
+        // Las que sí quedan libres conservan su renglón completo.
+        ->and($salida)->toContain('- Cabaña Sencilla 1: hasta 4 personas, $3,000')
+        ->and($salida)->toContain('- Cabaña Sencilla 2: hasta 4 personas, $3,000');
+});
+
+it('respeta los renglones: no amontona la lista en un párrafo', function () {
+    [$date, $dicho] = diaDicho();
+    ocupar('Cabaña Luxury', $date);
+
+    $salida = sanear(listaDelDia($dicho));
+
+    expect($salida)->toContain("\n- Cabaña Sencilla 1")
+        ->and($salida)->toContain("\n- Cabaña Sencilla 2")
+        // El pegoste del caso real: los renglones unidos con " - ".
+        ->and($salida)->not->toContain('$3,000 - Cabaña Sencilla 2');
+});
+
+it('en prosa borra solo la frase de la cabaña ocupada, no el párrafo entero', function () {
+    [$date, $dicho] = diaDicho();
+    ocupar('Cabaña Luxury', $date);
+
+    $salida = sanear("Para el {$dicho} tenemos la Cabaña Luxury disponible. La alberca abre de 9:00 AM a 10:30 PM.");
+
+    expect($salida)->not->toContain('Cabaña Luxury disponible')
+        ->and($salida)->toContain('La alberca abre de 9:00 AM a 10:30 PM.');
+});
+
+// ------------------- Traspaso prematuro (cabañas, conv. 992, 17-sep-2026)
+//
+// Tras dos fechas llenas, el huésped escribió "para el 26 de septiembre?" y
+// el bot lo transfirió con una persona. Un minuto después, cuando volvió a
+// preguntar, contestó él solo la disponibilidad correcta: nunca hizo falta
+// molestar al hotel.
+
+function esPrematuro(string $dijoElHuesped, string $motivo = ''): bool
+{
+    $channel = Channel::firstOrCreate(
+        ['property_id' => test()->property->id, 'type' => Channel::TYPE_WHATSAPP_EVOLUTION, 'external_id' => '1'],
+        ['name' => 'WhatsApp', 'mode' => 'auto', 'active' => true],
+    );
+    $conversation = Conversation::create([
+        'channel_id' => $channel->id,
+        'contact_phone' => '52165'.random_int(10000000, 99999999),
+        'status' => Conversation::STATUS_OPEN,
+        'last_message_at' => now(),
+    ]);
+    $conversation->messages()->create([
+        'direction' => 'in',
+        'sender_type' => 'guest',
+        'body' => $dijoElHuesped,
+        'created_at' => now(),
+    ]);
+
+    return (new ReflectionMethod(AgentBrain::class, 'handoffIsPremature'))
+        ->invoke(app(AgentBrain::class), $conversation, $motivo);
+}
+
+it('preguntar por una fecha no justifica transferir', function (string $dijo) {
+    expect(esPrematuro($dijo))->toBeTrue();
+})->with([
+    'la pregunta del caso real' => ['para el 26 de septiembre?'],
+    'disponibilidad a secas' => ['no tienes disponibilidad?'],
+    'precio' => ['cuánto cuesta la cabaña más grande'],
+    'fecha con más texto' => ['oye y para el 3 de octubre habría lugar?'],
+]);
+
+it('lo que sí necesita una persona se sigue transfiriendo', function (string $dijo, string $motivo) {
+    expect(esPrematuro($dijo, $motivo))->toBeFalse();
+})->with([
+    'pide hablar con alguien' => ['quiero hablar con una persona', ''],
+    'se queja' => ['tengo una queja del servicio de ayer', ''],
+    'reclama un pago' => ['ya pagué y no aparece mi reserva', ''],
+    'un evento' => ['quiero cotizar una boda para 80 personas', ''],
+    'restricción interna' => ['para el 26 de septiembre?', 'revisión de recepción'],
+    'el motivo habla de un pago' => ['para el 26 de septiembre?', 'insiste en que ya hizo el depósito'],
+    'sin mensajes del huésped' => ['', ''],
+]);

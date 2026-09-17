@@ -161,3 +161,71 @@ it('deja en paz las horas que no son una afirmación del reloj', function () {
 
     expect(bankSanitizer()->sanitizeClockClaims($texto, '16:51'))->toBe($texto);
 });
+
+// Caso real cabañas 2026-09-17 12:47 (RES-2026-1767): el bloque le llegó al
+// huésped con la CLABE DOS veces y la línea de la tarjeta repetida fuera del
+// bloque. El modelo lo había copiado bien; el saneador no reconocía las
+// etiquetas nuevas ("CLABE interbancaria:", la línea de la tarjeta) como parte
+// del bloque, así que las conservaba y encima volvía a pegar el bloque entero.
+it('no repite renglones cuando el modelo copia bien el bloque', function () {
+    $cuenta = [[
+        'bank' => 'BBVA',
+        'holder' => 'Jatziry Sofía Salazar Salazar',
+        'clabe' => '012164015648463025',
+        'card' => '4152314577952941',
+        'account' => '1564846302',
+        'active' => true,
+    ]];
+
+    $salida = limpiarBanco(<<<'TXT'
+Datos para la transferencia:
+
+- Banco: BBVA
+- Titular: Jatziry Sofía Salazar Salazar
+- CLABE interbancaria: 012164015648463025
+- Si tu app solo permite transferir a tarjeta: Tarjeta de débito 4152314577952941
+- Monto: $1,750.00 MXN
+
+Envía tu comprobante por este chat y el personal lo verificará.
+TXT, $cuenta);
+
+    $veces = fn (string $aguja) => substr_count($salida, $aguja);
+
+    expect($veces('012164015648463025'))->toBe(1)
+        ->and($veces('4152314577952941'))->toBe(1)
+        ->and($veces('- Banco: BBVA'))->toBe(1)
+        ->and($veces('- Titular: Jatziry Sofía Salazar Salazar'))->toBe(1)
+        ->and($veces('Si tu app solo permite transferir a tarjeta'))->toBe(1)
+        // Lo que no es dato bancario se conserva.
+        ->and($salida)->toContain('Monto: $1,750.00')
+        ->and($salida)->toContain('Envía tu comprobante')
+        // Y la cuenta interna nunca aparece como dato propio.
+        ->and($salida)->not->toContain('Número de cuenta');
+});
+
+it('tampoco repite cuando el modelo escribe el bloque con sus propias etiquetas', function () {
+    $cuenta = [[
+        'bank' => 'BBVA',
+        'holder' => 'Jatziry Sofía Salazar Salazar',
+        'clabe' => '012164015648463025',
+        'card' => '4152314577952941',
+        'active' => true,
+    ]];
+
+    $salida = limpiarBanco(<<<'TXT'
+Te paso los datos:
+
+- Banco: BBVA
+- Titular: Jatziry Sofía Salazar Salazar
+- Cuenta: 012164015648463025
+- Tarjeta: 4152314577952941
+
+Mándame tu comprobante.
+TXT, $cuenta);
+
+    expect(substr_count($salida, '012164015648463025'))->toBe(1)
+        ->and(substr_count($salida, '4152314577952941'))->toBe(1)
+        // Con la etiqueta correcta, no la que improvisó el modelo.
+        ->and($salida)->toContain('- CLABE interbancaria: 012164015648463025')
+        ->and($salida)->not->toContain('- Cuenta: 012164015648463025');
+});
