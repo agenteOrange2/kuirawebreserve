@@ -401,3 +401,53 @@ it('un hotel sin esos ajustes aparta como siempre', function () {
     expect($response->getStatusCode())->toBe(201)
         ->and(Reservation::count())->toBe(1);
 });
+
+it('la promesa del descuento se borra y la verdad va primero', function () {
+    // PACHEPACHE real de cabañas: 30% de lunes a jueves, hasta el 15/10.
+    $cupon = \App\Models\Coupon::create([
+        'property_id' => $this->property->id,
+        'code' => 'PACHEPACHE',
+        'kind' => 'percent',
+        'value' => 30,
+        'active' => true,
+        'weekdays' => [1, 2, 3, 4],
+        'starts_at' => now()->subDays(5),
+        'ends_at' => now()->addDays(30),
+    ]);
+
+    $channel = \App\Models\Channel::firstOrCreate(
+        ['property_id' => $this->property->id, 'type' => 'whatsapp', 'external_id' => null],
+        ['name' => 'WhatsApp', 'mode' => 'auto', 'active' => true],
+    );
+    $conversation = \App\Models\Conversation::create([
+        'channel_id' => $channel->id,
+        'contact_phone' => '5216560000000',
+        'status' => \App\Models\Conversation::STATUS_OPEN,
+        'last_message_at' => now(),
+    ]);
+
+    // El huésped pregunta por un SÁBADO, donde el cupón no aplica.
+    $sabado = now()->next(\Carbon\CarbonInterface::SATURDAY);
+    $fecha = $sabado->day.' de '.$sabado->locale('es')->isoFormat('MMMM');
+
+    $conversation->messages()->create([
+        'direction' => 'in',
+        'sender_type' => 'visitor',
+        'body' => "¿El cupón PACHEPACHE aplica para el {$fecha}?",
+        'created_at' => now(),
+    ]);
+
+    $salida = (new ReflectionMethod(\App\Services\Agent\AgentBrain::class, 'enforceCouponClaims'))
+        ->invoke(app(\App\Services\Agent\AgentBrain::class),
+            "¡Claro! Con PACHEPACHE tienes 30% de descuento para el {$fecha}. La Cabaña Luxury quedaría en \$2,450.",
+            $conversation);
+
+    expect($salida)->toStartWith('El cupón PACHEPACHE no aplica')
+        // La promesa ya no viaja en el mismo mensaje.
+        ->and($salida)->not->toContain('30% de descuento')
+        ->and($salida)->toContain('apartar sin el descuento')
+        // Lo que no era promesa se conserva.
+        ->and($salida)->toContain('Cabaña Luxury');
+
+    expect($cupon->fresh()->code)->toBe('PACHEPACHE');
+});

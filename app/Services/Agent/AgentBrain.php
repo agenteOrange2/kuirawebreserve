@@ -2462,25 +2462,56 @@ BLOCK;
             return $text;
         }
 
+        $malas = [];
+
         foreach ($this->datesMentioned($text) as $date) {
             $reason = $coupon->rejectionReason($conversation->guest, $date, 1, null);
 
-            if ($reason === null) {
-                continue;
+            if ($reason !== null) {
+                $malas[] = ['fecha' => $date, 'motivo' => $reason];
             }
-
-            \Illuminate\Support\Facades\Log::warning('Agente: prometió un cupón que no aplica', [
-                'coupon' => $coupon->code,
-                'fecha' => $date->toDateString(),
-                'motivo' => $reason,
-            ]);
-
-            return rtrim($text)."\n\nUna aclaración importante: el cupón {$coupon->code} no aplica para el "
-                .$date->format('d/m/Y').'. '.$reason
-                .' Puedes apartar sin el descuento, o elegir una fecha en la que sí aplique.';
         }
 
-        return $text;
+        if ($malas === []) {
+            return $text;
+        }
+
+        \Illuminate\Support\Facades\Log::warning('Agente: prometió un cupón que no aplica', [
+            'coupon' => $coupon->code,
+            'fecha' => $malas[0]['fecha']->toDateString(),
+            'motivo' => $malas[0]['motivo'],
+        ]);
+
+        // La verdad va PRIMERO y la promesa se borra. Antes se agregaba una
+        // "aclaración" al final: el huésped leía "sí tienes 30% de descuento"
+        // y debajo "no aplica", en el mismo mensaje. En cabañas pasó 43 veces
+        // en dos días con PACHEPACHE (2026-09-15/16).
+        $verdad = collect($malas)
+            ->map(fn (array $mala) => "El cupón {$coupon->code} no aplica para el "
+                .$mala['fecha']->format('d/m/Y').'. '.$mala['motivo'])
+            ->unique()
+            ->implode(' ');
+
+        $kept = collect(preg_split('/(?<=[.!?])\s+|\R/u', $text) ?: [])
+            ->reject(fn (string $frase) => $this->promisesDiscount($frase))
+            ->map(fn (string $frase) => trim($frase))
+            ->filter()
+            ->implode(' ');
+
+        return trim($verdad.' Puedes apartar sin el descuento, o elegir una fecha en la que sí aplique.'
+            .($kept !== '' ? "\n\n".$kept : ''));
+    }
+
+    /**
+     * ¿Esta frase promete el descuento? (no la que ya dice que no aplica)
+     */
+    protected function promisesDiscount(string $frase): bool
+    {
+        if (preg_match('/\bno\s+(aplica|es v[áa]lido|cuenta)|no puedes usar/iu', $frase) === 1) {
+            return false;
+        }
+
+        return preg_match('/(\d+\s?%|descuento|promoci[óo]n|rebaja|precio con cup[óo]n)/iu', $frase) === 1;
     }
 
     /** Todo lo que el huésped ha escrito en la conversación, en un texto. */
