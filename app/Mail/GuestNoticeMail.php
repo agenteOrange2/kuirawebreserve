@@ -2,7 +2,6 @@
 
 namespace App\Mail;
 
-use App\Models\Property;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -32,10 +31,12 @@ class GuestNoticeMail extends Mailable
 
     public function envelope(): Envelope
     {
-        $hotel = Property::query()->first()?->name;
+        $brand = TenantBranding::resolve();
 
         return new Envelope(
-            subject: trim($this->subjectLine.($this->code ? " — {$this->code}" : '').($hotel ? " · {$hotel}" : '')),
+            // Igual que GuestReservationMail: firma el hotel.
+            from: $brand->fromAddress(),
+            subject: trim($this->subjectLine.($this->code ? " — {$this->code}" : '')." · {$brand->name}"),
         );
     }
 
@@ -44,7 +45,7 @@ class GuestNoticeMail extends Mailable
         return new Content(
             markdown: 'emails.guest-notice',
             with: [
-                'hotelName' => Property::query()->first()?->name ?? config('app.name'),
+                'hotelName' => TenantBranding::resolve()->name,
             ],
         );
     }

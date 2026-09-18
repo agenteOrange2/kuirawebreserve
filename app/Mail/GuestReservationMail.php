@@ -32,10 +32,14 @@ class GuestReservationMail extends Mailable
 
     public function envelope(): Envelope
     {
-        $hotel = Property::query()->first()?->name;
+        $brand = TenantBranding::resolve();
 
         return new Envelope(
-            subject: trim("{$this->subjectLine} — {$this->reservation->displayCode()}".($hotel ? " · {$hotel}" : '')),
+            // El huésped ve llegar el correo del HOTEL, no de la plataforma:
+            // solo cambia el nombre visible, la dirección sigue siendo la
+            // autenticada en el SMTP.
+            from: $brand->fromAddress(),
+            subject: trim("{$this->subjectLine} — {$this->reservation->displayCode()} · {$brand->name}"),
         );
     }
 
@@ -44,7 +48,7 @@ class GuestReservationMail extends Mailable
         return new Content(
             markdown: 'emails.guest-reservation',
             with: [
-                'hotelName' => Property::query()->first()?->name ?? config('app.name'),
+                'hotelName' => TenantBranding::resolve()->name,
             ],
         );
     }

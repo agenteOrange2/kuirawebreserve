@@ -1,6 +1,5 @@
+{{-- El encabezado ya rotula al hotel (logo o nombre): aquí no se repite. --}}
 <x-mail::message>
-# {{ $hotelName }}
-
 {{ $bodyText }}
 
 <x-mail::panel>
