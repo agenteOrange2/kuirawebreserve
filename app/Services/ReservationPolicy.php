@@ -676,6 +676,23 @@ class ReservationPolicy
     }
 
     /**
+     * Días de silencio tras los que una consulta suelta se cierra sola en la
+     * bandeja. 0 = apagado (nadie cierra nada).
+     *
+     * La bandeja no es un almacén: en cabañas entraron 985 conversaciones en
+     * 30 días y el personal alcanzó a marcar 37 como resueltas, así que
+     * "abierta" dejó de querer decir nada. Se cierra a quien preguntó y se
+     * fue; quien llegó a una COTIZACIÓN REAL (fechas con disponibilidad
+     * confirmada, AgentBrain::REAL_QUOTE) se queda abierto aunque lleve
+     * semanas callado — ese sí es alguien a quien perseguir. Cerrar no borra
+     * nada: si el huésped vuelve a escribir, el webhook la reabre.
+     */
+    public function inboxAutoCloseDays(): int
+    {
+        return max(0, (int) ($this->settings()['inbox_auto_close_days'] ?? 2));
+    }
+
+    /**
      * Cuánto silencio del huésped se espera antes del reenganche. Default:
      * los 20 minutos de siempre. En cabañas el aviso llegaba mientras la
      * persona estaba consultando con su familia ("están checando las

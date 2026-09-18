@@ -242,6 +242,11 @@ class PropertyController extends Controller
             // es escribirle a quien solo preguntó el precio y se fue.
             'settings.nudge_silence_minutes' => ['sometimes', 'integer', 'min:5', 'max:1440'],
             'settings.nudge_min_messages' => ['sometimes', 'integer', 'min:0', 'max:20'],
+            // Cierre automático de la bandeja: días de silencio tras los que
+            // una consulta suelta se da por terminada. 0 = apagado. Quien
+            // llegó a una cotización real nunca se cierra solo (ver
+            // ReservationPolicy::inboxAutoCloseDays).
+            'settings.inbox_auto_close_days' => ['sometimes', 'integer', 'min:0', 'max:365'],
             // Walk-ins de mostrador: cobrar al registrar la llegada o la
             // cuenta final al registrar la salida (default histórico).
             'settings.walkin_charge' => ['sometimes', \Illuminate\Validation\Rule::in(['checkout', 'checkin'])],

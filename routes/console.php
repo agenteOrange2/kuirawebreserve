@@ -82,6 +82,15 @@ Schedule::command('tenants:run conversations:summarize')
     ->everyFifteenMinutes()
     ->withoutOverlapping();
 
+// La bandeja se cierra sola: quien preguntó y se fue deja de ocupar un
+// hilo abierto a los 2 días (ajustable por hotel). Quien llegó a una
+// cotización real se queda. Antes de que existiera esto, cabañas tenía 900
+// conversaciones "abiertas" y 37 resueltas. Temprano y una vez al día: no
+// es urgente y mueve cientos de filas en la primera corrida.
+Schedule::command('tenants:run conversations:close-stale')
+    ->dailyAt('04:15')
+    ->withoutOverlapping();
+
 // El archivo de la bandeja se vacía solo: lo archivado se elimina
 // definitivamente a los 30 días (el staff también puede vaciarlo a mano).
 Schedule::command('tenants:run conversations:prune-archived')
