@@ -82,6 +82,35 @@ class CashCutsPageController extends Controller
             // momento: el corte deja de ser solo totales.
             $preview['movements'] = $service->movements($selectedUser, $from, $to, $shift, $scope);
             $preview['pending'] = $service->pendingSnapshot($selectedUser, $from, $to, $shift, $scope);
+            // Las salidas de efectivo del periodo, una por una: se pueden
+            // corregir mientras el corte no se cierre.
+            $preview['expenses'] = $service->expensesQuery($selectedUser, $scope)
+                ->with('createdBy:id,name')
+                ->when(
+                    $shift !== null,
+                    fn ($q) => $q->where(fn ($w) => $w
+                        ->where('shift_id', $shift->id)
+                        ->orWhere(fn ($legacy) => $legacy
+                            ->whereNull('shift_id')
+                            ->where('occurred_at', '>', $from)
+                            ->where('occurred_at', '<=', $to))),
+                    fn ($q) => $q->where('occurred_at', '>', $from)->where('occurred_at', '<=', $to),
+                )
+                ->orderByDesc('occurred_at')
+                ->get()
+                ->map(fn (\App\Models\CashExpense $e) => [
+                    'id' => $e->id,
+                    'category' => $e->category,
+                    'category_label' => $e->categoryLabel(),
+                    'concept' => $e->concept,
+                    'amount' => (float) $e->amount,
+                    'at' => $e->occurred_at->format('d/m H:i'),
+                    'by' => $e->createdBy?->name,
+                    'receipt_url' => $e->receiptUrl(),
+                    'locked' => $e->isLocked(),
+                ])
+                ->values()
+                ->all();
         }
 
         // Historial: paginado y filtrable. Antes eran "los últimos 20" sin
@@ -118,6 +147,8 @@ class CashCutsPageController extends Controller
             'transfer_total' => (float) $c->transfer_total,
             'expected_cash' => (float) $c->expected_cash,
             'opening_cash' => (float) $c->opening_cash,
+            'expenses_count' => (int) $c->expenses_count,
+            'expenses_total' => (float) $c->expenses_total,
             'counted_cash' => $c->counted_cash !== null ? (float) $c->counted_cash : null,
             'difference' => (float) $c->difference,
             'pending_count' => (int) $c->pending_count,

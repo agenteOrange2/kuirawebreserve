@@ -172,7 +172,16 @@ Route::middleware([
         Route::middleware('can:rooms.view')->group(function () {
             Route::get('/plano', FloorPlanController::class)->name('plano');
             Route::get('/habitaciones', RoomsPageController::class)->name('rooms');
-            Route::get('/habitaciones/{room}', RoomShowController::class)->name('rooms.show');
+            // Reportes de uso, dinero y mantenimiento por habitación. VAN
+            // ANTES de /{room}: esa ruta no exige número y se tragaría
+            // "reportes" como si fuera un id.
+            Route::get('/habitaciones/reportes', \App\Http\Controllers\Tenant\RoomReportsController::class)
+                ->name('rooms.reports');
+            Route::get('/habitaciones/reportes/pdf', [\App\Http\Controllers\Tenant\RoomReportsController::class, 'pdf'])
+                ->name('rooms.reports.pdf');
+            Route::get('/habitaciones/{room}', RoomShowController::class)
+                ->whereNumber('room')
+                ->name('rooms.show');
             Route::get('/habitaciones/{room}/history', RoomHistoryController::class)->name('rooms.history');
             Route::get('/catalogo', CatalogPageController::class)->name('catalog');
 
@@ -247,6 +256,20 @@ Route::middleware([
             ->whereNumber('reservation')
             ->middleware('can:reservations.view')
             ->name('reservations.detail');
+
+        // Contrato de hospedaje de ESA reserva: verlo en PDF y mandarlo por
+        // correo. Antes el contrato solo salía solo, en la confirmación, y
+        // solo si el huésped tenía correo en su ficha; si no lo tenía no
+        // salía nada y nadie se enteraba (cabañas 2026-09-18, Daysi Gómez).
+        Route::get('/reservas/{reservation}/contrato.pdf', [\App\Http\Controllers\Tenant\ReservationContractController::class, 'pdf'])
+            ->whereNumber('reservation')
+            ->middleware('can:reservations.view')
+            ->name('reservations.contract.pdf');
+
+        Route::post('/reservas/{reservation}/contrato', [\App\Http\Controllers\Tenant\ReservationContractController::class, 'send'])
+            ->whereNumber('reservation')
+            ->middleware('can:reservations.manage')
+            ->name('reservations.contract.send');
 
         // Cuentas por cerrar: estancias que ya se cerraron (casi siempre por
         // el reloj) y a las que les quedó dinero sin registrar. Antes esto no
@@ -351,6 +374,11 @@ Route::middleware([
         // CRM de huéspedes.
         Route::middleware('can:guests.view')->group(function () {
             Route::get('/huespedes', [GuestsPageController::class, 'index'])->name('guests');
+            // El directorio en CSV, con los filtros puestos. VA ANTES de
+            // /huespedes/{guest}: esa ruta no exige número y se tragaría
+            // "exportar" como si fuera un id.
+            Route::get('/huespedes/exportar', [GuestsPageController::class, 'export'])
+                ->name('guests.export');
             Route::get('/huespedes/{guest}', [GuestsPageController::class, 'show'])
                 ->withTrashed() // el perfil de un huésped archivado sigue visible
                 ->name('guests.show');
@@ -630,11 +658,21 @@ Route::middleware([
         });
 
         // Conciliación de pasarelas y transferencias (spec-pagos §9.4).
-        // Centro de pagos: transferencias por verificar, saldos vencidos,
-        // links vivos y últimos pagos — todo el dinero en un solo lugar.
+        // Centro de caja y pagos: /pagos es el TABLERO y cada trabajo tiene
+        // su superficie. Los enlaces viejos a /pagos siguen llegando al
+        // tablero, que lleva a donde toque.
         Route::get('/pagos', \App\Http\Controllers\Tenant\PaymentsPageController::class)
             ->middleware('can:reservations.view')
             ->name('payments');
+        Route::get('/pagos/verificar', [\App\Http\Controllers\Tenant\PaymentsPageController::class, 'verify'])
+            ->middleware('can:reservations.manage')
+            ->name('payments.verify');
+        Route::get('/pagos/cobrar', [\App\Http\Controllers\Tenant\PaymentsPageController::class, 'collect'])
+            ->middleware('can:reservations.view')
+            ->name('payments.collect');
+        Route::get('/pagos/movimientos', [\App\Http\Controllers\Tenant\PaymentsPageController::class, 'movements'])
+            ->middleware('can:reservations.view')
+            ->name('payments.movements');
         Route::get('/cobros-en-linea', \App\Http\Controllers\Tenant\OnlinePaymentsPageController::class)
             ->middleware('can:reservations.view')
             ->name('online-payments');
@@ -1021,6 +1059,10 @@ Route::middleware([
             // Cómo va la caja ahora, en JSON: lo pide el panel del plano.
             Route::get('cash-cuts/current', [CashCutController::class, 'current'])->name('cashcuts.current');
             Route::post('cash-cuts', [CashCutController::class, 'store'])->name('cashcuts.store');
+            // Salidas de efectivo del turno (gasolina, insumos, retiros):
+            // restan del efectivo esperado del corte.
+            Route::post('cash-expenses', [\App\Http\Controllers\Tenant\CashExpenseController::class, 'store'])->name('cashexpenses.store');
+            Route::delete('cash-expenses/{cashExpense}', [\App\Http\Controllers\Tenant\CashExpenseController::class, 'destroy'])->name('cashexpenses.destroy');
             Route::post('shifts', [ShiftController::class, 'store'])->name('shifts.store');
             Route::patch('shifts/{shift}/close', [ShiftController::class, 'close'])->name('shifts.close');
         });

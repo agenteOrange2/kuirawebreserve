@@ -3,7 +3,7 @@ import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormCheck, FormInput } from '@/components/Base/Form';
+import { FormCheck, FormInput, FormSelect } from '@/components/Base/Form';
 import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
@@ -16,6 +16,10 @@ interface GuestRow {
     phone: string | null;
     email: string | null;
     visits: number;
+    /** Hospedaje + consumos de todo lo que ya se usó. */
+    total_spent: number;
+    /** Cuándo vino la última vez (estancia o reserva completada). */
+    last_visit: string | null;
     /** Llegada de su próxima reserva viva, si trae alguna. */
     next_arrival: string | null;
     is_blacklisted: boolean;
@@ -30,7 +34,13 @@ interface PaginationLink {
 }
 
 const props = defineProps<{
-    guests: { data: GuestRow[]; links: PaginationLink[]; total: number };
+    guests: {
+        data: GuestRow[];
+        links: PaginationLink[];
+        total: number;
+        from: number | null;
+        to: number | null;
+    };
     archivedCount: number;
     /** Cifras del directorio completo (no dependen del filtro activo). */
     stats: {
@@ -39,7 +49,13 @@ const props = defineProps<{
         blacklisted: number;
         archived: number;
     };
-    filters: { q: string; blacklisted: boolean; archived: boolean };
+    filters: {
+        q: string;
+        blacklisted: boolean;
+        upcoming: boolean;
+        archived: boolean;
+        sort: string;
+    };
     canManage: boolean;
     canViewDocuments: boolean;
     documentTypes: string[];
@@ -49,18 +65,63 @@ const toast = useToasts();
 const q = ref(props.filters.q);
 const blacklisted = ref(props.filters.blacklisted);
 const archived = ref(props.filters.archived);
+const upcomingOnly = ref(props.filters.upcoming);
+const sort = ref(props.filters.sort || 'recent');
+// El orden NO es un filtro: si contara, "Limpiar" aparecía solo por haber
+// cambiado cómo se ordena la lista.
 const filtersActive = computed(
-    () => q.value.trim() !== '' || blacklisted.value || archived.value,
+    () =>
+        q.value.trim() !== '' ||
+        blacklisted.value ||
+        upcomingOnly.value ||
+        archived.value,
 );
+
+const money = (value: number) =>
+    '$' +
+    new Intl.NumberFormat('es-MX', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+    }).format(Number(value) || 0);
+
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const sectionLabel =
+    'text-[11px] font-medium tracking-wide text-slate-400 uppercase';
+const rowAction =
+    'flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition';
 
 function clearFilters(): void {
     q.value = '';
     blacklisted.value = false;
+    upcomingOnly.value = false;
     archived.value = false;
+    sort.value = 'recent';
 }
 
+/** Las tarjetas de arriba son filtros: tocarlas acota la lista. */
+function applyCard(card: 'all' | 'upcoming' | 'blacklisted' | 'archived') {
+    q.value = '';
+    blacklisted.value = card === 'blacklisted';
+    upcomingOnly.value = card === 'upcoming';
+    archived.value = card === 'archived';
+}
+
+/** Enlace de descarga del CSV con los filtros que se estén viendo. */
+const exportHref = computed(() => {
+    const params = new URLSearchParams();
+    if (q.value.trim()) params.set('q', q.value.trim());
+    if (blacklisted.value) params.set('blacklisted', '1');
+    if (upcomingOnly.value) params.set('upcoming', '1');
+    if (archived.value) params.set('archived', '1');
+    if (sort.value !== 'recent') params.set('sort', sort.value);
+    const query = params.toString();
+
+    return route('tenant.guests.export') + (query ? `?${query}` : '');
+});
+
 let timer: ReturnType<typeof setTimeout> | null = null;
-watch([q, blacklisted, archived], () => {
+watch([q, blacklisted, upcomingOnly, archived, sort], () => {
     selectedIds.value = [];
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
@@ -69,7 +130,9 @@ watch([q, blacklisted, archived], () => {
             {
                 q: q.value || undefined,
                 blacklisted: blacklisted.value || undefined,
+                upcoming: upcomingOnly.value || undefined,
                 archived: archived.value || undefined,
+                sort: sort.value !== 'recent' ? sort.value : undefined,
             },
             {
                 preserveState: true,
@@ -204,6 +267,28 @@ async function bulkDelete() {
     }
 }
 
+// Al cambiar de página la selección anterior ya no se ve, pero el botón
+// seguía diciendo "3 seleccionados" y borraba gente que no estaba en
+// pantalla. Se limpia al cambiar el contenido de la lista.
+watch(
+    () => props.guests.data.map((g) => g.id).join(','),
+    () => {
+        selectedIds.value = [];
+    },
+);
+
+/**
+ * Liga de WhatsApp con el número normalizado: guardado como
+ * "+52 614 586 9225", wa.me solo acepta dígitos. Diez dígitos se asumen
+ * mexicanos (es el lada del hotel).
+ */
+const whatsappHref = (phone: string) => {
+    const digits = phone.replace(/\D+/g, '');
+    const full = digits.length === 10 ? `52${digits}` : digits;
+
+    return `https://wa.me/${full}`;
+};
+
 const initials = (name: string) =>
     name
         .trim()
@@ -235,38 +320,73 @@ const initials = (name: string) =>
                         </p>
                     </div>
                 </div>
-                <Button
-                    v-if="canManage"
-                    variant="primary"
-                    class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
-                    @click="showCreate = true"
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2"
                 >
-                    <Lucide icon="UserPlus" class="mr-1.5 h-3.5 w-3.5" />
-                    Nuevo huésped
-                </Button>
+                    <Button
+                        as="a"
+                        :href="exportHref"
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
+                    >
+                        <Lucide icon="Download" class="mr-1.5 h-3.5 w-3.5" />
+                        Exportar CSV
+                    </Button>
+                    <Button
+                        v-if="canManage"
+                        variant="primary"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                        @click="showCreate = true"
+                    >
+                        <Lucide icon="UserPlus" class="mr-1.5 h-3.5 w-3.5" />
+                        Nuevo huésped
+                    </Button>
+                </div>
             </div>
 
-            <div class="mt-4 grid grid-cols-12 gap-4">
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+            <!-- Las cifras del directorio son filtros: tocarlas acota la lista -->
+            <div class="mt-4 flex items-center gap-2">
+                <span :class="sectionLabel">El directorio</span>
+                <span class="hidden text-[11px] text-slate-400 sm:inline">
+                    Toca una cifra para filtrar la lista
+                </span>
+            </div>
+            <div class="mt-2 grid auto-rows-fr grid-cols-12 gap-4">
+                <button
+                    type="button"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                    :class="!filtersActive ? 'border-primary/30' : ''"
+                    @click="applyCard('all')"
                 >
                     <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        :class="[
+                            sectionIcon,
+                            'border-primary/10 bg-primary/10 text-primary',
+                        ]"
                     >
                         <Lucide icon="Users" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
                         <div class="text-sm font-medium">{{ stats.total }}</div>
-                        <div class="truncate text-xs text-slate-500">
+                        <div class="text-xs leading-tight text-slate-500">
                             En el directorio
                         </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Se dan de alta solos al reservar
+                        </div>
                     </div>
-                </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                </button>
+                <button
+                    type="button"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                    :class="upcomingOnly ? 'border-primary/30' : ''"
+                    @click="applyCard('upcoming')"
                 >
                     <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                        :class="[
+                            sectionIcon,
+                            'border-info/10 bg-info/10 text-info',
+                        ]"
                     >
                         <Lucide icon="CalendarClock" class="h-4 w-4" />
                     </div>
@@ -274,16 +394,27 @@ const initials = (name: string) =>
                         <div class="text-sm font-medium">
                             {{ stats.upcoming }}
                         </div>
-                        <div class="truncate text-xs text-slate-500">
+                        <div class="text-xs leading-tight text-slate-500">
                             Con llegada próxima
                         </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Traen algo apartado
+                        </div>
                     </div>
-                </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                </button>
+                <button
+                    type="button"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                    :class="blacklisted ? 'border-danger/30' : ''"
+                    @click="applyCard('blacklisted')"
                 >
                     <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
+                        :class="[
+                            sectionIcon,
+                            stats.blacklisted
+                                ? 'border-danger/10 bg-danger/10 text-danger'
+                                : 'border-slate-200 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400',
+                        ]"
                     >
                         <Lucide icon="ShieldAlert" class="h-4 w-4" />
                     </div>
@@ -291,16 +422,25 @@ const initials = (name: string) =>
                         <div class="text-sm font-medium">
                             {{ stats.blacklisted }}
                         </div>
-                        <div class="truncate text-xs text-slate-500">
+                        <div class="text-xs leading-tight text-slate-500">
                             En lista negra
                         </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            No se les vuelve a rentar
+                        </div>
                     </div>
-                </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
+                </button>
+                <button
+                    type="button"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                    :class="archived ? 'border-primary/30' : ''"
+                    @click="applyCard('archived')"
                 >
                     <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
+                        :class="[
+                            sectionIcon,
+                            'border-pending/10 bg-pending/10 text-pending',
+                        ]"
                     >
                         <Lucide icon="Archive" class="h-4 w-4" />
                     </div>
@@ -308,63 +448,91 @@ const initials = (name: string) =>
                         <div class="text-sm font-medium">
                             {{ stats.archived }}
                         </div>
-                        <div class="truncate text-xs text-slate-500">
+                        <div class="text-xs leading-tight text-slate-500">
                             Archivados
                         </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Fuera del directorio, con su historial
+                        </div>
                     </div>
-                </div>
+                </button>
             </div>
 
             <!-- Buscador y resultados en la misma caja: eran dos cajas y el
                  filtro quedaba lejos de la lista que filtra. -->
             <div class="box box--stacked mt-4">
                 <div
-                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
-                    <div class="flex items-center gap-2 text-sm font-medium">
-                        <Lucide icon="Users" class="h-4 w-4 text-slate-400" />
-                        {{ archived ? 'Archivados' : 'Huéspedes' }}
-                        <span
-                            class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
-                        >
-                            {{ guests.total }}
-                        </span>
-                    </div>
-                    <label
-                        v-if="canManage && guests.data.length"
-                        class="ml-auto flex cursor-pointer items-center gap-2 text-xs text-slate-500"
+                    <div
+                        :class="[
+                            sectionIcon,
+                            'border-primary/10 bg-primary/10 text-primary',
+                        ]"
                     >
-                        <FormCheck.Input
-                            type="checkbox"
-                            :checked="allSelected"
-                            @change="toggleAll"
-                        />
-                        Seleccionar esta página
-                    </label>
+                        <Lucide icon="Users" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{
+                                archived ? 'Huéspedes archivados' : 'Huéspedes'
+                            }}
+                            <span class="text-xs font-normal text-slate-500">
+                                · {{ guests.total }}
+                            </span>
+                        </div>
+                        <div class="text-xs text-slate-500">
+                            {{
+                                upcomingOnly
+                                    ? 'Solo los que traen una llegada apartada'
+                                    : blacklisted
+                                      ? 'Solo los de la lista negra'
+                                      : 'Contacto, visitas y lo que ha dejado cada quien'
+                            }}
+                        </div>
+                    </div>
+                    <div class="ml-auto flex flex-wrap items-center gap-2">
+                        <FormSelect
+                            v-model="sort"
+                            class="h-8 w-40 text-xs"
+                            title="Cómo se ordena la lista"
+                        >
+                            <option value="recent">Más recientes</option>
+                            <option value="name">Nombre (A-Z)</option>
+                            <option value="visits">Más visitas</option>
+                            <option value="spent">Más han dejado</option>
+                        </FormSelect>
+                        <Button
+                            as="a"
+                            :href="exportHref"
+                            variant="outline-secondary"
+                            class="h-8 rounded-[0.5rem] bg-white text-xs"
+                            title="Descarga la lista tal como la estás viendo"
+                        >
+                            <Lucide
+                                icon="Download"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Exportar CSV
+                        </Button>
+                    </div>
                 </div>
 
+                <!-- Buscador y filtros, en franja gris pegada a la lista -->
                 <div
                     class="border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                 >
-                    <div class="mb-3 flex items-center gap-2.5">
-                        <div
-                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                    <div class="mb-2.5 flex flex-wrap items-center gap-2">
+                        <span :class="sectionLabel">Encuentra un huésped</span>
+                        <span
+                            class="hidden text-[11px] text-slate-400 sm:inline"
                         >
-                            <Lucide icon="Search" class="h-4 w-4" />
-                        </div>
-                        <div>
-                            <div class="text-sm font-medium">
-                                Encuentra un huésped
-                            </div>
-                            <div class="text-xs text-slate-500">
-                                Busca por nombre, teléfono o correo.
-                            </div>
-                        </div>
+                            Nombre completo, teléfono (como sea que lo escribas)
+                            o correo
+                        </span>
                     </div>
-                    <div
-                        class="grid grid-cols-1 gap-2.5 lg:grid-cols-[minmax(16rem,1fr)_auto_auto_auto]"
-                    >
-                        <div class="relative">
+                    <div class="flex flex-wrap items-center gap-2.5">
+                        <div class="relative w-full min-w-0 sm:w-80">
                             <Lucide
                                 icon="Search"
                                 class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
@@ -376,6 +544,23 @@ const initials = (name: string) =>
                                 class="h-9 pl-9 text-xs"
                             />
                         </div>
+                        <label
+                            class="flex h-9 cursor-pointer items-center gap-2 rounded-[0.5rem] border px-3 text-xs font-medium transition"
+                            :class="
+                                upcomingOnly
+                                    ? 'border-info/30 bg-info/5 text-info'
+                                    : 'border-slate-200/70 bg-white text-slate-500 hover:bg-slate-50 dark:border-darkmode-400 dark:bg-darkmode-600'
+                            "
+                        >
+                            <FormCheck.Input
+                                id="f-upcoming"
+                                v-model="upcomingOnly"
+                                type="checkbox"
+                                class="!mt-0"
+                            />
+                            <Lucide icon="CalendarClock" class="h-3.5 w-3.5" />
+                            Con llegada
+                        </label>
                         <label
                             class="flex h-9 cursor-pointer items-center gap-2 rounded-[0.5rem] border px-3 text-xs font-medium transition"
                             :class="
@@ -411,16 +596,26 @@ const initials = (name: string) =>
                             <Lucide icon="Archive" class="h-3.5 w-3.5" />
                             Archivados ({{ archivedCount }})
                         </label>
-                        <Button
+                        <button
                             v-if="filtersActive"
                             type="button"
-                            variant="outline-secondary"
-                            class="h-9 bg-white text-xs whitespace-nowrap"
+                            class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
                             @click="clearFilters"
                         >
-                            <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
+                            <Lucide icon="X" class="h-3.5 w-3.5" />
                             Limpiar
-                        </Button>
+                        </button>
+                        <label
+                            v-if="canManage && guests.data.length"
+                            class="ml-auto flex cursor-pointer items-center gap-2 text-xs text-slate-500"
+                        >
+                            <FormCheck.Input
+                                type="checkbox"
+                                :checked="allSelected"
+                                @change="toggleAll"
+                            />
+                            Seleccionar esta página
+                        </label>
                     </div>
                 </div>
 
@@ -467,7 +662,7 @@ const initials = (name: string) =>
                     <article
                         v-for="g in guests.data"
                         :key="g.id"
-                        class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 transition hover:bg-slate-50/70 sm:px-5 lg:grid-cols-[auto_minmax(13rem,1.3fr)_minmax(11rem,1fr)_minmax(9rem,0.7fr)_auto] dark:hover:bg-darkmode-700/30"
+                        class="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-2 px-4 py-3 transition hover:bg-slate-50/70 sm:px-5 lg:grid-cols-[auto_minmax(12rem,1.2fr)_minmax(10rem,1fr)_minmax(9rem,0.8fr)_minmax(7rem,auto)_auto] dark:hover:bg-darkmode-700/30"
                     >
                         <FormCheck.Input
                             v-if="canManage"
@@ -486,7 +681,7 @@ const initials = (name: string) =>
                             <div class="min-w-0">
                                 <Link
                                     :href="route('tenant.guests.show', g.id)"
-                                    class="block truncate text-sm font-medium text-primary hover:underline"
+                                    class="block truncate text-sm font-medium hover:text-primary"
                                 >
                                     {{ g.full_name }}
                                 </Link>
@@ -505,7 +700,7 @@ const initials = (name: string) =>
                                     >
                                         Archivado
                                     </span>
-                                    <span class="text-xs text-slate-400">
+                                    <span class="text-[11px] text-slate-400">
                                         Alta {{ g.created_at }}
                                     </span>
                                 </div>
@@ -515,26 +710,28 @@ const initials = (name: string) =>
                         <div
                             class="col-start-2 min-w-0 text-xs text-slate-500 lg:col-start-auto"
                         >
-                            <div
+                            <a
                                 v-if="g.phone"
-                                class="flex items-center gap-1.5"
+                                :href="`tel:${g.phone}`"
+                                class="flex items-center gap-1.5 transition hover:text-primary"
                             >
                                 <Lucide
                                     icon="Phone"
                                     class="h-3.5 w-3.5 shrink-0 text-slate-400"
                                 />
                                 <span class="truncate">{{ g.phone }}</span>
-                            </div>
-                            <div
+                            </a>
+                            <a
                                 v-if="g.email"
-                                class="flex items-center gap-1.5"
+                                :href="`mailto:${g.email}`"
+                                class="flex items-center gap-1.5 transition hover:text-primary"
                             >
                                 <Lucide
                                     icon="Mail"
                                     class="h-3.5 w-3.5 shrink-0 text-slate-400"
                                 />
                                 <span class="truncate">{{ g.email }}</span>
-                            </div>
+                            </a>
                             <span
                                 v-if="!g.phone && !g.email"
                                 class="text-slate-400"
@@ -543,6 +740,7 @@ const initials = (name: string) =>
                             </span>
                         </div>
 
+                        <!-- Cuántas veces ha venido y cuándo fue la última -->
                         <div
                             class="col-start-2 flex items-center gap-2 lg:col-start-auto"
                         >
@@ -561,17 +759,33 @@ const initials = (name: string) =>
                                     {{ g.visits }}
                                     {{ g.visits === 1 ? 'visita' : 'visitas' }}
                                 </div>
-                                <!-- Lo que de verdad ocupa al mostrador: si
-                                     este huésped trae algo próximo. -->
                                 <div
-                                    v-if="g.next_arrival"
-                                    class="truncate text-xs font-medium text-primary"
+                                    v-if="g.last_visit"
+                                    class="truncate text-[11px] text-slate-400"
                                 >
-                                    Llega el {{ g.next_arrival }}
+                                    última {{ g.last_visit }}
                                 </div>
-                                <div v-else class="text-xs text-slate-400">
-                                    Sin llegadas próximas
+                                <div v-else class="text-[11px] text-slate-400">
+                                    Nunca se ha hospedado
                                 </div>
+                            </div>
+                        </div>
+
+                        <!-- Lo que ha dejado y lo que trae apartado -->
+                        <div
+                            class="col-start-2 min-w-0 lg:col-start-auto lg:text-right"
+                        >
+                            <div class="text-xs font-medium tabular-nums">
+                                {{ money(g.total_spent) }}
+                            </div>
+                            <div
+                                v-if="g.next_arrival"
+                                class="truncate text-[11px] font-medium text-primary"
+                            >
+                                Llega el {{ g.next_arrival }}
+                            </div>
+                            <div v-else class="text-[11px] text-slate-400">
+                                Sin llegadas próximas
                             </div>
                         </div>
 
@@ -584,14 +798,15 @@ const initials = (name: string) =>
                                 :as="Link"
                                 :href="route('tenant.guests.show', g.id)"
                                 variant="outline-primary"
-                                class="h-9 flex-1 rounded-[0.5rem] text-xs whitespace-nowrap lg:flex-none"
+                                class="h-8 flex-1 rounded-[0.5rem] bg-white text-xs whitespace-nowrap lg:flex-none"
                             >
                                 <Lucide icon="Eye" class="mr-1.5 h-3.5 w-3.5" />
                                 Ver ficha
                             </Button>
                             <Menu v-if="canManage">
                                 <Menu.Button
-                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                    :class="rowAction"
+                                    class="shrink-0 border border-slate-200 hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
                                     title="Más acciones"
                                 >
                                     <Lucide
@@ -610,6 +825,30 @@ const initials = (name: string) =>
                                             class="mr-1.5 h-3.5 w-3.5"
                                         />
                                         Editar huésped
+                                    </Menu.Item>
+                                    <Menu.Item
+                                        v-if="g.phone"
+                                        as="a"
+                                        :href="whatsappHref(g.phone)"
+                                        target="_blank"
+                                        rel="noopener"
+                                    >
+                                        <Lucide
+                                            icon="MessageCircle"
+                                            class="mr-1.5 h-3.5 w-3.5"
+                                        />
+                                        Escribir por WhatsApp
+                                    </Menu.Item>
+                                    <Menu.Item
+                                        v-if="!g.is_archived"
+                                        :as="Link"
+                                        :href="`${route('tenant.reservations.operation')}?intent=reserve&guest=${g.id}`"
+                                    >
+                                        <Lucide
+                                            icon="CalendarPlus"
+                                            class="mr-1.5 h-3.5 w-3.5"
+                                        />
+                                        Reservar para él
                                     </Menu.Item>
                                     <Menu.Item
                                         v-if="!g.is_archived"
@@ -662,26 +901,32 @@ const initials = (name: string) =>
 
                 <div
                     v-if="!guests.data.length"
-                    class="flex flex-col items-center gap-2.5 px-4 py-10 text-center"
+                    class="flex flex-col items-center gap-2 px-5 py-10 text-center"
                 >
-                    <div
-                        class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
-                    >
-                        <Lucide icon="Users" class="h-5 w-5" />
-                    </div>
-                    <p class="text-xs text-slate-500">
+                    <Lucide
+                        :icon="filtersActive ? 'SearchX' : 'Users'"
+                        class="h-8 w-8 text-slate-300"
+                    />
+                    <p class="text-sm font-medium text-slate-600">
                         {{
                             filters.archived
-                                ? 'No hay huéspedes archivados.'
-                                : filters.q
-                                  ? 'Sin resultados para tu búsqueda.'
-                                  : 'Aún no hay huéspedes; se crean solos al reservar, o da de alta uno.'
+                                ? 'No hay huéspedes archivados'
+                                : filtersActive
+                                  ? 'Nadie coincide con lo que buscas'
+                                  : 'Aún no hay huéspedes'
+                        }}
+                    </p>
+                    <p class="text-xs text-slate-500">
+                        {{
+                            filtersActive
+                                ? 'Puedes buscar por el nombre completo, el teléfono como sea que lo escribas o el correo.'
+                                : 'Se dan de alta solos al reservar, o puedes crear uno a mano.'
                         }}
                     </p>
                     <Button
-                        v-if="canManage && !filters.q"
+                        v-if="canManage && !filtersActive"
                         variant="outline-primary"
-                        class="h-9 rounded-[0.5rem] text-xs"
+                        class="mt-1 h-9 rounded-[0.5rem] text-xs"
                         @click="showCreate = true"
                     >
                         <Lucide icon="UserPlus" class="mr-1.5 h-3.5 w-3.5" />
@@ -692,28 +937,31 @@ const initials = (name: string) =>
                 <!-- Paginación -->
                 <div
                     v-if="guests.links.length > 3"
-                    class="flex flex-wrap justify-center gap-1 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
-                    <template v-for="(link, i) in guests.links" :key="i">
-                        <Link
-                            v-if="link.url"
-                            :href="link.url"
+                    <span class="text-xs text-slate-500">
+                        {{ guests.from }}–{{ guests.to }} de {{ guests.total }}
+                    </span>
+                    <div class="ml-auto flex flex-wrap gap-1">
+                        <component
+                            :is="link.url ? Link : 'span'"
+                            v-for="(link, i) in guests.links"
+                            :key="i"
+                            :href="link.url ?? undefined"
                             preserve-state
                             class="rounded-md px-2.5 py-1 text-xs"
                             :class="
                                 link.active
                                     ? 'bg-primary text-white'
-                                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                                    : link.url
+                                      ? 'text-slate-500 hover:bg-slate-100 dark:hover:bg-darkmode-400'
+                                      : 'text-slate-300'
                             "
                         >
+                            <!-- El rótulo trae las flechas « » de Laravel. -->
                             <span v-html="link.label" />
-                        </Link>
-                        <span
-                            v-else
-                            class="px-2.5 py-1 text-xs text-slate-400"
-                            v-html="link.label"
-                        />
-                    </template>
+                        </component>
+                    </div>
                 </div>
             </div>
         </div>

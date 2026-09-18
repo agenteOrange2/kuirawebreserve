@@ -193,7 +193,8 @@ async function submitPayment() {
         const form = new FormData();
         form.append('amount', String(paymentForm.amount));
         form.append('method', paymentForm.method);
-        if (paymentForm.reference) form.append('reference', paymentForm.reference);
+        if (paymentForm.reference)
+            form.append('reference', paymentForm.reference);
         if (paymentForm.notes) form.append('notes', paymentForm.notes);
         form.append('notify_guest', paymentForm.notify ? '1' : '0');
         if (receiptFile.value) form.append('receipt', receiptFile.value);

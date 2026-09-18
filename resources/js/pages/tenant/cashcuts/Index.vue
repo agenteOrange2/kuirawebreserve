@@ -5,6 +5,7 @@ import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormDateTime,
+    FormHelp,
     FormInput,
     FormLabel,
     FormSelect,
@@ -77,6 +78,29 @@ interface Preview {
     methods: Method[];
     movements: Movement[];
     pending: Pending;
+    // Salidas de efectivo del periodo: restan del efectivo esperado.
+    expenses_count: number;
+    expenses_total: number;
+    expenses_by_category: ExpenseCategory[];
+    expenses: Expense[];
+}
+interface ExpenseCategory {
+    key: string;
+    label: string;
+    count: number;
+    total: number;
+}
+interface Expense {
+    id: number;
+    category: string;
+    category_label: string;
+    concept: string;
+    amount: number;
+    at: string;
+    by: string | null;
+    receipt_url: string | null;
+    /** Ya quedó dentro de un corte cerrado: no se borra. */
+    locked: boolean;
 }
 interface Cut {
     id: number;
@@ -94,6 +118,8 @@ interface Cut {
     transfer_total: number;
     expected_cash: number;
     opening_cash: number;
+    expenses_count: number;
+    expenses_total: number;
     counted_cash: number | null;
     difference: number;
     pending_count: number;
@@ -158,12 +184,17 @@ const props = defineProps<{
 }>();
 
 const toast = useToasts();
-const money = (n: number) =>
-    '$' +
-    new Intl.NumberFormat('es-MX', {
-        minimumFractionDigits: 2,
-        maximumFractionDigits: 2,
-    }).format(n || 0);
+const money = (n: number) => {
+    const valor = n || 0;
+    // El menos va antes del peso: "$-6,500.00" se lee como un precio raro.
+    return (
+        (valor < 0 ? '−$' : '$') +
+        new Intl.NumberFormat('es-MX', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+        }).format(Math.abs(valor))
+    );
+};
 
 const userId = ref<string | number>(props.filters.user ?? '');
 const from = ref(props.filters.from);
@@ -275,6 +306,12 @@ const expectedCashHint = computed(() => {
         );
     }
 
+    if ((props.preview?.expenses_total ?? 0) > 0) {
+        parts.push(
+            `Ya tiene descontados ${money(props.preview!.expenses_total)} de gastos y retiros del turno.`,
+        );
+    }
+
     return parts.join(' ');
 });
 
@@ -345,6 +382,96 @@ async function submitCut() {
         );
     } finally {
         saving.value = false;
+    }
+}
+
+// ── Gastos y retiros de la caja ──
+// Se capturan DURANTE el turno, no al cortar: a las once de la noche nadie
+// se acuerda de los $380 de gasolina de la mañana, y ese hueco salía como
+// faltante del encargado.
+const expenseCategories: { key: string; label: string }[] = [
+    { key: 'insumos', label: 'Insumos y despensa' },
+    { key: 'mantenimiento', label: 'Mantenimiento y reparaciones' },
+    { key: 'transporte', label: 'Gasolina y transporte' },
+    { key: 'servicios', label: 'Servicios y pagos' },
+    { key: 'personal', label: 'Personal (adelantos, propinas)' },
+    { key: 'retiro', label: 'Retiro a bóveda o depósito' },
+    { key: 'otro', label: 'Otro' },
+];
+
+const showExpense = ref(false);
+const expenseCategory = ref('insumos');
+const expenseConcept = ref('');
+const expenseAmount = ref<string | number>('');
+const expenseReceipt = ref<File | null>(null);
+const expenseReceiptInput = ref<HTMLInputElement | null>(null);
+const savingExpense = ref(false);
+
+function openExpense() {
+    expenseCategory.value = 'insumos';
+    expenseConcept.value = '';
+    expenseAmount.value = '';
+    clearReceipt();
+    showExpense.value = true;
+}
+
+function pickReceipt(event: Event) {
+    expenseReceipt.value =
+        (event.target as HTMLInputElement).files?.[0] ?? null;
+}
+
+function clearReceipt() {
+    expenseReceipt.value = null;
+    if (expenseReceiptInput.value) expenseReceiptInput.value.value = '';
+}
+
+const expenseValid = computed(
+    () =>
+        expenseConcept.value.trim().length > 2 &&
+        Number(expenseAmount.value) > 0,
+);
+
+async function submitExpense() {
+    if (!expenseValid.value || savingExpense.value) return;
+    savingExpense.value = true;
+    try {
+        const form = new FormData();
+        form.append('user_id', String(props.selectedUser?.id ?? ''));
+        form.append('scope', props.filters.scope ?? '');
+        if (props.filters.shift)
+            form.append('shift_id', String(props.filters.shift));
+        form.append('category', expenseCategory.value);
+        form.append('concept', expenseConcept.value.trim());
+        form.append('amount', String(expenseAmount.value));
+        if (expenseReceipt.value) form.append('receipt', expenseReceipt.value);
+
+        await axios.post(route('tenant.cashexpenses.store'), form);
+        showExpense.value = false;
+        toast.success(
+            'Gasto registrado',
+            'Ya se descontó del efectivo esperado de esta caja.',
+        );
+        router.reload();
+    } catch (e: any) {
+        toast.error(
+            'No se pudo registrar',
+            e.response?.data?.message ?? 'Revisa el monto y el concepto.',
+        );
+    } finally {
+        savingExpense.value = false;
+    }
+}
+
+async function deleteExpense(expense: Expense) {
+    try {
+        await axios.delete(route('tenant.cashexpenses.destroy', expense.id));
+        toast.success('Gasto eliminado', 'El efectivo esperado se recalculó.');
+        router.reload();
+    } catch (e: any) {
+        toast.error(
+            'No se pudo eliminar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
     }
 }
 
@@ -491,8 +618,20 @@ async function openDetail(cut: Cut) {
                             {{ period.from }} → {{ period.to }}
                         </span>
                     </div>
+                    <!--
+                        Las columnas se cuentan según los campos que SÍ están:
+                        con la plantilla fija de cinco, un hotel sin turnos
+                        dejaba a Desde y Hasta en la pista angosta y la fecha
+                        salía cortada ("26/08/20"). Desde/Hasta piden más ancho
+                        que un select: llevan fecha Y hora.
+                    -->
                     <div
-                        class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-[13rem_15rem_13rem_13rem_auto]"
+                        class="grid grid-cols-1 gap-3 sm:grid-cols-2"
+                        :class="
+                            shifts.length
+                                ? 'xl:grid-cols-[13rem_13rem_17rem_17rem_auto]'
+                                : 'xl:grid-cols-[13rem_17rem_17rem_auto]'
+                        "
                     >
                         <div>
                             <FormLabel htmlFor="cut-user">Encargado</FormLabel>
@@ -608,7 +747,7 @@ async function openDetail(cut: Cut) {
 
             <template v-if="preview">
                 <!-- Cifras del corte en curso -->
-                <div class="mt-4 grid grid-cols-12 gap-4">
+                <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
                     <div
                         class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
                     >
@@ -637,18 +776,39 @@ async function openDetail(cut: Cut) {
                         :title="expectedCashHint"
                     >
                         <div
-                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
+                            :class="
+                                preview.expected_cash < 0
+                                    ? 'border-danger/10 bg-danger/10 text-danger'
+                                    : 'border-success/10 bg-success/10 text-success'
+                            "
                         >
                             <Lucide icon="Banknote" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0">
                             <div
-                                class="truncate text-sm font-medium text-success"
+                                class="truncate text-sm font-medium"
+                                :class="
+                                    preview.expected_cash < 0
+                                        ? 'text-danger'
+                                        : 'text-success'
+                                "
                             >
                                 {{ money(preview.expected_cash) }}
                             </div>
                             <div class="truncate text-xs text-slate-500">
-                                Efectivo esperado en caja
+                                <template v-if="preview.expected_cash < 0">
+                                    Salió más efectivo del que entró
+                                </template>
+                                <template v-else>
+                                    Efectivo esperado en caja
+                                </template>
+                            </div>
+                            <div
+                                v-if="preview.expected_cash < 0"
+                                class="truncate text-[11px] text-slate-400"
+                            >
+                                El periodo no arranca de un fondo de caja
                             </div>
                         </div>
                     </div>
@@ -707,16 +867,18 @@ async function openDetail(cut: Cut) {
                         </div>
                         <div class="min-w-0">
                             <div class="truncate text-sm font-medium">
-                                {{
-                                    money(
-                                        preview.guarantees_cash_in -
-                                            preview.guarantees_cash_out,
-                                    )
-                                }}
+                                {{ money(preview.guarantees_cash_in) }}
                             </div>
                             <div class="truncate text-xs text-slate-500">
-                                Fianzas en garantía ·
+                                Fianzas cobradas ·
                                 {{ preview.guarantees_count }}
+                            </div>
+                            <div
+                                v-if="preview.guarantees_cash_out > 0"
+                                class="truncate text-[11px] text-danger"
+                            >
+                                Devueltas
+                                {{ money(preview.guarantees_cash_out) }}
                             </div>
                         </div>
                     </div>
@@ -753,7 +915,8 @@ async function openDetail(cut: Cut) {
                     v-if="
                         preview.opening_cash > 0 ||
                         preview.guarantees_cash_in > 0 ||
-                        preview.guarantees_cash_out > 0
+                        preview.guarantees_cash_out > 0 ||
+                        preview.expenses_total > 0
                     "
                     class="box mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-l-4 border-l-info px-4 py-2.5 text-xs text-slate-500"
                 >
@@ -784,6 +947,13 @@ async function openDetail(cut: Cut) {
                             </span>
                             devueltas</template
                         >, que no son venta.
+                    </span>
+                    <span v-if="preview.expenses_total > 0">
+                        Ya tiene descontados
+                        <span class="font-medium text-danger">
+                            {{ money(preview.expenses_total) }}
+                        </span>
+                        de gastos y retiros ({{ preview.expenses_count }}).
                     </span>
                 </div>
 
@@ -935,7 +1105,7 @@ async function openDetail(cut: Cut) {
                         </div>
                     </div>
 
-                    <!-- Desglose y pendientes -->
+                    <!-- Desglose y salidas de la caja -->
                     <div class="col-span-12 xl:col-span-5">
                         <div class="box box--stacked">
                             <div
@@ -1026,136 +1196,252 @@ async function openDetail(cut: Cut) {
                             </p>
                         </div>
 
-                        <!-- Pagos pendientes -->
+                        <!-- Gastos y retiros del periodo -->
                         <div class="box box--stacked mt-5">
                             <div
                                 class="flex flex-wrap items-center gap-3 border-b border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
                             >
                                 <div
-                                    class="flex h-9 w-9 items-center justify-center rounded-full"
-                                    :class="
-                                        preview.pending.count > 0
-                                            ? 'bg-warning/10 text-warning'
-                                            : 'bg-success/10 text-success'
-                                    "
+                                    class="flex h-9 w-9 items-center justify-center rounded-full bg-danger/10 text-danger"
                                 >
                                     <Lucide
-                                        :icon="
-                                            preview.pending.count > 0
-                                                ? 'CircleAlert'
-                                                : 'CircleCheck'
-                                        "
+                                        icon="ArrowDownLeft"
                                         class="h-4 w-4"
                                     />
                                 </div>
-                                <div class="min-w-0">
+                                <div class="min-w-0 flex-1">
                                     <div class="font-medium">
-                                        Pagos pendientes
+                                        Gastos y retiros
                                     </div>
                                     <div class="text-xs text-slate-500">
-                                        Saldos vivos que hereda el relevo.
+                                        Dinero que salió del cajón en este
+                                        periodo.
                                     </div>
                                 </div>
-                                <span
-                                    v-if="preview.pending.count > 0"
-                                    class="ml-auto rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
-                                >
-                                    {{ preview.pending.count }} ·
-                                    {{ money(preview.pending.total) }}
-                                </span>
-                            </div>
-
-                            <template v-if="preview.pending.items.length">
-                                <div
-                                    class="max-h-72 divide-y divide-slate-200/60 overflow-y-auto dark:divide-darkmode-400"
-                                >
-                                    <div
-                                        v-for="(p, i) in preview.pending.items"
-                                        :key="i"
-                                        class="flex items-center justify-between gap-3 px-4 py-2.5"
-                                    >
-                                        <div
-                                            class="flex min-w-0 items-center gap-2.5"
-                                        >
-                                            <span
-                                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning"
-                                            >
-                                                <Lucide
-                                                    :icon="
-                                                        p.kind === 'order'
-                                                            ? 'ShoppingCart'
-                                                            : p.kind ===
-                                                                'reservation'
-                                                              ? 'CalendarClock'
-                                                              : 'BedDouble'
-                                                    "
-                                                    class="h-3.5 w-3.5"
-                                                />
-                                            </span>
-                                            <div class="min-w-0">
-                                                <div
-                                                    class="truncate text-sm font-medium"
-                                                >
-                                                    {{ p.label }}
-                                                </div>
-                                                <div
-                                                    v-if="p.detail"
-                                                    class="truncate text-xs text-slate-500"
-                                                >
-                                                    {{ p.detail }}
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <span
-                                            class="text-sm font-semibold whitespace-nowrap"
-                                        >
-                                            {{ money(p.amount) }}
-                                        </span>
-                                    </div>
-                                </div>
-                                <div
-                                    class="flex items-center justify-between border-t border-slate-200/60 px-4 py-2.5 text-xs dark:border-darkmode-400"
-                                >
-                                    <span class="text-slate-500">
-                                        Total pendiente de cobro
-                                    </span>
-                                    <span
-                                        class="text-sm font-semibold text-warning"
-                                    >
-                                        {{ money(preview.pending.total) }}
-                                    </span>
-                                </div>
-                                <p
-                                    class="flex items-start gap-2 border-t border-slate-200/60 px-4 py-2.5 text-xs text-slate-500 dark:border-darkmode-400"
+                                <Button
+                                    v-if="canManage"
+                                    variant="outline-secondary"
+                                    class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
+                                    @click="openExpense"
                                 >
                                     <Lucide
-                                        icon="Info"
-                                        class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                                        icon="Plus"
+                                        class="mr-1.5 h-3.5 w-3.5"
                                     />
-                                    <span>
-                                        Huéspedes en casa con saldo, reservas
-                                        con pago vencido y ventas cargadas a
-                                        habitación. Al guardar el corte quedan
-                                        congelados para el relevo de turno.
+                                    Registrar gasto
+                                </Button>
+                            </div>
+
+                            <div
+                                v-if="preview.expenses.length"
+                                class="divide-y divide-slate-100 dark:divide-darkmode-400/60"
+                            >
+                                <div
+                                    v-for="e in preview.expenses"
+                                    :key="e.id"
+                                    class="flex items-center gap-3 px-4 py-2.5"
+                                >
+                                    <div class="min-w-0 flex-1">
+                                        <div
+                                            class="truncate text-sm font-medium"
+                                        >
+                                            {{ e.concept }}
+                                        </div>
+                                        <div
+                                            class="truncate text-xs text-slate-500"
+                                        >
+                                            {{ e.category_label }} ·
+                                            {{ e.at }}
+                                            <template v-if="e.by">
+                                                · {{ e.by }}
+                                            </template>
+                                        </div>
+                                    </div>
+                                    <span
+                                        class="shrink-0 text-sm font-semibold text-danger"
+                                    >
+                                        −{{ money(e.amount) }}
                                     </span>
-                                </p>
-                            </template>
+                                    <a
+                                        v-if="e.receipt_url"
+                                        :href="e.receipt_url"
+                                        target="_blank"
+                                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-info/10 hover:text-info"
+                                        title="Ver comprobante"
+                                    >
+                                        <Lucide
+                                            icon="Paperclip"
+                                            class="h-4 w-4"
+                                        />
+                                    </a>
+                                    <button
+                                        v-if="canManage && !e.locked"
+                                        type="button"
+                                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                        title="Eliminar gasto"
+                                        @click="deleteExpense(e)"
+                                    >
+                                        <Lucide icon="Trash2" class="h-4 w-4" />
+                                    </button>
+                                </div>
+                            </div>
 
                             <div
                                 v-else
-                                class="flex items-center gap-2.5 px-4 py-6 text-xs text-slate-500"
+                                class="px-4 py-6 text-center text-xs text-slate-500"
                             >
-                                <span
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                                Sin salidas de efectivo en este periodo. Si
+                                alguien sacó dinero del cajón, regístralo aquí
+                                para que el arqueo cuadre.
+                            </div>
+
+                            <div
+                                v-if="preview.expenses.length"
+                                class="border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                            >
+                                <div
+                                    v-for="c in preview.expenses_by_category"
+                                    :key="c.key"
+                                    class="flex items-center justify-between text-xs text-slate-500"
                                 >
-                                    <Lucide
-                                        icon="CircleCheck"
-                                        class="h-4 w-4"
-                                    />
-                                </span>
-                                Sin pagos pendientes al momento del corte.
+                                    <span>{{ c.label }} ({{ c.count }})</span>
+                                    <span>{{ money(c.total) }}</span>
+                                </div>
+                                <div
+                                    class="mt-2 flex items-center justify-between border-t border-dashed border-slate-300/70 pt-2 text-xs dark:border-darkmode-400"
+                                >
+                                    <span class="text-slate-500">
+                                        Total que salió
+                                    </span>
+                                    <span
+                                        class="text-sm font-semibold text-danger"
+                                    >
+                                        −{{ money(preview.expenses_total) }}
+                                    </span>
+                                </div>
                             </div>
                         </div>
+                    </div>
+                </div>
+                <!-- Pagos pendientes: bloque alto, a ancho completo para no
+                 estirar la columna vecina y dejar un hueco. -->
+                <div class="box box--stacked mt-4">
+                    <div
+                        class="flex flex-wrap items-center gap-3 border-b border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-9 w-9 items-center justify-center rounded-full"
+                            :class="
+                                preview.pending.count > 0
+                                    ? 'bg-warning/10 text-warning'
+                                    : 'bg-success/10 text-success'
+                            "
+                        >
+                            <Lucide
+                                :icon="
+                                    preview.pending.count > 0
+                                        ? 'CircleAlert'
+                                        : 'CircleCheck'
+                                "
+                                class="h-4 w-4"
+                            />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="font-medium">Pagos pendientes</div>
+                            <div class="text-xs text-slate-500">
+                                Saldos vivos que hereda el relevo.
+                            </div>
+                        </div>
+                        <span
+                            v-if="preview.pending.count > 0"
+                            class="ml-auto rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
+                        >
+                            {{ preview.pending.count }} ·
+                            {{ money(preview.pending.total) }}
+                        </span>
+                    </div>
+
+                    <template v-if="preview.pending.items.length">
+                        <div
+                            class="max-h-72 divide-y divide-slate-200/60 overflow-y-auto dark:divide-darkmode-400"
+                        >
+                            <div
+                                v-for="(p, i) in preview.pending.items"
+                                :key="i"
+                                class="flex items-center justify-between gap-3 px-4 py-2.5"
+                            >
+                                <div class="flex min-w-0 items-center gap-2.5">
+                                    <span
+                                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning"
+                                    >
+                                        <Lucide
+                                            :icon="
+                                                p.kind === 'order'
+                                                    ? 'ShoppingCart'
+                                                    : p.kind === 'reservation'
+                                                      ? 'CalendarClock'
+                                                      : 'BedDouble'
+                                            "
+                                            class="h-3.5 w-3.5"
+                                        />
+                                    </span>
+                                    <div class="min-w-0">
+                                        <div
+                                            class="truncate text-sm font-medium"
+                                        >
+                                            {{ p.label }}
+                                        </div>
+                                        <div
+                                            v-if="p.detail"
+                                            class="truncate text-xs text-slate-500"
+                                        >
+                                            {{ p.detail }}
+                                        </div>
+                                    </div>
+                                </div>
+                                <span
+                                    class="text-sm font-semibold whitespace-nowrap"
+                                >
+                                    {{ money(p.amount) }}
+                                </span>
+                            </div>
+                        </div>
+                        <div
+                            class="flex items-center justify-between border-t border-slate-200/60 px-4 py-2.5 text-xs dark:border-darkmode-400"
+                        >
+                            <span class="text-slate-500">
+                                Total pendiente de cobro
+                            </span>
+                            <span class="text-sm font-semibold text-warning">
+                                {{ money(preview.pending.total) }}
+                            </span>
+                        </div>
+                        <p
+                            class="flex items-start gap-2 border-t border-slate-200/60 px-4 py-2.5 text-xs text-slate-500 dark:border-darkmode-400"
+                        >
+                            <Lucide
+                                icon="Info"
+                                class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                            />
+                            <span>
+                                Huéspedes en casa con saldo, reservas con pago
+                                vencido y ventas cargadas a habitación. Al
+                                guardar el corte quedan congelados para el
+                                relevo de turno.
+                            </span>
+                        </p>
+                    </template>
+
+                    <div
+                        v-else
+                        class="flex items-center gap-2.5 px-4 py-6 text-xs text-slate-500"
+                    >
+                        <span
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                        >
+                            <Lucide icon="CircleCheck" class="h-4 w-4" />
+                        </span>
+                        Sin pagos pendientes al momento del corte.
                     </div>
                 </div>
             </template>
@@ -1504,6 +1790,165 @@ async function openDetail(cut: Cut) {
             </div>
         </div>
 
+        <!-- Modal registrar gasto de caja -->
+        <Dialog size="lg" :open="showExpense" @close="showExpense = false">
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[560px]">
+                <form
+                    class="flex max-h-[calc(100dvh-6rem)] flex-col"
+                    @submit.prevent="submitExpense"
+                >
+                    <div
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                        >
+                            <Lucide icon="ArrowDownLeft" class="h-5 w-5" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                Registrar una salida de efectivo
+                            </h2>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Caja de {{ activeScopeLabel.toLowerCase() }} ·
+                                {{ selectedUser?.name }}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            @click="showExpense = false"
+                        >
+                            <Lucide icon="X" class="h-4 w-4" />
+                        </button>
+                    </div>
+
+                    <div
+                        class="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4"
+                    >
+                        <div>
+                            <div
+                                class="mb-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                Qué se pagó
+                            </div>
+                            <div class="grid grid-cols-12 gap-4">
+                                <div class="col-span-12 sm:col-span-7">
+                                    <FormLabel class="text-xs">
+                                        Concepto
+                                    </FormLabel>
+                                    <FormInput
+                                        v-model="expenseConcept"
+                                        type="text"
+                                        maxlength="160"
+                                        class="h-9 text-xs"
+                                        placeholder="Gasolina de la camioneta"
+                                    />
+                                </div>
+                                <div class="col-span-12 sm:col-span-5">
+                                    <FormLabel class="text-xs">Monto</FormLabel>
+                                    <FormInput
+                                        v-model="expenseAmount"
+                                        type="number"
+                                        step="0.01"
+                                        min="0.01"
+                                        class="h-9 text-xs"
+                                        placeholder="0.00"
+                                    />
+                                </div>
+                                <div class="col-span-12">
+                                    <FormLabel class="text-xs">
+                                        Categoría
+                                    </FormLabel>
+                                    <FormSelect
+                                        v-model="expenseCategory"
+                                        class="h-9 text-xs"
+                                    >
+                                        <option
+                                            v-for="c in expenseCategories"
+                                            :key="c.key"
+                                            :value="c.key"
+                                        >
+                                            {{ c.label }}
+                                        </option>
+                                    </FormSelect>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div>
+                            <div
+                                class="mb-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                Comprobante
+                            </div>
+                            <div class="flex items-center gap-3">
+                                <input
+                                    ref="expenseReceiptInput"
+                                    type="file"
+                                    accept="image/jpeg,image/png,image/webp,application/pdf"
+                                    class="h-9 flex-1 text-xs file:mr-3 file:h-9 file:rounded-[0.5rem] file:border-0 file:bg-slate-100 file:px-3 file:text-xs file:text-slate-600 dark:file:bg-darkmode-400"
+                                    @change="pickReceipt"
+                                />
+                                <button
+                                    v-if="expenseReceipt"
+                                    type="button"
+                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                    title="Quitar archivo"
+                                    @click="clearReceipt"
+                                >
+                                    <Lucide icon="X" class="h-4 w-4" />
+                                </button>
+                            </div>
+                            <FormHelp class="text-xs">
+                                Opcional: la foto del ticket es lo que sostiene
+                                el gasto cuando alguien revisa el corte días
+                                después.
+                            </FormHelp>
+                        </div>
+
+                        <p
+                            class="flex items-start gap-2 rounded-lg bg-slate-50 px-3.5 py-2.5 text-xs text-slate-500 dark:bg-darkmode-700"
+                        >
+                            <Lucide
+                                icon="Info"
+                                class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                            />
+                            <span>
+                                Se descuenta del efectivo esperado de esta caja.
+                                Mientras el corte no se cierre lo puedes
+                                eliminar; después queda como respaldo del
+                                arqueo.
+                            </span>
+                        </p>
+                    </div>
+
+                    <div
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] bg-white px-5 text-xs"
+                            @click="showExpense = false"
+                        >
+                            Cancelar
+                        </Button>
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="!expenseValid || savingExpense"
+                        >
+                            {{
+                                savingExpense ? 'Guardando…' : 'Registrar gasto'
+                            }}
+                        </Button>
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
+
         <!-- Modal hacer corte (arqueo) -->
         <Dialog size="lg" :open="showClose" @close="showClose = false">
             <Dialog.Panel>
@@ -1747,7 +2192,7 @@ async function openDetail(cut: Cut) {
                                     Total cobrado
                                 </div>
                                 <div
-                                    class="mt-1 text-xl font-medium text-primary"
+                                    class="mt-1 text-sm font-semibold text-primary"
                                 >
                                     {{ money(detailCut.grand_total) }}
                                 </div>
@@ -1764,7 +2209,7 @@ async function openDetail(cut: Cut) {
                                     />
                                     Movimientos
                                 </div>
-                                <div class="mt-1 text-xl font-medium">
+                                <div class="mt-1 text-sm font-semibold">
                                     {{
                                         detailCut.orders_count +
                                         detailCut.payments_count
@@ -2023,6 +2468,19 @@ async function openDetail(cut: Cut) {
                                     <span>{{
                                         money(detailCut.opening_cash)
                                     }}</span>
+                                </div>
+                                <div
+                                    v-if="detailCut.expenses_count > 0"
+                                    class="mb-2 flex items-center justify-between text-sm"
+                                >
+                                    <span class="text-slate-500">
+                                        Gastos y retiros ({{
+                                            detailCut.expenses_count
+                                        }})
+                                    </span>
+                                    <span class="text-danger">
+                                        −{{ money(detailCut.expenses_total) }}
+                                    </span>
                                 </div>
                                 <div
                                     class="flex items-center justify-between text-sm"

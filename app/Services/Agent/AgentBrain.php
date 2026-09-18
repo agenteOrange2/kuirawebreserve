@@ -335,8 +335,11 @@ class AgentBrain
                 $this->enforcePaymentClaims(
                     $this->enforceHoldDeadlineClaims(
                         $this->enforceHandoffClaims(
-                            $this->enforceCouponClaims(
-                                $this->enforceAvailabilityClaims($text, $conversation),
+                            $this->enforceRescheduleClaims(
+                                $this->enforceCouponClaims(
+                                    $this->enforceAvailabilityClaims($text, $conversation),
+                                    $conversation,
+                                ),
                                 $conversation,
                             ),
                             $conversation,
@@ -507,6 +510,80 @@ class AgentBrain
      * Llegar hasta aquí ya implica que transferir_a_humano NO se llamó (ese
      * camino sale antes, con su mensaje de sistema).
      */
+    /**
+     * El bot NO puede mover una reserva: entre sus herramientas no hay
+     * ninguna que cambie fechas (consultar, apartar, cobrar, reactivar un
+     * apartado vencido y transferir; nada más). Prometerlo es dejar a un
+     * huésped creyendo que su reserva cambió de día.
+     *
+     * Caso real cabañas 2026-09-17 (conv. 917, RES-2026-1758): al huésped
+     * que pagó por el viernes creyendo que era sábado le contestó "Tiene
+     * razón... Entonces las fechas quedan: entrada sábado 19 de septiembre",
+     * con el sábado LLENO y sin poder cambiar nada.
+     *
+     * Lo que promete se borra y la conversación pasa a una persona.
+     */
+    protected function enforceRescheduleClaims(string $text, ?Conversation $conversation): string
+    {
+        if ($conversation === null || trim($text) === '') {
+            return $text;
+        }
+
+        $lines = preg_split('/\R/u', $text) ?: [];
+        $offending = [];
+
+        foreach ($lines as $line) {
+            foreach ($this->sentencesOf($line) as $sentence) {
+                if ($this->claimsReschedule($sentence)) {
+                    $offending[] = $sentence;
+                }
+            }
+        }
+
+        if ($offending === []) {
+            return $text;
+        }
+
+        \Illuminate\Support\Facades\Log::warning('Agente: prometió mover una reserva, algo que no puede hacer', [
+            'conversation_id' => $conversation->id,
+            'texto' => $text,
+        ]);
+
+        $this->markHandoff($conversation, 'El huésped pide cambiar la fecha de su reserva.');
+
+        $kept = collect($lines)
+            ->map(fn (string $line) => collect($this->sentencesOf($line))
+                ->reject(fn (string $sentence) => in_array($sentence, $offending, true))
+                ->map(fn (string $sentence) => trim($sentence))
+                ->filter()
+                ->implode(' '))
+            ->filter(fn (string $line) => trim($line) !== '')
+            ->implode("\n");
+
+        return trim($kept."\n\nEl cambio de fecha lo hace una persona del hotel. ".$this->handoffLine());
+    }
+
+    /** ¿Esta frase promete mover o corregir la fecha de una reserva? */
+    protected function claimsReschedule(string $sentence): bool
+    {
+        $plain = $this->plain($sentence);
+
+        // "no puedo cambiarla", "no se puede mover": eso es decir la verdad.
+        if (preg_match('/\bno\s+(puedo|podemos|se\s+puede|es\s+posible)\b/u', $plain) === 1) {
+            return false;
+        }
+
+        // Reactivar un apartado vencido SÍ lo puede hacer (reactivar_apartado).
+        if (preg_match('/\breactiv/u', $plain) === 1) {
+            return false;
+        }
+
+        // "muev" aparte de "mov": en español el verbo cambia de raíz (muevo,
+        // mueve) y "la muevo para esas fechas" se colaba.
+        return preg_match('/\b(cambi|mov|muev|reagend|modific|actualiz|recorr|corrij|correcci)\w*\b[^.!?]{0,80}\b(reserva\w*|apartado|fecha\w*|estancia|d[ií]as?)\b/u', $plain) === 1
+            || preg_match('/\b(las|sus|tus)\s+fechas\s+(quedan|quedar[ií]an|cambian|ser[ií]an)\b/u', $plain) === 1;
+    }
+
     protected function enforceHandoffClaims(string $text, ?Conversation $conversation): string
     {
         if ($conversation === null || trim($text) === '' || ! $this->claimsHandoff($text)) {
@@ -660,7 +737,11 @@ class AgentBrain
         // demás se ofrecían igual (cabañas, conv. 17-sep-2026).
         $lines = preg_split('/\R/u', $text) ?: [];
 
-        $date = null;
+        // NOCHES, no fechas sueltas: "del viernes 18 al sábado 19" es una
+        // sola noche y el 19 es el día en que se van. Juzgar por la salida
+        // fue lo que borró tres respuestas correctas seguidas (conv. 1011).
+        $nights = [];
+        $spans = [];
         $wrong = [];
         $freeLabels = [];
         // Renglones que se caen enteros, y frases sueltas dentro de un
@@ -680,14 +761,14 @@ class AgentBrain
             }
 
             $bullet = preg_match('/^\s*[-•*\d]/u', $line) === 1;
-            $lineDates = $this->datesMentioned($line);
-            $date = $lineDates !== [] ? reset($lineDates) : $date;
+            $lineNights = $this->nightsClaimed($line);
+            $nights = $lineNights !== [] ? $lineNights : $nights;
             $claims = $this->claimsAvailability($line);
             $named = $this->roomTypesMentioned($line, $types);
 
             // Encabezado de lista ("Para el 27 tenemos estas disponibles:").
             if ($claims && $named->isEmpty()) {
-                $listing = $date !== null;
+                $listing = $nights !== [];
                 $header = $listing ? $i : null;
 
                 if ($header !== null) {
@@ -704,12 +785,12 @@ class AgentBrain
 
             $isItem = $listing && $bullet;
 
-            if ($date === null || $named->isEmpty() || ! ($claims || $isItem)) {
+            if ($nights === [] || $named->isEmpty() || ! ($claims || $isItem)) {
                 continue;
             }
 
             $busy = $named->filter(fn (\App\Models\RoomType $type) => ! in_array($type->id, $mine, true)
-                && ! $this->typeIsFree($type, $date, $availability));
+                && ! $this->typeIsFreeEveryNight($type, $nights, $availability));
 
             if ($busy->isEmpty()) {
                 if ($isItem && $header !== null) {
@@ -738,10 +819,11 @@ class AgentBrain
                 }
             }
 
-            $key = $date->toDateString();
+            $key = $this->nightsKey($nights);
+            $spans[$key] ??= $nights;
             $wrong[$key] = array_values(array_unique([...($wrong[$key] ?? []), ...$busy->pluck('name')->all()]));
             $freeLabels[$key] ??= $types
-                ->filter(fn (\App\Models\RoomType $type) => $this->typeIsFree($type, $date, $availability))
+                ->filter(fn (\App\Models\RoomType $type) => $this->typeIsFreeEveryNight($type, $nights, $availability))
                 ->pluck('name')
                 ->values()
                 ->all();
@@ -761,21 +843,24 @@ class AgentBrain
 
         \Illuminate\Support\Facades\Log::warning('Agente: ofreció habitaciones que no están libres', [
             'conversation_id' => $conversation?->id,
+            // Contra qué noches se juzgó: sin esto no se puede saber si el
+            // guardián borró bien o se equivocó de fecha.
+            'noches' => array_map(fn (array $span) => $this->nightsKey($span), $spans),
             'texto' => $text,
         ]);
 
         $truth = [];
 
-        foreach ($wrong as $day => $names) {
-            $label = \Carbon\CarbonImmutable::parse($day)->locale('es')->isoFormat('dddd D [de] MMMM');
-            $free = $freeLabels[$day] ?? [];
+        foreach ($wrong as $key => $names) {
+            $label = $this->nightsLabel($spans[$key] ?? []);
+            $free = $freeLabels[$key] ?? [];
 
             // Esto lo LEE EL HUÉSPED: nunca una instrucción para el modelo.
             // "dile la verdad y ofrécele otra fecha" se le mandó tal cual a un
             // huésped el 17-sep-2026.
             $truth[] = $free === []
-                ? 'Para el '.$label.' no queda ninguna habitación libre. Con gusto reviso otra fecha.'
-                : 'Para el '.$label.', '.implode(' y ', $names)
+                ? 'Para '.$label.' no queda ninguna habitación libre. Con gusto reviso otra fecha.'
+                : 'Para '.$label.', '.implode(' y ', $names)
                     .(count($names) === 1 ? ' ya no está disponible' : ' ya no están disponibles').'. '
                     .'Lo que sí queda libre ese día: '.implode(', ', $free).'.';
         }
@@ -891,6 +976,117 @@ class AgentBrain
             // Ante la duda, no se borra lo que dijo el modelo.
             return true;
         }
+    }
+
+    /**
+     * Noches que promete un renglón.
+     *
+     * La última fecha de un rango es la SALIDA, no una noche: "del viernes 18
+     * al sábado 19" es UNA noche, la del 18. Caso real cabañas 2026-09-17
+     * (conv. 1011): una familia de 4 preguntó TRES veces por el viernes 18 al
+     * sábado 19; el modelo contestó bien las tres veces y el guardián le borró
+     * la lista de las cuatro cabañas libres y le contestó "para el sábado 19
+     * no queda ninguna habitación libre" — cierto, pero el 19 era el día en
+     * que se iban.
+     *
+     * Se lee en modo SUELTO a propósito: en "viernes 18 al sábado 19 de
+     * septiembre" el mes solo acompaña a la SEGUNDA fecha, así que el modo
+     * normal veía únicamente el 19 y ni siquiera se enteraba del 18.
+     *
+     * @return array<int, \Carbon\CarbonImmutable>
+     */
+    protected function nightsClaimed(string $line): array
+    {
+        $dates = array_values($this->datesMentioned($line, loose: true));
+
+        if (count($dates) < 2) {
+            return $dates;
+        }
+
+        usort($dates, fn (\Carbon\CarbonImmutable $a, \Carbon\CarbonImmutable $b) => $a <=> $b);
+
+        // Sin conector de rango son fechas sueltas ("el 20 y el 27 libres"):
+        // cada una es su propia noche y todas deben estar libres.
+        if (! $this->mentionsDateRange($line)) {
+            return $dates;
+        }
+
+        $first = $dates[0];
+        $last = $dates[count($dates) - 1];
+        $nights = [];
+
+        // Tope de dos semanas: son consultas al motor de disponibilidad por
+        // tipo y por noche, y una estancia de mes no se cotiza por chat.
+        for ($night = $first; $night < $last && count($nights) < 14; $night = $night->addDay()) {
+            $nights[] = $night;
+        }
+
+        return $nights !== [] ? $nights : [$first];
+    }
+
+    /**
+     * ¿El renglón habla de un rango de fechas ("del 18 al 19")? La "a" suelta
+     * no cuenta: "alberca de 9:00 AM a 10:30 PM" es un horario.
+     */
+    protected function mentionsDateRange(string $line): bool
+    {
+        $plain = $this->plain((string) preg_replace('/\s+/u', ' ', $line));
+
+        return preg_match('/\d\s*(?:\p{L}+\s+){0,2}?(?:al|hasta)\s/u', $plain) === 1;
+    }
+
+    /**
+     * Ofrecer una habitación para una estancia es prometerla TODAS sus
+     * noches: libre la primera y ocupada la segunda no se puede vender.
+     *
+     * @param  array<int, \Carbon\CarbonImmutable>  $nights
+     */
+    protected function typeIsFreeEveryNight(\App\Models\RoomType $type, array $nights, \App\Services\AvailabilityService $availability): bool
+    {
+        foreach ($nights as $night) {
+            if (! $this->typeIsFree($type, $night, $availability)) {
+                return false;
+            }
+        }
+
+        return $nights !== [];
+    }
+
+    /** @param  array<int, \Carbon\CarbonImmutable>  $nights */
+    protected function nightsKey(array $nights): string
+    {
+        return implode(',', array_map(
+            fn (\Carbon\CarbonImmutable $night) => $night->toDateString(),
+            $nights,
+        ));
+    }
+
+    /**
+     * Cómo se nombra la estancia en el mensaje que LEE EL HUÉSPED: una noche
+     * por su día, y varias de la llegada a la SALIDA (última noche + 1), que
+     * es como la lee cualquiera. Fechas sueltas se enumeran.
+     *
+     * @param  array<int, \Carbon\CarbonImmutable>  $nights
+     */
+    protected function nightsLabel(array $nights): string
+    {
+        if ($nights === []) {
+            return 'esa fecha';
+        }
+
+        $fmt = fn (\Carbon\CarbonImmutable $night) => $night->locale('es')->isoFormat('dddd D [de] MMMM');
+        $first = $nights[0];
+        $last = $nights[count($nights) - 1];
+
+        if (count($nights) === 1) {
+            return 'el '.$fmt($first);
+        }
+
+        $contiguas = count($nights) === (int) $first->diffInDays($last) + 1;
+
+        return $contiguas
+            ? 'del '.$fmt($first).' al '.$fmt($last->addDay())
+            : 'el '.implode(' y el ', array_map($fmt, $nights));
     }
 
     /**
@@ -1428,7 +1624,11 @@ class AgentBrain
         foreach (preg_split('/\R/u', $text) ?: [] as $line) {
             // La línea de la alternativa es parte del bloque: si se deja
             // pasar, al rehacer el bloque sale DOS veces (RES-2026-1767).
-            if (preg_match('/^\s*[-*•]?\s*si tu app solo permite transferir a tarjeta\s*:/iu', $line)) {
+            // Se compara por lo que DICE, no por su redacción exacta: el
+            // filtro pedía "si TU app" y el modelo la escribió de usted
+            // ("si SU app"), así que se coló y salió duplicada otra vez
+            // (RES-2026-1769, 17-sep-2026).
+            if (preg_match('/permite\s+transferir\s+a\s+tarjeta/iu', $line)) {
                 $insertAt ??= count($kept);
                 $structured = true;
 
@@ -2204,6 +2404,26 @@ BLOCK;
                 }
             }
 
+            // "el sábado", SIN número. Sin esto el servidor no veía ninguna
+            // fecha en el mensaje, así que ni el prompt le decía cuál era ni
+            // el guardián podía comparar nada: el modelo la elegía por su
+            // cuenta. Caso real cabañas 2026-09-16 (conv. 917, RES-2026-1758):
+            // el huésped pidió "para el sabado" y el bot le vendió el VIERNES
+            // 18 llamándolo "sábado 18 de septiembre"; pagó $1,500 y el error
+            // se descubrió el día antes de llegar, con el sábado lleno.
+            // Solo si nombra UN día: "entro el sábado y salgo el domingo" es
+            // un itinerario que se está repitiendo, no una fecha que se pide,
+            // y resolverlo al sábado de ESTA semana pisaría la fecha que la
+            // conversación ya tenía.
+            if (preg_match_all('/\b(?:el|este|esta|proximo|proxima)\s+('.$weekdays.')\b(?!\s*\d)/u', $plain, $matches, PREG_SET_ORDER)) {
+                $named = array_unique(array_column($matches, 1));
+
+                if (count($named) === 1) {
+                    $date = $this->nextWeekday(reset($named));
+                    $found[$date->toDateString()] = $date;
+                }
+            }
+
             // "para el 27", "el día 27". Se descartan los números que son
             // otra cosa ("el 27 personas" no existe, pero "el 2 noches" sí).
             if (preg_match_all('/\b(?:el|del|dia)\s+(\d{1,2})\b(?!\s*(?:de\s*)?(?:'.$names.')|\s*(?:personas?|pax|adultos?|ni[nñ]os?|noches?|dias?|anos?|grados?|pesos?|%))/u', $plain, $matches, PREG_SET_ORDER)) {
@@ -2238,6 +2458,81 @@ BLOCK;
         return strtr(mb_strtolower($text), [
             'á' => 'a', 'é' => 'e', 'í' => 'i', 'ó' => 'o', 'ú' => 'u', 'ü' => 'u',
         ]);
+    }
+
+    /**
+     * ¿La fecha la dio como día de la semana, sin número ni mes? Entonces la
+     * dedujo el servidor y hay que confirmársela antes de cobrarle.
+     */
+    protected function saidOnlyWeekday(string $text): bool
+    {
+        if (trim($text) === '' || $this->datesMentioned($text) !== []) {
+            return false;
+        }
+
+        return preg_match(
+            '/\b(?:el|este|esta|proximo|proxima)\s+(?:domingo|lunes|martes|miercoles|jueves|viernes|sabado)\b(?!\s*\d)/u',
+            $this->plain($text),
+        ) === 1;
+    }
+
+    /**
+     * El apartado NO puede caer en una fecha distinta a la que el huésped
+     * acaba de pedir. Devuelve el reclamo para el modelo, o null si cuadra.
+     *
+     * Solo mira su ÚLTIMO mensaje: si ahí no nombró fecha, no hay contra qué
+     * comparar y no se estorba (el huésped que acepta una alternativa con un
+     * "ok, ese" no puede quedarse sin apartado).
+     */
+    protected function holdDateMismatch(?Conversation $conversation, string $startsAt): ?string
+    {
+        if ($conversation === null) {
+            return null;
+        }
+
+        $requested = $this->requestedDates($conversation);
+
+        if ($requested === []) {
+            return null;
+        }
+
+        try {
+            $day = \Carbon\CarbonImmutable::parse($startsAt)->toDateString();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if (array_key_exists($day, $requested)) {
+            return null;
+        }
+
+        $pedida = reset($requested);
+
+        \Illuminate\Support\Facades\Log::warning('Agente: iba a apartar otra fecha', [
+            'conversation_id' => $conversation->id,
+            'pedida' => $pedida->toDateString(),
+            'intento' => $day,
+        ]);
+
+        return json_encode([
+            'ok' => false,
+            'error' => 'La fecha del apartado no es la que pidió el huésped.',
+            'fecha_pedida' => $pedida->toDateString(),
+            'fecha_pedida_texto' => $pedida->locale('es')->isoFormat('dddd D [de] MMMM [de] YYYY'),
+            'que_hacer' => 'Consulta la disponibilidad de la fecha pedida y apártala con ESA fecha. Si el huésped quiere otra, confírmasela con día y número antes de apartar.',
+        ], JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * El próximo día de la semana con ese nombre. Hoy cuenta: quien dice "el
+     * sábado" un sábado habla de hoy, no del de la semana que entra.
+     */
+    protected function nextWeekday(string $weekday): \Carbon\CarbonImmutable
+    {
+        $index = (int) array_search($weekday, ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'], true);
+        $today = \Carbon\CarbonImmutable::now()->startOfDay();
+
+        return $today->addDays(($index - $today->dayOfWeek + 7) % 7);
     }
 
     /**
@@ -2418,7 +2713,17 @@ BLOCK;
             $dates,
         ));
 
-        return "\nFECHA QUE PIDIÓ EL HUÉSPED EN SU ÚLTIMO MENSAJE: {$list}. Contesta sobre ESA fecha y consulta la disponibilidad con ESA fecha. Si antes se habló de otra, ya no aplica: el huésped acaba de elegir esta. Y si esta fecha la sacaste de una lista de alternativas que tú le ofreciste, NO se la vuelvas a ofrecer como alternativa: es la que eligió.\n";
+        $bloque = "\nFECHA QUE PIDIÓ EL HUÉSPED EN SU ÚLTIMO MENSAJE: {$list}. Contesta sobre ESA fecha y consulta la disponibilidad con ESA fecha. Si antes se habló de otra, ya no aplica: el huésped acaba de elegir esta. Y si esta fecha la sacaste de una lista de alternativas que tú le ofreciste, NO se la vuelvas a ofrecer como alternativa: es la que eligió.\n";
+
+        // Dijo "el sábado" y ya: la fecha la dedujo el servidor, no él. Antes
+        // de cotizar o apartar tiene que oírla completa y decir que sí — un
+        // huésped pagó $1,500 por un viernes creyendo que era sábado
+        // (cabañas, RES-2026-1758, 16-sep-2026).
+        if ($this->saidOnlyWeekday((string) $conversation->messages()->where('direction', 'in')->latest('id')->value('body'))) {
+            $bloque .= "OJO: el huésped solo dijo el DÍA DE LA SEMANA, no la fecha. Antes de cotizar o apartar, dile la fecha completa tal como está arriba y pídele que la confirme. No apartes hasta que él confirme esa fecha.\n";
+        }
+
+        return $bloque;
     }
 
     /**
@@ -3227,6 +3532,11 @@ BLOCK;
                 ->withStringParameter('metodo_pago', "Cómo eligió pagar el anticipo: 'pasarela', 'transferencia' o 'efectivo'. Algunos hoteles no apartan hasta que el huésped lo elige.", false)
                 ->withNumberParameter('personas', 'Cuántas personas se van a quedar. Mándalo SIEMPRE que el huésped lo haya dicho: con más de las incluidas se cobra persona extra y el total cambia.', false)
                 ->using(function (int|float $rate_plan_id, string $starts_at, string $guest_name, ?string $guest_phone = null, ?string $guest_email = null, ?string $ends_at = null, ?string $cupon = null, ?string $metodo_pago = null, int|float|null $personas = null) use ($call, $conversation): string {
+                    // Nunca en una fecha distinta a la que pidió el huésped.
+                    if (($reclamo = $this->holdDateMismatch($conversation, $starts_at)) !== null) {
+                        return $reclamo;
+                    }
+
                     $result = $call('hold', array_filter([
                         'rate_plan_id' => (int) $rate_plan_id,
                         'starts_at' => $starts_at,
@@ -3293,6 +3603,11 @@ BLOCK;
                 ->withStringParameter('guest_phone', 'Teléfono del responsable (opcional)', false)
                 ->withNumberParameter('personas', 'Cuántas personas van en total. Mándalo SIEMPRE que el huésped lo haya dicho: el sistema las reparte entre las habitaciones y cobra la persona extra; sin esto el total sale sin personas extra.', false)
                 ->using(function (string $starts_at, string $guest_name, array $habitaciones, ?string $ends_at = null, ?string $guest_phone = null, int|float|null $personas = null) use ($call, $conversation): string {
+                    // Nunca en una fecha distinta a la que pidió el huésped.
+                    if (($reclamo = $this->holdDateMismatch($conversation, $starts_at)) !== null) {
+                        return $reclamo;
+                    }
+
                     $result = $call('group_hold', array_filter([
                         'starts_at' => $starts_at,
                         'ends_at' => $ends_at,

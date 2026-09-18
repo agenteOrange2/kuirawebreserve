@@ -3,13 +3,14 @@ import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormInput, FormSelect } from '@/components/Base/Form';
+import { FormDate, FormInput, FormSelect } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import ReservationsNav from './ReservationsNav.vue';
 
 interface PriceLine {
     concept: string;
@@ -80,8 +81,18 @@ const props = defineProps<{
         data: UpcomingRow[];
         links: PaginationLink[];
         total: number;
+        from: number | null;
+        to: number | null;
     };
-    filters: { q: string; status: string };
+    /** Cifras de TODO lo apartado, no de la página ni del filtro. */
+    summary: {
+        total: number;
+        today: number;
+        pending: number;
+        balance: number;
+        balance_label: string;
+    };
+    filters: { q: string; status: string; date: string; date_label: string };
     statusOptions: { value: string; label: string }[];
     canManage: boolean;
 }>();
@@ -96,9 +107,11 @@ const money = (n: number) =>
 // ── Buscador y filtro (reactivos, con debounce) ──
 const q = ref(props.filters.q);
 const status = ref(props.filters.status);
+// Día de llegada: llega marcado desde el pulso de la semana del tablero.
+const date = ref(props.filters.date);
 
 let timer: ReturnType<typeof setTimeout> | null = null;
-watch([q, status], () => {
+watch([q, status, date], () => {
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => {
         router.get(
@@ -106,6 +119,7 @@ watch([q, status], () => {
             {
                 q: q.value || undefined,
                 status: status.value || undefined,
+                date: date.value || undefined,
             },
             {
                 preserveState: true,
@@ -126,6 +140,14 @@ const statusFor = (s: string) =>
         class: 'bg-slate-100 text-slate-600',
         icon: 'CircleHelp' as Icon,
     };
+
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const tableHead =
+    'text-[11px] font-medium tracking-wide text-slate-400 uppercase';
+const sectionLabel = tableHead;
+const rowAction =
+    'flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary';
 
 const sourceChannelLabel: Record<string, string> = {
     front_desk: 'Recepción',
@@ -281,12 +303,119 @@ const detailLines = computed(() => {
                 </div>
             </div>
 
-            <div class="box box--stacked mt-5">
+            <ReservationsNav current="upcoming" />
+
+            <!-- Lo que viene, en cifras -->
+            <div class="mt-4 flex items-center gap-2">
+                <span :class="sectionLabel">Lo que viene</span>
+                <span class="hidden text-[11px] text-slate-400 sm:inline">
+                    Cuenta todo lo apartado, no solo esta página
+                </span>
+            </div>
+            <div class="mt-2 grid auto-rows-fr grid-cols-12 gap-4">
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        :class="[
+                            sectionIcon,
+                            'border-primary/10 bg-primary/10 text-primary',
+                        ]"
+                    >
+                        <Lucide icon="CalendarDays" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ summary.total }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            {{ summary.total === 1 ? 'Apartada' : 'Apartadas' }}
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            De hoy en adelante
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        :class="[
+                            sectionIcon,
+                            'border-info/10 bg-info/10 text-info',
+                        ]"
+                    >
+                        <Lucide icon="LogIn" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ summary.today }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Llegan hoy
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Lo que hay que recibir
+                        </div>
+                    </div>
+                </div>
+                <Link
+                    :href="route('tenant.reservations.pending')"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 transition hover:border-primary/30 xl:col-span-3"
+                >
+                    <div
+                        :class="[
+                            sectionIcon,
+                            summary.pending
+                                ? 'border-pending/10 bg-pending/10 text-pending'
+                                : 'border-slate-200 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400',
+                        ]"
+                    >
+                        <Lucide icon="AlarmClock" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ summary.pending }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Sin confirmar
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Se trabajan en Pendientes
+                        </div>
+                    </div>
+                </Link>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        :class="[
+                            sectionIcon,
+                            'border-success/10 bg-success/10 text-success',
+                        ]"
+                    >
+                        <Lucide icon="Banknote" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium tabular-nums">
+                            {{ summary.balance_label }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Por cobrar
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Sin contar fianzas
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="box box--stacked mt-4">
                 <!-- Filtros, en franja gris dentro del mismo box -->
                 <div
                     class="flex flex-col gap-2.5 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 sm:flex-row sm:flex-wrap sm:items-center dark:border-darkmode-400 dark:bg-darkmode-700/40"
                 >
-                    <div class="relative w-full min-w-0 sm:w-72">
+                    <div class="relative w-full min-w-0 sm:w-80">
                         <Lucide
                             icon="Search"
                             class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
@@ -294,7 +423,7 @@ const detailLines = computed(() => {
                         <FormInput
                             v-model="q"
                             type="text"
-                            placeholder="Buscar huésped, teléfono, código o habitación"
+                            placeholder="Huésped, teléfono, folio o habitación"
                             class="h-9 pl-9 text-xs"
                         />
                     </div>
@@ -311,8 +440,24 @@ const detailLines = computed(() => {
                             {{ option.label }}
                         </option>
                     </FormSelect>
+                    <div class="w-full sm:w-44">
+                        <FormDate
+                            v-model="date"
+                            input-class="h-9 text-xs"
+                            placeholder="Llegada (día)"
+                        />
+                    </div>
+                    <button
+                        v-if="date"
+                        type="button"
+                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
+                        @click="date = ''"
+                    >
+                        <Lucide icon="X" class="h-3.5 w-3.5" />
+                        Quitar el día
+                    </button>
                     <span
-                        class="ml-auto hidden text-xs text-slate-500 lg:block"
+                        class="ml-auto hidden text-[11px] text-slate-400 lg:block"
                     >
                         Las llegadas más cercanas también están en
                         <Link
@@ -324,79 +469,125 @@ const detailLines = computed(() => {
                 </div>
 
                 <!-- Tabla completa: solo desde lg, que es donde caben las
-                     siete columnas sin arrastrar la pantalla de lado. -->
+                     columnas sin arrastrar la pantalla de lado. -->
                 <div
                     v-if="reservations.data.length"
-                    class="hidden overflow-auto p-4 lg:block lg:overflow-visible"
+                    class="hidden overflow-auto lg:block lg:overflow-visible"
                 >
-                    <Table striped>
+                    <Table hover>
                         <Table.Thead>
                             <Table.Tr>
-                                <Table.Th>Huésped</Table.Th>
-                                <Table.Th>Habitación</Table.Th>
-                                <Table.Th>Llegada → Salida</Table.Th>
-                                <Table.Th>Total</Table.Th>
-                                <Table.Th>Pago</Table.Th>
-                                <Table.Th>Estado</Table.Th>
-                                <Table.Th class="text-right">Acciones</Table.Th>
+                                <Table.Th :class="tableHead">Huésped</Table.Th>
+                                <Table.Th :class="tableHead"
+                                    >Habitación</Table.Th
+                                >
+                                <Table.Th :class="tableHead">Estancia</Table.Th>
+                                <Table.Th :class="[tableHead, 'text-right']"
+                                    >Total</Table.Th
+                                >
+                                <Table.Th :class="tableHead">Estado</Table.Th>
+                                <Table.Th :class="[tableHead, 'text-right']"
+                                    >Acciones</Table.Th
+                                >
                             </Table.Tr>
                         </Table.Thead>
                         <Table.Tbody>
                             <Table.Tr
                                 v-for="r in reservations.data"
                                 :key="r.id"
+                                class="align-top"
                             >
-                                <Table.Td>
-                                    <span
-                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                <Table.Td class="max-w-[22rem]">
+                                    <button
+                                        type="button"
+                                        class="truncate text-left text-sm font-medium transition hover:text-primary"
+                                        @click="detail = r"
                                     >
-                                        {{ r.code }}
-                                    </span>
-                                    <div class="mt-1 text-sm font-medium">
                                         {{ r.guest_name ?? 'Anónimo' }}
+                                    </button>
+                                    <div
+                                        class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
+                                    >
+                                        <span
+                                            class="font-medium text-slate-600 dark:text-slate-300"
+                                        >
+                                            {{ r.code }}
+                                        </span>
+                                        <span
+                                            class="text-slate-300 dark:text-darkmode-400"
+                                            >·</span
+                                        >
+                                        <span>
+                                            {{
+                                                sourceChannelLabel[
+                                                    r.source_channel
+                                                ] ?? r.source_channel
+                                            }}
+                                        </span>
+                                        <template v-if="r.guest_phone">
+                                            <span
+                                                class="text-slate-300 dark:text-darkmode-400"
+                                                >·</span
+                                            >
+                                            <a
+                                                :href="`tel:${r.guest_phone}`"
+                                                class="transition hover:text-primary"
+                                                >{{ r.guest_phone }}</a
+                                            >
+                                        </template>
+                                    </div>
+                                </Table.Td>
+                                <Table.Td class="whitespace-nowrap">
+                                    <div class="text-sm font-medium">
+                                        {{ r.room ?? 'Sin asignar' }}
+                                    </div>
+                                    <div class="text-xs text-slate-500">
+                                        {{ r.room_type }}
+                                    </div>
+                                </Table.Td>
+                                <Table.Td class="whitespace-nowrap">
+                                    <div class="text-xs tabular-nums">
+                                        {{ r.starts_at }}
                                     </div>
                                     <div
-                                        v-if="r.guest_phone"
-                                        class="text-xs text-slate-500"
+                                        class="text-xs text-slate-500 tabular-nums"
                                     >
-                                        {{ r.guest_phone }}
+                                        sale {{ r.ends_at }}
                                     </div>
-                                </Table.Td>
-                                <Table.Td>
-                                    <span class="font-medium">{{
-                                        r.room ?? '—'
-                                    }}</span>
-                                    <span
-                                        class="block text-xs text-slate-500"
-                                        >{{ r.room_type }}</span
-                                    >
-                                </Table.Td>
-                                <Table.Td class="text-sm">
-                                    {{ r.starts_at }}
-                                    <span class="text-slate-400">→</span>
-                                    {{ r.ends_at }}
                                     <span
                                         v-if="r.starts_today"
-                                        class="ml-1 rounded-full bg-success/10 px-1.5 text-[11px] text-success"
-                                        >llega hoy</span
+                                        class="mt-1 inline-block rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"
                                     >
+                                        Llega hoy
+                                    </span>
                                 </Table.Td>
-                                <Table.Td>${{ r.total_amount }}</Table.Td>
-                                <Table.Td>
+                                <Table.Td class="text-right whitespace-nowrap">
+                                    <div
+                                        class="text-sm font-medium tabular-nums"
+                                    >
+                                        {{ money(Number(r.total_amount)) }}
+                                    </div>
                                     <span
-                                        class="inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                        class="mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="paymentBadge(r)"
                                     >
-                                        {{ r.payment_status_label }}
+                                        {{
+                                            r.payment_overdue
+                                                ? 'Pago vencido'
+                                                : r.payment_status_label
+                                        }}
                                     </span>
-                                    <span
-                                        v-if="r.pending_balance > 0"
-                                        class="block text-xs text-slate-500"
-                                        >Pendiente
-                                        {{ money(r.pending_balance) }}</span
+                                    <div
+                                        v-if="
+                                            r.paid_total > 0 &&
+                                            r.pending_balance > 0
+                                        "
+                                        class="mt-0.5 text-[11px] text-slate-400 tabular-nums"
                                     >
+                                        debe {{ money(r.pending_balance) }}
+                                    </div>
                                 </Table.Td>
-                                <Table.Td>
+                                <Table.Td class="whitespace-nowrap">
                                     <span
                                         class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="statusFor(r.status).class"
@@ -409,11 +600,11 @@ const detailLines = computed(() => {
                                     </span>
                                 </Table.Td>
                                 <Table.Td>
-                                    <div class="flex justify-end gap-1">
+                                    <div class="flex justify-end gap-1.5">
                                         <button
                                             type="button"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
-                                            title="Ver detalle"
+                                            :class="rowAction"
+                                            title="Ver el detalle de la reserva"
                                             @click="detail = r"
                                         >
                                             <Lucide
@@ -424,8 +615,8 @@ const detailLines = computed(() => {
                                         <Link
                                             v-if="canManage"
                                             :href="openInList(r)"
-                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
-                                            title="Abrir en la lista de reservas para atenderla"
+                                            :class="rowAction"
+                                            title="Abrirla en la operación del día para atenderla"
                                         >
                                             <Lucide
                                                 icon="SquareArrowOutUpRight"
@@ -478,8 +669,8 @@ const detailLines = computed(() => {
                                 >
                             </div>
                             <div class="shrink-0 text-right">
-                                <div class="text-sm font-medium">
-                                    ${{ r.total_amount }}
+                                <div class="text-sm font-medium tabular-nums">
+                                    {{ money(Number(r.total_amount)) }}
                                 </div>
                                 <div
                                     v-if="r.pending_balance > 0"
@@ -562,18 +753,28 @@ const detailLines = computed(() => {
 
                 <div
                     v-if="!reservations.data.length"
-                    class="flex flex-col items-center gap-3 px-6 py-12 text-center"
+                    class="flex flex-col items-center gap-2 px-5 py-10 text-center"
                 >
-                    <div
-                        class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
-                    >
-                        <Lucide icon="CalendarDays" class="h-4 w-4" />
-                    </div>
-                    <p class="text-sm text-slate-500">
+                    <Lucide
+                        :icon="
+                            filters.q || filters.status || filters.date
+                                ? 'SearchX'
+                                : 'CalendarDays'
+                        "
+                        class="h-8 w-8 text-slate-300"
+                    />
+                    <p class="text-sm font-medium text-slate-600">
                         {{
-                            filters.q || filters.status
-                                ? 'Nada coincide con la búsqueda.'
-                                : 'No hay reservas apartadas a futuro.'
+                            filters.q || filters.status || filters.date
+                                ? 'Nada coincide con la búsqueda'
+                                : 'No hay reservas apartadas a futuro'
+                        }}
+                    </p>
+                    <p class="text-xs text-slate-500">
+                        {{
+                            filters.q || filters.status || filters.date
+                                ? 'Prueba con el folio, el teléfono o quita el filtro del día.'
+                                : 'Lo que se aparte desde el sitio, el asistente o el mostrador aparece aquí.'
                         }}
                     </p>
                 </div>
@@ -581,28 +782,32 @@ const detailLines = computed(() => {
                 <!-- Paginación, en franja propia -->
                 <div
                     v-if="reservations.links.length > 3"
-                    class="flex flex-wrap justify-center gap-1 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
-                    <template v-for="(link, i) in reservations.links" :key="i">
-                        <Link
-                            v-if="link.url"
-                            :href="link.url"
+                    <span class="text-xs text-slate-500">
+                        {{ reservations.from }}–{{ reservations.to }} de
+                        {{ reservations.total }}
+                    </span>
+                    <div class="ml-auto flex flex-wrap gap-1">
+                        <component
+                            :is="link.url ? Link : 'span'"
+                            v-for="(link, i) in reservations.links"
+                            :key="i"
+                            :href="link.url ?? undefined"
                             preserve-state
                             class="rounded-md px-2.5 py-1 text-xs"
                             :class="
                                 link.active
                                     ? 'bg-primary text-white'
-                                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                                    : link.url
+                                      ? 'text-slate-500 hover:bg-slate-100 dark:hover:bg-darkmode-400'
+                                      : 'text-slate-300'
                             "
                         >
+                            <!-- El rótulo trae las flechas « » de Laravel. -->
                             <span v-html="link.label" />
-                        </Link>
-                        <span
-                            v-else
-                            class="px-2.5 py-1 text-xs text-slate-400"
-                            v-html="link.label"
-                        />
-                    </template>
+                        </component>
+                    </div>
                 </div>
             </div>
         </div>

@@ -166,6 +166,8 @@ class CashCutController extends Controller
             'grand_total' => $agg['grand_total'],
             'expected_cash' => $agg['expected_cash'],
             'opening_cash' => $agg['opening_cash'],
+            'expenses_count' => $agg['expenses_count'],
+            'expenses_total' => $agg['expenses_total'],
             'counted_cash' => $countedCash,
             'difference' => $difference,
             'pending_count' => $pending['count'],
@@ -174,6 +176,22 @@ class CashCutController extends Controller
             'notes' => $data['notes'] ?? null,
             'created_by' => $request->user()?->id,
         ]);
+
+        // Los gastos del periodo quedan amarrados al corte: a partir de aquí
+        // no se borran ni se editan, son el respaldo de este arqueo.
+        $service->expensesQuery($user, $data['scope'])
+            ->whereNull('cash_cut_id')
+            ->when(
+                $shift !== null,
+                fn ($q) => $q->where(fn ($w) => $w
+                    ->where('shift_id', $shift->id)
+                    ->orWhere(fn ($legacy) => $legacy
+                        ->whereNull('shift_id')
+                        ->where('occurred_at', '>', $from)
+                        ->where('occurred_at', '<=', $to))),
+                fn ($q) => $q->where('occurred_at', '>', $from)->where('occurred_at', '<=', $to),
+            )
+            ->update(['cash_cut_id' => $cut->id]);
 
         return response()->json($cut, 201);
     }

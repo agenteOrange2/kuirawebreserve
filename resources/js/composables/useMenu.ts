@@ -251,20 +251,6 @@ const tenantMenu: Array<MenuItem | string> = [
                 permission: 'orders.manage',
             },
             {
-                icon: 'Clock',
-                pageName: 'tenant.shifts',
-                title: 'Turnos',
-                module: 'corte-caja',
-                permission: 'orders.manage',
-            },
-            {
-                icon: 'Calculator',
-                pageName: 'tenant.cashcuts',
-                title: 'Cortes de caja',
-                module: 'corte-caja',
-                permission: 'orders.manage',
-            },
-            {
                 icon: 'Package',
                 pageName: 'tenant.inventory',
                 title: 'Inventario',
@@ -285,14 +271,62 @@ const tenantMenu: Array<MenuItem | string> = [
                 module: 'menu-digital',
                 permission: 'orders.manage',
             },
+        ],
+    },
+    {
+        icon: 'Wallet',
+        // El dinero tenía sus seis pantallas repartidas entre "Ventas" y
+        // "Reservas", así que para cerrar una caja había que acordarse de
+        // dónde vivía cada cosa. Todas juntas y en el orden del trabajo:
+        // primero lo que pide atención, luego el historial y el corte.
+        title: 'Caja y pagos',
+        subMenu: [
             {
-                icon: 'Wallet',
+                icon: 'LayoutGrid',
                 pageName: 'tenant.payments',
-                title: 'Pagos',
+                title: 'Resumen',
                 permission: 'reservations.view',
             },
             {
                 icon: 'Landmark',
+                pageName: 'tenant.payments.verify',
+                title: 'Por verificar',
+                permission: 'reservations.manage',
+            },
+            {
+                icon: 'TriangleAlert',
+                pageName: 'tenant.payments.collect',
+                title: 'Por cobrar',
+                permission: 'reservations.view',
+            },
+            {
+                icon: 'ArrowLeftRight',
+                pageName: 'tenant.payments.movements',
+                title: 'Movimientos',
+                permission: 'reservations.view',
+            },
+            {
+                icon: 'ReceiptText',
+                pageName: 'tenant.reservations.settlements',
+                title: 'Cuentas por cerrar',
+                permission: 'reservations.view',
+            },
+            {
+                icon: 'Clock',
+                pageName: 'tenant.shifts',
+                title: 'Turnos',
+                module: 'corte-caja',
+                permission: 'orders.manage',
+            },
+            {
+                icon: 'Calculator',
+                pageName: 'tenant.cashcuts',
+                title: 'Cortes de caja',
+                module: 'corte-caja',
+                permission: 'orders.manage',
+            },
+            {
+                icon: 'Globe',
                 pageName: 'tenant.online-payments',
                 title: 'Cobros en línea',
                 permission: 'reservations.view',

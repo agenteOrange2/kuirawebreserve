@@ -34,6 +34,7 @@ import MonthCalendar from './MonthCalendar.vue';
 import PaymentModal from './PaymentModal.vue';
 import RackCalendar from './RackCalendar.vue';
 import ReopenDialog from './ReopenDialog.vue';
+import ReservationsNav from './ReservationsNav.vue';
 
 interface PaymentRow {
     id: number;
@@ -281,6 +282,66 @@ const departuresToday = computed(
         props.stays.filter((s) => s.overdue || endsToday(s.planned_end_at_iso))
             .length,
 );
+
+/** La llegada ya pasó y nadie registró la entrada: trabajo atorado. */
+const arrivalPendingCount = computed(
+    () => props.reservations.filter((r) => r.arrival_pending).length,
+);
+
+// ── Las tres listas, una a la vez ──
+// Antes iban apiladas: próximas, alojados e historial, una debajo de otra,
+// y la pantalla medía tres tablas de alto. Son el mismo trabajo visto desde
+// tres lados, así que comparten caja y se cambian con la pestaña.
+type ListTab = 'upcoming' | 'stays' | 'history';
+
+const listTab = ref<ListTab>('upcoming');
+
+const listTabs = computed(() => [
+    {
+        key: 'upcoming' as ListTab,
+        label: 'Próximas',
+        icon: 'CalendarDays' as Icon,
+        count: props.reservations.length,
+    },
+    {
+        key: 'stays' as ListTab,
+        label: 'En casa',
+        icon: 'DoorOpen' as Icon,
+        count: props.staysTotal,
+    },
+    {
+        key: 'history' as ListTab,
+        label: 'Historial',
+        icon: 'History' as Icon,
+        count: props.historyTotal,
+    },
+]);
+
+/** Las cifras del día abren la lista que les toca, ya filtrada. */
+function focusList(tab: ListTab, status: '' | 'pending' = '') {
+    listTab.value = tab;
+
+    if (tab === 'upcoming') {
+        listFilters.status = status;
+    }
+
+    document
+        .getElementById('listas-del-dia')
+        ?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+// ── Anatomía de pantalla: las clases que se repiten ──
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const cardHeader =
+    'flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400';
+const sectionLabel =
+    'text-[11px] font-medium tracking-wide text-slate-400 uppercase';
+const rowAction =
+    'flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition';
+// La cabecera de tabla es rótulo, no contenido: 11px, gris y en versales.
+const tableHead =
+    'text-[11px] font-medium tracking-wide text-slate-400 uppercase';
 
 // ── Calendario (/reservas/calendario): mes clásico o habitaciones × días ──
 const calMode = ref<'month' | 'rooms'>('month');
@@ -1762,9 +1823,19 @@ const modalDescription = computed(() => {
                 </div>
             </div>
 
+            <ReservationsNav
+                :current="view === 'calendar' ? 'calendar' : 'operation'"
+                :badges="{
+                    upcoming: reservations.length,
+                    'in-house': staysTotal,
+                    pending: pendingCount,
+                    settlements: settlementsPending,
+                }"
+            />
+
             <div
                 v-if="!ratePlans.length"
-                class="box mt-5 border-l-4 border-l-warning p-4"
+                class="box box--stacked mt-4 border-l-4 border-l-warning p-4"
             >
                 <p class="text-sm">
                     Define al menos una tarifa en "Zonas y tipos" para poder
@@ -1772,587 +1843,330 @@ const modalDescription = computed(() => {
                 </p>
             </div>
 
-            <!-- Holds por vencer: apartados que expiran en < 30 min -->
+            <!-- Lo atorado, junto y arriba. Antes los apartados por vencer
+                 salían aquí, las llegadas sin registrar solo dentro de la
+                 tabla y las cuentas sin cobrar cinco pantallazos más abajo,
+                 cuando ya nadie bajaba. -->
             <div
-                v-if="view === 'list' && expiringHolds.length"
-                class="box box--stacked mt-5 border-l-4 border-l-warning p-4"
+                v-if="
+                    view === 'list' &&
+                    (expiringHolds.length ||
+                        arrivalPendingCount ||
+                        overdueStays ||
+                        settlementsPending)
+                "
+                class="box box--stacked mt-4 overflow-hidden"
             >
-                <div class="flex items-center gap-2 text-sm font-medium">
-                    <Lucide icon="AlarmClock" class="h-4 w-4 text-warning" />
-                    Apartados por vencer
-                    <span class="text-xs font-normal text-slate-500"
-                        >— expiran en menos de 30 minutos; confírmalos o se
-                        liberan solos</span
-                    >
-                </div>
-                <div class="mt-2.5 flex flex-wrap gap-2">
-                    <button
-                        v-for="r in expiringHolds"
-                        :key="r.id"
-                        type="button"
-                        class="flex items-center gap-1.5 rounded-full bg-warning/10 px-3 py-1.5 text-xs font-medium text-warning transition hover:bg-warning/20"
-                        @click="router.visit(`/reservas/${r.id}`)"
-                    >
-                        {{ r.code }} · {{ r.guest_name }}
-                        <span class="font-normal"
-                            >expira {{ r.hold_expires_at }}</span
-                        >
-                    </button>
-                </div>
-            </div>
-
-            <!-- Resumen operativo del día -->
-            <div v-if="view === 'list'" class="mt-5 grid grid-cols-12 gap-5">
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 sm:col-span-6 xl:col-span-3"
-                >
+                <div :class="cardHeader">
                     <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10"
+                        :class="[
+                            sectionIcon,
+                            'border-warning/10 bg-warning/10 text-warning',
+                        ]"
                     >
-                        <Lucide icon="LogIn" class="h-4 w-4 text-info" />
+                        <Lucide icon="TriangleAlert" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0">
-                        <div class="text-base font-medium">
-                            {{ arrivalsToday }}
-                        </div>
-                        <div class="truncate text-xs text-slate-500">
-                            Llegadas hoy
+                        <div class="text-sm font-medium">Requiere atención</div>
+                        <div class="text-xs text-slate-500">
+                            Lo que no se resuelve solo con el tiempo
                         </div>
                     </div>
                 </div>
                 <div
-                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 sm:col-span-6 xl:col-span-3"
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
                 >
+                    <!-- Apartados por vencer (< 30 min) -->
+                    <div v-if="expiringHolds.length" class="px-4 py-3">
+                        <div
+                            class="flex flex-wrap items-center gap-2 text-sm font-medium"
+                        >
+                            <Lucide
+                                icon="AlarmClock"
+                                class="h-4 w-4 text-warning"
+                            />
+                            {{ expiringHolds.length }}
+                            {{
+                                expiringHolds.length === 1
+                                    ? 'apartado por vencer'
+                                    : 'apartados por vencer'
+                            }}
+                            <span class="text-xs font-normal text-slate-500">
+                                Expiran en menos de 30 minutos; confírmalos o se
+                                liberan solos
+                            </span>
+                        </div>
+                        <div class="mt-2 flex flex-wrap gap-2">
+                            <button
+                                v-for="r in expiringHolds"
+                                :key="r.id"
+                                type="button"
+                                class="flex items-center gap-1.5 rounded-full bg-warning/10 px-3 py-1 text-[11px] font-medium text-warning transition hover:bg-warning/20"
+                                @click="router.visit(`/reservas/${r.id}`)"
+                            >
+                                {{ r.code }} · {{ r.guest_name }}
+                                <span class="font-normal"
+                                    >expira {{ r.hold_expires_at }}</span
+                                >
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- La hora de entrada pasó y nadie registró la llegada -->
                     <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
+                        v-if="arrivalPendingCount"
+                        class="flex flex-wrap items-start gap-3 px-4 py-3"
                     >
                         <Lucide
-                            icon="AlarmClock"
-                            class="h-4 w-4 text-pending"
+                            icon="LogIn"
+                            class="mt-0.5 h-4 w-4 shrink-0 text-pending"
                         />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="text-base font-medium">
-                            {{ pendingCount }}
+                        <div class="min-w-0 flex-1">
+                            <p class="text-sm font-medium">
+                                {{ arrivalPendingCount }}
+                                {{
+                                    arrivalPendingCount === 1
+                                        ? 'llegada sin registrar'
+                                        : 'llegadas sin registrar'
+                                }}
+                            </p>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                La hora de entrada ya pasó y la habitación sigue
+                                apartada en el plano.
+                            </p>
                         </div>
-                        <div class="truncate text-xs text-slate-500">
-                            Por confirmar
-                        </div>
-                    </div>
-                </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 sm:col-span-6 xl:col-span-3"
-                >
-                    <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
-                    >
-                        <Lucide icon="DoorOpen" class="h-4 w-4 text-primary" />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="text-base font-medium">
-                            {{ stays.length }}
-                        </div>
-                        <div class="truncate text-xs text-slate-500">
-                            Huéspedes alojados
-                        </div>
-                    </div>
-                </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 sm:col-span-6 xl:col-span-3"
-                >
-                    <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10"
-                    >
-                        <Lucide icon="LogOut" class="h-4 w-4 text-success" />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="text-base font-medium">
-                            {{ departuresToday }}
-                        </div>
-                        <div class="truncate text-xs text-slate-500">
-                            Salidas hoy<span
-                                v-if="overdueStays"
-                                class="text-danger"
-                            >
-                                · {{ overdueStays }} vencida{{
-                                    overdueStays > 1 ? 's' : ''
-                                }}</span
-                            >
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Próximas -->
-            <div v-if="view === 'list'" class="box box--stacked mt-5">
-                <div
-                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
-                >
-                    <div class="flex items-center gap-2 text-sm font-medium">
-                        <Lucide
-                            icon="CalendarDays"
-                            class="h-4 w-4 text-slate-400"
-                        />
-                        Próximas reservas
-                        <span
-                            class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
-                            >{{ reservations.length }}</span
-                        >
-                    </div>
-                    <div
-                        v-if="listFiltersActive"
-                        class="ml-auto flex items-center gap-2 text-xs text-slate-500"
-                    >
-                        Mostrando {{ filteredReservations.length }} de
-                        {{ reservations.length }}
-                        <button
-                            type="button"
-                            class="font-medium text-primary hover:underline"
-                            @click="clearListFilters"
-                        >
-                            Limpiar filtros
-                        </button>
-                    </div>
-                    <!-- Si hay más se dice, en vez de ocultarlas en
-                         silencio: aquí solo caben las llegadas más
-                         cercanas. -->
-                    <div
-                        v-else
-                        class="ml-auto flex flex-wrap items-center gap-3"
-                    >
-                        <span
-                            v-if="upcomingTotal > reservations.length"
-                            class="text-xs text-slate-500"
-                        >
-                            Las {{ reservations.length }} llegadas más cercanas
-                            de {{ upcomingTotal }} en los próximos
-                            {{ upcomingDays }} días
-                        </span>
                         <Button
-                            :as="Link"
-                            :href="route('tenant.reservations.upcoming')"
+                            type="button"
                             variant="outline-secondary"
-                            class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                            class="ml-auto h-8 rounded-[0.5rem] bg-white text-xs"
+                            @click="focusList('upcoming')"
                         >
                             <Lucide
                                 icon="ChevronRight"
                                 class="mr-1.5 h-3.5 w-3.5"
                             />
-                            Ver todas las próximas
+                            Ver próximas
                         </Button>
                     </div>
-                </div>
-                <!-- Filtros principales de la operación -->
-                <div
-                    v-if="reservations.length"
-                    class="border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
-                >
-                    <div class="mb-3 flex items-center gap-3">
-                        <div
-                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                        >
-                            <Lucide icon="Filter" class="h-4 w-4" />
-                        </div>
-                        <div>
-                            <div class="text-sm font-medium">
-                                Encuentra una reserva
-                            </div>
-                            <div class="text-xs text-slate-500">
-                                Busca por huésped, teléfono, folio o habitación.
-                            </div>
-                        </div>
-                    </div>
-                    <div
-                        class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(15rem,1.5fr)_12rem_12rem_12rem_auto]"
-                    >
-                        <div>
-                            <FormLabel htmlFor="reservation-search"
-                                >Búsqueda rápida</FormLabel
-                            >
-                            <div class="relative">
-                                <Lucide
-                                    icon="Search"
-                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
-                                />
-                                <FormInput
-                                    id="reservation-search"
-                                    v-model="listFilters.query"
-                                    type="search"
-                                    class="h-9 pl-9 text-xs"
-                                    placeholder="Nombre, teléfono, folio o habitación"
-                                />
-                            </div>
-                        </div>
-                        <div>
-                            <FormLabel htmlFor="reservation-status"
-                                >Estado</FormLabel
-                            >
-                            <FormSelect
-                                id="reservation-status"
-                                v-model="listFilters.status"
-                                class="h-9 text-xs"
-                            >
-                                <option value="">Todos los estados</option>
-                                <option value="pending">Pendiente</option>
-                                <option value="confirmed">Confirmada</option>
-                            </FormSelect>
-                        </div>
-                        <div>
-                            <FormLabel htmlFor="reservation-from"
-                                >Llegada desde</FormLabel
-                            >
-                            <FormDate
-                                id="reservation-from"
-                                v-model="listFilters.from"
-                                input-class="h-9 text-xs"
-                            />
-                        </div>
-                        <div>
-                            <FormLabel htmlFor="reservation-to"
-                                >Llegada hasta</FormLabel
-                            >
-                            <FormDate
-                                id="reservation-to"
-                                v-model="listFilters.to"
-                                input-class="h-9 text-xs"
-                            />
-                        </div>
-                        <div class="flex items-end">
-                            <Button
-                                v-if="listFiltersActive"
-                                type="button"
-                                variant="outline-secondary"
-                                class="h-9 w-full text-xs whitespace-nowrap xl:w-auto"
-                                @click="clearListFilters"
-                            >
-                                <Lucide icon="X" class="mr-1.5 h-3.5 w-3.5" />
-                                Limpiar
-                            </Button>
-                        </div>
-                    </div>
-                </div>
-                <div class="overflow-auto p-4 lg:overflow-visible">
-                    <Table v-if="filteredReservations.length" striped>
-                        <Table.Thead>
-                            <Table.Tr>
-                                <Table.Th>Huésped</Table.Th>
-                                <Table.Th>Habitación</Table.Th>
-                                <Table.Th>Llegada → Salida</Table.Th>
-                                <Table.Th>Total</Table.Th>
-                                <Table.Th>Estado</Table.Th>
-                                <Table.Th v-if="canManage" class="text-right"
-                                    >Acciones</Table.Th
-                                >
-                            </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                            <Table.Tr
-                                v-for="r in filteredReservations"
-                                :key="r.id"
-                            >
-                                <Table.Td>
-                                    <div
-                                        class="flex flex-wrap items-center gap-2"
-                                    >
-                                        <span
-                                            class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600"
-                                        >
-                                            {{ r.code }}
-                                        </span>
-                                        <span
-                                            class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                                            :class="
-                                                channelBadge[
-                                                    r.source_channel
-                                                ] ??
-                                                'bg-slate-100 text-slate-600'
-                                            "
-                                        >
-                                            <Lucide
-                                                :icon="
-                                                    channelIcon[
-                                                        r.source_channel
-                                                    ] ?? 'Tag'
-                                                "
-                                                class="h-4 w-4"
-                                            />
-                                            {{
-                                                channelLabel[
-                                                    r.source_channel
-                                                ] ?? r.source_channel
-                                            }}
-                                        </span>
-                                    </div>
-                                    <div class="mt-1 text-sm font-medium">
-                                        {{ r.guest_name ?? 'Anónimo' }}
-                                    </div>
-                                    <div class="text-xs text-slate-500">
-                                        {{ paxLabel(r) }} · {{ r.rate_plan }}
-                                    </div>
-                                    <div
-                                        v-if="r.eta || r.vehicle_plate"
-                                        class="mt-1 flex flex-wrap gap-2 text-xs text-slate-500"
-                                    >
-                                        <span
-                                            v-if="r.eta"
-                                            class="inline-flex items-center gap-1"
-                                            title="Hora estimada de llegada"
-                                        >
-                                            <Lucide
-                                                icon="Clock"
-                                                class="h-4 w-4"
-                                            />
-                                            Llega aprox. {{ r.eta }}
-                                        </span>
-                                        <span
-                                            v-if="r.vehicle_plate"
-                                            class="inline-flex items-center gap-1"
-                                            :title="
-                                                r.vehicle_desc ?? 'Vehículo'
-                                            "
-                                        >
-                                            <Lucide
-                                                icon="Car"
-                                                class="h-4 w-4"
-                                            />
-                                            {{ r.vehicle_plate }}
-                                        </span>
-                                    </div>
-                                </Table.Td>
-                                <Table.Td>
-                                    <span class="font-medium">{{
-                                        r.room ?? '—'
-                                    }}</span>
-                                    <span
-                                        class="block text-xs text-slate-500"
-                                        >{{ r.room_type }}</span
-                                    >
-                                </Table.Td>
-                                <Table.Td class="text-sm">
-                                    {{ r.starts_at }}
-                                    <span class="text-slate-400">→</span>
-                                    {{ r.ends_at }}
-                                    <span
-                                        v-if="r.starts_today"
-                                        class="ml-1 rounded-full bg-success/10 px-1.5 text-xs text-success"
-                                        >hoy</span
-                                    >
-                                    <!-- La entrada pasó y nadie la registró:
-                                         antes esto solo se notaba porque la
-                                         habitación seguía apartada en el
-                                         plano, sin decir por qué. -->
-                                    <span
-                                        v-if="r.arrival_pending"
-                                        class="ml-1 rounded-full bg-pending/10 px-1.5 text-xs text-pending"
-                                        title="La hora de entrada ya pasó y nadie registró la llegada"
-                                        >sin llegada</span
-                                    >
-                                </Table.Td>
-                                <Table.Td>
-                                    ${{ r.total_amount }}
-                                    <span
-                                        class="mt-1 block w-fit rounded-full px-1.5 py-0.5 text-xs"
-                                        :class="paymentBadge(r)"
-                                    >
-                                        {{
-                                            r.payment_overdue
-                                                ? 'Pago vencido'
-                                                : r.payment_status_label
-                                        }}
-                                    </span>
-                                    <span
-                                        v-if="
-                                            r.payment_due_at &&
-                                            r.payment_status !== 'paid'
-                                        "
-                                        class="block text-xs text-slate-400"
-                                        >liquidar antes de
-                                        {{ r.payment_due_at }}</span
-                                    >
-                                </Table.Td>
-                                <Table.Td>
-                                    <span
-                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
-                                        :class="statusFor(r.status).class"
-                                    >
-                                        <Lucide
-                                            :icon="statusFor(r.status).icon"
-                                            class="h-4 w-4"
-                                        />
-                                        {{ friendlyStatusLabel(r) }}
-                                    </span>
-                                    <span
-                                        v-if="r.hold_expires_at"
-                                        class="block text-xs text-slate-400"
-                                        >apartada temporalmente hasta
-                                        {{ r.hold_expires_at }}</span
-                                    >
-                                </Table.Td>
-                                <Table.Td v-if="canManage">
-                                    <div
-                                        class="flex items-center justify-end gap-2"
-                                    >
-                                        <!-- Acción principal contextual -->
-                                        <Button
-                                            v-if="r.status === 'pending'"
-                                            variant="primary"
-                                            class="h-9 rounded-[0.5rem] text-xs whitespace-nowrap"
-                                            @click="askConfirm(r)"
-                                        >
-                                            <Lucide
-                                                icon="CircleCheck"
-                                                class="mr-1.5 h-3.5 w-3.5"
-                                            />
-                                            Confirmar
-                                        </Button>
-                                        <Button
-                                            v-else-if="manualCheckinAllowed"
-                                            variant="outline-success"
-                                            class="h-9 rounded-[0.5rem] text-xs whitespace-nowrap"
-                                            @click="askCheckIn(r)"
-                                        >
-                                            <Lucide
-                                                icon="LogIn"
-                                                class="mr-1.5 h-3.5 w-3.5"
-                                            />
-                                            Registrar llegada
-                                        </Button>
 
-                                        <!-- Menú de acciones secundarias -->
-                                        <Menu>
-                                            <Menu.Button
-                                                class="flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
-                                            >
-                                                <Lucide
-                                                    icon="MoreVertical"
-                                                    class="h-4 w-4"
-                                                />
-                                            </Menu.Button>
-                                            <Menu.Items class="w-52">
-                                                <Menu.Item
-                                                    as="button"
-                                                    type="button"
-                                                    @click="
-                                                        router.visit(
-                                                            `/reservas/${r.id}`,
-                                                        )
-                                                    "
-                                                >
-                                                    <Lucide
-                                                        icon="Eye"
-                                                        class="mr-1.5 h-3.5 w-3.5"
-                                                    />
-                                                    Ver detalle
-                                                </Menu.Item>
-                                                <Menu.Item
-                                                    as="button"
-                                                    type="button"
-                                                    @click="openEdit(r)"
-                                                >
-                                                    <Lucide
-                                                        icon="Pencil"
-                                                        class="mr-1.5 h-3.5 w-3.5"
-                                                    />
-                                                    Editar reserva
-                                                </Menu.Item>
-                                                <Menu.Item
-                                                    v-if="r.pending_balance > 0"
-                                                    as="button"
-                                                    type="button"
-                                                    class="text-pending"
-                                                    @click="openPayment(r)"
-                                                >
-                                                    <Lucide
-                                                        icon="Banknote"
-                                                        class="mr-1.5 h-3.5 w-3.5"
-                                                    />
-                                                    Registrar pago
-                                                </Menu.Item>
-                                                <Menu.Item
-                                                    v-if="
-                                                        r.status ===
-                                                            'pending' &&
-                                                        manualCheckinAllowed
-                                                    "
-                                                    as="button"
-                                                    type="button"
-                                                    class="text-success"
-                                                    @click="askCheckIn(r)"
-                                                >
-                                                    <Lucide
-                                                        icon="LogIn"
-                                                        class="mr-1.5 h-3.5 w-3.5"
-                                                    />
-                                                    Registrar llegada
-                                                </Menu.Item>
-                                                <Menu.Divider />
-                                                <Menu.Item
-                                                    as="button"
-                                                    type="button"
-                                                    class="text-warning"
-                                                    @click="askNoShow(r)"
-                                                >
-                                                    <Lucide
-                                                        icon="UserX"
-                                                        class="mr-1.5 h-3.5 w-3.5"
-                                                    />
-                                                    El huésped no llegó
-                                                </Menu.Item>
-                                                <Menu.Item
-                                                    as="button"
-                                                    type="button"
-                                                    class="text-danger"
-                                                    @click="askCancel(r)"
-                                                >
-                                                    <Lucide
-                                                        icon="Ban"
-                                                        class="mr-1.5 h-3.5 w-3.5"
-                                                    />
-                                                    Cancelar reserva
-                                                </Menu.Item>
-                                            </Menu.Items>
-                                        </Menu>
-                                    </div>
-                                </Table.Td>
-                            </Table.Tr>
-                        </Table.Tbody>
-                    </Table>
+                    <!-- Salidas vencidas: el huésped ya debía haber salido -->
                     <div
-                        v-else-if="reservations.length"
-                        class="flex flex-col items-center gap-2 py-8 text-center text-slate-500"
+                        v-if="overdueStays"
+                        class="flex flex-wrap items-start gap-3 px-4 py-3"
                     >
-                        Ninguna reserva coincide con los filtros.
-                        <span class="text-xs">
-                            Esta lista solo trae las llegadas más cercanas; si
-                            la reserva es de más adelante, búscala en
-                            <Link
-                                :href="upcomingSearchHref"
-                                class="font-medium text-primary hover:underline"
-                                >todas las próximas</Link
-                            >.
-                        </span>
-                        <button
+                        <Lucide
+                            icon="LogOut"
+                            class="mt-0.5 h-4 w-4 shrink-0 text-danger"
+                        />
+                        <div class="min-w-0 flex-1">
+                            <p class="text-sm font-medium">
+                                {{ overdueStays }}
+                                {{
+                                    overdueStays === 1
+                                        ? 'salida vencida'
+                                        : 'salidas vencidas'
+                                }}
+                            </p>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Pasó la hora de salida prevista y la estancia
+                                sigue abierta.
+                            </p>
+                        </div>
+                        <Button
                             type="button"
-                            class="text-sm font-medium text-primary hover:underline"
-                            @click="clearListFilters"
+                            variant="outline-secondary"
+                            class="ml-auto h-8 rounded-[0.5rem] bg-white text-xs"
+                            @click="focusList('stays')"
                         >
-                            Limpiar filtros
-                        </button>
+                            <Lucide
+                                icon="ChevronRight"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Ver alojados
+                        </Button>
                     </div>
-                    <div v-else class="py-8 text-center text-xs text-slate-500">
-                        Sin reservas próximas.
+
+                    <!-- Cuentas por cerrar: el cierre automático no puede
+                         cobrar, y hasta que existió la bandeja ese saldo no
+                         salía en ninguna pantalla. -->
+                    <div
+                        v-if="settlementsPending > 0"
+                        class="flex flex-wrap items-start gap-3 px-4 py-3"
+                    >
+                        <Lucide
+                            icon="ReceiptText"
+                            class="mt-0.5 h-4 w-4 shrink-0 text-pending"
+                        />
+                        <div class="min-w-0 flex-1">
+                            <p class="text-sm font-medium">
+                                {{ settlementsPending }}
+                                {{
+                                    settlementsPending === 1
+                                        ? 'cuenta quedó sin cobrar'
+                                        : 'cuentas quedaron sin cobrar'
+                                }}
+                            </p>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Estancias que se cerraron con saldo. Cóbralas,
+                                agrega lo que faltó o ciérralas con un motivo.
+                            </p>
+                        </div>
+                        <Button
+                            :as="Link"
+                            :href="route('tenant.reservations.settlements')"
+                            variant="outline-primary"
+                            class="ml-auto h-8 rounded-[0.5rem] bg-white text-xs"
+                        >
+                            <Lucide
+                                icon="ChevronRight"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Revisarlas
+                        </Button>
                     </div>
                 </div>
             </div>
 
+            <!-- Cómo va el día. Cada cifra abre la lista que le toca. -->
+            <template v-if="view === 'list'">
+                <div class="mt-4 flex items-center gap-2">
+                    <span :class="sectionLabel">Cómo va el día</span>
+                    <span class="hidden text-[11px] text-slate-400 sm:inline">
+                        Toca una cifra para ver su lista
+                    </span>
+                </div>
+                <div class="mt-2 grid auto-rows-fr grid-cols-12 gap-4">
+                    <button
+                        type="button"
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                        @click="focusList('upcoming')"
+                    >
+                        <div
+                            :class="[
+                                sectionIcon,
+                                'border-info/10 bg-info/10 text-info',
+                            ]"
+                        >
+                            <Lucide icon="LogIn" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
+                                {{ arrivalsToday }}
+                            </div>
+                            <div class="truncate text-xs text-slate-500">
+                                Llegadas hoy
+                            </div>
+                            <div class="truncate text-[11px] text-slate-400">
+                                {{ reservations.length }} próximas cargadas
+                            </div>
+                        </div>
+                    </button>
+                    <button
+                        type="button"
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                        @click="focusList('upcoming', 'pending')"
+                    >
+                        <div
+                            :class="[
+                                sectionIcon,
+                                'border-pending/10 bg-pending/10 text-pending',
+                            ]"
+                        >
+                            <Lucide icon="AlarmClock" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
+                                {{ pendingCount }}
+                            </div>
+                            <div class="truncate text-xs text-slate-500">
+                                Por confirmar
+                            </div>
+                            <div class="truncate text-[11px] text-slate-400">
+                                <template v-if="expiringHolds.length">
+                                    {{ expiringHolds.length }} por vencer
+                                </template>
+                                <template v-else>
+                                    Esperan anticipo o confirmación
+                                </template>
+                            </div>
+                        </div>
+                    </button>
+                    <button
+                        type="button"
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                        @click="focusList('stays')"
+                    >
+                        <div
+                            :class="[
+                                sectionIcon,
+                                'border-primary/10 bg-primary/10 text-primary',
+                            ]"
+                        >
+                            <Lucide icon="DoorOpen" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
+                                {{ staysTotal }}
+                            </div>
+                            <div class="truncate text-xs text-slate-500">
+                                Huéspedes alojados
+                            </div>
+                            <div class="truncate text-[11px] text-slate-400">
+                                Habitaciones en uso ahora
+                            </div>
+                        </div>
+                    </button>
+                    <button
+                        type="button"
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                        @click="focusList('stays')"
+                    >
+                        <div
+                            :class="[
+                                sectionIcon,
+                                'border-success/10 bg-success/10 text-success',
+                            ]"
+                        >
+                            <Lucide icon="LogOut" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
+                                {{ departuresToday }}
+                            </div>
+                            <div class="truncate text-xs text-slate-500">
+                                Salidas hoy
+                            </div>
+                            <div
+                                class="truncate text-[11px]"
+                                :class="
+                                    overdueStays
+                                        ? 'text-danger'
+                                        : 'text-slate-400'
+                                "
+                            >
+                                <template v-if="overdueStays">
+                                    {{ overdueStays }}
+                                    {{
+                                        overdueStays === 1
+                                            ? 'vencida'
+                                            : 'vencidas'
+                                    }}
+                                </template>
+                                <template v-else>Sin salidas vencidas</template>
+                            </div>
+                        </div>
+                    </button>
+                </div>
+            </template>
+
             <!-- Calendario: mes clásico o rack de ocupación (habitaciones × días) -->
-            <div v-if="view === 'calendar'" class="mt-5">
+            <div v-if="view === 'calendar'" class="mt-4">
                 <div
-                    class="mb-5 inline-flex gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
+                    class="mb-4 inline-flex gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
                 >
                     <button
                         type="button"
-                        class="flex items-center gap-2 rounded-[0.5rem] px-3.5 py-1.5 text-xs font-medium transition"
+                        class="flex h-8 items-center gap-1.5 rounded-[0.5rem] px-3.5 text-xs font-medium transition"
                         :class="
                             calMode === 'month'
                                 ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
@@ -2360,11 +2174,11 @@ const modalDescription = computed(() => {
                         "
                         @click="calMode = 'month'"
                     >
-                        <Lucide icon="CalendarDays" class="h-4 w-4" /> Mes
+                        <Lucide icon="CalendarDays" class="h-3.5 w-3.5" /> Mes
                     </button>
                     <button
                         type="button"
-                        class="flex items-center gap-2 rounded-[0.5rem] px-3.5 py-1.5 text-xs font-medium transition"
+                        class="flex h-8 items-center gap-1.5 rounded-[0.5rem] px-3.5 text-xs font-medium transition"
                         :class="
                             calMode === 'rooms'
                                 ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
@@ -2372,7 +2186,7 @@ const modalDescription = computed(() => {
                         "
                         @click="calMode = 'rooms'"
                     >
-                        <Lucide icon="CalendarRange" class="h-4 w-4" /> Por
+                        <Lucide icon="CalendarRange" class="h-3.5 w-3.5" /> Por
                         habitación
                     </button>
                 </div>
@@ -2390,94 +2204,1037 @@ const modalDescription = computed(() => {
                 />
             </div>
 
-            <!-- Cuentas por cerrar: el cierre automático no puede cobrar, y
-                 hasta que existió la bandeja ese saldo no salía en ninguna
-                 pantalla. Se avisa aquí porque es donde se trabaja el día. -->
+            <!-- Las tres listas del día en una sola caja: son el mismo
+                 trabajo visto desde tres lados, y apiladas medían tres
+                 tablas de alto. -->
             <div
-                v-if="view === 'list' && settlementsPending > 0"
-                class="box box--stacked mt-5 flex flex-wrap items-center gap-3 border-l-2 border-l-pending px-4 py-3"
+                v-if="view === 'list'"
+                id="listas-del-dia"
+                class="box box--stacked mt-4"
             >
-                <Lucide
-                    icon="ReceiptText"
-                    class="h-4 w-4 shrink-0 text-pending"
-                />
-                <div class="min-w-0">
-                    <p class="text-sm font-medium">
-                        {{ settlementsPending }}
-                        {{
-                            settlementsPending === 1
-                                ? 'cuenta quedó sin cobrar'
-                                : 'cuentas quedaron sin cobrar'
-                        }}
-                    </p>
-                    <p class="mt-0.5 text-xs text-slate-500">
-                        Estancias que se cerraron con saldo. Cóbralas, agrega lo
-                        que faltó o ciérralas con un motivo.
-                    </p>
-                </div>
-                <Button
-                    :as="Link"
-                    :href="route('tenant.reservations.settlements')"
-                    variant="outline-primary"
-                    class="ml-auto h-9 rounded-[0.5rem] bg-white text-xs"
-                >
-                    <Lucide icon="ChevronRight" class="mr-1.5 h-3.5 w-3.5" />
-                    Revisarlas
-                </Button>
-            </div>
-
-            <!-- Huéspedes alojados (estancias activas) -->
-            <div v-if="view === 'list'" class="box box--stacked mt-5">
-                <div
-                    class="flex flex-wrap items-center gap-2 border-b border-slate-200/60 px-4 py-3 text-sm font-medium dark:border-darkmode-400"
-                >
-                    <Lucide icon="DoorOpen" class="h-4 w-4 text-slate-400" />
-                    Huéspedes alojados ahora
-                    <span
-                        class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
+                <div :class="cardHeader">
+                    <div
+                        class="inline-flex gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
                     >
-                        <template v-if="staysTotal > stays.length"
-                            >{{ stays.length }} de {{ staysTotal }}</template
+                        <button
+                            v-for="tab in listTabs"
+                            :key="tab.key"
+                            type="button"
+                            class="flex h-8 items-center gap-1.5 rounded-[0.5rem] px-3 text-xs font-medium transition"
+                            :class="
+                                listTab === tab.key
+                                    ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
+                                    : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                            "
+                            @click="listTab = tab.key"
                         >
-                        <template v-else>{{ staysTotal }}</template>
-                    </span>
-                    <Button
-                        v-if="staysTotal > 0"
-                        :as="Link"
-                        :href="route('tenant.reservations.in-house')"
-                        variant="outline-secondary"
-                        class="ml-auto rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                            <Lucide :icon="tab.icon" class="h-3.5 w-3.5" />
+                            {{ tab.label }}
+                            <span
+                                class="rounded-full px-1.5 text-[11px] font-normal"
+                                :class="
+                                    listTab === tab.key
+                                        ? 'bg-primary/10 text-primary'
+                                        : 'bg-slate-200/70 text-slate-500 dark:bg-darkmode-400'
+                                "
+                                >{{ tab.count }}</span
+                            >
+                        </button>
+                    </div>
+
+                    <!-- A la derecha, lo que corresponde a la pestaña abierta -->
+                    <div class="ml-auto flex flex-wrap items-center gap-2.5">
+                        <template v-if="listTab === 'upcoming'">
+                            <span
+                                v-if="listFiltersActive"
+                                class="text-xs text-slate-500"
+                            >
+                                Mostrando
+                                {{ filteredReservations.length }} de
+                                {{ reservations.length }}
+                            </span>
+                            <button
+                                v-if="listFiltersActive"
+                                type="button"
+                                class="text-xs font-medium text-primary hover:underline"
+                                @click="clearListFilters"
+                            >
+                                Limpiar filtros
+                            </button>
+                            <span
+                                v-else-if="upcomingTotal > reservations.length"
+                                class="hidden text-xs text-slate-500 lg:inline"
+                            >
+                                Las {{ reservations.length }} llegadas más
+                                cercanas de {{ upcomingTotal }} en
+                                {{ upcomingDays }} días
+                            </span>
+                            <Button
+                                :as="Link"
+                                :href="route('tenant.reservations.upcoming')"
+                                variant="outline-secondary"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
+                            >
+                                <Lucide
+                                    icon="ChevronRight"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Ver todas
+                            </Button>
+                        </template>
+                        <template v-else-if="listTab === 'stays'">
+                            <span
+                                v-if="staysTotal > stays.length"
+                                class="hidden text-xs text-slate-500 lg:inline"
+                            >
+                                Se muestran {{ stays.length }} de
+                                {{ staysTotal }}
+                            </span>
+                            <Button
+                                :as="Link"
+                                :href="route('tenant.reservations.in-house')"
+                                variant="outline-secondary"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
+                            >
+                                <Lucide
+                                    icon="ChevronRight"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Ver todos
+                            </Button>
+                        </template>
+                        <template v-else>
+                            <span
+                                class="hidden text-xs text-slate-500 lg:inline"
+                            >
+                                Últimas {{ history.length }} de
+                                {{ historyTotal }}
+                            </span>
+                            <Button
+                                :as="Link"
+                                :href="route('tenant.reservations.history')"
+                                variant="outline-secondary"
+                                class="h-8 rounded-[0.5rem] bg-white text-xs"
+                            >
+                                <Lucide
+                                    icon="ChevronRight"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Ver historial completo
+                            </Button>
+                        </template>
+                    </div>
+                </div>
+
+                <template v-if="listTab === 'upcoming'">
+                    <!-- Filtros principales de la operación -->
+                    <div
+                        v-if="reservations.length"
+                        class="border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                    >
+                        <div class="mb-2.5 flex flex-wrap items-center gap-2">
+                            <span :class="sectionLabel">
+                                Encuentra una reserva
+                            </span>
+                            <span
+                                class="hidden text-[11px] text-slate-400 sm:inline"
+                            >
+                                Huésped, teléfono, folio o habitación
+                            </span>
+                        </div>
+                        <div
+                            class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-[minmax(15rem,1.5fr)_12rem_12rem_12rem_auto]"
+                        >
+                            <div>
+                                <FormLabel
+                                    htmlFor="reservation-search"
+                                    class="text-xs"
+                                    >Búsqueda rápida</FormLabel
+                                >
+                                <div class="relative">
+                                    <Lucide
+                                        icon="Search"
+                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
+                                    />
+                                    <FormInput
+                                        id="reservation-search"
+                                        v-model="listFilters.query"
+                                        type="search"
+                                        class="h-9 pl-9 text-xs"
+                                        placeholder="Nombre, teléfono, folio o habitación"
+                                    />
+                                </div>
+                            </div>
+                            <div>
+                                <FormLabel
+                                    htmlFor="reservation-status"
+                                    class="text-xs"
+                                    >Estado</FormLabel
+                                >
+                                <FormSelect
+                                    id="reservation-status"
+                                    v-model="listFilters.status"
+                                    class="h-9 text-xs"
+                                >
+                                    <option value="">Todos los estados</option>
+                                    <option value="pending">Pendiente</option>
+                                    <option value="confirmed">
+                                        Confirmada
+                                    </option>
+                                </FormSelect>
+                            </div>
+                            <div>
+                                <FormLabel
+                                    htmlFor="reservation-from"
+                                    class="text-xs"
+                                    >Llegada desde</FormLabel
+                                >
+                                <FormDate
+                                    id="reservation-from"
+                                    v-model="listFilters.from"
+                                    input-class="h-9 text-xs"
+                                />
+                            </div>
+                            <div>
+                                <FormLabel
+                                    htmlFor="reservation-to"
+                                    class="text-xs"
+                                    >Llegada hasta</FormLabel
+                                >
+                                <FormDate
+                                    id="reservation-to"
+                                    v-model="listFilters.to"
+                                    input-class="h-9 text-xs"
+                                />
+                            </div>
+                            <div class="flex items-end">
+                                <Button
+                                    v-if="listFiltersActive"
+                                    type="button"
+                                    variant="outline-secondary"
+                                    class="h-9 w-full text-xs whitespace-nowrap xl:w-auto"
+                                    @click="clearListFilters"
+                                >
+                                    <Lucide
+                                        icon="X"
+                                        class="mr-1.5 h-3.5 w-3.5"
+                                    />
+                                    Limpiar
+                                </Button>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Escritorio: tabla densa, sin cebra. La cebra del
+                         theme pinta un renglón sí y otro no en gris y con
+                         seis columnas de datos cansa; aquí manda el
+                         separador fino y el subrayado al pasar. -->
+                    <div
+                        class="hidden overflow-auto lg:block lg:overflow-visible"
+                    >
+                        <Table v-if="filteredReservations.length" hover>
+                            <Table.Thead>
+                                <Table.Tr>
+                                    <Table.Th :class="tableHead"
+                                        >Huésped</Table.Th
+                                    >
+                                    <Table.Th :class="tableHead"
+                                        >Habitación</Table.Th
+                                    >
+                                    <Table.Th :class="tableHead"
+                                        >Estancia</Table.Th
+                                    >
+                                    <Table.Th :class="[tableHead, 'text-right']"
+                                        >Total</Table.Th
+                                    >
+                                    <Table.Th :class="tableHead"
+                                        >Estado</Table.Th
+                                    >
+                                    <Table.Th
+                                        v-if="canManage"
+                                        :class="[tableHead, 'text-right']"
+                                    >
+                                        Acciones
+                                    </Table.Th>
+                                </Table.Tr>
+                            </Table.Thead>
+                            <Table.Tbody>
+                                <Table.Tr
+                                    v-for="r in filteredReservations"
+                                    :key="r.id"
+                                    class="align-top"
+                                >
+                                    <!-- Quién viene -->
+                                    <Table.Td class="max-w-[22rem]">
+                                        <button
+                                            type="button"
+                                            class="truncate text-left text-sm font-medium transition hover:text-primary"
+                                            @click="
+                                                router.visit(
+                                                    `/reservas/${r.id}`,
+                                                )
+                                            "
+                                        >
+                                            {{ r.guest_name ?? 'Anónimo' }}
+                                        </button>
+                                        <div
+                                            class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
+                                        >
+                                            <span
+                                                class="font-medium text-slate-600 dark:text-slate-300"
+                                            >
+                                                {{ r.code }}
+                                            </span>
+                                            <span
+                                                class="text-slate-300 dark:text-darkmode-400"
+                                                >·</span
+                                            >
+                                            <span
+                                                class="inline-flex items-center gap-1"
+                                            >
+                                                <Lucide
+                                                    :icon="
+                                                        channelIcon[
+                                                            r.source_channel
+                                                        ] ?? 'Tag'
+                                                    "
+                                                    class="h-3.5 w-3.5 stroke-[1.3]"
+                                                />
+                                                {{
+                                                    channelLabel[
+                                                        r.source_channel
+                                                    ] ?? r.source_channel
+                                                }}
+                                            </span>
+                                            <span
+                                                class="text-slate-300 dark:text-darkmode-400"
+                                                >·</span
+                                            >
+                                            <span>{{ paxLabel(r) }}</span>
+                                        </div>
+                                        <div
+                                            v-if="r.eta || r.vehicle_plate"
+                                            class="mt-1 flex flex-wrap gap-1.5"
+                                        >
+                                            <span
+                                                v-if="r.eta"
+                                                class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
+                                                title="Hora estimada de llegada"
+                                            >
+                                                <Lucide
+                                                    icon="Clock"
+                                                    class="h-3 w-3"
+                                                />
+                                                {{ r.eta }}
+                                            </span>
+                                            <span
+                                                v-if="r.vehicle_plate"
+                                                class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
+                                                :title="
+                                                    r.vehicle_desc ?? 'Vehículo'
+                                                "
+                                            >
+                                                <Lucide
+                                                    icon="Car"
+                                                    class="h-3 w-3"
+                                                />
+                                                {{ r.vehicle_plate }}
+                                            </span>
+                                        </div>
+                                    </Table.Td>
+
+                                    <!-- Dónde -->
+                                    <Table.Td class="whitespace-nowrap">
+                                        <div class="text-sm font-medium">
+                                            {{ r.room ?? 'Sin asignar' }}
+                                        </div>
+                                        <div class="text-xs text-slate-500">
+                                            {{ r.room_type }}
+                                        </div>
+                                    </Table.Td>
+
+                                    <!-- Cuándo -->
+                                    <Table.Td class="whitespace-nowrap">
+                                        <div class="text-xs tabular-nums">
+                                            {{ r.starts_at }}
+                                        </div>
+                                        <div
+                                            class="text-xs text-slate-500 tabular-nums"
+                                        >
+                                            sale {{ r.ends_at }}
+                                        </div>
+                                        <div class="mt-1 flex flex-wrap gap-1">
+                                            <span
+                                                v-if="r.starts_today"
+                                                class="rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"
+                                            >
+                                                Llega hoy
+                                            </span>
+                                            <!-- La entrada pasó y nadie la
+                                                 registró: antes solo se notaba
+                                                 porque la habitación seguía
+                                                 apartada en el plano. -->
+                                            <span
+                                                v-if="r.arrival_pending"
+                                                class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
+                                                title="La hora de entrada ya pasó y nadie registró la llegada"
+                                            >
+                                                Sin llegada
+                                            </span>
+                                        </div>
+                                    </Table.Td>
+
+                                    <!-- Cuánto -->
+                                    <Table.Td
+                                        class="text-right whitespace-nowrap"
+                                    >
+                                        <div
+                                            class="text-sm font-medium tabular-nums"
+                                        >
+                                            {{ money(Number(r.total_amount)) }}
+                                        </div>
+                                        <span
+                                            class="mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                            :class="paymentBadge(r)"
+                                        >
+                                            {{
+                                                r.payment_overdue
+                                                    ? 'Pago vencido'
+                                                    : r.payment_status_label
+                                            }}
+                                        </span>
+                                        <div
+                                            v-if="
+                                                r.paid_total > 0 &&
+                                                r.pending_balance > 0
+                                            "
+                                            class="mt-0.5 text-[11px] text-slate-400 tabular-nums"
+                                        >
+                                            debe {{ money(r.pending_balance) }}
+                                        </div>
+                                        <div
+                                            v-if="
+                                                r.payment_due_at &&
+                                                r.payment_status !== 'paid'
+                                            "
+                                            class="text-[11px] text-slate-400"
+                                        >
+                                            antes de {{ r.payment_due_at }}
+                                        </div>
+                                    </Table.Td>
+
+                                    <!-- Cómo va -->
+                                    <Table.Td class="whitespace-nowrap">
+                                        <span
+                                            class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                            :class="statusFor(r.status).class"
+                                        >
+                                            <Lucide
+                                                :icon="statusFor(r.status).icon"
+                                                class="h-3 w-3"
+                                            />
+                                            {{ friendlyStatusLabel(r) }}
+                                        </span>
+                                        <div
+                                            v-if="r.hold_expires_at"
+                                            class="mt-0.5 text-[11px] text-slate-400"
+                                        >
+                                            apartada hasta
+                                            {{ r.hold_expires_at }}
+                                        </div>
+                                    </Table.Td>
+
+                                    <Table.Td v-if="canManage">
+                                        <div
+                                            class="flex items-center justify-end gap-1.5"
+                                        >
+                                            <!-- Acción principal contextual -->
+                                            <Button
+                                                v-if="r.status === 'pending'"
+                                                variant="primary"
+                                                class="h-8 rounded-[0.5rem] text-xs whitespace-nowrap"
+                                                @click="askConfirm(r)"
+                                            >
+                                                <Lucide
+                                                    icon="CircleCheck"
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                />
+                                                Confirmar
+                                            </Button>
+                                            <Button
+                                                v-else-if="manualCheckinAllowed"
+                                                variant="outline-success"
+                                                class="h-8 rounded-[0.5rem] bg-white text-xs whitespace-nowrap"
+                                                @click="askCheckIn(r)"
+                                            >
+                                                <Lucide
+                                                    icon="LogIn"
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                />
+                                                Registrar llegada
+                                            </Button>
+                                            <button
+                                                type="button"
+                                                :class="rowAction"
+                                                class="hover:bg-primary/10 hover:text-primary"
+                                                title="Ver la ficha de la reserva"
+                                                @click="
+                                                    router.visit(
+                                                        `/reservas/${r.id}`,
+                                                    )
+                                                "
+                                            >
+                                                <Lucide
+                                                    icon="Eye"
+                                                    class="h-4 w-4"
+                                                />
+                                            </button>
+
+                                            <!-- Menú de acciones secundarias -->
+                                            <Menu>
+                                                <Menu.Button
+                                                    :class="rowAction"
+                                                    class="hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                                                    title="Más acciones"
+                                                >
+                                                    <Lucide
+                                                        icon="MoreVertical"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </Menu.Button>
+                                                <Menu.Items class="w-52">
+                                                    <Menu.Item
+                                                        as="button"
+                                                        type="button"
+                                                        @click="openEdit(r)"
+                                                    >
+                                                        <Lucide
+                                                            icon="Pencil"
+                                                            class="mr-1.5 h-3.5 w-3.5"
+                                                        />
+                                                        Editar reserva
+                                                    </Menu.Item>
+                                                    <Menu.Item
+                                                        v-if="
+                                                            r.pending_balance >
+                                                            0
+                                                        "
+                                                        as="button"
+                                                        type="button"
+                                                        class="text-pending"
+                                                        @click="openPayment(r)"
+                                                    >
+                                                        <Lucide
+                                                            icon="Banknote"
+                                                            class="mr-1.5 h-3.5 w-3.5"
+                                                        />
+                                                        Registrar pago
+                                                    </Menu.Item>
+                                                    <Menu.Item
+                                                        v-if="
+                                                            r.status ===
+                                                                'pending' &&
+                                                            manualCheckinAllowed
+                                                        "
+                                                        as="button"
+                                                        type="button"
+                                                        class="text-success"
+                                                        @click="askCheckIn(r)"
+                                                    >
+                                                        <Lucide
+                                                            icon="LogIn"
+                                                            class="mr-1.5 h-3.5 w-3.5"
+                                                        />
+                                                        Registrar llegada
+                                                    </Menu.Item>
+                                                    <Menu.Divider />
+                                                    <Menu.Item
+                                                        as="button"
+                                                        type="button"
+                                                        class="text-warning"
+                                                        @click="askNoShow(r)"
+                                                    >
+                                                        <Lucide
+                                                            icon="UserX"
+                                                            class="mr-1.5 h-3.5 w-3.5"
+                                                        />
+                                                        El huésped no llegó
+                                                    </Menu.Item>
+                                                    <Menu.Item
+                                                        as="button"
+                                                        type="button"
+                                                        class="text-danger"
+                                                        @click="askCancel(r)"
+                                                    >
+                                                        <Lucide
+                                                            icon="Ban"
+                                                            class="mr-1.5 h-3.5 w-3.5"
+                                                        />
+                                                        Cancelar reserva
+                                                    </Menu.Item>
+                                                </Menu.Items>
+                                            </Menu>
+                                        </div>
+                                    </Table.Td>
+                                </Table.Tr>
+                            </Table.Tbody>
+                        </Table>
+                    </div>
+
+                    <!-- Móvil y tablet: los mismos datos apilados. La tabla
+                         se arrastraba de lado en el celular del mostrador. -->
+                    <div
+                        v-if="filteredReservations.length"
+                        class="divide-y divide-slate-200/60 lg:hidden dark:divide-darkmode-400"
+                    >
+                        <div
+                            v-for="r in filteredReservations"
+                            :key="`m-${r.id}`"
+                            class="px-4 py-3.5"
+                        >
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <div
+                                        class="flex flex-wrap items-center gap-1.5"
+                                    >
+                                        <span
+                                            class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                        >
+                                            {{ r.code }}
+                                        </span>
+                                        <span
+                                            v-if="r.starts_today"
+                                            class="rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"
+                                        >
+                                            Llega hoy
+                                        </span>
+                                        <span
+                                            v-if="r.arrival_pending"
+                                            class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
+                                        >
+                                            Sin llegada
+                                        </span>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        class="mt-1.5 block truncate text-left text-sm font-medium transition hover:text-primary"
+                                        @click="
+                                            router.visit(`/reservas/${r.id}`)
+                                        "
+                                    >
+                                        {{ r.guest_name ?? 'Anónimo' }}
+                                    </button>
+                                    <div class="text-xs text-slate-500">
+                                        {{ paxLabel(r) }} ·
+                                        {{
+                                            channelLabel[r.source_channel] ??
+                                            r.source_channel
+                                        }}
+                                    </div>
+                                </div>
+                                <div class="shrink-0 text-right">
+                                    <div
+                                        class="text-sm font-medium tabular-nums"
+                                    >
+                                        {{ money(Number(r.total_amount)) }}
+                                    </div>
+                                    <span
+                                        class="mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                        :class="paymentBadge(r)"
+                                    >
+                                        {{
+                                            r.payment_overdue
+                                                ? 'Pago vencido'
+                                                : r.payment_status_label
+                                        }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div
+                                class="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3"
+                            >
+                                <span
+                                    class="inline-flex min-w-0 items-center gap-1.5"
+                                >
+                                    <Lucide
+                                        icon="BedDouble"
+                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                    />
+                                    <span class="truncate">
+                                        {{ r.room ?? 'Sin asignar' }}
+                                        <span
+                                            v-if="r.room_type"
+                                            class="text-slate-400"
+                                        >
+                                            · {{ r.room_type }}
+                                        </span>
+                                    </span>
+                                </span>
+                                <span
+                                    class="inline-flex items-center gap-1.5 tabular-nums"
+                                >
+                                    <Lucide
+                                        icon="CalendarDays"
+                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                    />
+                                    {{ r.starts_at }}
+                                    <span class="text-slate-400">→</span>
+                                    {{ r.ends_at }}
+                                </span>
+                            </div>
+
+                            <div
+                                class="mt-2.5 flex flex-wrap items-center gap-1.5"
+                            >
+                                <span
+                                    class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                    :class="statusFor(r.status).class"
+                                >
+                                    <Lucide
+                                        :icon="statusFor(r.status).icon"
+                                        class="h-3 w-3"
+                                    />
+                                    {{ friendlyStatusLabel(r) }}
+                                </span>
+                                <span
+                                    v-if="r.hold_expires_at"
+                                    class="text-[11px] text-slate-400"
+                                >
+                                    apartada hasta {{ r.hold_expires_at }}
+                                </span>
+                                <template v-if="canManage">
+                                    <Button
+                                        v-if="r.status === 'pending'"
+                                        variant="primary"
+                                        class="ml-auto h-8 rounded-[0.5rem] text-xs"
+                                        @click="askConfirm(r)"
+                                    >
+                                        <Lucide
+                                            icon="CircleCheck"
+                                            class="mr-1.5 h-3.5 w-3.5"
+                                        />
+                                        Confirmar
+                                    </Button>
+                                    <Button
+                                        v-else-if="manualCheckinAllowed"
+                                        variant="outline-success"
+                                        class="ml-auto h-8 rounded-[0.5rem] bg-white text-xs"
+                                        @click="askCheckIn(r)"
+                                    >
+                                        <Lucide
+                                            icon="LogIn"
+                                            class="mr-1.5 h-3.5 w-3.5"
+                                        />
+                                        Llegada
+                                    </Button>
+                                    <Menu>
+                                        <Menu.Button
+                                            :class="rowAction"
+                                            class="hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                                            title="Más acciones"
+                                        >
+                                            <Lucide
+                                                icon="MoreVertical"
+                                                class="h-4 w-4"
+                                            />
+                                        </Menu.Button>
+                                        <Menu.Items class="w-52">
+                                            <Menu.Item
+                                                as="button"
+                                                type="button"
+                                                @click="
+                                                    router.visit(
+                                                        `/reservas/${r.id}`,
+                                                    )
+                                                "
+                                            >
+                                                <Lucide
+                                                    icon="Eye"
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                />
+                                                Ver detalle
+                                            </Menu.Item>
+                                            <Menu.Item
+                                                as="button"
+                                                type="button"
+                                                @click="openEdit(r)"
+                                            >
+                                                <Lucide
+                                                    icon="Pencil"
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                />
+                                                Editar reserva
+                                            </Menu.Item>
+                                            <Menu.Item
+                                                v-if="r.pending_balance > 0"
+                                                as="button"
+                                                type="button"
+                                                class="text-pending"
+                                                @click="openPayment(r)"
+                                            >
+                                                <Lucide
+                                                    icon="Banknote"
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                />
+                                                Registrar pago
+                                            </Menu.Item>
+                                            <Menu.Divider />
+                                            <Menu.Item
+                                                as="button"
+                                                type="button"
+                                                class="text-warning"
+                                                @click="askNoShow(r)"
+                                            >
+                                                <Lucide
+                                                    icon="UserX"
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                />
+                                                El huésped no llegó
+                                            </Menu.Item>
+                                            <Menu.Item
+                                                as="button"
+                                                type="button"
+                                                class="text-danger"
+                                                @click="askCancel(r)"
+                                            >
+                                                <Lucide
+                                                    icon="Ban"
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                />
+                                                Cancelar reserva
+                                            </Menu.Item>
+                                        </Menu.Items>
+                                    </Menu>
+                                </template>
+                                <button
+                                    v-else
+                                    type="button"
+                                    :class="rowAction"
+                                    class="ml-auto hover:bg-primary/10 hover:text-primary"
+                                    title="Ver la ficha de la reserva"
+                                    @click="router.visit(`/reservas/${r.id}`)"
+                                >
+                                    <Lucide icon="Eye" class="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        v-else-if="reservations.length"
+                        class="flex flex-col items-center gap-2 px-5 py-10 text-center"
+                    >
+                        <Lucide icon="SearchX" class="h-8 w-8 text-slate-300" />
+                        <p class="text-sm font-medium text-slate-600">
+                            Ninguna reserva coincide con los filtros
+                        </p>
+                        <p class="text-xs text-slate-500">
+                            Esta lista solo trae las llegadas más cercanas; si
+                            la reserva es de más adelante, búscala en
+                            <Link
+                                :href="upcomingSearchHref"
+                                class="font-medium text-primary hover:underline"
+                            >
+                                todas las próximas</Link
+                            >.
+                        </p>
+                        <button
+                            type="button"
+                            class="mt-1 text-xs font-medium text-primary hover:underline"
+                            @click="clearListFilters"
+                        >
+                            Limpiar filtros
+                        </button>
+                    </div>
+                    <div
+                        v-else
+                        class="flex flex-col items-center gap-2 px-5 py-10 text-center"
                     >
                         <Lucide
-                            icon="ChevronRight"
-                            class="mr-1.5 h-3.5 w-3.5"
+                            icon="CalendarDays"
+                            class="h-8 w-8 text-slate-300"
                         />
-                        Ver todos
-                    </Button>
-                </div>
-                <div class="overflow-auto p-4 lg:overflow-visible">
-                    <Table v-if="stays.length" striped>
-                        <Table.Thead>
-                            <Table.Tr>
-                                <Table.Th>Habitación</Table.Th>
-                                <Table.Th>Huésped</Table.Th>
-                                <Table.Th>Entrada</Table.Th>
-                                <Table.Th>Salida prevista</Table.Th>
-                                <Table.Th>Monto</Table.Th>
-                                <Table.Th v-if="canManage" class="text-right"
-                                    >Acciones</Table.Th
+                        <p class="text-sm font-medium text-slate-600">
+                            Sin reservas próximas
+                        </p>
+                        <p class="text-xs text-slate-500">
+                            Lo que se aparte desde el sitio, el asistente o el
+                            mostrador aparece aquí.
+                        </p>
+                    </div>
+                </template>
+
+                <template v-else-if="listTab === 'stays'">
+                    <!-- Escritorio -->
+                    <div
+                        class="hidden overflow-auto lg:block lg:overflow-visible"
+                    >
+                        <Table v-if="stays.length" hover>
+                            <Table.Thead>
+                                <Table.Tr>
+                                    <Table.Th :class="tableHead"
+                                        >Habitación</Table.Th
+                                    >
+                                    <Table.Th :class="tableHead"
+                                        >Huésped</Table.Th
+                                    >
+                                    <Table.Th :class="tableHead"
+                                        >Entró</Table.Th
+                                    >
+                                    <Table.Th :class="tableHead">Sale</Table.Th>
+                                    <Table.Th :class="[tableHead, 'text-right']"
+                                        >Monto</Table.Th
+                                    >
+                                    <Table.Th
+                                        v-if="canManage"
+                                        :class="[tableHead, 'text-right']"
+                                    >
+                                        Acciones
+                                    </Table.Th>
+                                </Table.Tr>
+                            </Table.Thead>
+                            <Table.Tbody>
+                                <Table.Tr
+                                    v-for="s in stays"
+                                    :key="s.id"
+                                    class="align-top"
                                 >
-                            </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                            <Table.Tr v-for="s in stays" :key="s.id">
-                                <Table.Td class="font-medium">{{
-                                    s.room
-                                }}</Table.Td>
-                                <Table.Td>
-                                    {{ s.guest_name ?? 'Anónimo' }}
-                                    <span class="block text-xs text-slate-500"
-                                        >{{ s.num_people }}
+                                    <Table.Td class="whitespace-nowrap">
+                                        <div class="flex items-center gap-2">
+                                            <div
+                                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                                            >
+                                                <Lucide
+                                                    icon="BedDouble"
+                                                    class="h-3.5 w-3.5"
+                                                />
+                                            </div>
+                                            <span class="text-sm font-medium">{{
+                                                s.room
+                                            }}</span>
+                                        </div>
+                                    </Table.Td>
+                                    <Table.Td class="max-w-[20rem]">
+                                        <div
+                                            class="truncate text-sm font-medium"
+                                        >
+                                            {{ s.guest_name ?? 'Anónimo' }}
+                                        </div>
+                                        <div
+                                            class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
+                                        >
+                                            <span>
+                                                {{ s.num_people }}
+                                                {{
+                                                    s.num_people === 1
+                                                        ? 'persona'
+                                                        : 'personas'
+                                                }}
+                                            </span>
+                                            <span
+                                                class="text-slate-300 dark:text-darkmode-400"
+                                                >·</span
+                                            >
+                                            <span>{{
+                                                channelLabel[s.channel] ??
+                                                s.channel
+                                            }}</span>
+                                            <template v-if="s.vehicle_plate">
+                                                <span
+                                                    class="text-slate-300 dark:text-darkmode-400"
+                                                    >·</span
+                                                >
+                                                <span
+                                                    class="inline-flex items-center gap-1"
+                                                    :title="
+                                                        s.vehicle_desc ??
+                                                        'Vehículo'
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        icon="Car"
+                                                        class="h-3.5 w-3.5 stroke-[1.3]"
+                                                    />
+                                                    {{ s.vehicle_plate }}
+                                                </span>
+                                            </template>
+                                        </div>
+                                    </Table.Td>
+                                    <Table.Td
+                                        class="text-xs whitespace-nowrap tabular-nums"
+                                    >
+                                        {{ s.check_in_at }}
+                                    </Table.Td>
+                                    <Table.Td class="whitespace-nowrap">
+                                        <div class="text-xs tabular-nums">
+                                            {{ s.planned_end_at }}
+                                        </div>
+                                        <span
+                                            v-if="s.overdue"
+                                            class="mt-1 inline-block rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
+                                        >
+                                            Salida vencida
+                                        </span>
+                                    </Table.Td>
+                                    <Table.Td
+                                        class="text-right text-sm font-medium whitespace-nowrap tabular-nums"
+                                    >
+                                        {{ money(Number(s.amount)) }}
+                                    </Table.Td>
+                                    <Table.Td v-if="canManage">
+                                        <div class="flex justify-end">
+                                            <Button
+                                                variant="outline-primary"
+                                                class="h-8 rounded-[0.5rem] bg-white text-xs whitespace-nowrap"
+                                                @click="askCheckOut(s)"
+                                            >
+                                                <Lucide
+                                                    icon="LogOut"
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                />
+                                                Registrar salida
+                                            </Button>
+                                        </div>
+                                    </Table.Td>
+                                </Table.Tr>
+                            </Table.Tbody>
+                        </Table>
+                    </div>
+
+                    <!-- Móvil y tablet -->
+                    <div
+                        v-if="stays.length"
+                        class="divide-y divide-slate-200/60 lg:hidden dark:divide-darkmode-400"
+                    >
+                        <div
+                            v-for="s in stays"
+                            :key="`m-${s.id}`"
+                            class="px-4 py-3.5"
+                        >
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <div
+                                        class="flex flex-wrap items-center gap-1.5"
+                                    >
+                                        <span
+                                            class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                                        >
+                                            {{ s.room }}
+                                        </span>
+                                        <span
+                                            v-if="s.overdue"
+                                            class="rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
+                                        >
+                                            Salida vencida
+                                        </span>
+                                    </div>
+                                    <div
+                                        class="mt-1.5 truncate text-sm font-medium"
+                                    >
+                                        {{ s.guest_name ?? 'Anónimo' }}
+                                    </div>
+                                    <div class="text-xs text-slate-500">
+                                        {{ s.num_people }}
                                         {{
                                             s.num_people === 1
                                                 ? 'persona'
@@ -2486,78 +3243,91 @@ const modalDescription = computed(() => {
                                         ·
                                         {{
                                             channelLabel[s.channel] ?? s.channel
-                                        }}</span
-                                    >
-                                    <span
-                                        v-if="s.vehicle_plate"
-                                        class="mt-0.5 inline-flex items-center gap-1 text-xs text-slate-500"
-                                        :title="s.vehicle_desc ?? 'Vehículo'"
-                                    >
-                                        <Lucide icon="Car" class="h-3 w-3" />
-                                        {{ s.vehicle_plate }}
-                                    </span>
-                                </Table.Td>
-                                <Table.Td class="text-sm">{{
-                                    s.check_in_at
-                                }}</Table.Td>
-                                <Table.Td class="text-sm">
-                                    {{ s.planned_end_at }}
-                                    <span
-                                        v-if="s.overdue"
-                                        class="ml-1 rounded-full bg-danger/10 px-1.5 text-xs text-danger"
-                                        >vencida</span
-                                    >
-                                </Table.Td>
-                                <Table.Td>${{ s.amount }}</Table.Td>
-                                <Table.Td v-if="canManage">
-                                    <div class="flex justify-end">
-                                        <Button
-                                            variant="outline-primary"
-                                            size="sm"
-                                            class="rounded-[0.5rem] whitespace-nowrap"
-                                            @click="askCheckOut(s)"
-                                        >
-                                            <Lucide
-                                                icon="LogOut"
-                                                class="mr-1.5 h-4 w-4"
-                                            />
-                                            Registrar salida
-                                        </Button>
+                                        }}
                                     </div>
-                                </Table.Td>
-                            </Table.Tr>
-                        </Table.Tbody>
-                    </Table>
-                    <div v-else class="py-8 text-center text-xs text-slate-500">
-                        Ninguna habitación en uso ahora mismo.
-                    </div>
-                </div>
-            </div>
+                                </div>
+                                <div
+                                    class="shrink-0 text-sm font-medium tabular-nums"
+                                >
+                                    {{ money(Number(s.amount)) }}
+                                </div>
+                            </div>
 
-            <!-- Historial: completadas, canceladas y huéspedes que no llegaron -->
-            <div v-if="view === 'list'" class="box box--stacked mt-5">
-                <div
-                    class="flex flex-wrap items-center gap-2 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
-                >
-                    <div class="flex items-center gap-2 text-sm font-medium">
-                        <Lucide icon="History" class="h-4 w-4 text-slate-400" />
-                        Historial
-                        <span
-                            class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-500 dark:bg-darkmode-400"
-                            >últimas {{ history.length }} de
-                            {{ historyTotal }}</span
-                        >
+                            <div
+                                class="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3"
+                            >
+                                <span
+                                    class="inline-flex items-center gap-1.5 tabular-nums"
+                                >
+                                    <Lucide
+                                        icon="LogIn"
+                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                    />
+                                    entró {{ s.check_in_at }}
+                                </span>
+                                <span
+                                    class="inline-flex items-center gap-1.5 tabular-nums"
+                                >
+                                    <Lucide
+                                        icon="LogOut"
+                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                    />
+                                    sale {{ s.planned_end_at }}
+                                </span>
+                            </div>
+
+                            <div
+                                v-if="canManage"
+                                class="mt-2.5 flex justify-end"
+                            >
+                                <Button
+                                    variant="outline-primary"
+                                    class="h-8 rounded-[0.5rem] bg-white text-xs"
+                                    @click="askCheckOut(s)"
+                                >
+                                    <Lucide
+                                        icon="LogOut"
+                                        class="mr-1.5 h-3.5 w-3.5"
+                                    />
+                                    Registrar salida
+                                </Button>
+                            </div>
+                        </div>
                     </div>
+
+                    <div
+                        v-else
+                        class="flex flex-col items-center gap-2 px-5 py-10 text-center"
+                    >
+                        <Lucide
+                            icon="DoorOpen"
+                            class="h-8 w-8 text-slate-300"
+                        />
+                        <p class="text-sm font-medium text-slate-600">
+                            Ninguna habitación en uso ahora mismo
+                        </p>
+                        <p class="text-xs text-slate-500">
+                            Cuando registres una llegada, el huésped aparece
+                            aquí hasta que se le cobre la salida.
+                        </p>
+                    </div>
+                </template>
+
+                <template v-else-if="listTab === 'history'">
+                    <!-- Selección múltiple: los controles en la franja gris,
+                         no en la cabecera, para no empujar las pestañas. -->
                     <div
                         v-if="canManage && selectedHistoryIds.length"
-                        class="ml-auto flex flex-wrap items-center gap-3"
+                        class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                     >
-                        <span class="text-xs text-slate-500"
-                            >{{
-                                selectedHistoryIds.length
+                        <span class="text-xs text-slate-500">
+                            {{ selectedHistoryIds.length }}
+                            {{
+                                selectedHistoryIds.length === 1
+                                    ? 'seleccionada'
+                                    : 'seleccionadas'
                             }}
-                            seleccionada(s)</span
-                        >
+                        </span>
                         <button
                             type="button"
                             class="text-xs font-medium text-primary hover:underline"
@@ -2567,95 +3337,252 @@ const modalDescription = computed(() => {
                         </button>
                         <Button
                             variant="danger"
-                            class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                            class="ml-auto h-8 rounded-[0.5rem] text-xs"
                             @click="bulkDeleteOpen = true"
                         >
                             <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                             Eliminar seleccionadas
                         </Button>
                     </div>
+
+                    <!-- Escritorio -->
                     <div
-                        v-else
-                        class="ml-auto flex flex-wrap items-center gap-3"
+                        class="hidden overflow-auto lg:block lg:overflow-visible"
                     >
-                        <span
-                            class="hidden text-xs font-normal text-slate-500 lg:inline"
-                        >
-                            Completadas, canceladas y huéspedes que no llegaron.
-                        </span>
-                        <Button
-                            :as="Link"
-                            :href="route('tenant.reservations.history')"
-                            variant="outline-secondary"
-                            class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
-                        >
-                            <Lucide
-                                icon="ChevronRight"
-                                class="mr-1.5 h-3.5 w-3.5"
-                            />
-                            Ver historial completo
-                        </Button>
+                        <Table v-if="history.length" hover>
+                            <Table.Thead>
+                                <Table.Tr>
+                                    <Table.Th
+                                        v-if="canManage"
+                                        :class="[tableHead, 'w-10']"
+                                    >
+                                        <FormCheck.Input
+                                            type="checkbox"
+                                            :checked="allHistorySelected"
+                                            title="Seleccionar todo el historial"
+                                            @change="toggleAllHistory"
+                                        />
+                                    </Table.Th>
+                                    <Table.Th :class="tableHead"
+                                        >Huésped</Table.Th
+                                    >
+                                    <Table.Th :class="tableHead"
+                                        >Habitación</Table.Th
+                                    >
+                                    <Table.Th :class="tableHead"
+                                        >Estancia</Table.Th
+                                    >
+                                    <Table.Th :class="[tableHead, 'text-right']"
+                                        >Total</Table.Th
+                                    >
+                                    <Table.Th :class="tableHead"
+                                        >Cómo terminó</Table.Th
+                                    >
+                                    <Table.Th :class="[tableHead, 'text-right']"
+                                        >Acciones</Table.Th
+                                    >
+                                </Table.Tr>
+                            </Table.Thead>
+                            <Table.Tbody>
+                                <Table.Tr
+                                    v-for="r in history"
+                                    :key="r.id"
+                                    class="align-top"
+                                >
+                                    <Table.Td v-if="canManage" class="w-10">
+                                        <FormCheck.Input
+                                            type="checkbox"
+                                            :checked="
+                                                selectedHistoryIds.includes(
+                                                    r.id,
+                                                )
+                                            "
+                                            @change="toggleHistoryRow(r.id)"
+                                        />
+                                    </Table.Td>
+                                    <Table.Td class="max-w-[20rem]">
+                                        <button
+                                            type="button"
+                                            class="truncate text-left text-sm font-medium transition hover:text-primary"
+                                            @click="
+                                                router.visit(
+                                                    `/reservas/${r.id}`,
+                                                )
+                                            "
+                                        >
+                                            {{ r.guest_name ?? 'Anónimo' }}
+                                        </button>
+                                        <div
+                                            class="mt-0.5 text-xs text-slate-500"
+                                        >
+                                            {{ r.code }} ·
+                                            {{
+                                                channelLabel[
+                                                    r.source_channel
+                                                ] ?? r.source_channel
+                                            }}
+                                        </div>
+                                    </Table.Td>
+                                    <Table.Td class="whitespace-nowrap">
+                                        <div class="text-sm font-medium">
+                                            {{ r.room ?? 'Sin asignar' }}
+                                        </div>
+                                        <div class="text-xs text-slate-500">
+                                            {{ r.room_type }}
+                                        </div>
+                                    </Table.Td>
+                                    <Table.Td class="whitespace-nowrap">
+                                        <div class="text-xs tabular-nums">
+                                            {{ r.starts_at }}
+                                        </div>
+                                        <div
+                                            class="text-xs text-slate-500 tabular-nums"
+                                        >
+                                            sale {{ r.ends_at }}
+                                        </div>
+                                    </Table.Td>
+                                    <Table.Td
+                                        class="text-right text-sm font-medium whitespace-nowrap tabular-nums"
+                                    >
+                                        {{ money(Number(r.total_amount)) }}
+                                    </Table.Td>
+                                    <Table.Td class="max-w-[16rem]">
+                                        <span
+                                            class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                            :class="statusFor(r.status).class"
+                                        >
+                                            <Lucide
+                                                :icon="statusFor(r.status).icon"
+                                                class="h-3 w-3"
+                                            />
+                                            {{ friendlyStatusLabel(r) }}
+                                        </span>
+                                        <div
+                                            v-if="r.cancellation_reason"
+                                            class="mt-0.5 truncate text-[11px] text-slate-400"
+                                            :title="r.cancellation_reason"
+                                        >
+                                            {{ r.cancellation_reason }}
+                                        </div>
+                                    </Table.Td>
+                                    <Table.Td>
+                                        <div class="flex justify-end gap-1.5">
+                                            <button
+                                                v-if="
+                                                    canManage && isReopenable(r)
+                                                "
+                                                type="button"
+                                                :class="rowAction"
+                                                class="hover:bg-primary/10 hover:text-primary"
+                                                title="Reabrir o reagendar"
+                                                @click="openReopen(r)"
+                                            >
+                                                <Lucide
+                                                    icon="RotateCcw"
+                                                    class="h-4 w-4"
+                                                />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                :class="rowAction"
+                                                class="hover:bg-primary/10 hover:text-primary"
+                                                title="Ver la ficha de la reserva"
+                                                @click="
+                                                    router.visit(
+                                                        `/reservas/${r.id}`,
+                                                    )
+                                                "
+                                            >
+                                                <Lucide
+                                                    icon="Eye"
+                                                    class="h-4 w-4"
+                                                />
+                                            </button>
+                                        </div>
+                                    </Table.Td>
+                                </Table.Tr>
+                            </Table.Tbody>
+                        </Table>
                     </div>
-                </div>
-                <div class="overflow-auto p-4 lg:overflow-visible">
-                    <Table v-if="history.length" striped>
-                        <Table.Thead>
-                            <Table.Tr>
-                                <Table.Th v-if="canManage" class="w-10">
-                                    <FormCheck.Input
-                                        type="checkbox"
-                                        :checked="allHistorySelected"
-                                        title="Seleccionar todo el historial"
-                                        @change="toggleAllHistory"
-                                    />
-                                </Table.Th>
-                                <Table.Th>Huésped</Table.Th>
-                                <Table.Th>Habitación</Table.Th>
-                                <Table.Th>Llegada → Salida</Table.Th>
-                                <Table.Th>Total</Table.Th>
-                                <Table.Th>Estado</Table.Th>
-                                <Table.Th class="text-right">Detalle</Table.Th>
-                            </Table.Tr>
-                        </Table.Thead>
-                        <Table.Tbody>
-                            <Table.Tr v-for="r in history" :key="r.id">
-                                <Table.Td v-if="canManage" class="w-10">
-                                    <FormCheck.Input
-                                        type="checkbox"
-                                        :checked="
-                                            selectedHistoryIds.includes(r.id)
-                                        "
-                                        @change="toggleHistoryRow(r.id)"
-                                    />
-                                </Table.Td>
-                                <Table.Td>
-                                    <span
-                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600"
-                                    >
-                                        {{ r.code }}
-                                    </span>
-                                    <div class="mt-1 text-sm font-medium">
-                                        {{ r.guest_name ?? 'Anónimo' }}
+
+                    <!-- Móvil y tablet -->
+                    <div
+                        v-if="history.length"
+                        class="divide-y divide-slate-200/60 lg:hidden dark:divide-darkmode-400"
+                    >
+                        <div
+                            v-for="r in history"
+                            :key="`m-${r.id}`"
+                            class="flex gap-3 px-4 py-3.5"
+                        >
+                            <FormCheck.Input
+                                v-if="canManage"
+                                type="checkbox"
+                                class="mt-1 shrink-0"
+                                :checked="selectedHistoryIds.includes(r.id)"
+                                @change="toggleHistoryRow(r.id)"
+                            />
+                            <div class="min-w-0 flex-1">
+                                <div
+                                    class="flex items-start justify-between gap-3"
+                                >
+                                    <div class="min-w-0">
+                                        <span
+                                            class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                        >
+                                            {{ r.code }}
+                                        </span>
+                                        <button
+                                            type="button"
+                                            class="mt-1.5 block truncate text-left text-sm font-medium transition hover:text-primary"
+                                            @click="
+                                                router.visit(
+                                                    `/reservas/${r.id}`,
+                                                )
+                                            "
+                                        >
+                                            {{ r.guest_name ?? 'Anónimo' }}
+                                        </button>
                                     </div>
-                                </Table.Td>
-                                <Table.Td>
-                                    <span class="font-medium">{{
-                                        r.room ?? '—'
-                                    }}</span>
-                                    <span
-                                        class="block text-xs text-slate-500"
-                                        >{{ r.room_type }}</span
+                                    <div
+                                        class="shrink-0 text-sm font-medium tabular-nums"
                                     >
-                                </Table.Td>
-                                <Table.Td class="text-sm">
-                                    {{ r.starts_at }}
-                                    <span class="text-slate-400">→</span>
-                                    {{ r.ends_at }}
-                                </Table.Td>
-                                <Table.Td>${{ r.total_amount }}</Table.Td>
-                                <Table.Td>
+                                        {{ money(Number(r.total_amount)) }}
+                                    </div>
+                                </div>
+
+                                <div
+                                    class="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3"
+                                >
                                     <span
-                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
+                                        class="inline-flex min-w-0 items-center gap-1.5"
+                                    >
+                                        <Lucide
+                                            icon="BedDouble"
+                                            class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                        />
+                                        <span class="truncate">{{
+                                            r.room ?? 'Sin asignar'
+                                        }}</span>
+                                    </span>
+                                    <span
+                                        class="inline-flex items-center gap-1.5 tabular-nums"
+                                    >
+                                        <Lucide
+                                            icon="CalendarDays"
+                                            class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                        />
+                                        {{ r.starts_at }}
+                                        <span class="text-slate-400">→</span>
+                                        {{ r.ends_at }}
+                                    </span>
+                                </div>
+
+                                <div
+                                    class="mt-2.5 flex flex-wrap items-center gap-1.5"
+                                >
+                                    <span
+                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="statusFor(r.status).class"
                                     >
                                         <Lucide
@@ -2664,18 +3591,14 @@ const modalDescription = computed(() => {
                                         />
                                         {{ friendlyStatusLabel(r) }}
                                     </span>
-                                    <span
-                                        v-if="r.cancellation_reason"
-                                        class="block max-w-[220px] truncate text-xs text-slate-400"
-                                        :title="r.cancellation_reason"
-                                        >{{ r.cancellation_reason }}</span
+                                    <div
+                                        class="ml-auto flex items-center gap-1.5"
                                     >
-                                </Table.Td>
-                                <Table.Td>
-                                    <div class="flex justify-end gap-1">
                                         <button
                                             v-if="canManage && isReopenable(r)"
-                                            class="rounded-md p-1.5 text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                            type="button"
+                                            :class="rowAction"
+                                            class="hover:bg-primary/10 hover:text-primary"
                                             title="Reabrir o reagendar"
                                             @click="openReopen(r)"
                                         >
@@ -2685,8 +3608,10 @@ const modalDescription = computed(() => {
                                             />
                                         </button>
                                         <button
-                                            class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                                            title="Ver detalle"
+                                            type="button"
+                                            :class="rowAction"
+                                            class="hover:bg-primary/10 hover:text-primary"
+                                            title="Ver la ficha de la reserva"
                                             @click="
                                                 router.visit(
                                                     `/reservas/${r.id}`,
@@ -2699,14 +3624,25 @@ const modalDescription = computed(() => {
                                             />
                                         </button>
                                     </div>
-                                </Table.Td>
-                            </Table.Tr>
-                        </Table.Tbody>
-                    </Table>
-                    <div v-else class="py-8 text-center text-xs text-slate-500">
-                        Aún no hay historial.
+                                </div>
+                            </div>
+                        </div>
                     </div>
-                </div>
+
+                    <div
+                        v-else
+                        class="flex flex-col items-center gap-2 px-5 py-10 text-center"
+                    >
+                        <Lucide icon="History" class="h-8 w-8 text-slate-300" />
+                        <p class="text-sm font-medium text-slate-600">
+                            Aún no hay historial
+                        </p>
+                        <p class="text-xs text-slate-500">
+                            Aquí caen las reservas completadas, las canceladas y
+                            los huéspedes que no llegaron.
+                        </p>
+                    </div>
+                </template>
             </div>
         </div>
 

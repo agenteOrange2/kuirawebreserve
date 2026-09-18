@@ -118,6 +118,19 @@ class CashCutService
      *
      * @return array<string, mixed>
      */
+    /**
+     * Gastos del cajón de este encargado en este ámbito. Un corte combinado
+     * ('all', formato viejo) se lleva los dos cajones.
+     *
+     * @return \Illuminate\Database\Eloquent\Builder<\App\Models\CashExpense>
+     */
+    public function expensesQuery(User $user, string $scope): \Illuminate\Database\Eloquent\Builder
+    {
+        return \App\Models\CashExpense::query()
+            ->where('user_id', $user->id)
+            ->when($scope !== CashCut::SCOPE_ALL, fn ($q) => $q->where('scope', $scope));
+    }
+
     public function compute(User $user, CarbonInterface $from, CarbonInterface $to, ?Shift $shift = null, string $scope = CashCut::SCOPE_ALL): array
     {
         // Límite inferior exclusivo: evita recontar la venta justo en el
@@ -211,6 +224,22 @@ class CashCutService
             $scope === CashCut::SCOPE_POS ? null : ['key' => 'payments', 'label' => 'Cobros de reservas', 'count' => $payments->count(), 'total' => round($paymentsTotal, 2)],
         ]));
 
+        // Lo que SALIÓ del cajón en el periodo. Sin esto, cada gasto pagado
+        // de la caja (gasolina, insumos) se leía como faltante del encargado.
+        $expenses = $this->expensesQuery($user, $scope)->tap(fn ($q) => $inPeriod($q, 'occurred_at'))->get();
+        $expensesTotal = round((float) $expenses->sum('amount'), 2);
+        $expensesByCategory = $expenses
+            ->groupBy('category')
+            ->map(fn ($rows, $key) => [
+                'key' => $key,
+                'label' => \App\Models\CashExpense::CATEGORIES[$key] ?? \App\Models\CashExpense::CATEGORIES['otro'],
+                'count' => $rows->count(),
+                'total' => round((float) $rows->sum('amount'), 2),
+            ])
+            ->sortByDesc('total')
+            ->values()
+            ->all();
+
         return [
             'scope' => $scope,
             'orders_count' => $orders->count(),
@@ -227,8 +256,11 @@ class CashCutService
             'opening_cash' => $openingCash,
             // Arqueo: el cajón de recepción contiene el fondo inicial del
             // turno y también las fianzas en efectivo cobradas (menos las
-            // devueltas), aunque no sean venta.
-            'expected_cash' => round($openingCash + $posCash + $payCash + $guaranteesCashIn - $guaranteesCashOut, 2),
+            // devueltas), aunque no sean venta. Y menos lo que salió.
+            'expected_cash' => round($openingCash + $posCash + $payCash + $guaranteesCashIn - $guaranteesCashOut - $expensesTotal, 2),
+            'expenses_count' => $expenses->count(),
+            'expenses_total' => $expensesTotal,
+            'expenses_by_category' => $expensesByCategory,
             // Fianzas del periodo, como línea informativa aparte (pasivo).
             'guarantees_count' => $guarantees->count(),
             'guarantees_collected' => $guaranteesCollected,
@@ -353,6 +385,25 @@ class CashCutService
                     'collected' => false,
                 ]);
             }
+        }
+
+        // Las salidas van en el mismo rastro que las entradas: un corte que
+        // solo lista lo que entró no explica por qué el cajón trae menos.
+        $expenses = $this->expensesQuery($user, $scope)
+            ->with('createdBy:id,name')
+            ->tap(fn ($q) => $inPeriod($q, 'occurred_at'))
+            ->get();
+
+        foreach ($expenses as $expense) {
+            $items->push([
+                'at' => $expense->occurred_at,
+                'concept' => 'Gasto: '.$expense->concept,
+                'detail' => $expense->categoryLabel()
+                    .($expense->createdBy !== null ? ' · '.$expense->createdBy->name : ''),
+                'method' => 'Efectivo (salida)',
+                'amount' => -(float) $expense->amount,
+                'collected' => false,
+            ]);
         }
 
         return $items

@@ -11,45 +11,24 @@ use App\Models\Stay;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 use Inertia\Response;
+use Symfony\Component\HttpFoundation\StreamedResponse;
 
 class GuestsPageController extends Controller
 {
+    /** Cómo se puede ordenar el directorio (el resto cae en "recientes"). */
+    private const SORTS = ['recent', 'name', 'visits', 'spent'];
+
     public function index(Request $request): Response
     {
-        $search = trim($request->string('q')->toString());
         $archived = $request->boolean('archived');
+        $sort = in_array($request->string('sort')->toString(), self::SORTS, true)
+            ? $request->string('sort')->toString()
+            : 'recent';
 
-        $guests = Guest::query()
-            ->when($archived, fn ($q) => $q->onlyTrashed())
-            ->when($search !== '', fn ($q) => $q->search($search))
-            ->when($request->boolean('blacklisted'), fn ($q) => $q->where('is_blacklisted', true))
-            // Visitas = estancias completadas + reservas completadas sin
-            // estancia (Guest::withVisits, mismo criterio que metrics()).
-            // Antes el directorio entero decía "0 visitas".
-            ->withVisits()
-            // Lo que le importa al mostrador de un huésped: si trae algo
-            // próximo. Subconsulta, no una consulta por fila.
-            ->addSelect(['next_arrival' => Reservation::query()
-                ->selectRaw('min(starts_at)')
-                ->whereColumn('reservations.guest_id', 'guests.id')
-                ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
-                ->where('ends_at', '>=', now())])
-            ->orderByDesc('updated_at')
+        $guests = $this->directoryQuery($request, $sort)
             ->paginate(15)
             ->withQueryString()
-            ->through(fn (Guest $guest) => [
-                'id' => $guest->id,
-                'full_name' => $guest->full_name ?? 'Sin nombre',
-                'phone' => $guest->phone,
-                'email' => $guest->email,
-                'visits' => (int) $guest->visits,
-                'next_arrival' => $guest->next_arrival
-                    ? \Carbon\Carbon::parse($guest->next_arrival)->format('d/m/Y')
-                    : null,
-                'is_blacklisted' => $guest->is_blacklisted,
-                'is_archived' => $guest->trashed(),
-                'created_at' => $guest->created_at->format('d/m/Y'),
-            ]);
+            ->through(fn (Guest $guest) => $this->row($guest));
 
         $archivedCount = Guest::onlyTrashed()->count();
 
@@ -66,11 +45,175 @@ class GuestsPageController extends Controller
                 'blacklisted' => Guest::where('is_blacklisted', true)->count(),
                 'archived' => $archivedCount,
             ],
-            'filters' => ['q' => $search, 'blacklisted' => $request->boolean('blacklisted'), 'archived' => $archived],
+            'filters' => [
+                'q' => trim($request->string('q')->toString()),
+                'blacklisted' => $request->boolean('blacklisted'),
+                'upcoming' => $request->boolean('upcoming'),
+                'archived' => $archived,
+                'sort' => $sort,
+            ],
             'canManage' => $request->user()->can('guests.manage'),
             'canViewDocuments' => $request->user()->can('guests.view-documents'),
             'documentTypes' => Guest::DOCUMENT_TYPES,
         ]);
+    }
+
+    /**
+     * El directorio en CSV, con los filtros puestos.
+     *
+     * El dueño pedía la lista para mandar promociones y para el contador;
+     * hasta ahora salía copiando la pantalla a mano, página por página.
+     */
+    public function export(Request $request): StreamedResponse
+    {
+        $sort = in_array($request->string('sort')->toString(), self::SORTS, true)
+            ? $request->string('sort')->toString()
+            : 'recent';
+
+        $filename = 'huespedes-'.now()->format('Y-m-d').'.csv';
+
+        return response()->streamDownload(function () use ($request, $sort) {
+            $out = fopen('php://output', 'w');
+            // BOM: sin él Excel en Windows parte los acentos.
+            fwrite($out, chr(0xEF).chr(0xBB).chr(0xBF));
+            fputcsv($out, [
+                'Nombre', 'Teléfono', 'Correo', 'Visitas', 'Gastado',
+                'Última visita', 'Próxima llegada', 'Lista negra',
+                'Archivado', 'Alta',
+            ]);
+
+            // cursor() y no chunk(): el orden puede ser por gasto o por
+            // visitas, que no son únicos, y paginar con offset sobre un
+            // orden repetido salta o repite renglones.
+            foreach ($this->directoryQuery($request, $sort)->cursor() as $guest) {
+                $row = $this->row($guest);
+                fputcsv($out, [
+                    $row['full_name'],
+                    $row['phone'] ?? '',
+                    $row['email'] ?? '',
+                    $row['visits'],
+                    number_format($row['total_spent'], 2, '.', ''),
+                    $row['last_visit'] ?? '',
+                    $row['next_arrival'] ?? '',
+                    $row['is_blacklisted'] ? 'sí' : 'no',
+                    $row['is_archived'] ? 'sí' : 'no',
+                    $row['created_at'],
+                ]);
+            }
+
+            fclose($out);
+        }, $filename, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+        ]);
+    }
+
+    /**
+     * La consulta del directorio, una sola vez para la pantalla y el CSV.
+     *
+     * Todo lo que la fila necesita viaja en subconsultas: con 15 filas por
+     * página, calcular visitas o gasto por fila serían 45 consultas extra.
+     */
+    protected function directoryQuery(Request $request, string $sort): \Illuminate\Database\Eloquent\Builder
+    {
+        $search = trim($request->string('q')->toString());
+
+        $query = Guest::query()
+            // select() ANTES de withVisits(): puesto después borra las
+            // columnas que withCount ya había agregado y el directorio
+            // entero vuelve a decir "0 visitas".
+            ->select('guests.*')
+            ->when($request->boolean('archived'), fn ($q) => $q->onlyTrashed())
+            ->when($search !== '', fn ($q) => $q->search($search))
+            ->when($request->boolean('blacklisted'), fn ($q) => $q->where('is_blacklisted', true))
+            // Solo los que traen algo apartado: a estos se les llama hoy.
+            ->when($request->boolean('upcoming'), fn ($q) => $q->whereHas('reservations', fn ($r) => $r
+                ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
+                ->where('ends_at', '>=', now())))
+            // Visitas = estancias completadas + reservas completadas sin
+            // estancia (Guest::withVisits, mismo criterio que metrics()).
+            // Antes el directorio entero decía "0 visitas".
+            ->withVisits()
+            // Lo que ha dejado: hospedaje + consumos. Mismo criterio que
+            // metrics() en la ficha, para que las dos cifras coincidan.
+            ->selectRaw($this->spentExpression().' as total_spent')
+            // Lo que le importa al mostrador de un huésped: si trae algo
+            // próximo. Subconsulta, no una consulta por fila.
+            ->addSelect(['next_arrival' => Reservation::query()
+                ->selectRaw('min(starts_at)')
+                ->whereColumn('reservations.guest_id', 'guests.id')
+                ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
+                ->where('ends_at', '>=', now())])
+            // Cuándo vino por última vez: la estancia más reciente o, si
+            // nunca se registró llegada, la reserva completada más reciente.
+            ->addSelect(['last_stay_at' => Stay::query()
+                ->selectRaw('max(check_in_at)')
+                ->whereColumn('stays.guest_id', 'guests.id')
+                ->where('status', Stay::STATUS_COMPLETED)])
+            ->addSelect(['last_reservation_at' => Reservation::query()
+                ->selectRaw('max(starts_at)')
+                ->whereColumn('reservations.guest_id', 'guests.id')
+                ->where('status', ReservationStatus::Completed)]);
+
+        return match ($sort) {
+            'name' => $query->orderBy('last_name')->orderBy('first_name'),
+            // Los alias del select: los ordena igual MySQL y sqlite.
+            'visits' => $query->orderByRaw('(stay_visits + reservation_visits) desc'),
+            'spent' => $query->orderByRaw('total_spent desc'),
+            default => $query->orderByDesc('updated_at'),
+        };
+    }
+
+    /**
+     * Lo gastado por un huésped, en SQL: hospedaje de sus estancias
+     * (cerradas o en curso), consumos cargados al cuarto y reservas
+     * completadas que nunca tuvieron estancia (las migradas y las que el
+     * hotel cierra sin registrar la llegada).
+     */
+    protected function spentExpression(): string
+    {
+        $stayStatuses = "'".Stay::STATUS_COMPLETED."', '".Stay::STATUS_ACTIVE."'";
+        $orderStatus = "'".Order::STATUS_COMPLETED."'";
+        $completed = "'".ReservationStatus::Completed->value."'";
+
+        return "(
+            (select coalesce(sum(s.amount), 0) from stays s
+                where s.guest_id = guests.id and s.status in ({$stayStatuses}))
+            + (select coalesce(sum(o.total), 0) from orders o
+                inner join stays os on os.id = o.stay_id
+                where os.guest_id = guests.id and o.status = {$orderStatus})
+            + (select coalesce(sum(r.total_amount), 0) from reservations r
+                where r.guest_id = guests.id and r.status = {$completed}
+                and not exists (select 1 from stays rs where rs.reservation_id = r.id))
+        )";
+    }
+
+    /**
+     * Un renglón del directorio (lo usan la pantalla y el CSV).
+     *
+     * @return array<string, mixed>
+     */
+    protected function row(Guest $guest): array
+    {
+        $lastVisit = collect([$guest->last_stay_at, $guest->last_reservation_at])
+            ->filter()
+            ->map(fn ($date) => \Illuminate\Support\Carbon::parse($date))
+            ->max();
+
+        return [
+            'id' => $guest->id,
+            'full_name' => $guest->full_name ?? 'Sin nombre',
+            'phone' => $guest->phone,
+            'email' => $guest->email,
+            'visits' => (int) $guest->visits,
+            'total_spent' => round((float) $guest->total_spent, 2),
+            'last_visit' => $lastVisit?->format('d/m/Y'),
+            'next_arrival' => $guest->next_arrival
+                ? \Illuminate\Support\Carbon::parse($guest->next_arrival)->format('d/m/Y')
+                : null,
+            'is_blacklisted' => $guest->is_blacklisted,
+            'is_archived' => $guest->trashed(),
+            'created_at' => $guest->created_at->format('d/m/Y'),
+        ];
     }
 
     public function show(Request $request, Guest $guest): Response

@@ -5,7 +5,6 @@ import { computed, onMounted, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
-import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 import GuestFormModal from './GuestFormModal.vue';
@@ -74,6 +73,13 @@ const props = defineProps<{
         active_stay: boolean;
         total_spent: number;
         last_visit: string | null;
+        /** "hace 3 meses", calculado en el servidor (zona del hotel). */
+        last_visit_ago: string | null;
+        nights: number;
+        average_ticket: number;
+        /** La habitación donde más veces se ha quedado. */
+        favorite_room: string | null;
+        favorite_channel: string | null;
         cancellations: number;
         no_shows: number;
     };
@@ -99,6 +105,23 @@ const props = defineProps<{
 
 const toast = useToasts();
 const showEdit = ref(false);
+
+const channelLabel: Record<string, string> = {
+    front_desk: 'Mostrador',
+    counter: 'Mostrador',
+    phone: 'Teléfono',
+    web: 'Sitio web',
+    whatsapp: 'WhatsApp',
+    walk_in: 'Llegó sin reserva',
+    agent: 'Asistente',
+};
+
+/** wa.me solo acepta dígitos; diez se asumen mexicanos (el lada del hotel). */
+const whatsappHref = (phone: string) => {
+    const digits = phone.replace(/\D+/g, '');
+
+    return `https://wa.me/${digits.length === 10 ? `52${digits}` : digits}`;
+};
 function onSaved() {
     showEdit.value = false;
     router.reload();
@@ -266,16 +289,6 @@ const fullHistoryHref = computed(
 <template>
     <RazeLayout :title="guest.full_name">
         <div class="mt-2">
-            <!-- Volver: pastilla con forma de control, no un botón más entre
-                 las acciones de la ficha. -->
-            <Link
-                :href="route('tenant.guests')"
-                class="mb-2.5 inline-flex h-8 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
-            >
-                <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
-                Volver a huéspedes
-            </Link>
-
             <!-- Encabezado en franjas: quién es y su contacto, los avisos que
                  cambian cómo se le atiende, y sus cifras. -->
             <div class="box box--stacked overflow-hidden">
@@ -342,6 +355,22 @@ const fullHistoryHref = computed(
                                         {{ guest.phone }}
                                     </span>
                                 </a>
+                                <!-- El hotel atiende por WhatsApp: desde la
+                                     ficha no había forma de escribirle. -->
+                                <a
+                                    v-if="guest.phone"
+                                    :href="whatsappHref(guest.phone)"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="inline-flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success transition hover:bg-success/20"
+                                    title="Escribirle por WhatsApp"
+                                >
+                                    <Lucide
+                                        icon="MessageCircle"
+                                        class="h-3.5 w-3.5 shrink-0"
+                                    />
+                                    WhatsApp
+                                </a>
                                 <a
                                     v-if="guest.email"
                                     :href="`mailto:${guest.email}`"
@@ -371,6 +400,16 @@ const fullHistoryHref = computed(
                     <div
                         class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:shrink-0 md:flex-wrap md:items-center md:gap-2"
                     >
+                        <!-- El volver va DENTRO del encabezado, como primer
+                             control de las acciones (canon de pantalla);
+                             flotando encima de la tarjeta partía el bloque. -->
+                        <Link
+                            :href="route('tenant.guests')"
+                            class="inline-flex h-9 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
+                        >
+                            <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                            Volver a huéspedes
+                        </Link>
                         <Button
                             v-if="canManage && guest.is_archived"
                             variant="primary"
@@ -535,6 +574,12 @@ const fullHistoryHref = computed(
                         </span>
                         <template v-if="metrics.last_visit">
                             última visita
+                            <span
+                                v-if="metrics.last_visit_ago"
+                                class="text-slate-400"
+                            >
+                                ({{ metrics.last_visit_ago }})
+                            </span>
                         </template>
                     </span>
                     <span
@@ -860,6 +905,112 @@ const fullHistoryHref = computed(
                  estancia son la misma noche: van en la misma fila, con la
                  habitación real, la hora de llegada y sus consumos. -->
                 <div class="col-span-12 xl:col-span-7">
+                    <!-- Qué clase de cliente es: lo que el mostrador sabría
+                         de memoria si viniera seguido. Va arriba del
+                         historial porque explica lo que se ve abajo. -->
+                    <div class="box box--stacked mb-4">
+                        <div
+                            class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                        >
+                            <div
+                                class="flex h-9 w-9 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                            >
+                                <Lucide icon="ChartColumn" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">
+                                    Cómo es este huésped
+                                </h2>
+                                <p class="text-xs text-slate-500">
+                                    Lo que dice su historial, en cuatro datos
+                                </p>
+                            </div>
+                        </div>
+                        <div
+                            class="grid grid-cols-2 gap-px bg-slate-200/60 sm:grid-cols-4 dark:bg-darkmode-400"
+                        >
+                            <div
+                                class="bg-white px-4 py-3 dark:bg-darkmode-600"
+                            >
+                                <div class="text-sm font-medium tabular-nums">
+                                    {{ money(metrics.average_ticket) }}
+                                </div>
+                                <div class="mt-0.5 text-xs text-slate-500">
+                                    Promedio por visita
+                                </div>
+                                <!-- La cuenta a la vista: un promedio solo se
+                                     entiende si se ve de dónde sale. -->
+                                <div class="text-[11px] text-slate-400">
+                                    {{ money(metrics.total_spent) }} en
+                                    {{ metrics.visits }}
+                                    {{
+                                        metrics.visits === 1
+                                            ? 'visita'
+                                            : 'visitas'
+                                    }}
+                                </div>
+                            </div>
+                            <div
+                                class="bg-white px-4 py-3 dark:bg-darkmode-600"
+                            >
+                                <div class="text-sm font-medium tabular-nums">
+                                    {{ metrics.nights }}
+                                </div>
+                                <div class="mt-0.5 text-xs text-slate-500">
+                                    {{
+                                        metrics.nights === 1
+                                            ? 'Noche'
+                                            : 'Noches'
+                                    }}
+                                    dormidas
+                                </div>
+                                <div class="text-[11px] text-slate-400">
+                                    Sumando todas sus estancias
+                                </div>
+                            </div>
+                            <div
+                                class="bg-white px-4 py-3 dark:bg-darkmode-600"
+                            >
+                                <div class="truncate text-sm font-medium">
+                                    {{ metrics.favorite_room ?? 'Sin fija' }}
+                                </div>
+                                <div class="mt-0.5 text-xs text-slate-500">
+                                    Su habitación
+                                </div>
+                                <div class="text-[11px] text-slate-400">
+                                    {{
+                                        metrics.favorite_room
+                                            ? 'La que más repite'
+                                            : 'Todavía no repite'
+                                    }}
+                                </div>
+                            </div>
+                            <div
+                                class="bg-white px-4 py-3 dark:bg-darkmode-600"
+                            >
+                                <div class="truncate text-sm font-medium">
+                                    {{
+                                        metrics.favorite_channel
+                                            ? (channelLabel[
+                                                  metrics.favorite_channel
+                                              ] ?? metrics.favorite_channel)
+                                            : 'Sin reservas'
+                                    }}
+                                </div>
+                                <div class="mt-0.5 text-xs text-slate-500">
+                                    Por dónde reserva
+                                </div>
+                                <div class="text-[11px] text-slate-400">
+                                    {{
+                                        guest.marketing_consent
+                                            ? 'Acepta promociones'
+                                            : 'No quiere promociones'
+                                    }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="box box--stacked">
                         <div
                             class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"

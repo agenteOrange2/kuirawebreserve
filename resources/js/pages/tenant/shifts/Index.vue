@@ -27,6 +27,23 @@ interface ShiftRow {
     has_cut: boolean;
     // Ámbitos ya cortados de este turno ('rooms' | 'pos' | 'all').
     cut_scopes: string[];
+    // El corte del turno, con su dinero: antes había que salir a /cortes
+    // para saber si cuadró.
+    cuts: ShiftCut[];
+    // Lo que salió del cajón en el turno (gastos y retiros).
+    expenses_total: number;
+    // Turno cerrado y sin corte: lo que hay que perseguir.
+    cut_pending: boolean;
+}
+interface ShiftCut {
+    id: number;
+    scope: string;
+    scope_label: string;
+    grand_total: number;
+    expenses_total: number;
+    counted: boolean;
+    difference: number;
+    closed_at: string | null;
 }
 interface ShiftTypeRow {
     id: number;
@@ -163,6 +180,35 @@ const cutUrl = (s: ShiftRow) =>
         to: s.ended_at_input ?? undefined,
     });
 
+// El corte del turno se lee de un golpe: verde si cuadró, ámbar si nadie
+// contó el cajón, rojo si sobró o faltó dinero.
+function cutTone(c: ShiftCut): string {
+    if (!c.counted) return 'bg-pending/10 text-pending';
+    return c.difference === 0
+        ? 'bg-success/10 text-success'
+        : 'bg-danger/10 text-danger';
+}
+
+function cutHint(c: ShiftCut): string {
+    const partes = [`${c.scope_label}: ${money(c.grand_total)} cobrados`];
+
+    if (c.expenses_total > 0) {
+        partes.push(`${money(c.expenses_total)} en gastos y retiros`);
+    }
+
+    if (!c.counted) {
+        partes.push('sin arqueo: nadie contó el cajón');
+    } else if (c.difference === 0) {
+        partes.push('el arqueo cuadró');
+    } else if (c.difference > 0) {
+        partes.push(`sobraron ${money(c.difference)}`);
+    } else {
+        partes.push(`faltaron ${money(Math.abs(c.difference))}`);
+    }
+
+    return partes.join(' · ');
+}
+
 // El avatar dice de qué área es la persona sin tener que leer la etiqueta.
 const areaAvatar: Record<string, string> = {
     user: 'bg-linear-to-br from-theme-1 to-theme-2',
@@ -177,6 +223,13 @@ const activeUserIds = computed(
 
 // Indicadores del encabezado: el pulso de la operación antes de entrar al
 // detalle de cada pestaña.
+// Turnos que ya terminaron y nadie cuadró su caja.
+const pendingCuts = computed(() => props.history.filter((s) => s.cut_pending));
+const onlyPendingCuts = ref(false);
+const historyRows = computed(() =>
+    onlyPendingCuts.value ? pendingCuts.value : props.history,
+);
+
 const stats = computed(() => {
     const scheduledInShift = props.scheduledToday.filter(
         (a) => a.user_id !== null && activeUserIds.value.has(a.user_id),
@@ -186,6 +239,7 @@ const stats = computed(() => {
         0,
     );
     const withCut = props.history.filter((s) => s.has_cut).length;
+    const sinCorte = pendingCuts.value.length;
 
     return [
         {
@@ -219,16 +273,28 @@ const stats = computed(() => {
             tint: 'border-info/10 bg-info/10 text-info',
         },
         {
+            // Un turno cerrado sin corte es dinero sin cuadrar: ese es el
+            // número que hay que perseguir, no cuántos turnos hubo.
             key: 'closed',
-            value: String(props.history.length),
-            label: props.history.length
-                ? `Turnos cerrados · ${withCut} con corte`
-                : 'Turnos cerrados',
-            hint: props.history.length
-                ? `${withCut} de ${props.history.length} con su corte hecho`
-                : 'Aún no hay turnos cerrados',
-            icon: 'History' as Icon,
-            tint: 'border-pending/10 bg-pending/10 text-pending',
+            value:
+                sinCorte > 0 ? String(sinCorte) : String(props.history.length),
+            label:
+                sinCorte > 0
+                    ? `Cerrados sin corte · de ${props.history.length}`
+                    : props.history.length
+                      ? `Turnos cerrados · ${withCut} con corte`
+                      : 'Turnos cerrados',
+            hint:
+                sinCorte > 0
+                    ? 'Turnos que terminaron y nadie cuadró su caja'
+                    : props.history.length
+                      ? `${withCut} de ${props.history.length} con su corte hecho`
+                      : 'Aún no hay turnos cerrados',
+            icon: (sinCorte > 0 ? 'TriangleAlert' : 'History') as Icon,
+            tint:
+                sinCorte > 0
+                    ? 'border-danger/10 bg-danger/10 text-danger'
+                    : 'border-pending/10 bg-pending/10 text-pending',
         },
     ];
 });
@@ -1217,7 +1283,28 @@ async function createSuggested() {
                                 {{ history.length }}
                             </span>
                         </div>
-                        <span class="ml-auto text-xs text-slate-500">
+                        <button
+                            v-if="pendingCuts.length"
+                            type="button"
+                            class="ml-auto inline-flex h-8 items-center gap-1.5 rounded-[0.5rem] border px-2.5 text-xs font-medium transition"
+                            :class="
+                                onlyPendingCuts
+                                    ? 'border-danger bg-danger/10 text-danger'
+                                    : 'border-slate-200/70 text-slate-500 hover:border-danger/60 hover:text-danger dark:border-darkmode-400'
+                            "
+                            title="Turnos que terminaron y nadie cuadró su caja"
+                            @click="onlyPendingCuts = !onlyPendingCuts"
+                        >
+                            <Lucide icon="TriangleAlert" class="h-3.5 w-3.5" />
+                            Sin corte
+                            <span class="font-semibold">
+                                {{ pendingCuts.length }}
+                            </span>
+                        </button>
+                        <span
+                            class="text-xs text-slate-500"
+                            :class="pendingCuts.length ? '' : 'ml-auto'"
+                        >
                             Los últimos 30, del más reciente al más antiguo
                         </span>
                     </div>
@@ -1245,12 +1332,17 @@ async function createSuggested() {
                                     <Table.Th
                                         class="text-right whitespace-nowrap"
                                     >
+                                        Salidas
+                                    </Table.Th>
+                                    <Table.Th
+                                        class="text-right whitespace-nowrap"
+                                    >
                                         Corte
                                     </Table.Th>
                                 </Table.Tr>
                             </Table.Thead>
                             <Table.Tbody>
-                                <Table.Tr v-for="s in history" :key="s.id">
+                                <Table.Tr v-for="s in historyRows" :key="s.id">
                                     <Table.Td>
                                         <div class="flex items-center gap-2.5">
                                             <div
@@ -1302,27 +1394,45 @@ async function createSuggested() {
                                     <Table.Td
                                         class="text-right whitespace-nowrap"
                                     >
-                                        <Link
-                                            v-if="s.has_cut"
-                                            :href="cutUrl(s)"
-                                            class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"
+                                        <span
+                                            v-if="s.expenses_total > 0"
+                                            class="font-medium text-danger"
                                         >
-                                            <Lucide
-                                                icon="CircleCheck"
-                                                class="h-3.5 w-3.5"
-                                            />
-                                            {{
-                                                s.cut_scopes.includes('all')
-                                                    ? 'Con corte'
-                                                    : s.cut_scopes
-                                                          .map((sc) =>
-                                                              sc === 'pos'
-                                                                  ? 'POS'
-                                                                  : 'Recepción',
-                                                          )
-                                                          .join(' + ')
-                                            }}
-                                        </Link>
+                                            −{{ money(s.expenses_total) }}
+                                        </span>
+                                        <span v-else class="text-slate-400">
+                                            —
+                                        </span>
+                                    </Table.Td>
+                                    <Table.Td
+                                        class="text-right whitespace-nowrap"
+                                    >
+                                        <div
+                                            v-if="s.cuts.length"
+                                            class="flex flex-col items-end gap-1"
+                                        >
+                                            <Link
+                                                v-for="c in s.cuts"
+                                                :key="c.id"
+                                                :href="cutUrl(s)"
+                                                class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                :class="cutTone(c)"
+                                                :title="cutHint(c)"
+                                            >
+                                                <Lucide
+                                                    :icon="
+                                                        !c.counted
+                                                            ? 'CircleHelp'
+                                                            : c.difference === 0
+                                                              ? 'CircleCheck'
+                                                              : 'TriangleAlert'
+                                                    "
+                                                    class="h-3.5 w-3.5"
+                                                />
+                                                {{ c.scope_label }}
+                                                {{ money(c.grand_total) }}
+                                            </Link>
+                                        </div>
                                         <Button
                                             v-else
                                             :as="Link"
@@ -1779,8 +1889,7 @@ async function createSuggested() {
                             <p class="text-sm text-slate-500">Sin tipos aún.</p>
                             <Button
                                 variant="outline-primary"
-                                size="sm"
-                                class="rounded-[0.5rem]"
+                                class="h-9 rounded-[0.5rem] text-xs"
                                 :disabled="saving"
                                 @click="createSuggested"
                             >
@@ -1870,14 +1979,13 @@ async function createSuggested() {
                                 <Button
                                     v-if="typeForm.id"
                                     variant="outline-secondary"
-                                    size="sm"
+                                    class="h-9 rounded-[0.5rem] bg-white px-5 text-xs"
                                     @click="resetTypeForm"
                                     >Cancelar edición</Button
                                 >
                                 <Button
                                     variant="primary"
-                                    size="sm"
-                                    class="rounded-[0.5rem]"
+                                    class="h-9 rounded-[0.5rem] px-5 text-xs"
                                     :disabled="saving || !typeForm.name"
                                     @click="submitType"
                                 >

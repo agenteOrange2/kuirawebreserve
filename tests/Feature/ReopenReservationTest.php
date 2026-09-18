@@ -234,7 +234,10 @@ it('reactivar_apartado no revive lo que canceló el hotel', function () {
 });
 
 it('una respuesta del bot en ruso nunca sale: sin quien la traduzca va una frase segura en español', function () {
-    $brain = (new ReflectionClass(AgentBrain::class))->newInstanceWithoutConstructor();
+    // Por el contenedor, no con newInstanceWithoutConstructor: enforceLanguage
+    // busca un traductor entre los proveedores y eso pasa por PlatformAgentGate,
+    // que sin constructor queda sin inicializar.
+    $brain = app(AgentBrain::class);
     $enforce = fn (string $text) => (fn () => $this->enforceLanguage($text, null))->call($brain);
 
     // Texto real de la conversación 69 de cabañas (2026-09-10).

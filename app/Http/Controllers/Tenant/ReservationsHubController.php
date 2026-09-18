@@ -104,9 +104,65 @@ class ReservationsHubController extends Controller
                     ->where('updated_at', '>=', $now->copy()->subDays(7))
                     ->count(),
             ],
+            // El pulso de la semana: cuánta gente llega y sale cada día.
+            // Antes el tablero solo decía "hoy", y el puente que venía no
+            // se veía hasta que ya estaba encima.
+            'week' => $this->weekAhead($dayStart),
             'fresh' => $this->freshReservations($dayStart),
             'canManage' => $request->user()->can('reservations.manage'),
         ]);
+    }
+
+    /**
+     * Llegadas y salidas de los próximos siete días, contadas por día.
+     *
+     * Se traen las fechas del rango en dos consultas y se agrupan en PHP:
+     * agrupar por día en SQL cambia de dialecto (y aquí conviven MySQL en
+     * producción con sqlite en los tests).
+     *
+     * @return array<string, mixed>
+     */
+    protected function weekAhead(\Carbon\CarbonInterface $dayStart): array
+    {
+        $rangeEnd = $dayStart->copy()->addDays(7);
+
+        $arrivals = Reservation::query()
+            ->whereIn('status', [ReservationStatus::Pending, ReservationStatus::Confirmed])
+            ->whereBetween('starts_at', [$dayStart, $rangeEnd])
+            ->pluck('starts_at')
+            ->countBy(fn ($date) => $date->format('Y-m-d'));
+
+        $departures = Reservation::query()
+            ->whereIn('status', [ReservationStatus::Confirmed, ReservationStatus::CheckedIn])
+            ->whereBetween('ends_at', [$dayStart, $rangeEnd])
+            ->pluck('ends_at')
+            ->countBy(fn ($date) => $date->format('Y-m-d'));
+
+        $names = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+        $days = [];
+
+        for ($i = 0; $i < 7; $i++) {
+            $day = $dayStart->copy()->addDays($i);
+            $key = $day->format('Y-m-d');
+
+            $days[] = [
+                'date' => $key,
+                'label' => match ($i) {
+                    0 => 'Hoy',
+                    1 => 'Mañana',
+                    default => $names[$day->dayOfWeek].' '.$day->day,
+                },
+                'weekend' => in_array($day->dayOfWeek, [0, 5, 6], true),
+                'arrivals' => $arrivals[$key] ?? 0,
+                'departures' => $departures[$key] ?? 0,
+            ];
+        }
+
+        return [
+            'days' => $days,
+            'arrivals' => array_sum(array_column($days, 'arrivals')),
+            'departures' => array_sum(array_column($days, 'departures')),
+        ];
     }
 
     /**

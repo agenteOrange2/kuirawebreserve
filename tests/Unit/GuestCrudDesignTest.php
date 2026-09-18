@@ -19,10 +19,17 @@ it('mantiene el directorio de huéspedes ordenado y fácil de filtrar', function
         ->toContain('Encuentra un huésped')
         ->toContain('Nombre, teléfono o correo')
         // El buscador y la lista se unieron en una caja: el encabezado de
-        // los resultados ahora dice a secas "Huéspedes" (o "Archivados") con
-        // el total al lado, en vez de "Resultados del directorio".
-        ->toContain("archived ? 'Archivados' : 'Huéspedes'")
+        // los resultados nombra la lista (o los archivados) con el total al
+        // lado, en vez de "Resultados del directorio".
+        ->toContain("archived ? 'Huéspedes archivados' : 'Huéspedes'")
         ->toContain('{{ guests.total }}')
+        // Las cifras de arriba son filtros y la lista se puede ordenar y
+        // bajar en CSV: el directorio también sirve para trabajarlo, no
+        // solo para consultarlo.
+        ->toContain('applyCard(')
+        ->toContain('Exportar CSV')
+        ->toContain('Más han dejado')
+        ->toContain('Con llegada')
         ->toContain('Ver ficha')
         ->toContain('Archivar o eliminar')
         ->toContain('Eliminar definitivamente')

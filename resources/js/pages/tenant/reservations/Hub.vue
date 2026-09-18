@@ -6,6 +6,7 @@ import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import ReservationsNav from './ReservationsNav.vue';
 
 /** Reserva recién capturada: hoy sale como "Nuevo", mañana como "Ayer". */
 interface FreshRow {
@@ -26,12 +27,22 @@ interface FreshRow {
     area_label: string;
 }
 
+/** Un día del pulso de la semana. */
+interface WeekDay {
+    date: string;
+    label: string;
+    weekend: boolean;
+    arrivals: number;
+    departures: number;
+}
+
 const props = defineProps<{
     property: { id: number; name: string };
     upcoming: { total: number; today: number; arrival_pending: number };
     inHouse: { total: number; departures_today: number; overdue: number };
     pending: { total: number; expiring: number; settlements: number };
     history: { total: number; last_week: number };
+    week: { days: WeekDay[]; arrivals: number; departures: number };
     fresh: { rows: FreshRow[]; total: number; today: number };
     canManage: boolean;
 }>();
@@ -69,6 +80,31 @@ const money = (value: number | string) =>
         minimumFractionDigits: 2,
         maximumFractionDigits: 2,
     }).format(Number(value) || 0);
+
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const cardHeader =
+    'flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400';
+const sectionLabel =
+    'text-[11px] font-medium tracking-wide text-slate-400 uppercase';
+// La cabecera de tabla es rótulo, no contenido.
+const tableHead = sectionLabel;
+
+/**
+ * El día más cargado de la semana marca la altura de las barras: así se ve
+ * de un vistazo cuál es el puente, sin leer siete números.
+ */
+const weekPeak = computed(() =>
+    Math.max(
+        1,
+        ...props.week.days.map((d) => Math.max(d.arrivals, d.departures)),
+    ),
+);
+
+const barHeight = (value: number) =>
+    value
+        ? `${Math.max(12, Math.round((value / weekPeak.value) * 100))}%`
+        : '0%';
 
 interface HubCard {
     key: string;
@@ -156,6 +192,7 @@ const cards = computed<HubCard[]>(() => [
 <template>
     <RazeLayout title="Reservas">
         <div class="mt-2">
+            <!-- Encabezado -->
             <div
                 class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
@@ -168,8 +205,8 @@ const cards = computed<HubCard[]>(() => [
                     <div class="min-w-0">
                         <h1 class="text-base font-medium">Reservas</h1>
                         <p class="mt-0.5 text-xs text-slate-500">
-                            {{ property.name }} · entra a lo que necesites:
-                            próximas, en casa, pendientes o historial
+                            {{ property.name }} · cómo viene el día y dónde está
+                            el trabajo pendiente
                         </p>
                     </div>
                 </div>
@@ -177,16 +214,14 @@ const cards = computed<HubCard[]>(() => [
                     class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2"
                 >
                     <Button
+                        v-if="canManage"
                         :as="Link"
-                        :href="route('tenant.reservations.calendar')"
-                        variant="outline-secondary"
+                        :href="`${route('tenant.reservations.operation')}?intent=walkin`"
+                        variant="outline-primary"
                         class="h-9 rounded-[0.5rem] bg-white text-xs"
                     >
-                        <Lucide
-                            icon="CalendarRange"
-                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
-                        />
-                        Calendario
+                        <Lucide icon="Zap" class="mr-1.5 h-3.5 w-3.5" />
+                        Llegó sin reserva
                     </Button>
                     <Button
                         as="a"
@@ -213,8 +248,22 @@ const cards = computed<HubCard[]>(() => [
                 </div>
             </div>
 
+            <ReservationsNav
+                current="hub"
+                :badges="{
+                    pending: pending.total,
+                    settlements: pending.settlements,
+                }"
+            />
+
             <!-- Los cuatro accesos de la sección -->
-            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
+            <div class="mt-4 flex items-center gap-2">
+                <span :class="sectionLabel">Dónde está el trabajo</span>
+                <span class="hidden text-[11px] text-slate-400 sm:inline">
+                    Cada tarjeta abre su pantalla completa
+                </span>
+            </div>
+            <div class="mt-2 grid auto-rows-fr grid-cols-12 gap-4">
                 <Link
                     v-for="card in cards"
                     :key="card.key"
@@ -222,10 +271,7 @@ const cards = computed<HubCard[]>(() => [
                     class="box box--stacked col-span-12 flex flex-col gap-3 p-4 transition hover:border-primary/30 sm:col-span-6 xl:col-span-3"
                 >
                     <div class="flex items-center gap-2.5">
-                        <div
-                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
-                            :class="card.tone"
-                        >
+                        <div :class="[sectionIcon, card.tone]">
                             <Lucide :icon="card.icon" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
@@ -259,22 +305,257 @@ const cards = computed<HubCard[]>(() => [
                 </Link>
             </div>
 
+            <!-- Cómo viene la semana y dónde se trabaja el día: dos columnas
+                 parejas para no dejar el pulso solo a lo ancho. -->
+            <div class="mt-4 flex items-center gap-2">
+                <span :class="sectionLabel">Los próximos siete días</span>
+                <span class="hidden text-[11px] text-slate-400 sm:inline">
+                    Llegadas y salidas ya apartadas
+                </span>
+            </div>
+            <div class="mt-2 grid grid-cols-12 items-stretch gap-4">
+                <div class="col-span-12 flex flex-col xl:col-span-8">
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div
+                                :class="[
+                                    sectionIcon,
+                                    'border-primary/10 bg-primary/10 text-primary',
+                                ]"
+                            >
+                                <Lucide icon="CalendarRange" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <div class="text-sm font-medium">
+                                    Movimiento de la semana
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    {{ week.arrivals }}
+                                    {{
+                                        week.arrivals === 1
+                                            ? 'llegada'
+                                            : 'llegadas'
+                                    }}
+                                    y {{ week.departures }}
+                                    {{
+                                        week.departures === 1
+                                            ? 'salida'
+                                            : 'salidas'
+                                    }}
+                                    en total
+                                </div>
+                            </div>
+                            <div
+                                class="ml-auto flex items-center gap-3 text-[11px] text-slate-500"
+                            >
+                                <span class="inline-flex items-center gap-1.5">
+                                    <span
+                                        class="h-2 w-2 rounded-full bg-primary"
+                                    />
+                                    Llegan
+                                </span>
+                                <span class="inline-flex items-center gap-1.5">
+                                    <span
+                                        class="h-2 w-2 rounded-full bg-slate-300"
+                                    />
+                                    Salen
+                                </span>
+                            </div>
+                        </div>
+                        <div class="flex flex-1 flex-col px-4 py-3">
+                            <div
+                                class="grid grid-cols-4 gap-2 sm:grid-cols-7 sm:gap-3"
+                            >
+                                <Link
+                                    v-for="(day, index) in week.days"
+                                    :key="day.date"
+                                    :href="`${route('tenant.reservations.upcoming')}?date=${day.date}`"
+                                    class="flex flex-col items-center gap-2 rounded-[0.6rem] border px-2 py-2.5 transition hover:border-primary/30"
+                                    :class="
+                                        index === 0
+                                            ? 'border-primary/30 bg-primary/5'
+                                            : day.weekend
+                                              ? 'border-slate-200/70 bg-slate-50/70 dark:border-darkmode-400 dark:bg-darkmode-600/40'
+                                              : 'border-slate-200/70 dark:border-darkmode-400'
+                                    "
+                                    :title="`${day.arrivals} llegan y ${day.departures} salen`"
+                                >
+                                    <span
+                                        class="truncate text-[11px] font-medium"
+                                        :class="
+                                            index === 0
+                                                ? 'text-primary'
+                                                : 'text-slate-500'
+                                        "
+                                    >
+                                        {{ day.label }}
+                                    </span>
+                                    <!-- Dos barras a la misma escala: el día
+                                         más cargado marca el tope. -->
+                                    <div
+                                        class="flex h-14 items-end justify-center gap-1.5"
+                                    >
+                                        <span
+                                            class="min-h-[2px] w-2.5 rounded-t bg-primary/70"
+                                            :style="{
+                                                height: barHeight(day.arrivals),
+                                            }"
+                                        />
+                                        <span
+                                            class="min-h-[2px] w-2.5 rounded-t bg-slate-300 dark:bg-darkmode-400"
+                                            :style="{
+                                                height: barHeight(
+                                                    day.departures,
+                                                ),
+                                            }"
+                                        />
+                                    </div>
+                                    <span
+                                        class="text-xs font-medium text-slate-600 dark:text-slate-300"
+                                    >
+                                        {{ day.arrivals }}
+                                        <span class="text-slate-400"
+                                            >/ {{ day.departures }}</span
+                                        >
+                                    </span>
+                                </Link>
+                            </div>
+                            <p class="mt-3 text-[11px] text-slate-400">
+                                Cuentan las reservas vivas: apartadas,
+                                confirmadas y las que ya están en casa.
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- La pantalla de siempre: aquí se vende, se registra la
+                     llegada y se cobra la salida. El tablero solo reparte. -->
+                <div class="col-span-12 flex flex-col xl:col-span-4">
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div
+                                :class="[
+                                    sectionIcon,
+                                    'border-info/10 bg-info/10 text-info',
+                                ]"
+                            >
+                                <Lucide icon="ClipboardList" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <div class="text-sm font-medium">
+                                    Operación del día
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    Todo junto en una pantalla
+                                </div>
+                            </div>
+                        </div>
+                        <div
+                            class="flex flex-1 flex-col justify-between gap-3 px-4 py-3"
+                        >
+                            <p class="text-xs text-slate-500">
+                                Llegadas, huéspedes alojados, registrar salida,
+                                cobros y llegada exprés, sin cambiar de
+                                pantalla.
+                            </p>
+                            <div
+                                class="grid gap-2 sm:grid-cols-2 xl:grid-cols-1"
+                            >
+                                <Button
+                                    :as="Link"
+                                    :href="
+                                        route('tenant.reservations.operation')
+                                    "
+                                    variant="outline-primary"
+                                    class="h-9 justify-center rounded-[0.5rem] bg-white text-xs"
+                                >
+                                    <Lucide
+                                        icon="ArrowRight"
+                                        class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
+                                    />
+                                    Abrir operación
+                                </Button>
+                                <Button
+                                    :as="Link"
+                                    :href="
+                                        route('tenant.reservations.calendar')
+                                    "
+                                    variant="outline-secondary"
+                                    class="h-9 justify-center rounded-[0.5rem] bg-white text-xs"
+                                >
+                                    <Lucide
+                                        icon="CalendarRange"
+                                        class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
+                                    />
+                                    Ver calendario
+                                </Button>
+                            </div>
+                            <div
+                                v-if="pending.settlements"
+                                class="rounded-[0.6rem] border border-danger/20 bg-danger/5 px-3 py-2.5"
+                            >
+                                <div
+                                    class="flex items-center gap-1.5 text-xs font-medium text-danger"
+                                >
+                                    <Lucide
+                                        icon="ReceiptText"
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    {{ pending.settlements }}
+                                    {{
+                                        pending.settlements === 1
+                                            ? 'cuenta quedó sin cobrar'
+                                            : 'cuentas quedaron sin cobrar'
+                                    }}
+                                </div>
+                                <Link
+                                    :href="
+                                        route('tenant.reservations.settlements')
+                                    "
+                                    class="mt-1 inline-flex items-center gap-1 text-[11px] font-medium text-danger hover:underline"
+                                >
+                                    Revisarlas
+                                    <Lucide
+                                        icon="ChevronRight"
+                                        class="h-3 w-3"
+                                    />
+                                </Link>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Lo que entró hoy y ayer. Al tercer día se cae solo: para
                  entonces la reserva ya vive en su área. -->
-            <div class="box box--stacked mt-4">
-                <div
-                    class="flex flex-wrap items-center gap-2 border-b border-slate-200/60 px-4 py-3 text-sm font-medium dark:border-darkmode-400"
-                >
-                    <Lucide icon="Sparkles" class="h-4 w-4 text-slate-400" />
-                    Reservaciones nuevas
-                    <span
-                        class="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-normal text-primary"
+            <div class="mt-4 flex items-center gap-2">
+                <span :class="sectionLabel">Movimiento reciente</span>
+                <span class="hidden text-[11px] text-slate-400 sm:inline">
+                    Lo capturado hoy y ayer, venga de donde venga
+                </span>
+            </div>
+            <div class="box box--stacked mt-2">
+                <div :class="cardHeader">
+                    <div
+                        :class="[
+                            sectionIcon,
+                            'border-success/10 bg-success/10 text-success',
+                        ]"
                     >
-                        {{ fresh.today }} hoy
-                    </span>
+                        <Lucide icon="Sparkles" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            Reservaciones nuevas
+                        </div>
+                        <div class="text-xs text-slate-500">
+                            {{ fresh.today }}
+                            {{ fresh.today === 1 ? 'entró' : 'entraron' }} hoy
+                        </div>
+                    </div>
                     <span
                         v-if="fresh.total > fresh.rows.length"
-                        class="ml-auto text-[11px] text-slate-500"
+                        class="ml-auto text-[11px] text-slate-400"
                     >
                         Se muestran las {{ fresh.rows.length }} más recientes de
                         {{ fresh.total }}
@@ -282,12 +563,14 @@ const cards = computed<HubCard[]>(() => [
                 </div>
 
                 <template v-if="fresh.rows.length">
-                    <!-- Móvil: tarjetas apiladas -->
-                    <div class="space-y-2 p-4 sm:hidden">
+                    <!-- Móvil: renglones a ras, no tarjetas dentro de la caja -->
+                    <div
+                        class="divide-y divide-slate-200/60 sm:hidden dark:divide-darkmode-400"
+                    >
                         <div
                             v-for="row in fresh.rows"
                             :key="`card-${row.id}`"
-                            class="rounded-lg border border-slate-200/70 bg-white p-3 dark:border-darkmode-400 dark:bg-darkmode-600"
+                            class="px-4 py-3"
                         >
                             <div
                                 class="flex items-center justify-between gap-2"
@@ -356,24 +639,40 @@ const cards = computed<HubCard[]>(() => [
 
                     <!-- Escritorio: tabla -->
                     <div
-                        class="hidden overflow-auto p-4 sm:block lg:overflow-visible"
+                        class="hidden overflow-auto sm:block lg:overflow-visible"
                     >
-                        <Table>
+                        <Table hover>
                             <Table.Thead>
                                 <Table.Tr>
-                                    <Table.Th>Huésped</Table.Th>
-                                    <Table.Th>Habitación</Table.Th>
-                                    <Table.Th class="whitespace-nowrap"
+                                    <Table.Th :class="tableHead"
+                                        >Huésped</Table.Th
+                                    >
+                                    <Table.Th :class="tableHead"
+                                        >Habitación</Table.Th
+                                    >
+                                    <Table.Th
+                                        :class="[
+                                            tableHead,
+                                            'whitespace-nowrap',
+                                        ]"
                                         >Llegada</Table.Th
                                     >
-                                    <Table.Th class="whitespace-nowrap"
+                                    <Table.Th
+                                        :class="[
+                                            tableHead,
+                                            'whitespace-nowrap',
+                                        ]"
                                         >Se creó</Table.Th
                                     >
-                                    <Table.Th class="text-right"
+                                    <Table.Th :class="[tableHead, 'text-right']"
                                         >Total</Table.Th
                                     >
-                                    <Table.Th>Estado</Table.Th>
-                                    <Table.Th class="text-right">Reserva</Table.Th>
+                                    <Table.Th :class="tableHead"
+                                        >Estado</Table.Th
+                                    >
+                                    <Table.Th :class="[tableHead, 'text-right']"
+                                        >Reserva</Table.Th
+                                    >
                                 </Table.Tr>
                             </Table.Thead>
                             <Table.Tbody>
@@ -430,19 +729,21 @@ const cards = computed<HubCard[]>(() => [
                                             {{ row.room_type }}
                                         </div>
                                     </Table.Td>
-                                    <Table.Td class="text-xs whitespace-nowrap">
+                                    <Table.Td
+                                        class="text-xs whitespace-nowrap tabular-nums"
+                                    >
                                         {{ row.starts_at }}
                                         <div class="text-slate-500">
                                             sale {{ row.ends_at }}
                                         </div>
                                     </Table.Td>
                                     <Table.Td
-                                        class="text-xs whitespace-nowrap text-slate-500"
+                                        class="text-xs whitespace-nowrap text-slate-500 tabular-nums"
                                     >
                                         {{ row.created_at }}
                                     </Table.Td>
                                     <Table.Td
-                                        class="text-right text-xs font-medium whitespace-nowrap"
+                                        class="text-right text-xs font-medium whitespace-nowrap tabular-nums"
                                     >
                                         {{ money(row.total_amount) }}
                                     </Table.Td>
@@ -501,51 +802,6 @@ const cards = computed<HubCard[]>(() => [
                         Aquí aparecen las que se capturen hoy y ayer, vengan del
                         sitio, del asistente o del mostrador.
                     </p>
-                </div>
-            </div>
-
-            <!-- La pantalla de siempre: aquí se vende, se registra la llegada
-                 y se cobra la salida. El tablero solo reparte. -->
-            <div
-                class="box box--stacked mt-4 flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
-            >
-                <div class="flex min-w-0 items-center gap-3">
-                    <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-slate-200/80 text-slate-500 dark:border-darkmode-400"
-                    >
-                        <Lucide icon="ClipboardList" class="h-4 w-4" />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="text-sm font-medium">Operación del día</div>
-                        <p class="mt-0.5 text-xs text-slate-500">
-                            Todo junto en una pantalla: llegadas, alojados,
-                            registrar salida, cobros y llegada exprés.
-                        </p>
-                    </div>
-                </div>
-                <div class="flex flex-wrap gap-2">
-                    <Button
-                        v-if="canManage"
-                        :as="Link"
-                        :href="`${route('tenant.reservations.operation')}?intent=walkin`"
-                        variant="outline-primary"
-                        class="h-9 rounded-[0.5rem] bg-white text-xs"
-                    >
-                        <Lucide icon="Zap" class="mr-1.5 h-3.5 w-3.5" />
-                        Llegó sin reserva
-                    </Button>
-                    <Button
-                        :as="Link"
-                        :href="route('tenant.reservations.operation')"
-                        variant="outline-secondary"
-                        class="h-9 rounded-[0.5rem] bg-white text-xs"
-                    >
-                        <Lucide
-                            icon="ArrowRight"
-                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
-                        />
-                        Abrir operación
-                    </Button>
                 </div>
             </div>
         </div>

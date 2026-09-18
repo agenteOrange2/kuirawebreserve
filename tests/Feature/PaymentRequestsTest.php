@@ -241,7 +241,7 @@ it('el detalle de la solicitud trae huésped, montos del sujeto y cuentas del ho
         ->and($data['receipt'])->toBeNull();
 });
 
-it('los últimos pagos de /pagos paginan, filtran por método y marcan reembolsos', function () {
+it('los movimientos paginan, filtran por método y marcan reembolsos', function () {
     \Spatie\Permission\Models\Permission::findOrCreate('reservations.manage', 'web');
     $user = \App\Models\User::factory()->create();
     $user->givePermissionTo('reservations.manage');
@@ -271,7 +271,10 @@ it('los últimos pagos de /pagos paginan, filtran por método y marcan reembolso
         $request->headers->set('X-Inertia', 'true');
         $request->setUserResolver(fn () => $user);
 
-        return app(\App\Http\Controllers\Tenant\PaymentsPageController::class)($request)
+        // El historial ya no cuelga del tablero: tiene su propia pantalla
+        // (/pagos/movimientos) desde que /pagos se partió en cuatro.
+        return app(\App\Http\Controllers\Tenant\PaymentsPageController::class)
+            ->movements($request)
             ->toResponse($request)->getData(true)['props'];
     };
 

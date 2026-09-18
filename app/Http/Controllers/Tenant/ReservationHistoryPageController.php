@@ -97,6 +97,9 @@ class ReservationHistoryPageController extends ReservationsPageController
         return Inertia::render('tenant/reservations/History', [
             'property' => $property->only(['id', 'name']),
             'reservations' => $paginator,
+            // Las cifras miran TODO el archivo (o el del huésped a la
+            // vista), no la página ni el filtro de estado.
+            'summary' => $this->summary($guest),
             'filters' => ['q' => $search, 'status' => $status?->value ?? '', 'guest' => $guest?->id],
             'guest' => $guest === null ? null : [
                 'id' => $guest->id,
@@ -109,5 +112,27 @@ class ReservationHistoryPageController extends ReservationsPageController
             'canManage' => $request->user()->can('reservations.manage'),
             'holdMinutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
         ]);
+    }
+
+    /**
+     * Cómo terminaron las reservas y cuánto dejaron las que sí se usaron.
+     *
+     * @return array<string, mixed>
+     */
+    protected function summary(?Guest $guest): array
+    {
+        $base = fn () => Reservation::query()
+            ->whereIn('status', self::HISTORY_STATUSES)
+            ->when($guest, fn ($query, Guest $g) => $query->where('guest_id', $g->id));
+
+        $completed = $base()->where('status', ReservationStatus::Completed);
+        $revenue = round((float) $completed->sum('total_amount'), 2);
+
+        return [
+            'completed' => $base()->where('status', ReservationStatus::Completed)->count(),
+            'cancelled' => $base()->where('status', ReservationStatus::Cancelled)->count(),
+            'no_show' => $base()->where('status', ReservationStatus::NoShow)->count(),
+            'revenue_label' => '$'.number_format($revenue, 2),
+        ];
     }
 }

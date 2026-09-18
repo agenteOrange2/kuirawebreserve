@@ -132,6 +132,12 @@
             @if ((float) $cut->opening_cash > 0)
                 <tr><td>Fondo de caja inicial del turno</td><td class="right">${{ number_format((float) $cut->opening_cash, 2) }}</td></tr>
             @endif
+            @if ((int) $cut->expenses_count > 0)
+                <tr>
+                    <td>Gastos y retiros del turno ({{ $cut->expenses_count }})</td>
+                    <td class="right danger">− ${{ number_format((float) $cut->expenses_total, 2) }}</td>
+                </tr>
+            @endif
             <tr><td>Efectivo esperado en cajón</td><td class="right">${{ number_format((float) $cut->expected_cash, 2) }}</td></tr>
             @if ($cut->counted_cash !== null)
                 <tr><td>Efectivo contado</td><td class="right">${{ number_format((float) $cut->counted_cash, 2) }}</td></tr>

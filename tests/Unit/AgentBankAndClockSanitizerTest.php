@@ -229,3 +229,39 @@ TXT, $cuenta);
         ->and($salida)->toContain('- CLABE interbancaria: 012164015648463025')
         ->and($salida)->not->toContain('- Cuenta: 012164015648463025');
 });
+
+// Caso real cabañas 2026-09-17 15:10 (RES-2026-1769): el MISMO defecto otra
+// vez, porque el filtro pedía la línea escrita de tú ("si TU app") y el
+// modelo la redactó de usted ("si SU app"), así que se coló y el bloque
+// rehecho la volvió a pegar.
+it('no repite la línea de la tarjeta aunque el modelo la escriba de usted', function () {
+    $cuenta = [[
+        'bank' => 'BBVA',
+        'holder' => 'Jatziry Sofía Salazar Salazar',
+        'clabe' => '012164015648463025',
+        'card' => '4152314577952941',
+        'account' => '1564846302',
+        'active' => true,
+    ]];
+
+    $salida = limpiarBanco(<<<'TXT'
+Le comparto los datos para la transferencia:
+
+- Banco: BBVA
+- Titular: Jatziry Sofía Salazar Salazar
+- CLABE interbancaria: 012164015648463025
+- Si tu app solo permite transferir a tarjeta: Tarjeta de débito 4152314577952941
+
+Si su app solo permite transferir a tarjeta: Tarjeta de débito 4152314577952941
+
+Monto: $1,500.00 MXN. Al realizar el pago, envíe su comprobante por este chat.
+TXT, $cuenta);
+
+    $veces = fn (string $aguja) => substr_count($salida, $aguja);
+
+    expect($veces('4152314577952941'))->toBe(1)
+        ->and($veces('012164015648463025'))->toBe(1)
+        ->and(preg_match_all('/permite transferir a tarjeta/iu', $salida))->toBe(1)
+        ->and($salida)->toContain('Monto: $1,500.00')
+        ->and($salida)->toContain('envíe su comprobante');
+});

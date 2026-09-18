@@ -46,8 +46,32 @@ class InHouseStaysPageController extends ReservationsPageController
         return Inertia::render('tenant/reservations/InHouse', [
             'property' => $property->only(['id', 'name']),
             'stays' => $paginator,
+            // Las cifras son de la casa entera, no de la página ni de la
+            // búsqueda: es el estado del hotel en este momento.
+            'summary' => $this->summary(),
             'filters' => ['q' => $search],
             'canManage' => $request->user()->can('reservations.manage'),
         ]);
+    }
+
+    /**
+     * El estado de la casa ahora: cuántas habitaciones en uso, cuánta gente
+     * hay dentro, quién sale hoy y a quién ya se le pasó la hora.
+     *
+     * @return array<string, mixed>
+     */
+    protected function summary(): array
+    {
+        $now = now();
+        $active = fn () => Stay::query()->active();
+
+        return [
+            'rooms' => $active()->count(),
+            'guests' => (int) $active()->sum('num_people'),
+            'departures_today' => $active()
+                ->whereBetween('planned_end_at', [$now->copy()->startOfDay(), $now->copy()->endOfDay()])
+                ->count(),
+            'overdue' => $active()->where('planned_end_at', '<', $now)->count(),
+        ];
     }
 }

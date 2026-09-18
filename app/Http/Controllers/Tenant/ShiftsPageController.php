@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Tenant;
 
 use App\Http\Controllers\Controller;
+use App\Models\CashCut;
+use App\Models\CashExpense;
 use App\Models\Property;
 use App\Models\Shift;
 use App\Models\ShiftAssignment;
@@ -24,7 +26,15 @@ class ShiftsPageController extends Controller
     {
         $property = Property::firstOrFail();
 
-        $serialize = function (Shift $shift) {
+        // Salidas de efectivo por turno, en una sola consulta: pedirlas
+        // renglón por renglón serían 30 consultas en el historial.
+        $expensesByShift = CashExpense::query()
+            ->whereNotNull('shift_id')
+            ->selectRaw('shift_id, sum(amount) as total')
+            ->groupBy('shift_id')
+            ->pluck('total', 'shift_id');
+
+        $serialize = function (Shift $shift) use ($expensesByShift) {
             return [
                 'id' => $shift->id,
                 'user_id' => $shift->user_id,
@@ -43,6 +53,23 @@ class ShiftsPageController extends Controller
                 // cortes por reloj de antes del enlace no marcan el badge.
                 'has_cut' => $shift->cashCuts->isNotEmpty(),
                 'cut_scopes' => $shift->cashCuts->pluck('scope')->unique()->values(),
+                // El turno y su corte, en la misma pantalla: antes /turnos
+                // solo decía "ya tiene corte" y había que salir a /cortes
+                // para saber si cuadró.
+                'cuts' => $shift->cashCuts->map(fn (CashCut $c) => [
+                    'id' => $c->id,
+                    'scope' => $c->scope,
+                    'scope_label' => $c->scopeLabel(),
+                    'grand_total' => (float) $c->grand_total,
+                    'expenses_total' => (float) $c->expenses_total,
+                    'counted' => $c->counted_cash !== null,
+                    'difference' => (float) $c->difference,
+                    'closed_at' => $c->closed_at?->format('d/m H:i'),
+                ])->values(),
+                // Lo que salió del cajón en el turno, esté cortado o no.
+                'expenses_total' => round((float) ($expensesByShift[$shift->id] ?? 0), 2),
+                // Turno cerrado y sin corte: eso es lo que hay que perseguir.
+                'cut_pending' => $shift->ended_at !== null && $shift->cashCuts->isEmpty(),
             ];
         };
 
@@ -129,13 +156,13 @@ class ShiftsPageController extends Controller
             'scheduledToday' => $scheduledToday,
             'activeShifts' => Shift::query()
                 ->open()
-                ->with(['user:id,name', 'createdBy:id,name', 'cashCuts:id,shift_id,scope'])
+                ->with(['user:id,name', 'createdBy:id,name', 'cashCuts:id,shift_id,scope,grand_total,expenses_total,counted_cash,difference,closed_at'])
                 ->orderBy('started_at')
                 ->get()
                 ->map($serialize),
             'history' => Shift::query()
                 ->whereNotNull('ended_at')
-                ->with(['user:id,name', 'createdBy:id,name', 'closedBy:id,name', 'cashCuts:id,shift_id,scope'])
+                ->with(['user:id,name', 'createdBy:id,name', 'closedBy:id,name', 'cashCuts:id,shift_id,scope,grand_total,expenses_total,counted_cash,difference,closed_at'])
                 ->latest('ended_at')
                 ->take(30)
                 ->get()

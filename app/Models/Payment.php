@@ -21,6 +21,7 @@ class Payment extends Model implements HasMedia
 {
     use InteractsWithMedia;
     use LogsActivity;
+
     public const UPDATED_AT = null;
 
     /** Métodos de mostrador (los que el staff captura a mano). */
@@ -177,6 +178,7 @@ class Payment extends Model implements HasMedia
             'cash' => 'Efectivo',
             'card' => 'Tarjeta',
             'transfer' => 'Transferencia',
+            self::METHOD_ONLINE => 'Pasarela en línea',
             default => $method,
         };
     }

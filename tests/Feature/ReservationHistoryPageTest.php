@@ -107,6 +107,31 @@ it('el historial completo pagina, filtra por estado y busca por huésped y códi
         ->and($porCodigo['reservations']['data'][0]['id'])->toBe($cancelada->id);
 });
 
+it('la cabecera del historial cuenta cómo terminaron y cuánto se vendió', function () {
+    makeHistoryReservation(['total_amount' => 1200]);
+    makeHistoryReservation(['total_amount' => 800]);
+    makeHistoryReservation([
+        'guest_name' => 'Se Canceló',
+        'status' => ReservationStatus::Cancelled,
+        'total_amount' => 5000,
+    ]);
+    makeHistoryReservation([
+        'guest_name' => 'No Llegó',
+        'status' => ReservationStatus::NoShow,
+        'total_amount' => 3000,
+    ]);
+
+    // El filtro achica la lista, pero las cifras siguen mirando el archivo.
+    $props = inertiaProps(ReservationHistoryPageController::class, ['status' => 'cancelled']);
+
+    expect($props['reservations']['total'])->toBe(1)
+        ->and($props['summary']['completed'])->toBe(2)
+        ->and($props['summary']['cancelled'])->toBe(1)
+        ->and($props['summary']['no_show'])->toBe(1)
+        // Solo las completadas dejaron dinero: $1,200 + $800.
+        ->and($props['summary']['revenue_label'])->toBe('$2,000.00');
+});
+
 it('marca la reserva con transferencia esperando verificación (aviso del modal Confirmar)', function () {
     $conTransfer = makeHistoryReservation([
         'guest_name' => 'Espera Verificación',

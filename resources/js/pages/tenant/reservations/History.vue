@@ -11,6 +11,7 @@ import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 import ReopenDialog from './ReopenDialog.vue';
+import ReservationsNav from './ReservationsNav.vue';
 
 interface PriceLine {
     concept: string;
@@ -81,6 +82,15 @@ const props = defineProps<{
         data: HistoryRow[];
         links: PaginationLink[];
         total: number;
+        from: number | null;
+        to: number | null;
+    };
+    /** Cómo terminó TODO el archivo, no la página ni el filtro. */
+    summary: {
+        completed: number;
+        cancelled: number;
+        no_show: number;
+        revenue_label: string;
     };
     filters: { q: string; status: string; guest?: number | null };
     /** Con huésped a la vista el archivo muestra TODAS sus reservas. */
@@ -144,6 +154,14 @@ const statusFor = (s: string) =>
     };
 const friendlyStatusLabel = (status: string, label: string) =>
     status === 'no_show' ? 'No llegó' : label;
+
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const tableHead =
+    'text-[11px] font-medium tracking-wide text-slate-400 uppercase';
+const sectionLabel = tableHead;
+const rowAction =
+    'flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition';
 
 const sourceChannelLabel: Record<string, string> = {
     front_desk: 'Recepción',
@@ -316,24 +334,141 @@ async function submitDelete() {
                 </div>
             </div>
 
-            <div class="box box--stacked mt-5">
-                <!-- Filtros -->
+            <ReservationsNav current="history" />
+
+            <!-- Cómo terminaron -->
+            <div class="mt-4 flex items-center gap-2">
+                <span :class="sectionLabel">
+                    {{ guest ? 'Su historial' : 'Cómo terminaron' }}
+                </span>
+                <span class="hidden text-[11px] text-slate-400 sm:inline">
+                    Cuenta todo el archivo, no solo esta página
+                </span>
+            </div>
+            <div class="mt-2 grid auto-rows-fr grid-cols-12 gap-4">
                 <div
-                    class="flex flex-wrap items-center gap-3 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
                 >
-                    <div class="relative w-full sm:w-72">
+                    <div
+                        :class="[
+                            sectionIcon,
+                            'border-success/10 bg-success/10 text-success',
+                        ]"
+                    >
+                        <Lucide icon="CircleCheckBig" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ summary.completed }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            {{
+                                summary.completed === 1
+                                    ? 'Completada'
+                                    : 'Completadas'
+                            }}
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            El huésped se hospedó
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        :class="[
+                            sectionIcon,
+                            'border-danger/10 bg-danger/10 text-danger',
+                        ]"
+                    >
+                        <Lucide icon="Ban" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ summary.cancelled }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            {{
+                                summary.cancelled === 1
+                                    ? 'Cancelada'
+                                    : 'Canceladas'
+                            }}
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Se pueden reabrir
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        :class="[
+                            sectionIcon,
+                            'border-pending/10 bg-pending/10 text-pending',
+                        ]"
+                    >
+                        <Lucide icon="UserX" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ summary.no_show }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            No llegaron
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Apartaron y nunca aparecieron
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        :class="[
+                            sectionIcon,
+                            'border-primary/10 bg-primary/10 text-primary',
+                        ]"
+                    >
+                        <Lucide icon="Banknote" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium tabular-nums">
+                            {{ summary.revenue_label }}
+                        </div>
+                        <div class="truncate text-xs text-slate-500">
+                            Vendido en completadas
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            Lo cobrado se ve en Reportes
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="box box--stacked mt-4">
+                <!-- Filtros, en franja gris dentro del mismo box -->
+                <div
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                >
+                    <div class="relative w-full min-w-0 sm:w-80">
                         <Lucide
                             icon="Search"
                             class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
                         />
                         <FormInput
                             v-model="q"
-                            type="text"
-                            placeholder="Buscar por huésped, código o habitación…"
-                            class="pl-9"
+                            type="search"
+                            placeholder="Huésped, folio o habitación"
+                            class="h-9 pl-9 text-xs"
                         />
                     </div>
-                    <FormSelect v-model="status" class="w-full sm:w-48">
+                    <FormSelect
+                        v-model="status"
+                        class="h-9 w-full text-xs sm:w-48"
+                    >
                         <option value="">Todos los estados</option>
                         <option
                             v-for="option in statusOptions"
@@ -366,9 +501,14 @@ async function submitDelete() {
                         </Link>
                     </div>
                     <template v-if="canManage && selectedIds.length">
-                        <span class="ml-auto text-xs text-slate-500"
-                            >{{ selectedIds.length }} seleccionada(s)</span
-                        >
+                        <span class="ml-auto text-xs text-slate-500">
+                            {{ selectedIds.length }}
+                            {{
+                                selectedIds.length === 1
+                                    ? 'seleccionada'
+                                    : 'seleccionadas'
+                            }}
+                        </span>
                         <button
                             type="button"
                             class="text-xs font-medium text-primary hover:underline"
@@ -378,141 +518,61 @@ async function submitDelete() {
                         </button>
                         <Button
                             variant="danger"
-                            class="rounded-[0.5rem] !px-3 !py-1.5 text-xs"
+                            class="h-8 rounded-[0.5rem] text-xs"
                             @click="askDelete(selectedIds)"
                         >
                             <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                             Eliminar seleccionadas
                         </Button>
                     </template>
-                </div>
-
-                <!-- Móvil: tarjetas apiladas. La tabla de ocho columnas se
-                     arrastraba de lado en el celular. -->
-                <div
-                    v-if="reservations.data.length"
-                    class="space-y-2 p-4 sm:hidden"
-                >
-                    <div
-                        v-for="r in reservations.data"
-                        :key="`card-${r.id}`"
-                        class="rounded-lg border border-slate-200/70 bg-white p-3 dark:border-darkmode-400 dark:bg-darkmode-600"
+                    <span
+                        v-else
+                        class="ml-auto hidden text-[11px] text-slate-400 lg:block"
                     >
-                        <div class="flex items-start gap-2">
-                            <FormCheck.Input
-                                v-if="canManage && isDeletable(r)"
-                                type="checkbox"
-                                class="mt-1 shrink-0"
-                                :checked="selectedIds.includes(r.id)"
-                                @change="toggleRow(r.id)"
-                            />
-                            <div class="min-w-0 flex-1">
-                                <div class="truncate text-sm font-medium">
-                                    {{ r.guest_name ?? 'Anónimo' }}
-                                </div>
-                                <div class="mt-0.5 text-xs text-slate-500">
-                                    {{ r.code }} · Hab. {{ r.room ?? '—' }}
-                                </div>
-                            </div>
-                            <span
-                                class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                                :class="statusFor(r.status).class"
-                            >
-                                <Lucide
-                                    :icon="statusFor(r.status).icon"
-                                    class="h-3 w-3"
-                                />
-                                {{
-                                    friendlyStatusLabel(
-                                        r.status,
-                                        r.status_label,
-                                    )
-                                }}
-                            </span>
-                        </div>
-
-                        <div
-                            class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
-                        >
-                            <span>{{ r.starts_at }} → {{ r.ends_at }}</span>
-                            <span class="font-medium text-slate-600"
-                                >${{ r.total_amount }}</span
-                            >
-                            <span
-                                class="rounded-full px-2 py-0.5 text-[11px]"
-                                :class="paymentBadge(r)"
-                            >
-                                {{ r.payment_status_label }}
-                            </span>
-                        </div>
-                        <p
-                            v-if="r.cancellation_reason"
-                            class="mt-1 text-[11px] text-slate-400"
-                        >
-                            {{ r.cancellation_reason }}
-                        </p>
-
-                        <div
-                            class="mt-2.5 flex items-center gap-2 border-t border-dashed border-slate-200/70 pt-2.5 dark:border-darkmode-400"
-                        >
-                            <button
-                                type="button"
-                                class="inline-flex h-8 items-center gap-1.5 rounded-[0.5rem] border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 dark:border-darkmode-400 dark:bg-darkmode-600"
-                                @click="detail = r"
-                            >
-                                <Lucide icon="Eye" class="h-3.5 w-3.5" />
-                                Ver detalle
-                            </button>
-                            <button
-                                v-if="canManage && isReopenable(r)"
-                                type="button"
-                                class="inline-flex h-8 items-center gap-1.5 rounded-[0.5rem] border border-primary/30 bg-white px-3 text-xs font-medium text-primary dark:bg-darkmode-600"
-                                @click="openReopen(r)"
-                            >
-                                <Lucide icon="RotateCcw" class="h-3.5 w-3.5" />
-                                Reabrir
-                            </button>
-                            <button
-                                v-if="canManage && isDeletable(r)"
-                                type="button"
-                                class="ml-auto flex h-8 w-8 items-center justify-center rounded-full text-danger transition hover:bg-danger/10"
-                                title="Eliminar definitivamente"
-                                @click="askDelete([r.id])"
-                            >
-                                <Lucide icon="Trash2" class="h-4 w-4" />
-                            </button>
-                        </div>
-                    </div>
+                        Lo más reciente primero
+                    </span>
                 </div>
 
                 <!-- Escritorio: tabla -->
                 <div
-                    class="hidden overflow-auto p-4 sm:block lg:overflow-visible"
+                    v-if="reservations.data.length"
+                    class="hidden overflow-auto lg:block lg:overflow-visible"
                 >
-                    <Table v-if="reservations.data.length" striped>
+                    <Table hover>
                         <Table.Thead>
                             <Table.Tr>
-                                <Table.Th v-if="canManage" class="w-10">
+                                <Table.Th
+                                    v-if="canManage"
+                                    :class="[tableHead, 'w-10']"
+                                >
                                     <FormCheck.Input
                                         type="checkbox"
                                         :checked="allSelected"
-                                        title="Seleccionar esta página"
+                                        title="Seleccionar lo que se puede eliminar"
                                         @change="toggleAll"
                                     />
                                 </Table.Th>
-                                <Table.Th>Huésped</Table.Th>
-                                <Table.Th>Habitación</Table.Th>
-                                <Table.Th>Llegada → Salida</Table.Th>
-                                <Table.Th>Total</Table.Th>
-                                <Table.Th>Pago</Table.Th>
-                                <Table.Th>Estado</Table.Th>
-                                <Table.Th class="text-right">Acciones</Table.Th>
+                                <Table.Th :class="tableHead">Huésped</Table.Th>
+                                <Table.Th :class="tableHead"
+                                    >Habitación</Table.Th
+                                >
+                                <Table.Th :class="tableHead">Estancia</Table.Th>
+                                <Table.Th :class="[tableHead, 'text-right']"
+                                    >Total</Table.Th
+                                >
+                                <Table.Th :class="tableHead"
+                                    >Cómo terminó</Table.Th
+                                >
+                                <Table.Th :class="[tableHead, 'text-right']"
+                                    >Acciones</Table.Th
+                                >
                             </Table.Tr>
                         </Table.Thead>
                         <Table.Tbody>
                             <Table.Tr
                                 v-for="r in reservations.data"
                                 :key="r.id"
+                                class="align-top"
                             >
                                 <Table.Td v-if="canManage" class="w-10">
                                     <FormCheck.Input
@@ -522,42 +582,69 @@ async function submitDelete() {
                                         @change="toggleRow(r.id)"
                                     />
                                 </Table.Td>
-                                <Table.Td>
-                                    <span
-                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                <Table.Td class="max-w-[20rem]">
+                                    <button
+                                        type="button"
+                                        class="truncate text-left text-sm font-medium transition hover:text-primary"
+                                        @click="detail = r"
                                     >
-                                        {{ r.code }}
-                                    </span>
-                                    <div class="mt-1 text-sm font-medium">
                                         {{ r.guest_name ?? 'Anónimo' }}
+                                    </button>
+                                    <div
+                                        class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
+                                    >
+                                        <span
+                                            class="font-medium text-slate-600 dark:text-slate-300"
+                                        >
+                                            {{ r.code }}
+                                        </span>
+                                        <span
+                                            class="text-slate-300 dark:text-darkmode-400"
+                                            >·</span
+                                        >
+                                        <span>
+                                            {{
+                                                sourceChannelLabel[
+                                                    r.source_channel
+                                                ] ?? r.source_channel
+                                            }}
+                                        </span>
                                     </div>
                                 </Table.Td>
-                                <Table.Td>
-                                    <span class="font-medium">{{
-                                        r.room ?? '—'
-                                    }}</span>
-                                    <span
-                                        class="block text-xs text-slate-500"
-                                        >{{ r.room_type }}</span
+                                <Table.Td class="whitespace-nowrap">
+                                    <div class="text-sm font-medium">
+                                        {{ r.room ?? 'Sin asignar' }}
+                                    </div>
+                                    <div class="text-xs text-slate-500">
+                                        {{ r.room_type }}
+                                    </div>
+                                </Table.Td>
+                                <Table.Td class="whitespace-nowrap">
+                                    <div class="text-xs tabular-nums">
+                                        {{ r.starts_at }}
+                                    </div>
+                                    <div
+                                        class="text-xs text-slate-500 tabular-nums"
                                     >
+                                        sale {{ r.ends_at }}
+                                    </div>
                                 </Table.Td>
-                                <Table.Td class="text-sm">
-                                    {{ r.starts_at }}
-                                    <span class="text-slate-400">→</span>
-                                    {{ r.ends_at }}
-                                </Table.Td>
-                                <Table.Td>${{ r.total_amount }}</Table.Td>
-                                <Table.Td>
+                                <Table.Td class="text-right whitespace-nowrap">
+                                    <div
+                                        class="text-sm font-medium tabular-nums"
+                                    >
+                                        {{ money(Number(r.total_amount)) }}
+                                    </div>
                                     <span
-                                        class="inline-flex rounded-full px-2 py-0.5 text-xs"
+                                        class="mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="paymentBadge(r)"
                                     >
                                         {{ r.payment_status_label }}
                                     </span>
                                 </Table.Td>
-                                <Table.Td>
+                                <Table.Td class="max-w-[16rem]">
                                     <span
-                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
+                                        class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
                                         :class="statusFor(r.status).class"
                                     >
                                         <Lucide
@@ -571,18 +658,33 @@ async function submitDelete() {
                                             )
                                         }}
                                     </span>
-                                    <span
+                                    <div
                                         v-if="r.cancellation_reason"
-                                        class="block max-w-[200px] truncate text-xs text-slate-400"
+                                        class="mt-0.5 truncate text-[11px] text-slate-400"
                                         :title="r.cancellation_reason"
-                                        >{{ r.cancellation_reason }}</span
                                     >
+                                        {{ r.cancellation_reason }}
+                                    </div>
                                 </Table.Td>
                                 <Table.Td>
-                                    <div class="flex justify-end gap-1">
+                                    <div class="flex justify-end gap-1.5">
+                                        <button
+                                            type="button"
+                                            :class="rowAction"
+                                            class="hover:bg-primary/10 hover:text-primary"
+                                            title="Ver el detalle de la reserva"
+                                            @click="detail = r"
+                                        >
+                                            <Lucide
+                                                icon="Eye"
+                                                class="h-4 w-4"
+                                            />
+                                        </button>
                                         <button
                                             v-if="canManage && isReopenable(r)"
-                                            class="rounded-md p-1.5 text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                            type="button"
+                                            :class="rowAction"
+                                            class="hover:bg-primary/10 hover:text-primary"
                                             title="Reabrir o reagendar"
                                             @click="openReopen(r)"
                                         >
@@ -592,18 +694,10 @@ async function submitDelete() {
                                             />
                                         </button>
                                         <button
-                                            class="rounded-md p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                                            title="Ver detalle"
-                                            @click="detail = r"
-                                        >
-                                            <Lucide
-                                                icon="Eye"
-                                                class="h-4 w-4"
-                                            />
-                                        </button>
-                                        <button
                                             v-if="canManage && isDeletable(r)"
-                                            class="rounded-md p-1.5 text-danger hover:bg-danger/10"
+                                            type="button"
+                                            :class="rowAction"
+                                            class="hover:bg-danger/10 hover:text-danger"
                                             title="Eliminar definitivamente"
                                             @click="askDelete([r.id])"
                                         >
@@ -619,46 +713,204 @@ async function submitDelete() {
                     </Table>
                 </div>
 
+                <!-- Móvil y tablet: los mismos datos apilados, sin scroll
+                     horizontal. -->
+                <div
+                    v-if="reservations.data.length"
+                    class="divide-y divide-slate-200/60 lg:hidden dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="r in reservations.data"
+                        :key="`m-${r.id}`"
+                        class="flex gap-3 px-4 py-3.5"
+                    >
+                        <FormCheck.Input
+                            v-if="canManage && isDeletable(r)"
+                            type="checkbox"
+                            class="mt-1 shrink-0"
+                            :checked="selectedIds.includes(r.id)"
+                            @change="toggleRow(r.id)"
+                        />
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <span
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                    >
+                                        {{ r.code }}
+                                    </span>
+                                    <button
+                                        type="button"
+                                        class="mt-1.5 block truncate text-left text-sm font-medium transition hover:text-primary"
+                                        @click="detail = r"
+                                    >
+                                        {{ r.guest_name ?? 'Anónimo' }}
+                                    </button>
+                                </div>
+                                <div class="shrink-0 text-right">
+                                    <div
+                                        class="text-sm font-medium tabular-nums"
+                                    >
+                                        {{ money(Number(r.total_amount)) }}
+                                    </div>
+                                    <span
+                                        class="mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                        :class="paymentBadge(r)"
+                                    >
+                                        {{ r.payment_status_label }}
+                                    </span>
+                                </div>
+                            </div>
+
+                            <div
+                                class="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3"
+                            >
+                                <span
+                                    class="inline-flex min-w-0 items-center gap-1.5"
+                                >
+                                    <Lucide
+                                        icon="BedDouble"
+                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                    />
+                                    <span class="truncate">{{
+                                        r.room ?? 'Sin asignar'
+                                    }}</span>
+                                </span>
+                                <span
+                                    class="inline-flex items-center gap-1.5 tabular-nums"
+                                >
+                                    <Lucide
+                                        icon="CalendarDays"
+                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                    />
+                                    {{ r.starts_at }}
+                                    <span class="text-slate-400">→</span>
+                                    {{ r.ends_at }}
+                                </span>
+                            </div>
+                            <p
+                                v-if="r.cancellation_reason"
+                                class="mt-1 text-[11px] text-slate-400"
+                            >
+                                {{ r.cancellation_reason }}
+                            </p>
+
+                            <div
+                                class="mt-2.5 flex flex-wrap items-center gap-1.5"
+                            >
+                                <span
+                                    class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                    :class="statusFor(r.status).class"
+                                >
+                                    <Lucide
+                                        :icon="statusFor(r.status).icon"
+                                        class="h-3 w-3"
+                                    />
+                                    {{
+                                        friendlyStatusLabel(
+                                            r.status,
+                                            r.status_label,
+                                        )
+                                    }}
+                                </span>
+                                <div class="ml-auto flex items-center gap-1.5">
+                                    <button
+                                        type="button"
+                                        :class="rowAction"
+                                        class="hover:bg-primary/10 hover:text-primary"
+                                        title="Ver el detalle de la reserva"
+                                        @click="detail = r"
+                                    >
+                                        <Lucide icon="Eye" class="h-4 w-4" />
+                                    </button>
+                                    <button
+                                        v-if="canManage && isReopenable(r)"
+                                        type="button"
+                                        :class="rowAction"
+                                        class="hover:bg-primary/10 hover:text-primary"
+                                        title="Reabrir o reagendar"
+                                        @click="openReopen(r)"
+                                    >
+                                        <Lucide
+                                            icon="RotateCcw"
+                                            class="h-4 w-4"
+                                        />
+                                    </button>
+                                    <button
+                                        v-if="canManage && isDeletable(r)"
+                                        type="button"
+                                        :class="rowAction"
+                                        class="hover:bg-danger/10 hover:text-danger"
+                                        title="Eliminar definitivamente"
+                                        @click="askDelete([r.id])"
+                                    >
+                                        <Lucide icon="Trash2" class="h-4 w-4" />
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <!-- El vacío y la paginación viven FUERA del bloque de
                      escritorio: si no, en el celular no se veían. -->
                 <div
                     v-if="!reservations.data.length"
-                    class="px-4 py-10 text-center text-slate-500"
+                    class="flex flex-col items-center gap-2 px-5 py-10 text-center"
                 >
-                    {{
-                        filters.q || filters.status
-                            ? 'Nada coincide con la búsqueda.'
-                            : guest
-                              ? 'Este huésped todavía no tiene reservas.'
-                              : 'Aún no hay historial.'
-                    }}
+                    <Lucide
+                        :icon="
+                            filters.q || filters.status ? 'SearchX' : 'History'
+                        "
+                        class="h-8 w-8 text-slate-300"
+                    />
+                    <p class="text-sm font-medium text-slate-600">
+                        {{
+                            filters.q || filters.status
+                                ? 'Nada coincide con la búsqueda'
+                                : guest
+                                  ? 'Este huésped todavía no tiene reservas'
+                                  : 'Aún no hay historial'
+                        }}
+                    </p>
+                    <p class="text-xs text-slate-500">
+                        {{
+                            filters.q || filters.status
+                                ? 'Prueba con el folio, el número de habitación o quita el filtro de estado.'
+                                : 'Aquí caen las reservas completadas, las canceladas y los huéspedes que no llegaron.'
+                        }}
+                    </p>
                 </div>
 
                 <!-- Paginación -->
                 <div
                     v-if="reservations.links.length > 3"
-                    class="flex flex-wrap justify-center gap-1 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                    class="flex flex-wrap items-center gap-2 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                 >
-                    <template v-for="(link, i) in reservations.links" :key="i">
-                        <Link
-                            v-if="link.url"
-                            :href="link.url"
+                    <span class="text-xs text-slate-500">
+                        {{ reservations.from }}–{{ reservations.to }} de
+                        {{ reservations.total }}
+                    </span>
+                    <div class="ml-auto flex flex-wrap gap-1">
+                        <component
+                            :is="link.url ? Link : 'span'"
+                            v-for="(link, i) in reservations.links"
+                            :key="i"
+                            :href="link.url ?? undefined"
                             preserve-state
-                            class="rounded-md px-3 py-1.5 text-sm"
+                            class="rounded-md px-2.5 py-1 text-xs"
                             :class="
                                 link.active
                                     ? 'bg-primary text-white'
-                                    : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-darkmode-400'
+                                    : link.url
+                                      ? 'text-slate-500 hover:bg-slate-100 dark:hover:bg-darkmode-400'
+                                      : 'text-slate-300'
                             "
                         >
+                            <!-- El rótulo trae las flechas « » de Laravel. -->
                             <span v-html="link.label" />
-                        </Link>
-                        <span
-                            v-else
-                            class="px-3 py-1.5 text-sm text-slate-400"
-                            v-html="link.label"
-                        />
-                    </template>
+                        </component>
+                    </div>
                 </div>
             </div>
         </div>

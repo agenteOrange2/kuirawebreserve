@@ -198,13 +198,50 @@ class Guest extends Model implements HasMedia
             : null);
     }
 
+    /**
+     * Buscador del directorio, del buscador rápido del header y del selector
+     * de huésped al crear una reserva.
+     *
+     * Dos cosas que NO hacía y costaban caro en el mostrador:
+     *
+     * - "Karla Villalobos" (el nombre como se ve en la lista) no encontraba
+     *   nada, porque comparaba el término entero contra first_name o
+     *   last_name por separado. Ahora cada palabra tiene que estar en uno de
+     *   los dos, así que el nombre completo —y el nombre con el segundo
+     *   apellido— sí caen.
+     * - El teléfono se comparaba tal cual está escrito: guardado como
+     *   "+52 614 223 1540", teclear "6142231540" daba cero. Ahora se
+     *   comparan los dígitos de los dos lados.
+     */
     public function scopeSearch(Builder $query, string $term): Builder
     {
-        return $query->where(function (Builder $q) use ($term) {
-            $q->where('first_name', 'like', "%{$term}%")
-                ->orWhere('last_name', 'like', "%{$term}%")
-                ->orWhere('phone', 'like', "%{$term}%")
-                ->orWhere('email', 'like', "%{$term}%");
+        $term = trim($term);
+
+        if ($term === '') {
+            return $query;
+        }
+
+        $digits = (string) preg_replace('/\D+/', '', $term);
+        // El teléfono, sin lo que solo es formato. REPLACE existe igual en
+        // MySQL (producción) y en sqlite (los tests).
+        $phoneDigits = "replace(replace(replace(replace(replace(coalesce(phone, ''), ' ', ''), '-', ''), '(', ''), ')', ''), '+', '')";
+
+        $words = preg_split('/\s+/', $term, -1, PREG_SPLIT_NO_EMPTY) ?: [$term];
+
+        return $query->where(function (Builder $q) use ($term, $digits, $phoneDigits, $words) {
+            if (strlen($digits) >= 3) {
+                $q->orWhereRaw("{$phoneDigits} like ?", ['%'.$digits.'%']);
+            }
+
+            $q->orWhere('email', 'like', "%{$term}%");
+
+            $q->orWhere(function (Builder $names) use ($words) {
+                foreach ($words as $word) {
+                    $names->where(fn (Builder $w) => $w
+                        ->where('first_name', 'like', "%{$word}%")
+                        ->orWhere('last_name', 'like', "%{$word}%"));
+                }
+            });
         });
     }
 
@@ -224,7 +261,10 @@ class Guest extends Model implements HasMedia
      */
     public function metrics(): array
     {
-        $stays = $this->stays()->get(['id', 'status', 'amount', 'check_in_at']);
+        $stays = $this->stays()->get([
+            'id', 'status', 'amount', 'check_in_at', 'check_out_at',
+            'planned_end_at', 'room_id',
+        ]);
         $completed = $stays->where('status', Stay::STATUS_COMPLETED);
 
         $consumos = Order::whereIn('stay_id', $stays->pluck('id'))
@@ -239,21 +279,69 @@ class Guest extends Model implements HasMedia
         $pastReservations = $this->reservations()
             ->where('status', \App\Enums\ReservationStatus::Completed)
             ->whereDoesntHave('stay')
-            ->get(['id', 'starts_at', 'total_amount']);
+            ->get(['id', 'starts_at', 'ends_at', 'total_amount', 'room_id', 'source_channel']);
 
         $lastVisit = collect([
             $stays->max('check_in_at'),
             $pastReservations->max('starts_at'),
         ])->filter()->max();
 
+        $visits = $completed->count() + $pastReservations->count();
+        $totalSpent = round(
+            $lodging + (float) $consumos + $pastReservations->sum(fn ($r) => (float) $r->total_amount),
+            2,
+        );
+
+        // Noches dormidas: lo que de verdad mide a un cliente de cabañas.
+        //
+        // Se cuentan DÍAS DE CALENDARIO, no horas: entrar el viernes 15:00 y
+        // salir el domingo 12:00 son dos noches, pero en horas son 1.875 y
+        // `diffInDays` las truncaba a una. Una salida el mismo día cuenta
+        // como una noche, no como cero.
+        $nightsBetween = fn ($from, $to) => max(
+            1,
+            $from->copy()->startOfDay()->diffInDays($to->copy()->startOfDay()),
+        );
+
+        $nights = $completed->sum(fn (Stay $stay) => $nightsBetween(
+            $stay->check_in_at,
+            $stay->check_out_at ?? $stay->planned_end_at,
+        ))
+            + $pastReservations->sum(fn ($r) => $nightsBetween($r->starts_at, $r->ends_at));
+
+        // La habitación de siempre: en cabañas el huésped fiel pide la misma
+        // y el mostrador lo sabe de memoria; aquí se sabe sin memoria.
+        $roomId = $completed->pluck('room_id')
+            ->merge($pastReservations->pluck('room_id'))
+            ->filter()
+            ->countBy()
+            ->sortDesc()
+            ->keys()
+            ->first();
+
+        $channel = $pastReservations->pluck('source_channel')
+            ->merge($this->reservations()->pluck('source_channel'))
+            ->filter()
+            ->countBy()
+            ->sortDesc()
+            ->keys()
+            ->first();
+
         return [
-            'visits' => $completed->count() + $pastReservations->count(),
+            'visits' => $visits,
             'active_stay' => $stays->firstWhere('status', Stay::STATUS_ACTIVE) !== null,
-            'total_spent' => round(
-                $lodging + (float) $consumos + $pastReservations->sum(fn ($r) => (float) $r->total_amount),
-                2,
-            ),
+            'total_spent' => $totalSpent,
             'last_visit' => $lastVisit?->format('d/m/Y'),
+            // "Vino hace 3 meses" se entiende sin restar fechas de cabeza.
+            'last_visit_ago' => $lastVisit
+                ? $lastVisit->locale('es')->diffForHumans(['parts' => 1])
+                : null,
+            'nights' => (int) $nights,
+            'average_ticket' => $visits > 0 ? round($totalSpent / $visits, 2) : 0.0,
+            'favorite_room' => $roomId
+                ? \App\Models\Room::query()->whereKey($roomId)->value('number')
+                : null,
+            'favorite_channel' => $channel,
             'cancellations' => $this->reservations()->where('status', 'cancelled')->count(),
             'no_shows' => $this->reservations()->where('status', 'no_show')->count(),
         ];

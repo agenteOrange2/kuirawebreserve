@@ -94,7 +94,42 @@ class ReservationShowPageController extends ReservationsPageController
             'gatewayAvailable' => app(\App\Services\Payments\PaymentMethodGate::class)
                 ->activeGatewayLink((string) tenant('id')) !== null,
             'holdMinutes' => $this->policy()->holdMinutes(),
+            'contract' => $this->contractPayload($reservation),
         ]);
+    }
+
+    /**
+     * Estado del contrato de hospedaje de ESTA reserva.
+     *
+     * El contrato ya se adjuntaba al correo de confirmación, pero solo si el
+     * huésped tenía correo en su ficha: sin correo, `sendEmail()` regresaba
+     * false en silencio y nadie en el hotel se enteraba de que ese huésped
+     * nunca lo recibió (cabañas 2026-09-18, Daysi Gómez RES-2026-1773: dictó
+     * su correo por WhatsApp y la reserva se capturó sin él). Aquí la ficha
+     * lo dice con todas sus letras y deja mandarlo.
+     *
+     * @return array<string, mixed>
+     */
+    protected function contractPayload(Reservation $reservation): array
+    {
+        // Se busca aparte y no en $activities: la historia se corta en las
+        // 40 más recientes y un envío viejo desaparecería de la tarjeta.
+        $sent = Activity::query()
+            ->where('subject_type', Reservation::class)
+            ->where('subject_id', $reservation->id)
+            ->where('description', 'like', 'Contrato de hospedaje enviado%')
+            ->with('causer')
+            ->latest('id')
+            ->first();
+
+        return [
+            // El hotel captura su texto en Ajustes; sin él no hay nada que mandar.
+            'available' => app(\App\Services\Guests\ReservationContract::class)->available(),
+            'email' => $reservation->guest?->email,
+            'pdf_url' => route('tenant.reservations.contract.pdf', $reservation->id),
+            'sent_at' => $sent?->created_at?->format('d/m/Y H:i'),
+            'sent_by' => $sent?->causer?->name,
+        ];
     }
 
     /**

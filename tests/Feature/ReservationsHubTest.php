@@ -130,6 +130,41 @@ it('el tablero cuenta los cuatro accesos sin traer ni una fila', function () {
         ->and($props)->not->toHaveKey('reservations');
 });
 
+it('el pulso de la semana cuenta llegadas y salidas día por día', function () {
+    // Llega hoy y se va pasado mañana: cuenta como llegada del día 0 y
+    // como salida del día 2.
+    reservaDelTablero([
+        'starts_at' => now()->addHours(3),
+        'ends_at' => now()->addDays(2)->setTime(12, 0),
+    ]);
+    // Llega mañana.
+    reservaDelTablero([
+        'starts_at' => now()->addDay()->setTime(15, 0),
+        'ends_at' => now()->addDays(3)->setTime(12, 0),
+    ]);
+    // Cancelada: no mueve a nadie, no debe contarse.
+    reservaDelTablero([
+        'status' => ReservationStatus::Cancelled,
+        'starts_at' => now()->addDay()->setTime(15, 0),
+    ]);
+    // Fuera de la ventana de siete días.
+    reservaDelTablero([
+        'starts_at' => now()->addDays(20),
+        'ends_at' => now()->addDays(21),
+    ]);
+
+    $week = propsDelTablero(ReservationsHubController::class)['week'];
+
+    expect($week['days'])->toHaveCount(7)
+        ->and($week['days'][0]['label'])->toBe('Hoy')
+        ->and($week['days'][1]['label'])->toBe('Mañana')
+        ->and($week['days'][0]['arrivals'])->toBe(1)
+        ->and($week['days'][1]['arrivals'])->toBe(1)
+        ->and($week['days'][2]['departures'])->toBe(1)
+        ->and($week['arrivals'])->toBe(2)
+        ->and($week['departures'])->toBe(2);
+});
+
 it('las recién llegadas se etiquetan hoy/ayer, se caen al tercer día y apuntan a su área', function () {
     $creadaHoy = reservaDelTablero(['guest_name' => 'Entró Hoy', 'status' => ReservationStatus::Pending]);
 
@@ -206,4 +241,41 @@ it('pendientes pagina los apartados de diez en diez y asoma las cuentas sin cobr
         ->and($props['settlements'][0]['pending'])->toEqual(1000.0)
         ->and($props['settlements'][0]['auto_closed'])->toBeTrue()
         ->and($props['settlementsTotal'])->toBe(1);
+});
+
+it('el reloj del apartado se dice en palabras y avisa si ya venció', function () {
+    reservaDelTablero([
+        'guest_name' => 'Por Vencerse',
+        'status' => ReservationStatus::Pending,
+        'hold_expires_at' => now()->addMinutes(7),
+        'total_amount' => 2000,
+    ]);
+    reservaDelTablero([
+        'guest_name' => 'Ya Vencido',
+        'status' => ReservationStatus::Pending,
+        'hold_expires_at' => now()->subHours(2),
+        'total_amount' => 1000,
+    ]);
+    reservaDelTablero([
+        'guest_name' => 'Sin Reloj',
+        'status' => ReservationStatus::Pending,
+        'hold_expires_at' => null,
+        'total_amount' => 500,
+    ]);
+
+    $props = propsDelTablero(PendingReservationsPageController::class);
+    $filas = collect($props['reservations']['data'])->keyBy('guest_name');
+
+    expect($filas['Por Vencerse']['hold_state'])->toBe('urgent')
+        ->and($filas['Por Vencerse']['hold_countdown'])->toBe('en 7 min')
+        ->and($filas['Ya Vencido']['hold_state'])->toBe('expired')
+        ->and($filas['Ya Vencido']['hold_countdown'])->toBe('venció 2 h antes')
+        // Un apartado sin vencimiento no inventa un reloj.
+        ->and($filas['Sin Reloj']['hold_state'])->toBeNull()
+        ->and($filas['Sin Reloj']['hold_countdown'])->toBeNull()
+        // Las cifras de arriba miran TODO lo pendiente, no la página.
+        ->and($props['summary']['holds'])->toBe(3)
+        ->and($props['summary']['expiring'])->toBe(1)
+        ->and($props['summary']['expired'])->toBe(1)
+        ->and($props['summary']['balance_label'])->toBe('$3,500.00');
 });

@@ -72,6 +72,7 @@ class StaySettlementController extends Controller
             // El total no depende del filtro: es el trabajo que queda.
             'pendingCount' => Stay::query()->pendingSettlement()->count(),
             'reservationsPendingCount' => Reservation::query()->pendingSettlement()->count(),
+            'summary' => $this->summary(),
             'canManage' => $request->user()->can('reservations.manage'),
             'counterMethods' => app(ReservationPolicy::class)->counterMethods(),
         ]);
@@ -199,6 +200,59 @@ class StaySettlementController extends Controller
         $stay->update(['settlement_closed_at' => null, 'settlement_note' => null]);
 
         return response()->json(['closed' => false]);
+    }
+
+    /**
+     * Cuánto dinero hay ahí afuera, en total y no por página.
+     *
+     * Con 86 cuentas abiertas, la pregunta que nadie podía contestar desde
+     * esta pantalla era la primera: cuánto se debe y desde cuándo. El
+     * paginador solo decía cuántas filas caben.
+     *
+     * @return array<string, mixed>
+     */
+    protected function summary(): array
+    {
+        $stays = Stay::query()->pendingSettlement()->get();
+        $reservations = Reservation::query()
+            ->pendingSettlement()
+            ->withSum(['payments as paid_amount' => fn ($q) => $q->where(
+                fn ($qq) => $qq->whereNull('kind')->orWhere('kind', '!=', \App\Models\Payment::KIND_GUARANTEE)
+            )], 'amount')
+            ->get(['id', 'total_amount', 'ends_at']);
+
+        $staysTotal = round((float) $stays->sum(fn (Stay $stay) => $stay->pendingSettlementAmount()), 2);
+        $reservationsTotal = round((float) $reservations->sum(
+            fn (Reservation $r) => max(0, round((float) $r->total_amount - (float) ($r->paid_amount ?? 0), 2))
+        ), 2);
+
+        // La más vieja de las dos listas: es la que menos se va a cobrar.
+        $oldest = collect([
+            $stays->min('check_out_at'),
+            $reservations->min('ends_at'),
+        ])->filter()->min();
+
+        $amounts = $stays->map(fn (Stay $stay) => $stay->pendingSettlementAmount())
+            ->concat($reservations->map(
+                fn (Reservation $r) => max(0, round((float) $r->total_amount - (float) ($r->paid_amount ?? 0), 2))
+            ))
+            ->filter(fn (float $amount) => $amount > 0)
+            ->values();
+
+        $count = $amounts->count();
+        $total = round($staysTotal + $reservationsTotal, 2);
+
+        return [
+            'count' => $count,
+            'total' => $total,
+            'total_label' => '$'.number_format($total, 2),
+            'stays_total_label' => '$'.number_format($staysTotal, 2),
+            'reservations_total_label' => '$'.number_format($reservationsTotal, 2),
+            'average_label' => '$'.number_format($count ? $total / $count : 0, 2),
+            'biggest_label' => '$'.number_format((float) ($amounts->max() ?? 0), 2),
+            'oldest_label' => $oldest ? \Carbon\CarbonImmutable::parse($oldest)->locale('es')->isoFormat('D MMM YYYY') : null,
+            'oldest_days' => $oldest ? (int) \Carbon\CarbonImmutable::parse($oldest)->startOfDay()->diffInDays(now()->startOfDay()) : 0,
+        ];
     }
 
     /**

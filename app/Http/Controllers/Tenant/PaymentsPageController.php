@@ -12,34 +12,239 @@ use Inertia\Inertia;
 use Inertia\Response;
 
 /**
- * Centro de pagos del panel (/pagos): TODO el dinero en un solo lugar —
- * transferencias por verificar, saldos vencidos, links de pago vivos y los
- * últimos pagos registrados. Antes la cola de verificación vivía embebida
- * en la Bandeja de conversaciones; los pagos son operación propia, no una
- * conversación (feedback 2026-07-17). La conciliación fina sigue en
- * /cobros-en-linea.
+ * Centro de caja y pagos.
+ *
+ * /pagos era una sola página con cinco bloques apilados —cola de
+ * verificación, cerradas, saldos vencidos, links vivos e historial
+ * paginado— y 1,654 líneas de Vue: "está todo desorganizado y se pierde
+ * uno" (dueño, 2026-09-18). Además el dinero estaba repartido en seis rutas
+ * de dos grupos distintos del menú.
+ *
+ * Ahora /pagos es un TABLERO (mismo patrón que /reservas, que ya funcionó)
+ * y cada trabajo vive en su propia superficie:
+ *
+ *   /pagos             tablero: lo que entró hoy y lo que pide atención
+ *   /pagos/verificar   transferencias por verificar y las cerradas
+ *   /pagos/cobrar      saldos vencidos y links de pago vivos
+ *   /pagos/movimientos historial de pagos con filtros y paginación
+ *
+ * Desde el tablero se entra también a cortes de caja, turnos, cobros en
+ * línea y cuentas por cerrar, que siguen en sus rutas de siempre.
+ *
+ * El dinero cobrado lo calcula CashLedger, nunca a mano: es la misma
+ * contabilidad del dashboard, los cortes y los reportes.
  */
 class PaymentsPageController extends Controller
 {
+    /** Tablero: el día en una pantalla y a qué entrar. */
     public function __invoke(Request $request): Response
+    {
+        return Inertia::render('tenant/payments/Hub', [
+            'today' => $this->todayCash(),
+            'attention' => $this->attention($request),
+            'metrics' => $this->metrics(),
+        ] + $this->access($request));
+    }
+
+    /**
+     * Transferencias que esperan ojos humanos (spec-pagos §7.4): aprobar
+     * registra el pago y confirma. Las cerradas van abajo para reemitir el
+     * cobro cuando el huésped corrige — antes desaparecían y el staff no
+     * tenía camino de regreso.
+     */
+    public function verify(Request $request): Response
+    {
+        abort_unless($request->user()->can('reservations.manage'), 403);
+
+        return Inertia::render('tenant/payments/Verify', [
+            'queue' => PaymentRequestController::queue(),
+            'closedRequests' => $this->closedRequests(),
+        ] + $this->access($request));
+    }
+
+    /**
+     * Lo que falta cobrar: saldos vencidos (el impago NO cancela solo, el
+     * equipo decide) y los links de pasarela todavía vivos.
+     */
+    public function collect(Request $request): Response
+    {
+        return Inertia::render('tenant/payments/Collect', [
+            'overdueBalances' => $request->user()->can('reservations.manage')
+                ? $this->overdueBalances()
+                : [],
+            'pendingLinks' => $this->pendingLinks(),
+        ] + $this->access($request));
+    }
+
+    /** Historial de pagos registrados, con buscador y paginación. */
+    public function movements(Request $request): Response
+    {
+        return Inertia::render('tenant/payments/Movements', [
+            'recentPayments' => $this->recentPayments($request),
+        ] + $this->access($request));
+    }
+
+    /**
+     * Qué puede ver y hacer quien mira: lo comparten las cuatro pantallas
+     * para pintar el mismo menú de áreas.
+     *
+     * @return array<string, bool>
+     */
+    protected function access(Request $request): array
+    {
+        $tenant = tenant();
+
+        return [
+            'canManage' => $request->user()->can('reservations.manage'),
+            'canCashCuts' => $request->user()->can('orders.manage')
+                && ($tenant === null || $tenant->hasModule('corte-caja')),
+            // Los métodos de pago son configuración del hotel, no operación.
+            'canSettings' => $request->user()->can('properties.manage'),
+        ];
+    }
+
+    /**
+     * Lo que entró HOY, con la contabilidad de los cortes. La fianza se
+     * reporta aparte porque no es ingreso: es un depósito en garantía que se
+     * devuelve al salir.
+     *
+     * @return array<string, mixed>
+     */
+    protected function todayCash(): array
+    {
+        $today = \Carbon\CarbonImmutable::today();
+        $cash = app(\App\Services\CashLedger::class)->summary($today->startOfDay(), $today->endOfDay());
+
+        return $cash + [
+            'net_label' => '$'.number_format($cash['net'], 2),
+            'collected_label' => '$'.number_format($cash['collected'], 2),
+            'lodging_label' => '$'.number_format($cash['lodging'], 2),
+            'pos_label' => '$'.number_format($cash['pos'], 2),
+            'refunds_label' => '$'.number_format($cash['refunds'], 2),
+            'guarantees_label' => '$'.number_format($cash['guarantees'], 2),
+            'by_method' => array_map(
+                fn (array $row) => $row + ['amount_label' => '$'.number_format($row['amount'], 2)],
+                $cash['by_method'],
+            ),
+        ];
+    }
+
+    /**
+     * Las gráficas del tablero: catorce días de ingresos y cómo se cobró en
+     * esa ventana.
+     *
+     * Catorce días y no "hoy": una dona de un día que arranca en cero no
+     * dice nada a las nueve de la mañana, y la quincena es el tramo con el
+     * que el dueño compara.
+     *
+     * @return array<string, mixed>
+     */
+    protected function metrics(): array
+    {
+        $ledger = app(\App\Services\CashLedger::class);
+        $to = \Carbon\CarbonImmutable::today()->endOfDay();
+        $from = $to->subDays(13)->startOfDay();
+
+        $series = $ledger->dailySeries($from, $to);
+        $summary = $ledger->summary($from, $to);
+        $total = round((float) array_sum(array_column($series, 'total')), 2);
+
+        return [
+            'series' => $series,
+            'by_method' => array_map(
+                fn (array $row) => $row + ['amount_label' => '$'.number_format($row['amount'], 2)],
+                $summary['by_method'],
+            ),
+            'range_label' => $from->locale('es')->isoFormat('D MMM').' – '.$to->locale('es')->isoFormat('D MMM'),
+            'total' => $total,
+            'total_label' => '$'.number_format($total, 2),
+            'best_label' => collect($series)->sortByDesc('total')->first()['label'] ?? null,
+            'daily_average_label' => '$'.number_format($series === [] ? 0 : $total / count($series), 2),
+        ];
+    }
+
+    /**
+     * Lo que pide atención, ya contado en el servidor: cada tarjeta del
+     * tablero dice cuánto hay y qué está atorado, sin que nadie tenga que
+     * entrar a las cuatro pantallas para enterarse.
+     *
+     * @return array<string, mixed>
+     */
+    protected function attention(Request $request): array
     {
         $canManage = $request->user()->can('reservations.manage');
 
-        return Inertia::render('tenant/payments/Index', [
-            // Transferencias reportadas que esperan verificación humana
-            // (spec-pagos §7.4): aprobar registra el pago y confirma.
-            'queue' => $canManage ? PaymentRequestController::queue() : [],
-            // Rechazadas/vencidas recientes: visibles para poder reemitir
-            // el cobro cuando el huésped corrige (antes desaparecían y el
-            // staff no tenía camino de regreso).
-            'closedRequests' => $canManage ? $this->closedRequests() : [],
-            // Saldos vencidos (spec-pagos §7.2): el impago NO cancela solo
-            // por default — alerta aquí y el equipo decide.
-            'overdueBalances' => $canManage ? $this->overdueBalances() : [],
-            'pendingLinks' => $this->pendingLinks(),
-            'recentPayments' => $this->recentPayments($request),
-            'canManage' => $canManage,
-        ]);
+        $queue = $canManage
+            ? PaymentRequest::query()
+                ->where('method', PaymentRequest::METHOD_TRANSFER)
+                ->where('status', PaymentRequest::STATUS_PENDING)
+                ->get(['id', 'created_at'])
+            : collect();
+
+        // Dinero esperando ojos desde hace rato: es lo que hace que un
+        // huésped que ya pagó siga sin confirmación.
+        $oldest = $queue->min('created_at');
+
+        $overdue = $canManage
+            ? \App\Models\Reservation::query()
+                ->where('status', \App\Enums\ReservationStatus::Confirmed)
+                ->where('payment_status', '!=', \App\Enums\PaymentStatus::Paid)
+                ->whereNotNull('payment_due_at')
+                ->where('payment_due_at', '<', now())
+                ->withSum(['payments as paid_amount' => fn ($q) => $q->where(
+                    fn ($qq) => $qq->whereNull('kind')->orWhere('kind', '!=', Payment::KIND_GUARANTEE)
+                )], 'amount')
+                ->get(['id', 'total_amount'])
+                ->map(fn ($r) => max(0, round((float) $r->total_amount - (float) ($r->paid_amount ?? 0), 2)))
+                ->filter(fn (float $pending) => $pending > 0)
+            : collect();
+
+        $links = PaymentRequest::query()
+            ->where('status', PaymentRequest::STATUS_PENDING)
+            ->where('method', PaymentRequest::METHOD_GATEWAY)
+            ->get(['id', 'expires_at']);
+
+        $shifts = \App\Models\Shift::query()->open()->get(['id', 'started_at']);
+
+        $lastCut = \App\Models\CashCut::query()->latest('closed_at')->first();
+
+        return [
+            'queue' => [
+                'count' => $queue->count(),
+                'waiting_label' => $oldest ? $oldest->diffForHumans(short: true) : null,
+                // Más de dos horas esperando es alguien sin su confirmación.
+                'stale' => $oldest !== null && $oldest->lt(now()->subHours(2)),
+            ],
+            'overdue' => [
+                'count' => $overdue->count(),
+                'total_label' => '$'.number_format((float) $overdue->sum(), 2),
+            ],
+            'links' => [
+                'count' => $links->count(),
+                'expiring' => $links->filter(fn ($l) => $l->expires_at !== null
+                    && $l->expires_at->between(now(), now()->addHours(6)))->count(),
+            ],
+            'settlements' => [
+                'count' => \App\Models\Stay::query()->pendingSettlement()->count()
+                    + \App\Models\Reservation::query()->pendingSettlement()->count(),
+            ],
+            'shift' => [
+                'open' => $shifts->count(),
+                'since_label' => $shifts->min('started_at')?->diffForHumans(short: true),
+                // Un turno de más de 12 horas casi siempre es uno que nadie
+                // cerró, no alguien trabajando de más.
+                'stale' => $shifts->min('started_at')?->lt(now()->subHours(12)) ?? false,
+            ],
+            'cuts' => [
+                'today' => \App\Models\CashCut::query()->whereDate('closed_at', today())->count(),
+                'last_label' => $lastCut?->closed_at?->diffForHumans(short: true),
+                // El último corte no cuadró: falta o sobra efectivo.
+                'off' => $lastCut !== null && abs((float) $lastCut->difference) >= 0.01,
+                'off_label' => $lastCut !== null && abs((float) $lastCut->difference) >= 0.01
+                    ? '$'.number_format(abs((float) $lastCut->difference), 2)
+                    : null,
+            ],
+        ];
     }
 
     /**

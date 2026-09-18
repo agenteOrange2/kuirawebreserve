@@ -61,7 +61,16 @@ class PendingReservationsPageController extends ReservationsPageController
             ->get()
             ->groupBy('subject_id');
 
-        $paginator->through(fn (Reservation $r) => $this->serializeReservation($r, $timeline->get($r->id, collect())));
+        $paginator->through(function (Reservation $r) use ($timeline) {
+            $row = $this->serializeReservation($r, $timeline->get($r->id, collect()));
+
+            // El reloj, en palabras. La hora sola ("11:20") no dice si ya
+            // pasó: un apartado vencido se veía igual que uno que aguanta
+            // tres horas.
+            [$row['hold_state'], $row['hold_countdown']] = $this->holdClock($r->hold_expires_at);
+
+            return $row;
+        });
 
         return Inertia::render('tenant/reservations/Pending', [
             'property' => $property->only(['id', 'name']),
@@ -85,8 +94,90 @@ class PendingReservationsPageController extends ReservationsPageController
                     'auto_closed' => $stay->auto_closed_at !== null,
                 ]),
             'settlementsTotal' => Stay::query()->pendingSettlement()->count(),
+            'summary' => $this->summary(),
             'canManage' => $request->user()->can('reservations.manage'),
             'holdMinutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
         ]);
+    }
+
+    /**
+     * Cuánto le queda al apartado, dicho como lo diría una persona.
+     *
+     * @return array{0: string|null, 1: string|null} estado y frase
+     */
+    protected function holdClock(?\Carbon\CarbonInterface $expiresAt): array
+    {
+        if (! $expiresAt) {
+            return [null, null];
+        }
+
+        $minutes = (int) round(now()->diffInMinutes($expiresAt, false));
+
+        if ($minutes < 0) {
+            return ['expired', 'venció '.$this->spellMinutes(abs($minutes)).' antes'];
+        }
+
+        // Media hora o menos: es lo que se pierde solo mientras nadie mira.
+        return [$minutes <= 30 ? 'urgent' : 'live', 'en '.$this->spellMinutes($minutes)];
+    }
+
+    /** "45 min", "3 h", "2 días" — sin decimales ni locales del sistema. */
+    protected function spellMinutes(int $minutes): string
+    {
+        if ($minutes < 60) {
+            return max(1, $minutes).' min';
+        }
+
+        if ($minutes < 60 * 24) {
+            $hours = intdiv($minutes, 60);
+
+            return $hours.' h';
+        }
+
+        $days = intdiv($minutes, 60 * 24);
+
+        return $days.($days === 1 ? ' día' : ' días');
+    }
+
+    /**
+     * Las dos cifras de la pantalla: lo que está por perderse y el dinero
+     * que sigue sin cobrarse.
+     *
+     * @return array<string, mixed>
+     */
+    protected function summary(): array
+    {
+        $now = now();
+        $base = fn () => Reservation::query()
+            ->where('status', ReservationStatus::Pending)
+            ->where('ends_at', '>=', $now);
+
+        $total = (float) $base()->sum('total_amount');
+        $paid = (float) \App\Models\Payment::query()
+            ->whereIn('reservation_id', $base()->select('reservations.id'))
+            ->where(fn ($q) => $q->whereNull('kind')->orWhere('kind', '<>', 'guarantee'))
+            ->sum('amount');
+        $balance = round(max(0, $total - $paid), 2);
+
+        // El saldo de las cuentas cerradas: contarlas no dice cuánto dinero
+        // hay ahí afuera, y es la cifra por la que pregunta el dueño.
+        $settlementAmount = round((float) Stay::query()
+            ->pendingSettlement()
+            ->get()
+            ->sum(fn (Stay $stay) => $stay->pendingSettlementAmount()), 2);
+
+        return [
+            'holds' => $base()->count(),
+            'expiring' => $base()
+                ->whereNotNull('hold_expires_at')
+                ->whereBetween('hold_expires_at', [$now, $now->copy()->addMinutes(30)])
+                ->count(),
+            'expired' => $base()
+                ->whereNotNull('hold_expires_at')
+                ->where('hold_expires_at', '<', $now)
+                ->count(),
+            'balance_label' => '$'.number_format($balance, 2),
+            'settlement_amount_label' => '$'.number_format($settlementAmount, 2),
+        ];
     }
 }

@@ -13,7 +13,7 @@ import {
     FormSwitch,
     FormTextarea,
 } from '@/components/Base/Form';
-import { Dialog } from '@/components/Base/Headless';
+import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
 import { useToasts } from '@/composables/useToasts';
@@ -103,7 +103,17 @@ const filters = reactive({
     zone: '' as string | number,
     type: '' as string | number,
     status: '',
+    // Grupo del semáforo: las tarjetas de arriba filtran por "ocupadas o
+    // reservadas" y "por limpiar o en mantenimiento", que son dos o tres
+    // estados juntos y no caben en el select de estado.
+    group: '' as '' | 'available' | 'busy' | 'pending',
 });
+
+const statusGroups: Record<string, string[]> = {
+    available: ['available'],
+    busy: ['occupied', 'reserved'],
+    pending: ['dirty', 'cleaning', 'maintenance'],
+};
 
 /**
  * Cifras del semáforo: se calculan de las habitaciones que ya viajan a la
@@ -140,6 +150,8 @@ const filteredRooms = computed(() =>
         if (filters.type !== '' && r.room_type_id !== Number(filters.type))
             return false;
         if (filters.status && r.status !== filters.status) return false;
+        if (filters.group && !statusGroups[filters.group].includes(r.status))
+            return false;
         return true;
     }),
 );
@@ -149,8 +161,39 @@ const filtersActive = computed(
         filters.search.trim() !== '' ||
         filters.zone !== '' ||
         filters.type !== '' ||
-        filters.status !== '',
+        filters.status !== '' ||
+        filters.group !== '',
 );
+
+/** Las tarjetas del semáforo son filtros: tocarlas acota la lista. */
+function applyGroup(group: '' | 'available' | 'busy' | 'pending') {
+    filters.status = '';
+    filters.group = filters.group === group ? '' : group;
+    selectedIds.value = [];
+}
+
+// ── Anatomía de pantalla: las clases que se repiten ──
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const sectionLabel =
+    'text-[11px] font-medium tracking-wide text-slate-400 uppercase';
+const tableHead = sectionLabel;
+const rowAction =
+    'flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition';
+
+/** La columna de notas solo estorba si ninguna habitación tiene nota. */
+const anyNotes = computed(() => props.rooms.some((room) => room.notes));
+
+/** Fondo suave del semáforo, con los mismos tokens que el plano. */
+const statusBadge: Record<string, string> = {
+    success: 'bg-success/10 text-success',
+    info: 'bg-info/10 text-info',
+    primary: 'bg-primary/10 text-primary',
+    pending: 'bg-pending/10 text-pending',
+    warning: 'bg-warning/10 text-warning',
+    danger: 'bg-danger/10 text-danger',
+    dark: 'bg-slate-100 text-slate-600 dark:bg-darkmode-400 dark:text-slate-300',
+};
 
 // ── Selección múltiple: opera sobre las filas VISIBLES (filteredRooms).
 // El backend conserva las ocupadas o con reservas próximas. ──
@@ -209,6 +252,7 @@ function clearFilters() {
     filters.zone = '';
     filters.type = '';
     filters.status = '';
+    filters.group = '';
 }
 
 // Herencia explícita: lo que la habitación toma del tipo seleccionado.
@@ -856,10 +900,23 @@ async function submitDelete() {
                     </div>
                 </div>
                 <div
-                    v-if="canManage"
                     class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
                 >
+                    <!-- Los reportes son de consulta: los ve cualquiera que
+                         pueda entrar a habitaciones, no solo quien las
+                         administra. -->
                     <Button
+                        :as="Link"
+                        :href="route('tenant.rooms.reports')"
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
+                        title="Uso, dinero y mantenimiento por habitación"
+                    >
+                        <Lucide icon="ChartColumn" class="mr-1.5 h-3.5 w-3.5" />
+                        Reportes
+                    </Button>
+                    <Button
+                        v-if="canManage"
                         variant="outline-secondary"
                         class="h-9 rounded-[0.5rem] bg-white text-xs"
                         title="Crea el tipo, su tarifa y la habitación en un paso"
@@ -869,6 +926,7 @@ async function submitDelete() {
                         Alta rápida
                     </Button>
                     <Button
+                        v-if="canManage"
                         variant="outline-secondary"
                         class="h-9 rounded-[0.5rem] bg-white text-xs"
                         :disabled="!roomTypes.length"
@@ -879,6 +937,7 @@ async function submitDelete() {
                         Alta masiva
                     </Button>
                     <Button
+                        v-if="canManage"
                         variant="primary"
                         class="col-span-2 h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20 md:col-auto"
                         :disabled="!roomTypes.length"
@@ -890,84 +949,161 @@ async function submitDelete() {
                 </div>
             </div>
 
-            <!-- Semáforo de un vistazo: cuántas se pueden vender ahora y
-                 cuántas están detenidas. -->
-            <div v-if="rooms.length" class="mt-4 grid grid-cols-12 gap-4">
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
-                >
-                    <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+            <!-- Semáforo de un vistazo, y además filtro: cuántas se pueden
+                 vender ahora y cuántas están detenidas. -->
+            <template v-if="rooms.length">
+                <div class="mt-4 flex items-center gap-2">
+                    <span :class="sectionLabel">Cómo están ahora</span>
+                    <span class="hidden text-[11px] text-slate-400 sm:inline">
+                        Toca una cifra para ver solo esas
+                    </span>
+                </div>
+                <div class="mt-2 grid auto-rows-fr grid-cols-12 gap-4">
+                    <button
+                        type="button"
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                        :class="!filtersActive ? 'border-primary/30' : ''"
+                        @click="clearFilters"
                     >
-                        <Lucide icon="BedDouble" class="h-4 w-4" />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="text-sm font-medium">
-                            {{ rooms.length
-                            }}<span
-                                v-if="maxRooms"
-                                class="text-xs font-normal text-slate-400"
+                        <div
+                            :class="[
+                                sectionIcon,
+                                'border-primary/10 bg-primary/10 text-primary',
+                            ]"
+                        >
+                            <Lucide icon="BedDouble" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
+                                {{ rooms.length
+                                }}<span
+                                    v-if="maxRooms"
+                                    class="text-xs font-normal text-slate-400"
+                                >
+                                    de {{ maxRooms }}</span
+                                >
+                            </div>
+                            <div class="text-xs leading-tight text-slate-500">
+                                Dadas de alta
+                            </div>
+                            <div
+                                class="text-[11px] leading-tight text-slate-400"
                             >
-                                de {{ maxRooms }}</span
+                                {{
+                                    maxRooms
+                                        ? `Tu plan permite ${maxRooms}`
+                                        : 'Sin límite de plan'
+                                }}
+                            </div>
+                        </div>
+                    </button>
+                    <button
+                        type="button"
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                        :class="
+                            filters.group === 'available'
+                                ? 'border-success/30'
+                                : ''
+                        "
+                        @click="applyGroup('available')"
+                    >
+                        <div
+                            :class="[
+                                sectionIcon,
+                                'border-success/10 bg-success/10 text-success',
+                            ]"
+                        >
+                            <Lucide icon="CircleCheck" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
+                                {{ statusCounts.available }}
+                            </div>
+                            <div class="text-xs leading-tight text-slate-500">
+                                Disponibles ahora
+                            </div>
+                            <div
+                                class="text-[11px] leading-tight text-slate-400"
                             >
+                                Se pueden vender
+                            </div>
                         </div>
-                        <div class="truncate text-xs text-slate-500">
-                            Habitaciones dadas de alta
-                        </div>
-                    </div>
-                </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
-                >
-                    <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                    </button>
+                    <button
+                        type="button"
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                        :class="
+                            filters.group === 'busy' ? 'border-info/30' : ''
+                        "
+                        @click="applyGroup('busy')"
                     >
-                        <Lucide icon="CircleCheck" class="h-4 w-4" />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="text-sm font-medium">
-                            {{ statusCounts.available }}
+                        <div
+                            :class="[
+                                sectionIcon,
+                                'border-info/10 bg-info/10 text-info',
+                            ]"
+                        >
+                            <Lucide icon="DoorOpen" class="h-4 w-4" />
                         </div>
-                        <div class="truncate text-xs text-slate-500">
-                            Disponibles ahora
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
+                                {{ statusCounts.busy }}
+                            </div>
+                            <div class="text-xs leading-tight text-slate-500">
+                                Ocupadas o reservadas
+                            </div>
+                            <div
+                                class="text-[11px] leading-tight text-slate-400"
+                            >
+                                Con huésped o apartadas
+                            </div>
                         </div>
-                    </div>
-                </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
-                >
-                    <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                    </button>
+                    <button
+                        type="button"
+                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
+                        :class="
+                            filters.group === 'pending'
+                                ? 'border-pending/30'
+                                : ''
+                        "
+                        @click="applyGroup('pending')"
                     >
-                        <Lucide icon="DoorOpen" class="h-4 w-4" />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="text-sm font-medium">
-                            {{ statusCounts.busy }}
+                        <div
+                            :class="[
+                                sectionIcon,
+                                statusCounts.pending
+                                    ? 'border-pending/10 bg-pending/10 text-pending'
+                                    : 'border-slate-200 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400',
+                            ]"
+                        >
+                            <Lucide icon="Wrench" class="h-4 w-4" />
                         </div>
-                        <div class="truncate text-xs text-slate-500">
-                            Ocupadas o reservadas
+                        <div class="min-w-0">
+                            <div class="text-sm font-medium">
+                                {{ statusCounts.pending }}
+                            </div>
+                            <div class="text-xs leading-tight text-slate-500">
+                                Por limpiar o en mantenimiento
+                            </div>
+                            <div
+                                class="text-[11px] leading-tight"
+                                :class="
+                                    statusCounts.pending
+                                        ? 'text-pending'
+                                        : 'text-slate-400'
+                                "
+                            >
+                                {{
+                                    statusCounts.pending
+                                        ? 'No se pueden vender así'
+                                        : 'Todas listas'
+                                }}
+                            </div>
                         </div>
-                    </div>
+                    </button>
                 </div>
-                <div
-                    class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
-                >
-                    <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
-                    >
-                        <Lucide icon="Wrench" class="h-4 w-4" />
-                    </div>
-                    <div class="min-w-0">
-                        <div class="text-sm font-medium">
-                            {{ statusCounts.pending }}
-                        </div>
-                        <div class="truncate text-xs text-slate-500">
-                            Por limpiar o en mantenimiento
-                        </div>
-                    </div>
-                </div>
-            </div>
+            </template>
 
             <div
                 v-if="!roomTypes.length"
@@ -1037,157 +1173,531 @@ async function submitDelete() {
                     </div>
                 </div>
 
-                <!-- Filtros y búsqueda -->
+                <!-- Filtros y búsqueda, en franja gris pegada a la lista -->
                 <div
                     v-if="rooms.length"
-                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                    class="border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                 >
-                    <div class="relative w-full sm:w-56">
-                        <Lucide
-                            icon="Search"
-                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
-                        />
-                        <FormInput
-                            v-model="filters.search"
-                            type="text"
-                            class="h-9 pl-9 text-xs"
-                            placeholder="Buscar por número o nombre"
-                        />
+                    <div class="mb-2.5 flex flex-wrap items-center gap-2">
+                        <span :class="sectionLabel"
+                            >Encuentra una habitación</span
+                        >
+                        <span
+                            class="hidden text-[11px] text-slate-400 sm:inline"
+                        >
+                            Por número o nombre, o acota por zona, tipo y estado
+                        </span>
                     </div>
-                    <FormSelect
-                        v-model="filters.zone"
-                        class="h-9 w-full text-xs sm:w-40"
-                    >
-                        <option value="">Todas las zonas</option>
-                        <option
-                            v-for="zone in zones"
-                            :key="zone.id"
-                            :value="zone.id"
+                    <div class="flex flex-wrap items-center gap-2.5">
+                        <div class="relative w-full sm:w-72">
+                            <Lucide
+                                icon="Search"
+                                class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
+                            />
+                            <FormInput
+                                v-model="filters.search"
+                                type="text"
+                                class="h-9 pl-9 text-xs"
+                                placeholder="Número o nombre"
+                            />
+                        </div>
+                        <FormSelect
+                            v-model="filters.zone"
+                            class="h-9 w-full text-xs sm:w-40"
                         >
-                            {{ zone.name }}
-                        </option>
-                    </FormSelect>
-                    <FormSelect
-                        v-model="filters.type"
-                        class="h-9 w-full text-xs sm:w-44"
-                    >
-                        <option value="">Todos los tipos</option>
-                        <option
-                            v-for="type in roomTypes"
-                            :key="type.id"
-                            :value="type.id"
+                            <option value="">Todas las zonas</option>
+                            <option
+                                v-for="zone in zones"
+                                :key="zone.id"
+                                :value="zone.id"
+                            >
+                                {{ zone.name }}
+                            </option>
+                        </FormSelect>
+                        <FormSelect
+                            v-model="filters.type"
+                            class="h-9 w-full text-xs sm:w-44"
                         >
-                            {{ type.name }}
-                        </option>
-                    </FormSelect>
-                    <FormSelect
-                        v-model="filters.status"
-                        class="h-9 w-full text-xs sm:w-40"
-                    >
-                        <option value="">Todos los estados</option>
-                        <option
-                            v-for="opt in statusOptions"
-                            :key="opt.value"
-                            :value="opt.value"
+                            <option value="">Todos los tipos</option>
+                            <option
+                                v-for="type in roomTypes"
+                                :key="type.id"
+                                :value="type.id"
+                            >
+                                {{ type.name }}
+                            </option>
+                        </FormSelect>
+                        <FormSelect
+                            v-model="filters.status"
+                            class="h-9 w-full text-xs sm:w-40"
                         >
-                            {{ opt.label }}
-                        </option>
-                    </FormSelect>
-                    <div
-                        v-if="filtersActive"
-                        class="flex items-center gap-2 text-xs text-slate-500"
-                    >
-                        {{ filteredRooms.length }} de {{ rooms.length }}
-                        <button
-                            type="button"
-                            class="font-medium text-primary hover:underline"
-                            @click="clearFilters"
+                            <option value="">Todos los estados</option>
+                            <option
+                                v-for="opt in statusOptions"
+                                :key="opt.value"
+                                :value="opt.value"
+                            >
+                                {{ opt.label }}
+                            </option>
+                        </FormSelect>
+                        <div
+                            v-if="filtersActive"
+                            class="flex items-center gap-2 text-xs text-slate-500"
                         >
-                            Limpiar
-                        </button>
+                            {{ filteredRooms.length }} de {{ rooms.length }}
+                            <button
+                                type="button"
+                                class="font-medium text-primary hover:underline"
+                                @click="clearFilters"
+                            >
+                                Limpiar
+                            </button>
+                        </div>
+                        <template v-if="canManage && selectedIds.length">
+                            <span class="ml-auto text-xs text-slate-500">
+                                {{ selectedIds.length }}
+                                {{
+                                    selectedIds.length === 1
+                                        ? 'seleccionada'
+                                        : 'seleccionadas'
+                                }}
+                            </span>
+                            <button
+                                type="button"
+                                class="text-xs font-medium text-primary hover:underline"
+                                @click="selectedIds = []"
+                            >
+                                Quitar selección
+                            </button>
+                            <Button
+                                variant="danger"
+                                class="h-8 rounded-[0.5rem] text-xs"
+                                @click="bulkDeleteOpen = true"
+                            >
+                                <Lucide
+                                    icon="Trash2"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                Eliminar seleccionadas
+                            </Button>
+                        </template>
                     </div>
-                    <template v-if="canManage && selectedIds.length">
-                        <span class="ml-auto text-xs text-slate-500"
-                            >{{ selectedIds.length }} seleccionada(s)</span
-                        >
-                        <button
-                            type="button"
-                            class="text-xs font-medium text-primary hover:underline"
-                            @click="selectedIds = []"
-                        >
-                            Quitar selección
-                        </button>
-                        <Button
-                            variant="danger"
-                            class="h-8 rounded-[0.5rem] text-xs"
-                            @click="bulkDeleteOpen = true"
-                        >
-                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
-                            Eliminar seleccionadas
-                        </Button>
-                    </template>
                 </div>
 
-                <div class="p-4">
-                    <!-- Móvil: tarjetas apiladas (la tabla no es responsiva
-                         en pantallas chicas — patrón de catalog/Index.vue). -->
-                    <div
-                        v-if="filteredRooms.length"
-                        class="space-y-2.5 sm:hidden"
-                    >
-                        <div
-                            v-for="room in filteredRooms"
-                            :key="`room-card-${room.id}`"
-                            class="rounded-lg border border-slate-200/70 bg-white p-3.5 dark:border-darkmode-400 dark:bg-darkmode-600"
-                        >
-                            <div
-                                class="flex items-center justify-between gap-2"
-                            >
-                                <div class="flex min-w-0 items-center gap-2.5">
+                <!-- Escritorio: tabla densa, sin cebra -->
+                <div
+                    v-if="filteredRooms.length"
+                    class="hidden overflow-x-auto lg:block"
+                >
+                    <Table hover class="min-w-[760px]">
+                        <Table.Thead>
+                            <Table.Tr>
+                                <Table.Th
+                                    v-if="canManage"
+                                    :class="[tableHead, 'w-10']"
+                                >
                                     <FormCheck.Input
-                                        v-if="canManage"
+                                        type="checkbox"
+                                        :checked="allSelected"
+                                        title="Seleccionar las visibles"
+                                        @change="toggleAllRooms"
+                                    />
+                                </Table.Th>
+                                <Table.Th :class="tableHead"
+                                    >Habitación</Table.Th
+                                >
+                                <Table.Th :class="tableHead">Camas</Table.Th>
+                                <Table.Th :class="tableHead">Zona</Table.Th>
+                                <Table.Th :class="tableHead">Estado</Table.Th>
+                                <Table.Th v-if="anyNotes" :class="tableHead">
+                                    Notas
+                                </Table.Th>
+                                <Table.Th
+                                    v-if="canManage || canBlock"
+                                    :class="[tableHead, 'text-right']"
+                                >
+                                    Acciones
+                                </Table.Th>
+                            </Table.Tr>
+                        </Table.Thead>
+                        <Table.Tbody>
+                            <Table.Tr
+                                v-for="room in filteredRooms"
+                                :key="room.id"
+                                class="align-top"
+                            >
+                                <Table.Td v-if="canManage" class="w-10">
+                                    <FormCheck.Input
                                         type="checkbox"
                                         :checked="selectedIds.includes(room.id)"
                                         @change="toggleRow(room.id)"
                                     />
+                                </Table.Td>
+
+                                <!-- Quién es: número, nombre y su tipo -->
+                                <Table.Td class="whitespace-nowrap">
                                     <Link
                                         :href="
                                             route('tenant.rooms.show', room.id)
                                         "
-                                        class="truncate font-medium"
+                                        class="text-sm font-medium transition hover:text-primary"
+                                    >
+                                        {{ room.number }}
+                                    </Link>
+                                    <div
+                                        class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
+                                    >
+                                        <span v-if="room.name">{{
+                                            room.name
+                                        }}</span>
+                                        <span
+                                            v-if="room.name"
+                                            class="text-slate-300 dark:text-darkmode-400"
+                                            >·</span
+                                        >
+                                        <span>{{ room.room_type }}</span>
+                                        <span
+                                            v-if="
+                                                typesWithoutRate.has(
+                                                    room.room_type_id,
+                                                )
+                                            "
+                                            class="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-warning"
+                                            title="El tipo no tiene tarifa activa; agrégala en Zonas y tipos"
+                                        >
+                                            Sin tarifa
+                                        </span>
+                                    </div>
+                                </Table.Td>
+
+                                <Table.Td class="whitespace-nowrap">
+                                    <div class="text-xs">
+                                        {{
+                                            room.beds_label ??
+                                            'Sin camas capturadas'
+                                        }}
+                                    </div>
+                                    <div
+                                        v-if="room.capacity"
+                                        class="text-[11px] text-slate-400"
+                                    >
+                                        hasta {{ room.capacity }}
+                                        {{
+                                            room.capacity === 1
+                                                ? 'persona'
+                                                : 'personas'
+                                        }}
+                                    </div>
+                                </Table.Td>
+
+                                <Table.Td class="whitespace-nowrap">
+                                    <span
+                                        v-if="room.zone"
+                                        class="inline-flex items-center gap-1.5 text-xs"
+                                    >
+                                        <span
+                                            v-if="room.zone_color"
+                                            class="h-2 w-2 shrink-0 rounded-full"
+                                            :style="{
+                                                backgroundColor:
+                                                    room.zone_color,
+                                            }"
+                                        />
+                                        {{ room.zone }}
+                                    </span>
+                                    <span v-else class="text-xs text-slate-400">
+                                        Sin zona
+                                    </span>
+                                </Table.Td>
+
+                                <!-- Cómo está, y lo que hay que saber de ella -->
+                                <Table.Td class="whitespace-nowrap">
+                                    <span
+                                        class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                        :class="
+                                            statusBadge[room.status_color] ??
+                                            'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                        "
+                                    >
+                                        <span
+                                            class="h-1.5 w-1.5 rounded-full"
+                                            :class="dotColor[room.status_color]"
+                                        />
+                                        {{ room.status_label }}
+                                    </span>
+                                    <div
+                                        v-if="
+                                            room.smoking ||
+                                            room.accessible ||
+                                            room.price_modifier ||
+                                            room.usage_count ||
+                                            room.usage_limit
+                                        "
+                                        class="mt-1 flex items-center gap-1.5"
+                                    >
+                                        <span
+                                            v-if="
+                                                room.usage_count ||
+                                                room.usage_limit
+                                            "
+                                            :title="usageTitle(room)"
+                                            class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap"
+                                            :class="usageBadgeClass(room)"
+                                        >
+                                            <Lucide
+                                                :icon="
+                                                    room.usage_locked
+                                                        ? 'Lock'
+                                                        : 'Repeat'
+                                                "
+                                                class="h-3 w-3"
+                                            />
+                                            {{ room.usage_count
+                                            }}<template v-if="room.usage_limit"
+                                                >/{{
+                                                    room.usage_limit
+                                                }}</template
+                                            >
+                                        </span>
+                                        <span
+                                            v-if="room.smoking"
+                                            title="Se permite fumar"
+                                        >
+                                            <Lucide
+                                                icon="Cigarette"
+                                                class="h-3.5 w-3.5 text-slate-400"
+                                            />
+                                        </span>
+                                        <span
+                                            v-if="room.accessible"
+                                            title="Accesible / planta baja"
+                                        >
+                                            <Lucide
+                                                icon="Accessibility"
+                                                class="h-3.5 w-3.5 text-slate-400"
+                                            />
+                                        </span>
+                                        <span
+                                            v-if="room.price_modifier"
+                                            title="Ajuste de precio por unidad sobre la tarifa del tipo"
+                                            class="rounded-full px-1.5 py-0.5 text-[11px] font-medium"
+                                            :class="
+                                                room.price_modifier > 0
+                                                    ? 'bg-warning/10 text-warning'
+                                                    : 'bg-success/10 text-success'
+                                            "
+                                        >
+                                            {{
+                                                priceModifierLabel(
+                                                    room.price_modifier,
+                                                )
+                                            }}
+                                        </span>
+                                    </div>
+                                </Table.Td>
+
+                                <Table.Td class="max-w-[16rem]">
+                                    <span
+                                        v-if="room.notes"
+                                        class="line-clamp-2 text-xs text-slate-500"
+                                        :title="room.notes"
+                                    >
+                                        {{ room.notes }}
+                                    </span>
+                                    <span v-else class="text-xs text-slate-300"
+                                        >—</span
+                                    >
+                                </Table.Td>
+
+                                <!-- Una acción a la vista y el resto en el menú:
+                                     eran seis iconos grises en fila. -->
+                                <Table.Td v-if="canManage || canBlock">
+                                    <div
+                                        class="flex items-center justify-end gap-1.5"
+                                    >
+                                        <Link
+                                            :href="
+                                                route(
+                                                    'tenant.rooms.show',
+                                                    room.id,
+                                                )
+                                            "
+                                            :class="rowAction"
+                                            class="hover:bg-primary/10 hover:text-primary"
+                                            title="Ver la ficha y su uso"
+                                        >
+                                            <Lucide
+                                                icon="Eye"
+                                                class="h-4 w-4"
+                                            />
+                                        </Link>
+                                        <Menu>
+                                            <Menu.Button
+                                                :class="rowAction"
+                                                class="border border-slate-200 hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
+                                                title="Más acciones"
+                                            >
+                                                <Lucide
+                                                    icon="EllipsisVertical"
+                                                    class="h-4 w-4"
+                                                />
+                                            </Menu.Button>
+                                            <Menu.Items class="w-56">
+                                                <Menu.Item
+                                                    v-if="canManage"
+                                                    as="button"
+                                                    type="button"
+                                                    @click="openEdit(room)"
+                                                >
+                                                    <Lucide
+                                                        icon="Pencil"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Editar habitación
+                                                </Menu.Item>
+                                                <Menu.Item
+                                                    v-if="canManage"
+                                                    as="button"
+                                                    type="button"
+                                                    @click="duplicateRoom(room)"
+                                                >
+                                                    <Lucide
+                                                        icon="Copy"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Duplicar con el siguiente
+                                                    número
+                                                </Menu.Item>
+                                                <Menu.Item
+                                                    v-if="canBlock"
+                                                    as="button"
+                                                    type="button"
+                                                    @click="openBlocks(room)"
+                                                >
+                                                    <Lucide
+                                                        icon="CalendarOff"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Bloquear fechas
+                                                </Menu.Item>
+                                                <Menu.Item
+                                                    v-if="
+                                                        canBlock &&
+                                                        (room.usage_count > 0 ||
+                                                            room.usage_locked)
+                                                    "
+                                                    as="button"
+                                                    type="button"
+                                                    :class="
+                                                        room.usage_locked
+                                                            ? 'text-danger'
+                                                            : ''
+                                                    "
+                                                    @click="
+                                                        resettingUsage = room
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        icon="RotateCcw"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Reiniciar contador de usos
+                                                </Menu.Item>
+                                                <template v-if="canManage">
+                                                    <Menu.Divider />
+                                                    <Menu.Item
+                                                        as="button"
+                                                        type="button"
+                                                        class="text-danger"
+                                                        @click="deleting = room"
+                                                    >
+                                                        <Lucide
+                                                            icon="Trash2"
+                                                            class="mr-1.5 h-3.5 w-3.5"
+                                                        />
+                                                        Eliminar habitación
+                                                    </Menu.Item>
+                                                </template>
+                                            </Menu.Items>
+                                        </Menu>
+                                    </div>
+                                </Table.Td>
+                            </Table.Tr>
+                        </Table.Tbody>
+                    </Table>
+                </div>
+
+                <!-- Móvil y tablet: los mismos datos apilados -->
+                <div
+                    v-if="filteredRooms.length"
+                    class="divide-y divide-slate-200/60 lg:hidden dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="room in filteredRooms"
+                        :key="`room-card-${room.id}`"
+                        class="flex gap-3 px-4 py-3.5"
+                    >
+                        <FormCheck.Input
+                            v-if="canManage"
+                            type="checkbox"
+                            class="mt-1 shrink-0"
+                            :checked="selectedIds.includes(room.id)"
+                            @change="toggleRow(room.id)"
+                        />
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="min-w-0">
+                                    <Link
+                                        :href="
+                                            route('tenant.rooms.show', room.id)
+                                        "
+                                        class="block truncate text-sm font-medium transition hover:text-primary"
                                     >
                                         {{ room.number
                                         }}<template v-if="room.name">
                                             · {{ room.name }}</template
                                         >
                                     </Link>
+                                    <div class="text-xs text-slate-500">
+                                        {{ room.room_type }}
+                                        <template v-if="room.capacity">
+                                            · hasta {{ room.capacity }}
+                                            {{
+                                                room.capacity === 1
+                                                    ? 'persona'
+                                                    : 'personas'
+                                            }}
+                                        </template>
+                                    </div>
                                 </div>
                                 <span
-                                    class="inline-flex shrink-0 items-center gap-1.5 text-xs"
+                                    class="inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                    :class="
+                                        statusBadge[room.status_color] ??
+                                        'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                    "
                                 >
                                     <span
-                                        class="h-2 w-2 rounded-full"
+                                        class="h-1.5 w-1.5 rounded-full"
                                         :class="dotColor[room.status_color]"
                                     />
                                     {{ room.status_label }}
                                 </span>
                             </div>
+
                             <div
-                                class="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
+                                class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500"
                             >
-                                <span>{{ room.room_type }}</span>
-                                <span
-                                    v-if="
-                                        typesWithoutRate.has(room.room_type_id)
-                                    "
-                                    class="rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-warning"
-                                    title="El tipo no tiene tarifa activa; agrégala en Zonas y tipos"
-                                >
-                                    Sin tarifa
+                                <span class="inline-flex items-center gap-1.5">
+                                    <Lucide
+                                        icon="BedDouble"
+                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
+                                    />
+                                    {{ room.beds_label ?? 'Sin camas' }}
                                 </span>
                                 <span
                                     v-if="room.zone"
-                                    class="inline-flex items-center gap-2 sm:gap-1.5"
+                                    class="inline-flex items-center gap-1.5"
                                 >
                                     <span
                                         v-if="room.zone_color"
@@ -1199,9 +1709,17 @@ async function submitDelete() {
                                     {{ room.zone }}
                                 </span>
                                 <span
+                                    v-if="
+                                        typesWithoutRate.has(room.room_type_id)
+                                    "
+                                    class="rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
+                                >
+                                    Sin tarifa
+                                </span>
+                                <span
                                     v-if="room.usage_count || room.usage_limit"
                                     :title="usageTitle(room)"
-                                    class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium whitespace-nowrap"
+                                    class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-[11px] font-medium"
                                     :class="usageBadgeClass(room)"
                                 >
                                     <Lucide
@@ -1218,391 +1736,154 @@ async function submitDelete() {
                                     >
                                 </span>
                             </div>
+                            <p
+                                v-if="room.notes"
+                                class="mt-1 line-clamp-2 text-[11px] text-slate-400"
+                            >
+                                {{ room.notes }}
+                            </p>
+
                             <div
                                 v-if="canManage || canBlock"
-                                class="mt-3 flex items-center gap-2 border-t border-dashed border-slate-200/70 pt-2.5 dark:border-darkmode-400"
+                                class="mt-2.5 flex items-center gap-1.5"
                             >
                                 <Link
                                     :href="route('tenant.rooms.show', room.id)"
-                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 text-slate-500 dark:border-darkmode-400"
-                                    title="Ver ficha y uso"
+                                    class="inline-flex h-8 items-center gap-1.5 rounded-[0.5rem] border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 dark:border-darkmode-400 dark:bg-darkmode-600"
                                 >
-                                    <Lucide icon="Eye" class="h-4 w-4" />
+                                    <Lucide icon="Eye" class="h-3.5 w-3.5" />
+                                    Ver ficha
                                 </Link>
-                                <button
-                                    v-if="canManage"
-                                    type="button"
-                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 text-slate-500 dark:border-darkmode-400"
-                                    title="Editar"
-                                    @click="openEdit(room)"
-                                >
-                                    <Lucide icon="Pencil" class="h-4 w-4" />
-                                </button>
-                                <button
-                                    v-if="canManage"
-                                    type="button"
-                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 text-slate-500 dark:border-darkmode-400"
-                                    title="Duplicar con el siguiente número libre"
-                                    @click="duplicateRoom(room)"
-                                >
-                                    <Lucide icon="Copy" class="h-4 w-4" />
-                                </button>
-                                <button
-                                    v-if="canBlock"
-                                    type="button"
-                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 text-slate-500 dark:border-darkmode-400"
-                                    title="Bloquear fechas por mantenimiento"
-                                    @click="openBlocks(room)"
-                                >
-                                    <Lucide
-                                        icon="CalendarOff"
-                                        class="h-4 w-4"
-                                    />
-                                </button>
-                                <button
-                                    v-if="
-                                        canBlock &&
-                                        (room.usage_count > 0 ||
-                                            room.usage_locked)
-                                    "
-                                    type="button"
-                                    class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 dark:border-darkmode-400"
-                                    :class="
-                                        room.usage_locked
-                                            ? 'text-danger'
-                                            : 'text-slate-500'
-                                    "
-                                    title="Resetear contador de usos"
-                                    @click="resettingUsage = room"
-                                >
-                                    <Lucide icon="RotateCcw" class="h-4 w-4" />
-                                </button>
-                                <button
-                                    v-if="canManage"
-                                    type="button"
-                                    class="ml-auto flex h-8 w-8 items-center justify-center rounded-full border border-slate-200/70 text-danger dark:border-darkmode-400"
-                                    title="Eliminar"
-                                    @click="deleting = room"
-                                >
-                                    <Lucide icon="Trash2" class="h-4 w-4" />
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                    <div
-                        v-if="filteredRooms.length"
-                        class="hidden overflow-x-auto sm:block"
-                    >
-                        <Table striped class="min-w-[720px]">
-                            <Table.Thead>
-                                <Table.Tr>
-                                    <Table.Th v-if="canManage" class="w-10">
-                                        <FormCheck.Input
-                                            type="checkbox"
-                                            :checked="allSelected"
-                                            title="Seleccionar las visibles"
-                                            @change="toggleAllRooms"
+                                <Menu>
+                                    <Menu.Button
+                                        :class="rowAction"
+                                        class="border border-slate-200 dark:border-darkmode-400"
+                                        title="Más acciones"
+                                    >
+                                        <Lucide
+                                            icon="EllipsisVertical"
+                                            class="h-4 w-4"
                                         />
-                                    </Table.Th>
-                                    <Table.Th class="whitespace-nowrap"
-                                        >Número</Table.Th
-                                    >
-                                    <Table.Th class="whitespace-nowrap"
-                                        >Tipo</Table.Th
-                                    >
-                                    <Table.Th class="whitespace-nowrap"
-                                        >Camas / Capacidad</Table.Th
-                                    >
-                                    <Table.Th class="whitespace-nowrap"
-                                        >Zona</Table.Th
-                                    >
-                                    <Table.Th class="whitespace-nowrap"
-                                        >Estado</Table.Th
-                                    >
-                                    <Table.Th class="whitespace-nowrap"
-                                        >Notas</Table.Th
-                                    >
-                                    <Table.Th
-                                        v-if="canManage || canBlock"
-                                        class="text-right whitespace-nowrap"
-                                        >Acciones</Table.Th
-                                    >
-                                </Table.Tr>
-                            </Table.Thead>
-                            <Table.Tbody>
-                                <Table.Tr
-                                    v-for="room in filteredRooms"
-                                    :key="room.id"
-                                >
-                                    <Table.Td v-if="canManage" class="w-10">
-                                        <FormCheck.Input
-                                            type="checkbox"
-                                            :checked="
-                                                selectedIds.includes(room.id)
-                                            "
-                                            @change="toggleRow(room.id)"
-                                        />
-                                    </Table.Td>
-                                    <Table.Td>
-                                        <Link
-                                            :href="
-                                                route(
-                                                    'tenant.rooms.show',
-                                                    room.id,
-                                                )
-                                            "
-                                            class="font-medium text-primary hover:underline"
-                                            >{{ room.number }}</Link
+                                    </Menu.Button>
+                                    <Menu.Items class="w-56">
+                                        <Menu.Item
+                                            v-if="canManage"
+                                            as="button"
+                                            type="button"
+                                            @click="openEdit(room)"
                                         >
-                                        <div
-                                            v-if="room.name"
-                                            class="text-xs text-slate-500"
-                                        >
-                                            {{ room.name }}
-                                        </div>
-                                    </Table.Td>
-                                    <Table.Td>
-                                        {{ room.room_type }}
-                                        <span
-                                            v-if="
-                                                typesWithoutRate.has(
-                                                    room.room_type_id,
-                                                )
-                                            "
-                                            class="ml-1.5 rounded-full bg-warning/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-warning"
-                                            title="El tipo no tiene tarifa activa; agrégala en Zonas y tipos"
-                                        >
-                                            Sin tarifa
-                                        </span>
-                                    </Table.Td>
-                                    <Table.Td>
-                                        <span
-                                            class="text-slate-600 dark:text-slate-300"
-                                            >{{ room.beds_label ?? '—' }}</span
-                                        >
-                                        <span
-                                            v-if="room.capacity"
-                                            class="whitespace-nowrap text-slate-500"
-                                        >
-                                            · {{ room.capacity }} pers</span
-                                        >
-                                    </Table.Td>
-                                    <Table.Td>
-                                        <span
-                                            class="inline-flex items-center gap-2 sm:gap-1.5"
-                                        >
-                                            <span
-                                                v-if="room.zone_color"
-                                                class="h-2 w-2 shrink-0 rounded-full"
-                                                :style="{
-                                                    backgroundColor:
-                                                        room.zone_color,
-                                                }"
+                                            <Lucide
+                                                icon="Pencil"
+                                                class="mr-1.5 h-3.5 w-3.5"
                                             />
-                                            {{ room.zone ?? '—' }}
-                                        </span>
-                                    </Table.Td>
-                                    <Table.Td>
-                                        <span
-                                            class="inline-flex items-center gap-2 sm:gap-1.5"
+                                            Editar habitación
+                                        </Menu.Item>
+                                        <Menu.Item
+                                            v-if="canManage"
+                                            as="button"
+                                            type="button"
+                                            @click="duplicateRoom(room)"
                                         >
-                                            <span
-                                                class="h-2 w-2 rounded-full"
-                                                :class="
-                                                    dotColor[room.status_color]
-                                                "
+                                            <Lucide
+                                                icon="Copy"
+                                                class="mr-1.5 h-3.5 w-3.5"
                                             />
-                                            {{ room.status_label }}
-                                        </span>
-                                        <div
+                                            Duplicar con el siguiente número
+                                        </Menu.Item>
+                                        <Menu.Item
+                                            v-if="canBlock"
+                                            as="button"
+                                            type="button"
+                                            @click="openBlocks(room)"
+                                        >
+                                            <Lucide
+                                                icon="CalendarOff"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            Bloquear fechas
+                                        </Menu.Item>
+                                        <Menu.Item
                                             v-if="
-                                                room.smoking ||
-                                                room.accessible ||
-                                                room.price_modifier ||
-                                                room.usage_count ||
-                                                room.usage_limit
+                                                canBlock &&
+                                                (room.usage_count > 0 ||
+                                                    room.usage_locked)
                                             "
-                                            class="mt-1 flex items-center gap-2 sm:gap-1.5"
+                                            as="button"
+                                            type="button"
+                                            :class="
+                                                room.usage_locked
+                                                    ? 'text-danger'
+                                                    : ''
+                                            "
+                                            @click="resettingUsage = room"
                                         >
-                                            <span
-                                                v-if="
-                                                    room.usage_count ||
-                                                    room.usage_limit
-                                                "
-                                                :title="usageTitle(room)"
-                                                class="inline-flex items-center gap-1 rounded-full px-1.5 py-0.5 text-xs font-medium whitespace-nowrap"
-                                                :class="usageBadgeClass(room)"
-                                            >
-                                                <Lucide
-                                                    :icon="
-                                                        room.usage_locked
-                                                            ? 'Lock'
-                                                            : 'Repeat'
-                                                    "
-                                                    class="h-3 w-3"
-                                                />
-                                                {{ room.usage_count
-                                                }}<template
-                                                    v-if="room.usage_limit"
-                                                    >/{{
-                                                        room.usage_limit
-                                                    }}</template
-                                                >
-                                            </span>
-                                            <span
-                                                v-if="room.smoking"
-                                                title="Se permite fumar"
-                                            >
-                                                <Lucide
-                                                    icon="Cigarette"
-                                                    class="h-4 w-4 text-slate-400"
-                                                />
-                                            </span>
-                                            <span
-                                                v-if="room.accessible"
-                                                title="Accesible / planta baja"
-                                            >
-                                                <Lucide
-                                                    icon="Accessibility"
-                                                    class="h-4 w-4 text-slate-400"
-                                                />
-                                            </span>
-                                            <span
-                                                v-if="room.price_modifier"
-                                                title="Ajuste de precio por unidad sobre la tarifa del tipo"
-                                                class="rounded-full px-1.5 py-0.5 text-xs font-medium"
-                                                :class="
-                                                    room.price_modifier > 0
-                                                        ? 'bg-warning/10 text-warning'
-                                                        : 'bg-success/10 text-success'
-                                                "
-                                            >
-                                                {{
-                                                    priceModifierLabel(
-                                                        room.price_modifier,
-                                                    )
-                                                }}
-                                            </span>
-                                        </div>
-                                    </Table.Td>
-                                    <Table.Td
-                                        class="max-w-[200px] truncate text-slate-500"
-                                        >{{ room.notes ?? '—' }}</Table.Td
-                                    >
-                                    <Table.Td v-if="canManage || canBlock">
-                                        <div
-                                            class="flex items-center justify-end gap-2"
-                                        >
-                                            <Link
-                                                :href="
-                                                    route(
-                                                        'tenant.rooms.show',
-                                                        room.id,
-                                                    )
-                                                "
-                                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
-                                                title="Ver ficha y uso"
-                                            >
-                                                <Lucide
-                                                    icon="Eye"
-                                                    class="h-4 w-4"
-                                                />
-                                            </Link>
-                                            <button
-                                                v-if="canManage"
+                                            <Lucide
+                                                icon="RotateCcw"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            Reiniciar contador de usos
+                                        </Menu.Item>
+                                        <template v-if="canManage">
+                                            <Menu.Divider />
+                                            <Menu.Item
+                                                as="button"
                                                 type="button"
-                                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
-                                                title="Editar"
-                                                @click="openEdit(room)"
-                                            >
-                                                <Lucide
-                                                    icon="Pencil"
-                                                    class="h-4 w-4"
-                                                />
-                                            </button>
-                                            <button
-                                                v-if="canManage"
-                                                type="button"
-                                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary dark:hover:bg-darkmode-400"
-                                                title="Duplicar con el siguiente número libre"
-                                                @click="duplicateRoom(room)"
-                                            >
-                                                <Lucide
-                                                    icon="Copy"
-                                                    class="h-4 w-4"
-                                                />
-                                            </button>
-                                            <button
-                                                v-if="canBlock"
-                                                type="button"
-                                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-warning/10 hover:text-warning"
-                                                title="Bloquear fechas por mantenimiento"
-                                                @click="openBlocks(room)"
-                                            >
-                                                <Lucide
-                                                    icon="CalendarOff"
-                                                    class="h-4 w-4"
-                                                />
-                                            </button>
-                                            <button
-                                                v-if="
-                                                    canBlock &&
-                                                    (room.usage_count > 0 ||
-                                                        room.usage_locked)
-                                                "
-                                                type="button"
-                                                class="flex h-8 w-8 items-center justify-center rounded-full transition hover:bg-info/10 hover:text-info"
-                                                :class="
-                                                    room.usage_locked
-                                                        ? 'text-danger'
-                                                        : 'text-slate-500'
-                                                "
-                                                title="Resetear contador de usos"
-                                                @click="resettingUsage = room"
-                                            >
-                                                <Lucide
-                                                    icon="RotateCcw"
-                                                    class="h-4 w-4"
-                                                />
-                                            </button>
-                                            <button
-                                                v-if="canManage"
-                                                type="button"
-                                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
-                                                title="Eliminar"
+                                                class="text-danger"
                                                 @click="deleting = room"
                                             >
                                                 <Lucide
                                                     icon="Trash2"
-                                                    class="h-4 w-4"
+                                                    class="mr-1.5 h-3.5 w-3.5"
                                                 />
-                                            </button>
-                                        </div>
-                                    </Table.Td>
-                                </Table.Tr>
-                            </Table.Tbody>
-                        </Table>
+                                                Eliminar habitación
+                                            </Menu.Item>
+                                        </template>
+                                    </Menu.Items>
+                                </Menu>
+                            </div>
+                        </div>
                     </div>
-                    <div
-                        v-else-if="rooms.length"
-                        class="flex flex-col items-center gap-2 py-8 text-center text-slate-500"
+                </div>
+
+                <div
+                    v-else-if="rooms.length"
+                    class="flex flex-col items-center gap-2 px-5 py-10 text-center"
+                >
+                    <Lucide icon="SearchX" class="h-8 w-8 text-slate-300" />
+                    <p class="text-sm font-medium text-slate-600">
+                        Ninguna habitación coincide con los filtros
+                    </p>
+                    <p class="text-xs text-slate-500">
+                        Prueba con el número, o quita el filtro de zona, tipo o
+                        estado.
+                    </p>
+                    <button
+                        type="button"
+                        class="mt-1 text-xs font-medium text-primary hover:underline"
+                        @click="clearFilters"
                     >
-                        Ninguna habitación coincide con los filtros.
-                        <button
-                            type="button"
-                            class="text-sm font-medium text-primary hover:underline"
-                            @click="clearFilters"
-                        >
-                            Limpiar filtros
-                        </button>
-                    </div>
-                    <div v-else class="py-8 text-center text-slate-500">
-                        Sin habitaciones aún.
+                        Limpiar filtros
+                    </button>
+                </div>
+
+                <div
+                    v-else
+                    class="flex flex-col items-center gap-2 px-5 py-10 text-center"
+                >
+                    <Lucide icon="BedDouble" class="h-8 w-8 text-slate-300" />
+                    <p class="text-sm font-medium text-slate-600">
+                        Sin habitaciones aún
+                    </p>
+                    <p class="text-xs text-slate-500">
                         <template v-if="canManage && roomTypes.length">
                             Crea la primera con "Nueva habitación", o varias de
                             golpe con "Alta masiva".
                         </template>
-                    </div>
+                        <template v-else>
+                            Primero define un tipo de habitación en Zonas y
+                            tipos.
+                        </template>
+                    </p>
                 </div>
             </div>
         </div>

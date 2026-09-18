@@ -374,39 +374,20 @@ class DashboardController extends Controller
     }
 
     /**
-     * Dinero cobrado en la ventana, con la contabilidad de los cortes:
-     * hospedaje = abonos de reservas/estancias (sin fianzas), POS = órdenes
-     * cobradas en mostrador + consumos liquidados en folio. Lo cargado a
-     * habitación (`payment_method = room`) NO suma al ordenarse — suma una
-     * sola vez cuando el folio lo liquida (pago kind consumption).
+     * Dinero cobrado en la ventana. La contabilidad vive en CashLedger: la
+     * misma que usan los cortes, los reportes y el centro de pagos, para que
+     * las tres pantallas nunca digan cifras distintas del mismo día.
      *
      * @return array{lodging: float, pos: float, total: float}
      */
     private function revenueBetween(CarbonImmutable $start, CarbonImmutable $end): array
     {
-        $payments = Payment::query()
-            ->whereBetween('paid_at', [$start, $end])
-            ->where(fn ($q) => $q->whereNull('kind')->orWhere('kind', '!=', Payment::KIND_GUARANTEE))
-            ->selectRaw("COALESCE(kind, '') AS kind, SUM(amount) AS total")
-            ->groupByRaw("COALESCE(kind, '')")
-            ->pluck('total', 'kind');
-
-        $consumption = (float) ($payments[Payment::KIND_CONSUMPTION] ?? 0);
-        $lodging = (float) $payments->sum() - $consumption;
-
-        $orders = (float) Order::query()
-            ->where('status', Order::STATUS_COMPLETED)
-            ->whereBetween('created_at', [$start, $end])
-            ->where(fn ($q) => $q->whereNull('payment_method')->orWhere('payment_method', '!=', 'room'))
-            ->sum('total');
-
-        $pos = round($orders + $consumption, 2);
-        $lodging = round($lodging, 2);
+        $summary = app(\App\Services\CashLedger::class)->summary($start, $end);
 
         return [
-            'lodging' => $lodging,
-            'pos' => $pos,
-            'total' => round($lodging + $pos, 2),
+            'lodging' => $summary['lodging'],
+            'pos' => $summary['pos'],
+            'total' => $summary['collected'],
         ];
     }
 
@@ -498,6 +479,7 @@ class DashboardController extends Controller
     {
         return '$'.number_format($amount, 0, '.', ',');
     }
+
     /**
      * Mantenimiento pendiente para la portada del panel: cuántas fallas hay
      * abiertas, cuántas se pasaron de su tiempo y las tres más urgentes.
@@ -544,5 +526,4 @@ class DashboardController extends Controller
                 ->values(),
         ];
     }
-
 }

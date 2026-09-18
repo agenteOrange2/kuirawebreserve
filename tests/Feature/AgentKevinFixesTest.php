@@ -483,3 +483,267 @@ it('lo que sí necesita una persona se sigue transfiriendo', function (string $d
     'el motivo habla de un pago' => ['para el 26 de septiembre?', 'insiste en que ya hizo el depósito'],
     'sin mensajes del huésped' => ['', ''],
 ]);
+
+// ------------- "para el sabado" (cabañas, conv. 917, RES-2026-1758)
+//
+// El miércoles 16-sep el huésped pidió "una cabaña para el sabado". El bot
+// le vendió el VIERNES 18 llamándolo "sábado 18 de septiembre", pagó $1,500
+// de anticipo y el error se descubrió el jueves 17, con el sábado 19 lleno.
+// El servidor no veía NINGUNA fecha en ese mensaje, así que ni el prompt le
+// dictaba cuál era ni el guardián podía compararla.
+
+function fechasPedidas(string $dijo): array
+{
+    return array_keys(
+        (new ReflectionMethod(AgentBrain::class, 'datesMentioned'))
+            ->invoke(app(AgentBrain::class), $dijo, true),
+    );
+}
+
+it('un día de la semana suelto ya es una fecha', function (string $dijo, string $espera) {
+    // Miércoles 16 de septiembre de 2026, el día de la conversación real.
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-16 12:29'));
+
+    expect(fechasPedidas($dijo))->toContain($espera);
+})->with([
+    'el mensaje real' => ['Precio para una cabaña para 3 personas dos adultos y un menor para el sabado', '2026-09-19'],
+    'con acento' => ['me interesa el sábado', '2026-09-19'],
+    'este viernes' => ['este viernes tienen lugar?', '2026-09-18'],
+    'el próximo domingo' => ['el proximo domingo', '2026-09-20'],
+    'el mismo día de hoy cuenta' => ['el miercoles', '2026-09-16'],
+]);
+
+it('no confunde una costumbre con una fecha', function (string $dijo) {
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-16 12:29'));
+
+    expect(fechasPedidas($dijo))->toBe([]);
+})->with([
+    'plural genérico' => ['abren los sabados?'],
+    'sin determinante' => ['normalmente vengo en sabado'],
+    // Itinerario que se repite: la conversación ya tenía su fecha y
+    // resolverla a la de esta semana la pisaría (AgentDateAnchorTest).
+    'entrada y salida juntas' => ['Ok entraría el sábado alas 2pm y salgo el domingo alas 11'],
+]);
+
+it('con la fecha resuelta, el prompt se la dicta al modelo', function () {
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-16 12:29'));
+
+    $channel = Channel::firstOrCreate(
+        ['property_id' => $this->property->id, 'type' => Channel::TYPE_WHATSAPP_EVOLUTION, 'external_id' => '1'],
+        ['name' => 'WhatsApp', 'mode' => 'auto', 'active' => true],
+    );
+    $conversation = Conversation::create([
+        'channel_id' => $channel->id,
+        'contact_phone' => '5216565518468',
+        'status' => Conversation::STATUS_OPEN,
+        'last_message_at' => now(),
+    ]);
+    $conversation->messages()->create([
+        'direction' => 'in',
+        'sender_type' => 'guest',
+        'body' => 'Precio para una cabaña para 3 personas para el sabado',
+        'created_at' => now(),
+    ]);
+
+    $bloque = (new ReflectionMethod(AgentBrain::class, 'requestedDatesBlock'))
+        ->invoke(app(AgentBrain::class), $conversation);
+
+    expect($bloque)->toContain('sábado 19 de septiembre de 2026')
+        ->and($bloque)->toContain('2026-09-19')
+        ->and($bloque)->not->toContain('18 de septiembre');
+});
+
+// ---- El apartado se verifica contra la fecha pedida, y el día suelto se confirma
+
+function conversacionQueDijo(string $dijo): Conversation
+{
+    $channel = Channel::firstOrCreate(
+        ['property_id' => test()->property->id, 'type' => Channel::TYPE_WHATSAPP_EVOLUTION, 'external_id' => '1'],
+        ['name' => 'WhatsApp', 'mode' => 'auto', 'active' => true],
+    );
+    $conversation = Conversation::create([
+        'channel_id' => $channel->id,
+        'contact_phone' => '52165'.random_int(10000000, 99999999),
+        'status' => Conversation::STATUS_OPEN,
+        'last_message_at' => now(),
+    ]);
+    $conversation->messages()->create([
+        'direction' => 'in',
+        'sender_type' => 'guest',
+        'body' => $dijo,
+        'created_at' => now(),
+    ]);
+
+    return $conversation;
+}
+
+function chocaLaFecha(Conversation $c, string $startsAt): ?string
+{
+    return (new ReflectionMethod(AgentBrain::class, 'holdDateMismatch'))
+        ->invoke(app(AgentBrain::class), $c, $startsAt);
+}
+
+it('no aparta un viernes a quien pidió el sábado', function () {
+    // Miércoles 16: "el sábado" es el 19, no el 18.
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-16 12:29'));
+    $c = conversacionQueDijo('Precio para una cabaña para el sabado');
+
+    $reclamo = chocaLaFecha($c, '2026-09-18 14:00');
+
+    expect($reclamo)->not->toBeNull()
+        ->and($reclamo)->toContain('2026-09-19')
+        ->and($reclamo)->toContain('sábado 19 de septiembre');
+});
+
+it('la fecha correcta pasa sin estorbo', function () {
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-16 12:29'));
+    $c = conversacionQueDijo('Precio para una cabaña para el sabado');
+
+    expect(chocaLaFecha($c, '2026-09-19 14:00'))->toBeNull();
+});
+
+it('si en su último mensaje no dijo fecha, no se estorba el apartado', function () {
+    // "Ok, ese" tras elegir una alternativa que ofreció el bot.
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-16 12:29'));
+    $c = conversacionQueDijo('la 1 por favor');
+
+    expect(chocaLaFecha($c, '2026-09-27 14:00'))->toBeNull();
+});
+
+it('cuando solo dijo el día, el prompt exige confirmarle la fecha', function () {
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-16 12:29'));
+    $c = conversacionQueDijo('Precio para una cabaña para el sabado');
+
+    $bloque = (new ReflectionMethod(AgentBrain::class, 'requestedDatesBlock'))
+        ->invoke(app(AgentBrain::class), $c);
+
+    expect($bloque)->toContain('solo dijo el DÍA DE LA SEMANA')
+        ->and($bloque)->toContain('No apartes hasta que él confirme')
+        ->and($bloque)->toContain('sábado 19 de septiembre');
+});
+
+it('si dio la fecha con número, no se le pide confirmarla de más', function () {
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-16 12:29'));
+    $c = conversacionQueDijo('quiero el 19 de septiembre');
+
+    $bloque = (new ReflectionMethod(AgentBrain::class, 'requestedDatesBlock'))
+        ->invoke(app(AgentBrain::class), $c);
+
+    expect($bloque)->toContain('19 de septiembre')
+        ->and($bloque)->not->toContain('solo dijo el DÍA DE LA SEMANA');
+});
+
+// ---- El bot no promete mover una reserva: eso lo hace una persona
+//
+// Caso real (conv. 917, RES-2026-1758): al huésped que pagó por el viernes
+// creyendo que era sábado le contestó "Entonces las fechas quedan: entrada
+// sábado 19 de septiembre", con el sábado LLENO y sin herramienta para
+// cambiar nada.
+
+function saneaReagenda(string $texto, ?Conversation $c = null): string
+{
+    return (new ReflectionMethod(AgentBrain::class, 'enforceRescheduleClaims'))
+        ->invoke(app(AgentBrain::class), $texto, $c ?? conversacionQueDijo('Es para el sabado 19'));
+}
+
+it('borra la promesa de mover la reserva y pasa con el personal', function () {
+    $c = conversacionQueDijo('Disculpe hay un error, es para el sabado 19');
+
+    $salida = saneaReagenda(
+        "Tiene razón, me disculpo. Entonces las fechas quedan: entrada sábado 19 de septiembre.\n"
+        .'Le pido confirmación para hacer la corrección de su reserva.',
+        $c,
+    );
+
+    expect($salida)->not->toContain('las fechas quedan')
+        ->and($salida)->not->toContain('hacer la corrección de su reserva')
+        ->and($salida)->toContain('El cambio de fecha lo hace una persona del hotel')
+        // Y la conversación queda en manos del personal, con el bot apagado.
+        ->and($c->fresh()->bot_enabled)->toBeFalse()
+        ->and($c->fresh()->status)->toBe(Conversation::STATUS_PENDING);
+});
+
+it('detecta las formas de prometerlo', function (string $frase) {
+    expect(saneaReagenda($frase))->toContain('una persona del hotel');
+})->with([
+    'las fechas quedan' => ['Entonces las fechas quedan: entrada el sábado 19.'],
+    'te la cambio' => ['Con gusto le cambio la reserva al domingo 20.'],
+    'la muevo' => ['Ya la muevo para esas fechas, no se preocupe.'],
+    'reagendar' => ['Puedo reagendar su estancia sin costo.'],
+    'corrijo' => ['Corrijo las fechas de su apartado ahora mismo.'],
+]);
+
+it('no estorba lo que el bot sí puede decir', function (string $frase) {
+    expect(saneaReagenda($frase))->toBe($frase);
+})->with([
+    'decir la verdad' => ['No puedo cambiar las fechas de su reserva; lo paso con el personal.'],
+    'reactivar un apartado' => ['Si gusta lo reactivo con el mismo código si la cabaña sigue libre.'],
+    'confirmar una reserva nueva' => ['Su apartado RES-2026-1800 queda para el sábado 19 de septiembre.'],
+    'hablar de la alberca' => ['La alberca abre de 9:00 AM a 10:30 PM todos los días.'],
+    'cotizar otra fecha' => ['Para el domingo 20 de septiembre sí tenemos la Cabaña Prisma disponible.'],
+]);
+
+// ------------------------------------- 8. la salida no es una noche (1011)
+
+/**
+ * Caso real cabañas 2026-09-17, conv. 1011. Una familia preguntó TRES veces
+ * por el viernes 18 (llegada) al sábado 19 (salida). El modelo contestó bien
+ * las tres —"¡Buenas noticias! Para el viernes 18 al sábado 19 de septiembre
+ * sí hay disponibilidad"— y el guardián le borró la lista y le respondió
+ * "Para el sábado 19 de septiembre no queda ninguna habitación libre".
+ *
+ * Dos cosas rotas: en "viernes 18 al sábado 19 de septiembre" el mes solo va
+ * en la SEGUNDA fecha, así que el extractor únicamente veía el 19; y el 19 es
+ * la SALIDA, no una noche. El hotel estaba lleno el 19 y libre el 18.
+ */
+it('no juzga por el día de salida: "del 18 al 19" es la noche del 18', function () {
+    $llegada = now()->addDays(10);
+    $salida = $llegada->copy()->addDay();
+
+    // El día de SALIDA está lleno; la noche que se pide está libre.
+    $this->tipos->keys()->each(fn (string $tipo) => ocupar($tipo, $salida));
+
+    $dicho = 'Para el '.$llegada->locale('es')->isoFormat('dddd D')
+        .' al '.$salida->locale('es')->isoFormat('dddd D [de] MMMM');
+
+    $texto = "¡Buenas noticias! {$dicho} sí hay disponibilidad. Tenemos estas opciones:\n"
+        ."- Cabaña Sencilla 1: \$3,000 por noche\n"
+        ."- Cabaña Sencilla 2: \$3,000 por noche";
+
+    expect(sanear($texto))->toBe($texto);
+});
+
+it('sigue atrapando el rango cuya NOCHE está ocupada', function () {
+    $llegada = now()->addDays(10);
+    $salida = $llegada->copy()->addDay();
+
+    // Ahora sí: la noche que se pide está ocupada (la salida da igual).
+    ocupar('Cabaña Sencilla 1', $llegada);
+
+    $dicho = 'Para el '.$llegada->locale('es')->isoFormat('dddd D')
+        .' al '.$salida->locale('es')->isoFormat('dddd D [de] MMMM');
+
+    $salidaTexto = sanear("{$dicho} tenemos disponibles:\n- Cabaña Sencilla 1: \$3,000\n- Cabaña Luxury: \$3,500");
+
+    expect($salidaTexto)->toContain('Cabaña Sencilla 1 ya no está disponible')
+        ->and($salidaTexto)->not->toContain('Cabaña Sencilla 1: $3,000')
+        // La que sí está libre esa noche se queda.
+        ->and($salidaTexto)->toContain('Cabaña Luxury: $3,500');
+});
+
+it('en una estancia de varias noches exige que esté libre TODAS', function () {
+    $llegada = now()->addDays(10);
+    $enMedio = $llegada->copy()->addDay();
+    $salida = $llegada->copy()->addDays(3);
+
+    // Libre la primera noche, ocupada la segunda: no se puede ofrecer.
+    ocupar('Cabaña Sencilla 1', $enMedio);
+
+    $dicho = 'Del '.$llegada->locale('es')->isoFormat('dddd D')
+        .' al '.$salida->locale('es')->isoFormat('dddd D [de] MMMM');
+
+    $texto = sanear("{$dicho} tenemos disponibles:\n- Cabaña Sencilla 1: \$3,000\n- Cabaña Luxury: \$3,500");
+
+    expect($texto)->toContain('Cabaña Sencilla 1 ya no está disponible')
+        ->and($texto)->toContain('Cabaña Luxury: $3,500');
+});

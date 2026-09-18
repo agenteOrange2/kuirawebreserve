@@ -133,6 +133,73 @@ it('todas las próximas paginan, filtran por estado y buscan por huésped, telé
         ->and($porCodigo['reservations']['data'][0]['id'])->toBe($confirmada->id);
 });
 
+it('la cabecera de próximas cuenta todo lo apartado, no la página', function () {
+    // Dos llegan hoy, una más adelante, y una pendiente por confirmar.
+    makeUpcomingReservation(['starts_at' => now()->addHours(2), 'ends_at' => now()->addDay()]);
+    makeUpcomingReservation(['starts_at' => now()->addHours(6), 'ends_at' => now()->addDay()]);
+    $futura = makeUpcomingReservation([
+        'status' => ReservationStatus::Pending,
+        'starts_at' => now()->addDays(5),
+        'ends_at' => now()->addDays(6),
+        'total_amount' => 1000,
+    ]);
+    // Medio anticipo: el saldo tiene que bajar lo abonado.
+    \App\Models\Payment::create([
+        'reservation_id' => $futura->id,
+        'amount' => 400,
+        'method' => 'transfer',
+        'paid_at' => now(),
+        'created_by' => test()->user->id,
+    ]);
+    // La fianza no es del hospedaje: no debe descontarse del saldo.
+    \App\Models\Payment::create([
+        'reservation_id' => $futura->id,
+        'amount' => 500,
+        'method' => 'cash',
+        'kind' => 'guarantee',
+        'paid_at' => now(),
+        'created_by' => test()->user->id,
+    ]);
+
+    // El filtro achica la lista pero NO las cifras de arriba.
+    $props = propsDePagina(ReservationUpcomingPageController::class, ['status' => 'pending']);
+
+    expect($props['reservations']['total'])->toBe(1)
+        ->and($props['summary']['total'])->toBe(3)
+        ->and($props['summary']['today'])->toBe(2)
+        ->and($props['summary']['pending'])->toBe(1)
+        // 3 × $1,000 menos los $400 abonados; la fianza de $500 no cuenta.
+        ->and($props['summary']['balance'])->toEqual(2600);
+});
+
+it('las próximas se pueden acotar a un día de llegada', function () {
+    $viernes = now()->addDays(3)->setTime(15, 0);
+
+    $delDia = makeUpcomingReservation([
+        'guest_name' => 'Llega El Viernes',
+        'starts_at' => $viernes,
+        'ends_at' => $viernes->copy()->addDay()->setTime(12, 0),
+    ]);
+    makeUpcomingReservation([
+        'guest_name' => 'Llega Otro Día',
+        'starts_at' => $viernes->copy()->addDays(2),
+        'ends_at' => $viernes->copy()->addDays(3),
+    ]);
+
+    $props = propsDePagina(ReservationUpcomingPageController::class, [
+        'date' => $viernes->format('Y-m-d'),
+    ]);
+
+    expect($props['reservations']['total'])->toBe(1)
+        ->and($props['reservations']['data'][0]['id'])->toBe($delDia->id)
+        ->and($props['filters']['date'])->toBe($viernes->format('Y-m-d'));
+
+    // Una fecha con basura no filtra nada: se ignora, no revienta.
+    $basura = propsDePagina(ReservationUpcomingPageController::class, ['date' => 'mañana']);
+    expect($basura['reservations']['total'])->toBe(2)
+        ->and($basura['filters']['date'])->toBe('');
+});
+
 it('los alojados de /reservas se recortan a 20 y la estancia enfocada siempre viaja', function () {
     $ultima = null;
 
@@ -183,6 +250,24 @@ it('los alojados completos paginan y buscan por huésped, habitación o placa', 
 
     $porHabitacion = propsDePagina(InHouseStaysPageController::class, ['q' => '101']);
     expect($porHabitacion['stays']['total'])->toBe(2);
+});
+
+it('la cabecera de alojados mira la casa entera, aunque se busque', function () {
+    // Dos dentro: una sale hoy, la otra ya se pasó de la hora.
+    makeStayAlojada(['guest_name' => 'Ana Alojada', 'num_people' => 2]);
+    makeStayAlojada([
+        'guest_name' => 'Beto Alojado',
+        'num_people' => 3,
+        'planned_end_at' => now()->subHour(),
+    ]);
+
+    $props = propsDePagina(InHouseStaysPageController::class, ['q' => 'Ana']);
+
+    expect($props['stays']['total'])->toBe(1)
+        ->and($props['summary']['rooms'])->toBe(2)
+        ->and($props['summary']['guests'])->toBe(5)
+        ->and($props['summary']['departures_today'])->toBe(2)
+        ->and($props['summary']['overdue'])->toBe(1);
 });
 
 it('la página de reservas no cobra consultas por fila (el pagado viaja en la lista)', function () {

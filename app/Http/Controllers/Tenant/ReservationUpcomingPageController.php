@@ -32,6 +32,13 @@ class ReservationUpcomingPageController extends ReservationsPageController
         $property = Property::firstOrFail();
         $search = trim($request->string('q')->toString());
         $status = ReservationStatus::tryFrom($request->string('status')->toString());
+        // Un día concreto: el tablero manda aquí desde el pulso de la semana
+        // ("el viernes llegan 8"), y sin este filtro caía en la lista entera.
+        $date = null;
+
+        if (preg_match('/^\d{4}-\d{2}-\d{2}$/', $request->string('date')->toString())) {
+            $date = \Illuminate\Support\Carbon::parse($request->string('date')->toString());
+        }
 
         if (! in_array($status, self::UPCOMING_STATUSES, true)) {
             $status = null;
@@ -49,6 +56,10 @@ class ReservationUpcomingPageController extends ReservationsPageController
             // Mismo corte que la lista de /reservas: sigue viva mientras no
             // termine, aunque la llegada ya haya pasado.
             ->where('ends_at', '>=', now())
+            ->when($date, fn ($query) => $query->whereBetween('starts_at', [
+                $date->copy()->startOfDay(),
+                $date->copy()->endOfDay(),
+            ]))
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('guest_name', 'like', "%{$search}%")
@@ -79,11 +90,53 @@ class ReservationUpcomingPageController extends ReservationsPageController
         return Inertia::render('tenant/reservations/Upcoming', [
             'property' => $property->only(['id', 'name']),
             'reservations' => $paginator,
-            'filters' => ['q' => $search, 'status' => $status?->value ?? ''],
+            // Las cifras describen TODO lo apartado, no la página ni el
+            // filtro: el mostrador pregunta "cuánta gente viene", no
+            // "cuánta gente viene entre lo que estoy buscando".
+            'summary' => $this->summary(),
+            'filters' => [
+                'q' => $search,
+                'status' => $status?->value ?? '',
+                'date' => $date?->format('Y-m-d') ?? '',
+                'date_label' => $date?->format('d/m/Y') ?? '',
+            ],
             'statusOptions' => collect(self::UPCOMING_STATUSES)
                 ->map(fn (ReservationStatus $s) => ['value' => $s->value, 'label' => $s->label()])
                 ->values(),
             'canManage' => $request->user()->can('reservations.manage'),
         ]);
+    }
+
+    /**
+     * Cifras de la cabecera: cuántas vienen, cuántas llegan hoy, cuántas
+     * siguen sin confirmar y cuánto dinero falta por cobrar de todas ellas.
+     *
+     * @return array<string, mixed>
+     */
+    protected function summary(): array
+    {
+        $now = now();
+        $base = fn () => Reservation::query()
+            ->whereIn('status', self::UPCOMING_STATUSES)
+            ->where('ends_at', '>=', $now);
+
+        $total = (float) $base()->sum('total_amount');
+        // La fianza no es del hospedaje: si se cuenta, el saldo sale corto.
+        $paid = (float) \App\Models\Payment::query()
+            ->whereIn('reservation_id', $base()->select('reservations.id'))
+            ->where(fn ($q) => $q->whereNull('kind')->orWhere('kind', '<>', 'guarantee'))
+            ->sum('amount');
+
+        $balance = round(max(0, $total - $paid), 2);
+
+        return [
+            'total' => $base()->count(),
+            'today' => $base()
+                ->whereBetween('starts_at', [$now->copy()->startOfDay(), $now->copy()->endOfDay()])
+                ->count(),
+            'pending' => $base()->where('status', ReservationStatus::Pending)->count(),
+            'balance' => $balance,
+            'balance_label' => '$'.number_format($balance, 2),
+        ];
     }
 }
