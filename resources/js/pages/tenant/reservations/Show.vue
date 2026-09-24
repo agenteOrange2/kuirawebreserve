@@ -36,6 +36,7 @@ const props = defineProps<{
     /** En check-in automático puro la llegada la registra el reloj. */
     manualCheckinAllowed: boolean;
     gatewayAvailable: boolean;
+    chargeOptions?: { gateway: string | null; transfer: boolean };
     holdMinutes: number;
     /** Comprobantes que el huésped mandó por el chat de esta reserva. */
     chatReceipts?: {
@@ -1129,6 +1130,7 @@ const cardHeader =
         <PaymentModal
             ref="paymentModal"
             :gateway-available="gatewayAvailable"
+            :charge-options="chargeOptions"
             :chat-receipts="chatReceipts ?? []"
             @saved="reload"
         />

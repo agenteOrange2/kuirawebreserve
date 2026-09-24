@@ -93,6 +93,10 @@ class ReservationShowPageController extends ReservationsPageController
             'manualCheckinAllowed' => app(\App\Services\HousekeepingPolicy::class)->manualCheckInAllowed(),
             'gatewayAvailable' => app(\App\Services\Payments\PaymentMethodGate::class)
                 ->activeGatewayLink((string) tenant('id')) !== null,
+            // Por dónde se puede generar el cobro (pasarela con su nombre y
+            // transferencia): el personal elige en el modal de pago.
+            'chargeOptions' => app(\App\Services\Payments\PaymentMethodGate::class)
+                ->panelChargeOptions((string) tenant('id')),
             'holdMinutes' => $this->policy()->holdMinutes(),
             'contract' => $this->contractPayload($reservation),
         ]);

@@ -220,6 +220,7 @@ const props = defineProps<{
     // ¿El hotel puede cobrar en línea? Con la pasarela apagada, el modal
     // de pago ofrece transferencia en vez de un link que no existe.
     gatewayAvailable: boolean;
+    chargeOptions?: { gateway: string | null; transfer: boolean };
     holdMinutes: number;
     focusReservationId: number | null;
     /** "Editar" desde la ficha (/reservas?edit=ID): abre el formulario. */
@@ -4314,6 +4315,7 @@ const modalDescription = computed(() => {
         <PaymentModal
             ref="paymentModal"
             :gateway-available="gatewayAvailable"
+            :charge-options="chargeOptions"
             @saved="reload"
         />
 

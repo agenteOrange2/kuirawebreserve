@@ -547,17 +547,46 @@ class ReservationController extends Controller
         // solo cobran por transferencia y mostrador (bug 2026-08-28). Sin
         // pasarela habilitada, $link queda en null y el cobro sale como
         // transferencia, que es lo que ese hotel sí puede cobrar.
-        $link = app(\App\Services\Payments\PaymentMethodGate::class)
-            ->activeGatewayLink((string) tenant('id'));
+        $data = $request->validate([
+            // El personal elige por dónde cobrar y cuánto. Sin 'method' se
+            // conserva lo de siempre: pasarela si hay, si no transferencia.
+            'method' => ['nullable', 'in:gateway,transfer'],
+            // 'deposit' = el anticipo que falta (o el saldo, si ya se cubrió);
+            // 'full' = todo lo pendiente de una vez.
+            'scope' => ['nullable', 'in:deposit,full'],
+        ]);
+
+        $gate = app(\App\Services\Payments\PaymentMethodGate::class);
+        $link = $gate->activeGatewayLink((string) tenant('id'));
+        $method = $data['method'] ?? null;
+
+        if ($method === 'gateway' && $link === null) {
+            return response()->json(['message' => 'Este hotel no tiene una pasarela de pago activa.'], 422);
+        }
+
+        if ($method === 'transfer') {
+            if (! $gate->panelChargeOptions((string) tenant('id'))['transfer']) {
+                return response()->json(['message' => 'La transferencia está apagada o no hay cuentas activas en Métodos de pago.'], 422);
+            }
+            $link = null;
+        }
+
+        $preferFull = ($data['scope'] ?? null) === 'full';
 
         try {
-            $paymentRequest = $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user(), $link);
+            $paymentRequest = $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user(), $link, $preferFull);
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (\RuntimeException $e) {
+            // Si el personal pidió la pasarela a propósito, se le dice que
+            // falló en vez de mandar al huésped otra cosa en silencio.
+            if ($method === 'gateway') {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+
             // La pasarela falló: cae a transferencia (spec-pagos §7.1).
             try {
-                $paymentRequest = $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user());
+                $paymentRequest = $action->handle($reservation, \App\Models\PaymentRequest::METHOD_TRANSFER, $request->user(), null, $preferFull);
             } catch (InvalidArgumentException $inner) {
                 return response()->json(['message' => $inner->getMessage()], 422);
             }

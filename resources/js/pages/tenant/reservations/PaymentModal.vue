@@ -36,8 +36,18 @@ const props = withDefaults(
          * aquí sin ir a buscarlos a la bandeja.
          */
         chatReceipts?: ChatReceipt[];
+        /**
+         * Por dónde se puede generar el cobro: la pasarela (con su nombre) y
+         * la transferencia (método encendido y con cuentas). Con las dos, el
+         * personal elige; antes el panel mandaba siempre la pasarela.
+         */
+        chargeOptions?: { gateway: string | null; transfer: boolean };
     }>(),
-    { gatewayAvailable: false, chatReceipts: () => [] },
+    {
+        gatewayAvailable: false,
+        chatReceipts: () => [],
+        chargeOptions: undefined,
+    },
 );
 
 interface ChatReceipt {
@@ -183,6 +193,7 @@ function openPayment(r: ReservationRow) {
     paymentForm.notify = true;
     paymentError.value = null;
     clearReceipt();
+    resetChargeForm();
 }
 
 async function submitPayment() {
@@ -219,6 +230,56 @@ async function submitPayment() {
 // ── Cobro en línea desde el panel (link de pasarela o transferencia) ──
 const issuingLink = ref(false);
 
+// Las páginas viejas solo mandaban gatewayAvailable: sin chargeOptions se
+// conserva el comportamiento anterior (pasarela si hay, si no transferencia).
+const gatewayName = computed<string | null>(() =>
+    props.chargeOptions
+        ? props.chargeOptions.gateway
+        : props.gatewayAvailable
+          ? 'Pasarela'
+          : null,
+);
+const canTransfer = computed(() =>
+    props.chargeOptions
+        ? props.chargeOptions.transfer
+        : !props.gatewayAvailable,
+);
+
+const chargeForm = reactive({
+    scope: 'deposit' as 'deposit' | 'full',
+    method: 'gateway' as 'gateway' | 'transfer',
+});
+
+// El anticipo que falta, solo cuando de verdad hay algo que elegir: anticipo
+// menor al total y todavía sin cubrir. Mismo criterio que el servidor.
+const depositDue = computed<number>(() => {
+    const r = payingReservation.value;
+    if (!r) return 0;
+    const deposit = Number(r.deposit_amount);
+    const total = Number(r.total_amount);
+    if (deposit <= 0 || deposit >= total || r.paid_total >= deposit) return 0;
+    return Math.min(deposit - r.paid_total, r.pending_balance);
+});
+
+const chargeAmount = computed<number>(() =>
+    chargeForm.scope === 'deposit' && depositDue.value > 0
+        ? depositDue.value
+        : (payingReservation.value?.pending_balance ?? 0),
+);
+
+const chargeUsesGateway = computed(
+    () => chargeForm.method === 'gateway' && gatewayName.value !== null,
+);
+
+function resetChargeForm() {
+    chargeForm.scope = 'deposit';
+    chargeForm.method = gatewayName.value ? 'gateway' : 'transfer';
+}
+
+function money(value: number): string {
+    return `$${value.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 async function issuePaymentLink() {
     if (!payingReservation.value || issuingLink.value) return;
     issuingLink.value = true;
@@ -226,6 +287,13 @@ async function issuePaymentLink() {
     try {
         const { data } = await axios.post<ReservationRow>(
             `/api/reservations/${payingReservation.value.id}/payment-request`,
+            {
+                scope: chargeForm.scope,
+                method:
+                    gatewayName.value && canTransfer.value
+                        ? chargeForm.method
+                        : undefined,
+            },
         );
         payingReservation.value = data;
         toast.success(
@@ -250,6 +318,7 @@ async function cancelPaymentLink() {
             `/api/reservations/${payingReservation.value.id}/payment-request/${payingReservation.value.payment_request.id}`,
         );
         payingReservation.value = data;
+        resetChargeForm();
         toast.success('Cobro cancelado');
     } catch (error: any) {
         toast.error(
@@ -453,13 +522,11 @@ defineExpose({ open: openPayment });
                             class="flex items-center gap-1.5 text-xs font-medium tracking-wide text-slate-400 uppercase"
                         >
                             <Lucide
-                                :icon="
-                                    props.gatewayAvailable ? 'Link' : 'Landmark'
-                                "
+                                :icon="gatewayName ? 'Link' : 'Landmark'"
                                 class="h-3.5 w-3.5 text-primary"
                             />
                             {{
-                                props.gatewayAvailable
+                                gatewayName
                                     ? 'Cobrar en línea'
                                     : 'Cobrar por transferencia'
                             }}
@@ -515,6 +582,7 @@ defineExpose({ open: openPayment });
                                     size="sm"
                                     class="rounded-[0.5rem] bg-white"
                                     :disabled="issuingLink"
+                                    title="Cancela este cobro para generar otro: anticipo o total, link o transferencia"
                                     @click="cancelPaymentLink"
                                 >
                                     <Lucide
@@ -536,18 +604,99 @@ defineExpose({ open: openPayment });
                             </div>
                         </template>
                         <template v-else>
-                            <p
-                                v-if="props.gatewayAvailable"
-                                class="mt-2 text-xs text-slate-500"
+                            <!-- Cuánto: el anticipo que falta o todo de una vez -->
+                            <div v-if="depositDue > 0" class="mt-2.5">
+                                <div class="mb-1.5 text-xs text-slate-500">
+                                    ¿Qué le cobras?
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button
+                                        v-for="opt in [
+                                            {
+                                                key: 'deposit',
+                                                label: 'Anticipo',
+                                                amount: depositDue,
+                                            },
+                                            {
+                                                key: 'full',
+                                                label: 'Todo lo pendiente',
+                                                amount: payingReservation.pending_balance,
+                                            },
+                                        ] as const"
+                                        :key="opt.key"
+                                        type="button"
+                                        class="rounded-lg border px-3 py-2 text-left text-xs transition"
+                                        :class="
+                                            chargeForm.scope === opt.key
+                                                ? 'border-primary bg-primary/10 text-primary'
+                                                : 'border-slate-200/70 bg-white text-slate-600 hover:border-primary/40 dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-300'
+                                        "
+                                        @click="chargeForm.scope = opt.key"
+                                    >
+                                        <span class="block">{{
+                                            opt.label
+                                        }}</span>
+                                        <span
+                                            class="mt-0.5 block font-medium"
+                                            >{{ money(opt.amount) }}</span
+                                        >
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Por dónde: pasarela o transferencia -->
+                            <div
+                                v-if="gatewayName && canTransfer"
+                                class="mt-2.5"
                             >
-                                Genera un link de pago; al generarlo se envía
-                                solo al huésped por WhatsApp o correo.
-                            </p>
-                            <p v-else class="mt-2 text-xs text-slate-500">
-                                Este hotel no cobra en línea: se le mandan al
-                                huésped las cuentas del hotel por WhatsApp o
-                                correo, y cuando conteste con su comprobante lo
-                                confirmas en Pagos.
+                                <div class="mb-1.5 text-xs text-slate-500">
+                                    ¿Cómo va a pagar?
+                                </div>
+                                <div class="grid grid-cols-2 gap-2">
+                                    <button
+                                        v-for="opt in [
+                                            {
+                                                key: 'gateway',
+                                                icon: 'Link',
+                                                label: `Link de ${gatewayName}`,
+                                            },
+                                            {
+                                                key: 'transfer',
+                                                icon: 'Landmark',
+                                                label: 'Transferencia',
+                                            },
+                                        ] as const"
+                                        :key="opt.key"
+                                        type="button"
+                                        class="flex items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs transition"
+                                        :class="
+                                            chargeForm.method === opt.key
+                                                ? 'border-primary bg-primary/10 text-primary'
+                                                : 'border-slate-200/70 bg-white text-slate-600 hover:border-primary/40 dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-300'
+                                        "
+                                        @click="chargeForm.method = opt.key"
+                                    >
+                                        <Lucide
+                                            :icon="opt.icon"
+                                            class="h-3.5 w-3.5 shrink-0"
+                                        />
+                                        {{ opt.label }}
+                                    </button>
+                                </div>
+                            </div>
+
+                            <p class="mt-2.5 text-xs text-slate-500">
+                                <template v-if="chargeUsesGateway">
+                                    Se genera un link de {{ gatewayName }} por
+                                    {{ money(chargeAmount) }} y se le envía solo
+                                    al huésped por WhatsApp o correo.
+                                </template>
+                                <template v-else>
+                                    Se le mandan al huésped las cuentas del
+                                    hotel por {{ money(chargeAmount) }}; cuando
+                                    conteste con su comprobante lo confirmas en
+                                    Pagos.
+                                </template>
                             </p>
                             <Button
                                 type="button"
@@ -558,17 +707,15 @@ defineExpose({ open: openPayment });
                                 @click="issuePaymentLink"
                             >
                                 <Lucide
-                                    :icon="
-                                        props.gatewayAvailable ? 'Link' : 'Send'
-                                    "
+                                    :icon="chargeUsesGateway ? 'Link' : 'Send'"
                                     class="mr-1.5 h-3.5 w-3.5"
                                 />
                                 {{
                                     issuingLink
                                         ? 'Generando…'
-                                        : props.gatewayAvailable
-                                          ? 'Generar cobro en línea'
-                                          : 'Mandar datos de transferencia'
+                                        : chargeUsesGateway
+                                          ? `Generar link por ${money(chargeAmount)}`
+                                          : `Mandar datos de transferencia`
                                 }}
                             </Button>
                         </template>
@@ -605,6 +752,39 @@ defineExpose({ open: openPayment });
                                     :max="payingReservation.pending_balance"
                                     class="pl-9"
                                 />
+                            </div>
+                            <div
+                                v-if="depositDue > 0"
+                                class="mt-1.5 flex flex-wrap gap-1.5"
+                            >
+                                <button
+                                    v-for="opt in [
+                                        {
+                                            label: 'Anticipo',
+                                            amount: depositDue,
+                                        },
+                                        {
+                                            label: 'Todo',
+                                            amount: payingReservation.pending_balance,
+                                        },
+                                    ]"
+                                    :key="opt.label"
+                                    type="button"
+                                    class="rounded-full border px-2.5 py-0.5 text-[11px] transition"
+                                    :class="
+                                        Number(paymentForm.amount) ===
+                                        Number(opt.amount.toFixed(2))
+                                            ? 'border-primary bg-primary/10 text-primary'
+                                            : 'border-slate-200/70 text-slate-500 hover:border-primary/40 dark:border-darkmode-400'
+                                    "
+                                    @click="
+                                        paymentForm.amount = Number(
+                                            opt.amount.toFixed(2),
+                                        )
+                                    "
+                                >
+                                    {{ opt.label }} {{ money(opt.amount) }}
+                                </button>
                             </div>
                         </div>
                         <div>

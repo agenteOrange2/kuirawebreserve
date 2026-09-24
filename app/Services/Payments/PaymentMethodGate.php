@@ -108,6 +108,25 @@ class PaymentMethodGate
             ->first();
     }
 
+    /**
+     * Por dónde puede cobrar el panel una reserva: la pasarela (con su
+     * nombre, para que el botón diga "Mercado Pago" y no "en línea") y la
+     * transferencia, que solo existe con el método encendido y al menos una
+     * cuenta activa. El personal elige entre las dos; antes el panel mandaba
+     * link de pasarela siempre que hubiera una y la transferencia quedaba
+     * fuera de su alcance. Se llama dentro del contexto del tenant.
+     *
+     * @return array{gateway: ?string, transfer: bool}
+     */
+    public function panelChargeOptions(string $tenantId): array
+    {
+        return [
+            'gateway' => $this->activeGatewayLink($tenantId)?->providerLabel(),
+            'transfer' => $this->enabledFor($tenantId, 'transfer')
+                && app(\App\Services\ReservationPolicy::class)->guestAccounts()->isNotEmpty(),
+        ];
+    }
+
     /** Fija el interruptor global (tenant_id null) o el de un hotel. */
     public function set(?string $tenantId, string $method, bool $enabled): void
     {

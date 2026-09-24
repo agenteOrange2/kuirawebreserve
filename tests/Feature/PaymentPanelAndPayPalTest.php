@@ -133,6 +133,61 @@ it('el panel NO cobra con una pasarela apagada: cae a transferencia', function (
         ->and($data['payment_request']['checkout_url'])->toBeNull();
 });
 
+it('el panel cobra el anticipo por defecto y el total si el personal lo elige', function () {
+    $reservation = reservaF3(); // $1000 con anticipo del 20%
+
+    $issue = fn (array $body) => json_decode(app(ReservationController::class)->issuePayment(
+        Request::create('/x', 'POST', $body),
+        $reservation,
+        app(IssuePaymentRequest::class),
+    )->getContent(), true);
+
+    expect($issue([])['payment_request']['amount_label'])->toContain('200');
+
+    $full = $issue(['scope' => 'full']);
+    expect($full['payment_request']['amount_label'])->toContain('1,000')
+        // El cobro del anticipo ya no puede seguir vivo junto al total.
+        ->and($reservation->paymentRequests()->active()->count())->toBe(1);
+});
+
+it('con pasarela activa el personal puede mandar transferencia', function () {
+    $reservation = reservaF3();
+    paypalLink();
+
+    $response = app(ReservationController::class)->issuePayment(
+        Request::create('/x', 'POST', ['method' => 'transfer']),
+        $reservation,
+        app(IssuePaymentRequest::class),
+    );
+
+    $data = json_decode($response->getContent(), true);
+
+    expect($data['payment_request']['method'])->toBe(PaymentRequest::METHOD_TRANSFER)
+        ->and($data['payment_request']['checkout_url'])->toBeNull();
+});
+
+it('pedir la pasarela sin una activa responde 422', function () {
+    $response = app(ReservationController::class)->issuePayment(
+        Request::create('/x', 'POST', ['method' => 'gateway']),
+        reservaF3(),
+        app(IssuePaymentRequest::class),
+    );
+
+    expect($response->getStatusCode())->toBe(422);
+});
+
+it('pedir transferencia sin cuentas activas responde 422', function () {
+    $this->property->update(['settings' => ['bank_accounts' => []]]);
+
+    $response = app(ReservationController::class)->issuePayment(
+        Request::create('/x', 'POST', ['method' => 'transfer']),
+        reservaF3(),
+        app(IssuePaymentRequest::class),
+    );
+
+    expect($response->getStatusCode())->toBe(422);
+});
+
 it('el panel cancela un cobro pendiente (§7.5)', function () {
     $reservation = reservaF3();
     $request = app(IssuePaymentRequest::class)->handle($reservation);
