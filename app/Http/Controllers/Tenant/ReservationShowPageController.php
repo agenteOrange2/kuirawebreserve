@@ -81,6 +81,10 @@ class ReservationShowPageController extends ReservationsPageController
             ->latest('id')
             ->value('created_at') : null;
 
+        // Una sola consulta de métodos para las dos props del modal de pago.
+        $chargeOptions = app(\App\Services\Payments\PaymentMethodGate::class)
+            ->panelChargeOptions((string) tenant('id'), $this->policy());
+
         return Inertia::render('tenant/reservations/Show', [
             'reservation' => $row,
             'conversationId' => $conversationId,
@@ -91,12 +95,10 @@ class ReservationShowPageController extends ReservationsPageController
             'canManage' => $request->user()->can('reservations.manage'),
             // En check-in "automático" puro la llegada la registra el reloj.
             'manualCheckinAllowed' => app(\App\Services\HousekeepingPolicy::class)->manualCheckInAllowed(),
-            'gatewayAvailable' => app(\App\Services\Payments\PaymentMethodGate::class)
-                ->activeGatewayLink((string) tenant('id')) !== null,
+            'gatewayAvailable' => $chargeOptions['gateway'] !== null,
             // Por dónde se puede generar el cobro (pasarela con su nombre y
             // transferencia): el personal elige en el modal de pago.
-            'chargeOptions' => app(\App\Services\Payments\PaymentMethodGate::class)
-                ->panelChargeOptions((string) tenant('id')),
+            'chargeOptions' => $chargeOptions,
             'holdMinutes' => $this->policy()->holdMinutes(),
             'contract' => $this->contractPayload($reservation),
         ]);

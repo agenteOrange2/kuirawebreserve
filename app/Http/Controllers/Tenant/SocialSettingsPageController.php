@@ -26,7 +26,11 @@ class SocialSettingsPageController extends Controller
     {
         return Inertia::render('tenant/social/Settings', [
             'settings' => (new SocialSettings)->all(),
-            'classifications' => SocialComment::CLASSIFICATION_LABELS,
+            // La etiqueta a un amigo no se configura: nunca se contesta.
+            'classifications' => array_diff_key(
+                SocialComment::CLASSIFICATION_LABELS,
+                [SocialComment::CLASS_TAG => true],
+            ),
             'privateLocked' => [SocialComment::CLASS_COMPLAINT],
             'agentReady' => $brain->isConfigured(),
             'connected' => MetaChannelLink::query()

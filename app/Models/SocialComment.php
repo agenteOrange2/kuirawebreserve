@@ -27,12 +27,20 @@ class SocialComment extends Model
 
     public const CLASS_SPAM = 'spam';
 
+    /**
+     * Etiquetar a un amigo o contestar la dinámica de la publicación ("1",
+     * "opción 2"): la plática no es con el hotel. No se contesta ni va a la
+     * cola del personal. Su comportamiento es fijo, no se configura.
+     */
+    public const CLASS_TAG = 'etiqueta';
+
     public const CLASSIFICATIONS = [
         self::CLASS_PURCHASE,
         self::CLASS_QUESTION,
         self::CLASS_COMPLAINT,
         self::CLASS_PRAISE,
         self::CLASS_SPAM,
+        self::CLASS_TAG,
     ];
 
     public const CLASSIFICATION_LABELS = [
@@ -41,6 +49,7 @@ class SocialComment extends Model
         self::CLASS_COMPLAINT => 'Queja',
         self::CLASS_PRAISE => 'Elogio',
         self::CLASS_SPAM => 'Spam',
+        self::CLASS_TAG => 'Etiqueta a un amigo',
     ];
 
     /** Recién llegado: nadie lo ha atendido todavía. */

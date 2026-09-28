@@ -159,3 +159,92 @@ it('no cobra a reservas ya pagadas ni fuera de la ventana', function () {
     $this->artisan('payments:collect-balance')->assertSuccessful();
     expect($conversation->messages()->count())->toBe(0);
 });
+
+it('no usa una pasarela que el hotel apagó aunque siga conectada', function () {
+    // Caso real cabañas (2026-09-23/25): Stripe de PRUEBA conectado primero
+    // y apagado en Métodos de pago; el barrido lo usaba igual.
+    PaymentGatewayLink::create([
+        'tenant_id' => (string) tenant('id'),
+        'provider' => 'stripe',
+        'mode' => 'test',
+        'secret_key' => 'sk_test_123',
+        'webhook_secret' => 'whsec_123',
+        'webhook_token' => PaymentGatewayLink::generateToken(),
+        'active' => true,
+    ]);
+    app(\App\Services\Payments\PaymentMethodGate::class)->set((string) tenant('id'), 'stripe', false);
+    Http::fake();
+
+    [$reservation, $conversation] = reservaConSaldo();
+    $reservation->update(['payment_due_at' => now()->addDays(2)]);
+
+    $this->artisan('payments:collect-balance')->assertSuccessful();
+
+    $request = PaymentRequest::query()->where('reservation_id', $reservation->id)->latest('id')->first();
+
+    expect($request->method)->toBe(PaymentRequest::METHOD_TRANSFER)
+        ->and($request->provider)->toBeNull();
+    Http::assertNothingSent();
+});
+
+/** Hilo de WhatsApp oficial; $lastInbound = cuándo escribió el huésped por última vez. */
+function hiloWhatsApp(Conversation $conversation, \DateTimeInterface $lastInbound): void
+{
+    $link = \App\Models\Central\MetaChannelLink::create([
+        'tenant_id' => (string) tenant('id'),
+        'type' => 'whatsapp',
+        'external_id' => 'PN123',
+        'waba_id' => 'WABA9',
+        'access_token' => 'EAAG-token',
+        'active' => true,
+    ]);
+    $channel = Channel::create(['property_id' => test()->property->id, 'type' => 'whatsapp', 'name' => 'WhatsApp', 'active' => true]);
+    $conversation->update(['channel_id' => $channel->id, 'contact_phone' => '5216564055414']);
+    $conversation->messages()->create([
+        'direction' => 'in',
+        'sender_type' => 'visitor',
+        'body' => 'Ok gracias',
+        'created_at' => $lastInbound,
+    ]);
+
+    // Las pruebas corren sin tenancy inicializada y MetaApi solo resuelve el
+    // canal dentro de un tenant: se le entrega el link directo.
+    $meta = Mockery::mock(\App\Services\Meta\MetaApi::class)->makePartial()->shouldAllowMockingProtectedMethods();
+    $meta->shouldReceive('linkForConversation')->andReturn($link);
+    app()->instance(\App\Services\Meta\MetaApi::class, $meta);
+}
+
+it('fuera de la ventana de 24 h no manda WhatsApp: marca, avisa y va por correo', function () {
+    \Illuminate\Support\Facades\Mail::fake();
+    Http::fake();
+
+    [$reservation, $conversation] = reservaConSaldo();
+    $guest = \App\Models\Guest::create(['full_name' => 'Iris Prueba', 'email' => 'iris@example.com', 'phone' => '6564055414']);
+    $reservation->update(['guest_id' => $guest->id]);
+    $reservation->update(['payment_due_at' => now()->addHours(12)]);
+    hiloWhatsApp($conversation, now()->subDays(10));
+
+    $this->artisan('payments:collect-balance')->assertSuccessful();
+
+    $reminder = $conversation->messages()->where('meta->followup', 'balance_reminder')->first();
+
+    expect($reminder->meta['undelivered'] ?? false)->toBeTrue()
+        ->and(\App\Models\StaffNotification::query()->where('title', 'Respuesta no entregada')->exists())->toBeTrue();
+    Http::assertNothingSent();
+    \Illuminate\Support\Facades\Mail::assertSent(\App\Mail\GuestReservationMail::class, fn ($mail) => $mail->hasTo('iris@example.com'));
+});
+
+it('dentro de la ventana de 24 h sí manda por WhatsApp', function () {
+    Http::fake(['graph.facebook.com/*' => Http::response(['messages' => [['id' => 'wamid.ok']]])]);
+
+    [$reservation, $conversation] = reservaConSaldo();
+    $reservation->update(['payment_due_at' => now()->addHours(12)]);
+    hiloWhatsApp($conversation, now()->subHours(3));
+
+    $this->artisan('payments:collect-balance')->assertSuccessful();
+
+    $reminder = $conversation->messages()->where('meta->followup', 'balance_reminder')->first();
+
+    expect($reminder->meta['undelivered'] ?? false)->toBeFalse();
+    Http::assertSent(fn ($request) => str_contains($request->url(), 'PN123/messages'));
+});

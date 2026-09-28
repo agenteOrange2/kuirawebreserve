@@ -251,6 +251,21 @@ class Conversation extends Model
     }
 
     /**
+     * ¿Sigue abierta la ventana de 24 h de WhatsApp? La Cloud API solo deja
+     * mandar texto libre si el huésped escribió en las últimas 24 h; fuera
+     * de ella acepta el envío y DESPUÉS lo rechaza por webhook (#131047).
+     * Cabañas, RES-2026-1750 (2026-09-25): el recordatorio de saldo salió
+     * diez días después del último mensaje de la huésped y nunca llegó.
+     */
+    public function whatsappWindowOpen(): bool
+    {
+        return $this->messages()
+            ->where('direction', 'in')
+            ->where('created_at', '>=', now()->subHours(24))
+            ->exists();
+    }
+
+    /**
      * Comentarios de redes sociales que abrieron (o retomaron) esta
      * conversación: la atribución del embudo post → comentario → DM → reserva.
      */

@@ -57,11 +57,13 @@ class CollectBalancePayments extends Command
             ->get()
             ->filter(fn (Reservation $r) => $r->pendingBalance() > 0);
 
-        $gatewayLink = PaymentGatewayLink::query()
-            ->where('tenant_id', (string) tenant('id'))
-            ->where('active', true)
-            ->orderBy('id')
-            ->first();
+        // La misma puerta que el panel y el bot: una pasarela conectada no
+        // basta, el método tiene que estar encendido. Preguntando por la fila
+        // cruda, a cabañas se le mandaron links de Stripe en modo PRUEBA (la
+        // primera conectada, apagada desde agosto) en vez de Mercado Pago
+        // (RES-2026-1750, 2026-09-23 y 25).
+        $gatewayLink = app(\App\Services\Payments\PaymentMethodGate::class)
+            ->activeGatewayLink((string) tenant('id'));
 
         foreach ($reservations as $reservation) {
             if ($reservation->payment_due_at->isPast()) {
@@ -124,7 +126,7 @@ class CollectBalancePayments extends Command
             ? " Puedes pagarlo en este link seguro: {$request->checkout_url}"
             : $this->transferInstructions();
 
-        $this->send($conversation, $key, $body);
+        $this->send($conversation, $key, $body, $reservation);
 
         return true;
     }
@@ -200,9 +202,9 @@ class CollectBalancePayments extends Command
             : " Puedes transferir a: {$accounts}. Cuando lo hagas, mándanos el comprobante por aquí para verificarlo.";
     }
 
-    protected function send(Conversation $conversation, string $key, string $body): void
+    protected function send(Conversation $conversation, string $key, string $body, ?Reservation $reservation = null): void
     {
-        $conversation->messages()->create([
+        $message = $conversation->messages()->create([
             'direction' => 'out',
             'sender_type' => 'bot',
             'body' => $body,
@@ -213,6 +215,26 @@ class CollectBalancePayments extends Command
         $conversation->markFollowup($key);
         $conversation->update(['last_message_at' => now()]);
 
-        app(OutboundMessenger::class)->pushToConversation($conversation, $body, EvolutionApi::humanDelay($body));
+        $messenger = app(OutboundMessenger::class);
+
+        // El webchat no tiene transporte: el visitante lo lee al abrir su hilo.
+        if (
+            $messenger->pushToConversation($conversation, $body, EvolutionApi::humanDelay($body))
+            || $conversation->channel?->type === \App\Models\Channel::TYPE_WEBCHAT
+        ) {
+            return;
+        }
+
+        // No salió por el chat (casi siempre la ventana de 24 h de WhatsApp:
+        // estos avisos llegan días después del último mensaje del huésped).
+        // Se marca en la bandeja, suena la campana y va por correo.
+        $messenger->flagUndelivered($conversation, $message);
+
+        $reservation ??= $conversation->reservation;
+
+        if ($reservation) {
+            app(\App\Services\Channels\DirectGuestMessenger::class)
+                ->mailTo($reservation, $body, 'Saldo de tu reserva');
+        }
     }
 }

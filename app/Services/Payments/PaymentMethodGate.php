@@ -118,12 +118,12 @@ class PaymentMethodGate
      *
      * @return array{gateway: ?string, transfer: bool}
      */
-    public function panelChargeOptions(string $tenantId): array
+    public function panelChargeOptions(string $tenantId, ?\App\Services\ReservationPolicy $policy = null): array
     {
         return [
             'gateway' => $this->activeGatewayLink($tenantId)?->providerLabel(),
             'transfer' => $this->enabledFor($tenantId, 'transfer')
-                && app(\App\Services\ReservationPolicy::class)->guestAccounts()->isNotEmpty(),
+                && ($policy ?? app(\App\Services\ReservationPolicy::class))->guestAccounts()->isNotEmpty(),
         ];
     }
 

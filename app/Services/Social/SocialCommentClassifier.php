@@ -19,6 +19,9 @@ use Throwable;
  */
 class SocialCommentClassifier
 {
+    /** Lo que las reglas fijas ya saben del comentario (ver withHint). */
+    protected ?string $hint = null;
+
     public function __construct(
         protected AgentBrain $brain,
         protected AgentToolsController $tools,
@@ -68,6 +71,18 @@ class SocialCommentClassifier
         return null;
     }
 
+    /**
+     * Cuando SocialIntentRules ya decidió que es compra, se le dice al
+     * modelo para que redacte el privado como tal: si lo adivina como spam
+     * deja el privado vacío y el cliente se queda sin respuesta.
+     */
+    public function withHint(?string $classification): static
+    {
+        $this->hint = $classification;
+
+        return $this;
+    }
+
     protected function systemPrompt(): string
     {
         $policies = $this->tools->policies()->getContent();
@@ -84,8 +99,11 @@ class SocialCommentClassifier
         - compra: pregunta precios, disponibilidad, ubicación o cómo reservar.
         - pregunta: duda general del hotel (servicios, reglas, horarios) sin intención clara de reservar.
         - queja: reclamo, mala experiencia o inconformidad.
-        - elogio: felicitación o comentario positivo sin pregunta.
-        - spam: publicidad ajena, ligas sospechosas, texto sin relación u ofensas.
+        - elogio: SOLO si habla bien del lugar, del servicio o de su estancia ("hermoso lugar", "excelente atención"). Una broma, un sarcasmo o un "qué bonito, quiero ir" dirigido a un amigo NO es elogio.
+        - etiqueta: etiqueta o le habla a otra persona ("Karla Franco", "Raquel vamos", "mira amor", "hay que ir"), o contesta la dinámica de la publicación ("1", "opción 2"). La plática no es con el hotel.
+        - spam: publicidad ajena, ligas sospechosas u ofensas.
+
+        Si dudas entre elogio y etiqueta, elige etiqueta. Si alguien pide información, precio, ubicación o fechas, aunque sea con una sola palabra ("Inf", "Inbox", "Precio"), es compra.
 
         REGLAS DE REDACCIÓN:
         - NUNCA AFIRMES DISPONIBILIDAD. No tienes forma de consultarla: no digas "tenemos lugar", "hay cabañas disponibles" ni "sí hay para ese fin de semana". Invita a decir sus fechas y ofrece confirmárselo. (Caso real: se contestó "varias cabañas disponibles este fin de semana" con el hotel lleno.)
@@ -94,10 +112,10 @@ class SocialCommentClassifier
         - mensaje_privado: 2 o 3 oraciones. Retoma lo que preguntó, ofrece ayuda concreta con tarifas o disponibilidad y deja abierta la conversación. Si en los datos del hotel está la respuesta (por ejemplo en faqs), dala.
         - Escribe en el idioma del comentario (español por defecto). NUNCA mezcles palabras ni caracteres de otro alfabeto.
         - Sin emojis, sin markdown, sin asteriscos, sin tablas: se muestran como texto plano.
-        - Si la categoría es queja o spam, deja ambos textos vacíos ("").
+        - Si la categoría es queja, spam o etiqueta, deja ambos textos vacíos ("").
 
         Responde ÚNICAMENTE con este JSON, sin explicaciones ni ```:
-        {"clasificacion":"compra|pregunta|queja|elogio|spam","respuesta_publica":"...","mensaje_privado":"..."}
+        {"clasificacion":"compra|pregunta|queja|elogio|etiqueta|spam","respuesta_publica":"...","mensaje_privado":"..."}
         PROMPT;
     }
 
@@ -107,8 +125,14 @@ class SocialCommentClassifier
             ? mb_substr((string) $post->message, 0, 500)
             : '(sin texto)';
 
-        return "PUBLICACIÓN ({$post->networkLabel()}): {$publication}\n\n"
+        $prompt = "PUBLICACIÓN ({$post->networkLabel()}): {$publication}\n\n"
             .'COMENTARIO de '.($comment->author_name ?: 'un usuario').': '.trim((string) $comment->body);
+
+        if ($this->hint === SocialComment::CLASS_PURCHASE) {
+            $prompt .= "\n\nEsta persona pide información para hospedarse: clasifícalo como compra y escribe el mensaje privado.";
+        }
+
+        return $prompt;
     }
 
     /**

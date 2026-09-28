@@ -167,6 +167,10 @@ class ReservationsPageController extends Controller
         }
         $focusReservationId = $request->integer('reservation') ?: null;
 
+        // Una sola consulta de métodos para las dos props del modal de pago.
+        $chargeOptions = app(\App\Services\Payments\PaymentMethodGate::class)
+            ->panelChargeOptions((string) tenant('id'), $this->policy());
+
         return Inertia::render('tenant/reservations/Index', [
             // Lista y calendario comparten componente y datos; cambia la vista.
             'view' => $request->routeIs('tenant.reservations.calendar') ? 'calendar' : 'list',
@@ -231,12 +235,10 @@ class ReservationsPageController extends Controller
             // ¿Este hotel puede cobrar en línea? Con la pasarela apagada
             // el modal de pago ofrece transferencia, que es lo que de
             // verdad va a pasar cuando se genere el cobro.
-            'gatewayAvailable' => app(\App\Services\Payments\PaymentMethodGate::class)
-                ->activeGatewayLink((string) tenant('id')) !== null,
+            'gatewayAvailable' => $chargeOptions['gateway'] !== null,
             // Por dónde se puede generar el cobro (pasarela con su nombre y
             // transferencia): el personal elige en el modal de pago.
-            'chargeOptions' => app(\App\Services\Payments\PaymentMethodGate::class)
-                ->panelChargeOptions((string) tenant('id')),
+            'chargeOptions' => $chargeOptions,
             // Duración REAL del apartado (hold_value/unit de Métodos de
             // pago): la UI nunca debe decir "30 minutos" fijo.
             'holdMinutes' => $this->policy()->holdMinutes(),

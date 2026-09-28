@@ -217,6 +217,14 @@ class DirectGuestMessenger
                 return false;
             }
 
+            // Sin ventana de 24 h abierta con ese número, la Cloud API acepta
+            // y luego rechaza (#131047): "salió" por WhatsApp, el correo y la
+            // campana ya no se activaban y el aviso moría sin que nadie lo
+            // supiera. Se salta Meta y se prueba lo siguiente.
+            if (! $this->metaWindowOpen($phone)) {
+                return false;
+            }
+
             try {
                 return $this->meta->sendText($link, $phone, $body);
             } catch (Throwable $e) {
@@ -251,6 +259,24 @@ class DirectGuestMessenger
             'evolution' => [$viaEvolution],
             default => [$viaMeta, $viaEvolution],
         };
+    }
+
+    /** ¿Ese número le escribió al WhatsApp oficial en las últimas 24 h? */
+    protected function metaWindowOpen(string $phone): bool
+    {
+        $last10 = substr(preg_replace('/\D+/', '', $phone) ?? '', -10);
+
+        if (strlen($last10) < 10) {
+            return false;
+        }
+
+        return \App\Models\Conversation::query()
+            ->whereHas('channel', fn ($q) => $q->where('type', 'whatsapp'))
+            ->where('contact_phone', 'like', '%'.$last10)
+            ->whereHas('messages', fn ($q) => $q
+                ->where('direction', 'in')
+                ->where('created_at', '>=', now()->subHours(24)))
+            ->exists();
     }
 
     /**

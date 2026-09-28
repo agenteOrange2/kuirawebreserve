@@ -30,7 +30,10 @@ class SocialResponder
         protected SocialCommentClassifier $classifier,
         protected AgentBrain $brain,
         protected StaffNotifier $notifier,
-    ) {}
+        protected ?SocialIntentRules $rules = null,
+    ) {
+        $this->rules ??= new SocialIntentRules;
+    }
 
     public function handle(SocialComment $comment, MetaChannelLink $link): void
     {
@@ -56,11 +59,29 @@ class SocialResponder
             return;
         }
 
-        if (! $settings->all()['activo'] || ! $this->brain->isConfigured()) {
+        if (! $settings->all()['activo']) {
             return; // el comentario queda como nuevo, para el staff
         }
 
-        $result = $this->classifier->classify($comment->post, $comment);
+        // Lo evidente se decide sin IA (SocialIntentRules): etiquetar a un
+        // amigo no gasta una llamada, y un "Inf" es compra siempre.
+        $rule = $this->rules->classify($comment->body);
+
+        if ($rule === SocialComment::CLASS_TAG) {
+            $this->markAsTag($comment, ['regla' => true]);
+
+            return;
+        }
+
+        if (! $this->brain->isConfigured()) {
+            return;
+        }
+
+        $result = $this->classifier->withHint($rule)->classify($comment->post, $comment);
+
+        if ($rule === SocialComment::CLASS_PURCHASE) {
+            $result = $this->asPurchase($result, $comment);
+        }
 
         if (! $result) {
             $comment->update(['status' => SocialComment::STATUS_PENDING_STAFF]);
@@ -75,6 +96,7 @@ class SocialResponder
         ]);
 
         match ($result['clasificacion']) {
+            SocialComment::CLASS_TAG => $this->markAsTag($comment, $result['meta']),
             SocialComment::CLASS_COMPLAINT => $this->handleComplaint($comment, $link, $settings),
             SocialComment::CLASS_SPAM => $this->handleSpam($comment, $link, $settings),
             default => $this->handleAnswerable($comment, $link, $settings, $result),
@@ -91,6 +113,14 @@ class SocialResponder
     {
         $classification = $result['clasificacion'];
         $answered = false;
+
+        // Un elogio con "pero", una broma o algo que no habla del lugar no
+        // se agradece en público: se deja pasar sin contestar.
+        if ($classification === SocialComment::CLASS_PRAISE && ! $this->rules->praiseIsSafe($comment->body)) {
+            $comment->update(['status' => SocialComment::STATUS_IGNORED]);
+
+            return;
+        }
 
         if ($settings->repliesPublicly($classification)) {
             // La PLANTILLA manda sobre lo que redacte la IA: esto se publica
@@ -121,7 +151,21 @@ class SocialResponder
         }
 
         if ($settings->sendsPrivate($classification) && $comment->canPrivateReply()) {
-            $answered = $this->sendPrivateReply($comment, $link, $result['mensaje_privado']) || $answered;
+            // Ya platica con nosotros por privado: un segundo mensaje con
+            // "¡Hola...!" en medio de esa conversación la reinicia (16 chats
+            // de cabañas en septiembre). El comentario se liga a ese hilo.
+            $open = $this->openConversationFor($comment);
+
+            if ($open) {
+                $comment->update(['conversation_id' => $open->id]);
+                $answered = true;
+            } else {
+                $message = $classification === SocialComment::CLASS_PURCHASE
+                    ? self::withBookingLink($result['mensaje_privado'], $this->bookingUrl())
+                    : $result['mensaje_privado'];
+
+                $answered = $this->sendPrivateReply($comment, $link, $message) || $answered;
+            }
         }
 
         $comment->update([
@@ -131,6 +175,106 @@ class SocialResponder
         if (! $answered) {
             $this->alertStaff($comment, 'Comentario sin responder');
         }
+    }
+
+    /**
+     * Quien pide información por un comentario puede reservar solo, sin
+     * esperar a que le contesten: de 216 chats abiertos así en septiembre,
+     * ninguno terminó ligado a una reserva y el bot nunca mandó la liga.
+     */
+    public static function withBookingLink(string $message, ?string $url): string
+    {
+        if ($url === null || trim($message) === '' || str_contains($message, '/reservar')) {
+            return $message;
+        }
+
+        return rtrim($message).' Si prefieres, aquí puedes ver fechas y apartar en línea: '.$url;
+    }
+
+    /** El wizard del hotel, solo si lo tiene contratado (módulo motor-web). */
+    protected function bookingUrl(): ?string
+    {
+        $tenant = tenant();
+
+        if (! $tenant || ! $tenant->hasModule('motor-web')) {
+            return null;
+        }
+
+        $domain = $tenant->domains()->value('domain');
+        $scheme = parse_url((string) config('app.url'), PHP_URL_SCHEME) ?: 'https';
+
+        return $domain ? "{$scheme}://{$domain}/reservar" : null;
+    }
+
+    /**
+     * Etiqueta a un amigo o respuesta a la dinámica: no se contesta y no va
+     * a la cola del personal (eran 50 "spam" pendientes en cabañas).
+     *
+     * @param  array<string, mixed>  $meta
+     */
+    protected function markAsTag(SocialComment $comment, array $meta): void
+    {
+        $comment->update([
+            'classification' => SocialComment::CLASS_TAG,
+            'classification_meta' => $meta,
+            'status' => SocialComment::STATUS_IGNORED,
+        ]);
+    }
+
+    /**
+     * Las reglas ya saben que pide información: se respeta aunque el modelo
+     * opine otra cosa, y si no redactó el privado (o no contestó) se manda
+     * uno fijo que pregunta lo que hace falta para cotizar.
+     *
+     * @param  array{clasificacion: string, respuesta_publica: string, mensaje_privado: string, meta: array<string, mixed>}|null  $result
+     * @return array{clasificacion: string, respuesta_publica: string, mensaje_privado: string, meta: array<string, mixed>}
+     */
+    protected function asPurchase(?array $result, SocialComment $comment): array
+    {
+        $result ??= ['respuesta_publica' => '', 'mensaje_privado' => '', 'meta' => []];
+
+        if (trim((string) $result['mensaje_privado']) === '') {
+            $hotel = Property::query()->value('name');
+            $nombre = trim((string) strtok((string) $comment->author_name, ' '));
+
+            $result['mensaje_privado'] = trim(
+                '¡Hola'.($nombre !== '' ? " {$nombre}" : '').'! Gracias por tu interés'
+                .($hotel ? " en {$hotel}" : '').'. ¿Para qué fechas y cuántas personas te gustaría hospedarte? '
+                .'Así te paso las tarifas y te confirmo la disponibilidad.',
+            );
+        }
+
+        $result['clasificacion'] = SocialComment::CLASS_PURCHASE;
+        $result['meta'] = ($result['meta'] ?? []) + ['regla' => true];
+
+        return $result;
+    }
+
+    /**
+     * Conversación por privado que esa misma persona ya tiene viva (abierta
+     * por otro de sus comentarios en la última semana).
+     */
+    protected function openConversationFor(SocialComment $comment): ?Conversation
+    {
+        if (! $comment->author_external_id) {
+            return null;
+        }
+
+        $conversationId = SocialComment::query()
+            ->where('author_external_id', $comment->author_external_id)
+            ->whereKeyNot($comment->id)
+            ->whereNotNull('conversation_id')
+            ->latest('id')
+            ->value('conversation_id');
+
+        if (! $conversationId) {
+            return null;
+        }
+
+        return Conversation::query()
+            ->whereKey($conversationId)
+            ->where('last_message_at', '>=', now()->subDays(7))
+            ->first();
     }
 
     /**

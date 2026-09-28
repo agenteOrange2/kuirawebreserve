@@ -247,13 +247,13 @@ it('spam: se oculta solo si el hotel activó la moderación, y siempre queda aud
     $spam = ['clasificacion' => SocialComment::CLASS_SPAM, 'respuesta_publica' => '', 'mensaje_privado' => ''];
 
     // Sin moderación automática: espera a una persona.
-    $sinModeracion = socialComment();
+    $sinModeracion = socialComment(['body' => 'Visiten mi página de ofertas']);
     socialResponder($spam)->handle($sinModeracion->fresh(), socialLink());
     expect($sinModeracion->fresh()->status)->toBe(SocialComment::STATUS_PENDING_STAFF);
 
     (new SocialSettings)->save(['activo' => true, 'moderacion_automatica' => true]);
 
-    $conModeracion = socialComment();
+    $conModeracion = socialComment(['body' => 'Visiten mi página de ofertas']);
     socialResponder($spam)->handle($conModeracion->fresh(), socialLink());
 
     $conModeracion->refresh();
@@ -311,7 +311,7 @@ it('un comentario sin texto va al staff sin gastar una llamada de IA', function 
 it('si el clasificador falla, el comentario va al staff en vez de inventar respuesta', function () {
     Http::fake();
 
-    $comment = socialComment();
+    $comment = socialComment(['body' => 'Hola saludos']);
     socialResponder(null)->handle($comment->fresh(), socialLink());
 
     expect($comment->fresh()->status)->toBe(SocialComment::STATUS_PENDING_STAFF);
@@ -345,4 +345,161 @@ it('el mensaje privado solo se puede mandar una vez y dentro de los 7 días', fu
     expect($reciente->canPrivateReply())->toBeTrue()
         ->and($viejo->canPrivateReply())->toBeFalse()
         ->and($yaEnviado->canPrivateReply())->toBeFalse();
+});
+
+// ---------------------------------------------- lo evidente, sin IA
+//
+// Revisión de cabañas 2026-09-28: el mismo "Inf" salió como compra, elogio y
+// spam; etiquetar a un amigo caía en elogio ("gracias por recomendarnos"),
+// spam (50 pendientes) o compra (privado no pedido). Estos textos son reales.
+
+it('las reglas reconocen los pedidos de información por cortos que sean', function (string $body) {
+    expect((new \App\Services\Social\SocialIntentRules)->classify($body))->toBe(SocialComment::CLASS_PURCHASE);
+})->with([
+    'Inf', 'Inf.', 'Inbox', 'Información', 'Informes', 'info porfavor', 'Precio xf', 'Presio 4 personas',
+    '$$', 'Cuánto cobran amigo ??', 'Rebeca Estrada  donde es', 'Yo me quiero ospedar',
+    'Cabañas Real de la Sierra que precio tienen', 'Fechas disponibles', 'Me interesa',
+]);
+
+it('las reglas reconocen etiquetas a amigos y respuestas a la dinámica', function (string $body) {
+    expect((new \App\Services\Social\SocialIntentRules)->classify($body))->toBe(SocialComment::CLASS_TAG);
+})->with([
+    'Karla Franco', 'Cristina Saucedo Yvette Trevizo Pamo Zuzana', 'Moro Compas', 'Joe LG❤️',
+    'Raquel Alvarado siii Vamos 🤗', 'Mari Esparza vamos', 'Magali Barrera hay que ir bebe 🥺🥺🥺❤️',
+    'Elizabeth Camacho 😍 si voy me llevas', '3', 'opción 2🙂',
+]);
+
+it('lo dudoso o las quejas siguen yendo a la IA', function (string $body) {
+    expect((new \App\Services\Social\SocialIntentRules)->classify($body))->toBeNull();
+})->with([
+    'Hermoso lugar', 'No contestan les marco y marco y no contestan para reservar',
+    'Qué tan cierto es que están carísimas ?', 'Hola saludos', 'LA RIFA PARA CUANDO ES ?????👀',
+    'Me encantaria pero ya se metio la pache pache ala alberca nesecirarian desinfectar',
+    'Es donde empieza lo bonito de un viaje, en carretera.', 'Yo', 'Margie Garcia Cisneros que bonito, quiero ir !!!',
+]);
+
+it('una etiqueta a un amigo no se contesta, no va al personal y no gasta IA', function () {
+    Http::fake();
+    $comment = socialComment(['body' => 'Karla Franco']);
+
+    // Con clasificador nulo: si se le preguntara, el comentario iría al staff.
+    socialResponder(null)->handle($comment->fresh(), socialLink());
+
+    $comment->refresh();
+    expect($comment->classification)->toBe(SocialComment::CLASS_TAG)
+        ->and($comment->status)->toBe(SocialComment::STATUS_IGNORED)
+        ->and(StaffNotification::count())->toBe(0);
+    Http::assertNothingSent();
+});
+
+it('un "Inf" es compra aunque el modelo diga spam, y lleva privado fijo', function () {
+    Http::fake([
+        'graph.test/*/me/messages' => Http::response(['message_id' => 'mid.1', 'recipient_id' => 'PSID88']),
+        'graph.test/*/comments' => Http::response(['id' => 'reply-2']),
+    ]);
+    $comment = socialComment(['body' => 'Inf']);
+
+    socialResponder([
+        'clasificacion' => SocialComment::CLASS_SPAM,
+        'respuesta_publica' => '',
+        'mensaje_privado' => '',
+    ])->handle($comment->fresh(), socialLink());
+
+    $comment->refresh();
+    expect($comment->classification)->toBe(SocialComment::CLASS_PURCHASE)
+        ->and($comment->status)->toBe(SocialComment::STATUS_ANSWERED)
+        ->and($comment->private_reply_sent_at)->not->toBeNull();
+
+    $privado = Conversation::find($comment->conversation_id)->messages()->first()->body;
+    expect($privado)->toContain('Hola Ana')
+        ->and($privado)->toContain('fechas');
+});
+
+it('si ya platica por privado, un segundo comentario no le manda otro saludo', function () {
+    Http::fake([
+        'graph.test/*/me/messages' => Http::response(['message_id' => 'mid.1', 'recipient_id' => 'PSID77']),
+        'graph.test/*/comments' => Http::response(['id' => 'reply-3']),
+    ]);
+    $compra = [
+        'clasificacion' => SocialComment::CLASS_PURCHASE,
+        'respuesta_publica' => '',
+        'mensaje_privado' => 'Hola Ana, ¿para qué fechas?',
+    ];
+
+    $primero = socialComment(['body' => 'Precio']);
+    socialResponder($compra)->handle($primero->fresh(), socialLink());
+
+    $segundo = socialComment(['body' => 'Precio por favor']);
+    socialResponder($compra)->handle($segundo->fresh(), socialLink());
+
+    $segundo->refresh();
+    expect($segundo->conversation_id)->toBe($primero->fresh()->conversation_id)
+        ->and($segundo->private_reply_sent_at)->toBeNull()
+        ->and($segundo->status)->toBe(SocialComment::STATUS_ANSWERED)
+        ->and(Conversation::find($segundo->conversation_id)->messages()->count())->toBe(1);
+    Http::assertSentCount(3); // 2 respuestas públicas + 1 solo privado
+});
+
+// ---------------------------------------------- elogio, liga y reintento
+
+it('solo se agradece en público un elogio que habla bien del lugar', function (string $body, bool $safe) {
+    expect((new \App\Services\Social\SocialIntentRules)->praiseIsSafe($body))->toBe($safe);
+})->with([
+    ['Hermoso lugar', true],
+    ['Yo los visité y la pasé súper bien muy lindas sus cabañas.', true],
+    ['100% recomendada, a pesar del mal clima, el cual nos recompensaron con un paseo gratis', true],
+    ['Me encantaria pero ya se metio la pache pache ala alberca nesecirarian desinfectar', false],
+    ['Si por mi 😃 jejejeje', false],
+    ['Cabañas Real de la Sierra ok', false],
+]);
+
+it('un elogio con "pero" no se contesta en público', function () {
+    Http::fake();
+    (new SocialSettings)->save(['activo' => true, 'clasificaciones' => [
+        SocialComment::CLASS_PRAISE => ['responder_publico' => true, 'mandar_privado' => false, 'plantilla' => '¡Gracias por recomendarnos!'],
+    ]]);
+    $comment = socialComment(['body' => 'Me encantaría pero ya se metió la pache pache a la alberca']);
+
+    socialResponder([
+        'clasificacion' => SocialComment::CLASS_PRAISE,
+        'respuesta_publica' => '',
+        'mensaje_privado' => '',
+    ])->handle($comment->fresh(), socialLink());
+
+    expect($comment->fresh()->status)->toBe(SocialComment::STATUS_IGNORED)
+        ->and($comment->fresh()->public_replied_at)->toBeNull();
+    Http::assertNothingSent();
+});
+
+it('el privado de compra lleva la liga del wizard una sola vez', function () {
+    $url = 'https://cabanas.test/reservar';
+
+    expect(SocialResponder::withBookingLink('Hola, ¿para qué fechas?', $url))
+        ->toBe('Hola, ¿para qué fechas? Si prefieres, aquí puedes ver fechas y apartar en línea: '.$url)
+        ->and(SocialResponder::withBookingLink('Reserva en '.$url, $url))->toBe('Reserva en '.$url)
+        ->and(SocialResponder::withBookingLink('Hola', null))->toBe('Hola');
+});
+
+it('reintenta el privado cuando Meta falla de su lado', function () {
+    Http::fake([
+        'graph.test/*/me/messages' => Http::sequence()
+            ->push(['error' => ['code' => 1, 'message' => 'Please reduce the amount of data you\'re asking for, then retry your request']], 500)
+            ->push(['message_id' => 'mid.9', 'recipient_id' => 'PSID9']),
+    ]);
+
+    $sent = app(\App\Services\Meta\MetaApi::class)->privateReply(socialLink(), 'PAGE123_c1', 'Hola');
+
+    expect($sent['recipient_id'] ?? null)->toBe('PSID9');
+    Http::assertSentCount(2);
+});
+
+it('no reintenta cuando el usuario no admite respuesta', function () {
+    Http::fake([
+        'graph.test/*/me/messages' => Http::response(['error' => [
+            'code' => 10903, 'error_subcode' => 1893049, 'is_transient' => false, 'message' => 'This user cant reply to this activity',
+        ]], 400),
+    ]);
+
+    expect(app(\App\Services\Meta\MetaApi::class)->privateReply(socialLink(), 'PAGE123_c1', 'Hola'))->toBeNull();
+    Http::assertSentCount(1);
 });

@@ -547,7 +547,12 @@ class MetaApi
         $endpoint = ($this->usesInstagramLogin($link) ? $this->igGraph() : rtrim(config('meta.graph_url'), '/')).'/me/messages';
 
         try {
+            // Meta a veces contesta "Please reduce the amount of data you're
+            // asking for" (código 1, HTTP 500) o marca el error como
+            // is_transient: es su lado, no el nuestro, y al segundo intento
+            // sale. En cabañas se perdieron así 3 privados en septiembre.
             $response = Http::withToken($link->access_token)->timeout(10)
+                ->retry(2, 1500, fn ($exception) => $this->isTransientMetaError($exception), throw: false)
                 ->post($endpoint, [
                     'recipient' => ['comment_id' => $commentId],
                     'message' => ['text' => $message],
@@ -568,6 +573,20 @@ class MetaApi
 
             return null;
         }
+    }
+
+    /** Error de Meta que vale la pena reintentar una vez. */
+    protected function isTransientMetaError(mixed $exception): bool
+    {
+        $response = $exception instanceof \Illuminate\Http\Client\RequestException ? $exception->response : null;
+
+        if (! $response) {
+            return $exception instanceof \Illuminate\Http\Client\ConnectionException;
+        }
+
+        return $response->serverError()
+            || (bool) $response->json('error.is_transient')
+            || in_array((int) $response->json('error.code'), [1, 2], true);
     }
 
     /**
@@ -1297,7 +1316,23 @@ class MetaApi
     {
         $link = $this->linkForConversation($conversation);
 
-        return $link ? $this->sendText($link, $conversation->contact_phone, $text) : false;
+        if (! $link) {
+            return false;
+        }
+
+        // Fuera de la ventana de 24 h WhatsApp rechaza el texto libre, pero
+        // lo hace después, por webhook: quien llama creía que había salido y
+        // su respaldo (correo, campana) nunca se activaba. Se dice que no
+        // desde aquí para que el respaldo corra en el momento.
+        if ($link->type === 'whatsapp' && ! $conversation->whatsappWindowOpen()) {
+            \Illuminate\Support\Facades\Log::info('Meta: ventana de 24 h cerrada, no se manda texto libre', [
+                'conversation_id' => $conversation->id,
+            ]);
+
+            return false;
+        }
+
+        return $this->sendText($link, $conversation->contact_phone, $text);
     }
 
     /**
