@@ -133,7 +133,14 @@ class UpdateReservation
                 'deposit_amount' => $ratePlan->depositAmountFor($total)
                     ?? $data['deposit_amount']
                     ?? $reservation->deposit_amount,
-                'payment_due_at' => $ratePlan->paymentDueAt($start),
+                // Solo si se movió la llegada o la tarifa, y por la misma
+                // puerta que al crear (no nace vencida). Recalcularla cruda
+                // en cualquier edición le ponía una fecha ya pasada a quien
+                // reservó dentro del plazo, o a la que se reabrió sin ella, y
+                // el barrido de saldos la cancelaba a la hora siguiente.
+                'payment_due_at' => $start->equalTo($reservation->starts_at) && $ratePlan->id === $reservation->rate_plan_id
+                    ? $reservation->payment_due_at
+                    : app(\App\Services\ReservationPolicy::class)->paymentDueAt($ratePlan, $start),
                 'notes' => array_key_exists('notes', $data) ? $data['notes'] : $reservation->notes,
                 'guest_notes' => array_key_exists('guest_notes', $data) ? $data['guest_notes'] : $reservation->guest_notes,
             ]);

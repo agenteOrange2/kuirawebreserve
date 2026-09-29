@@ -137,7 +137,7 @@ class TransitionReservation
      * se conservan; los tours que se cancelaron con ella NO se reviven — su
      * cupo pudo venderse.
      *
-     * @param  array{starts_at?: mixed, ends_at?: mixed, room_id?: int|null, confirmed?: bool, hold_minutes?: int|null}  $data
+     * @param  array{starts_at?: mixed, ends_at?: mixed, room_id?: int|null, confirmed?: bool, hold_minutes?: int|null, notify_guest?: bool}  $data
      *
      * @throws NoAvailabilityException
      * @throws InvalidArgumentException
@@ -214,14 +214,46 @@ class TransitionReservation
                 ->causedBy($user)
                 ->log($datesChanged ? 'Reserva reabierta y reagendada' : 'Reserva reabierta');
 
+            self::dropOverdueBalanceDeadline($reservation, $user);
+
             return $reservation;
         });
 
         if ((bool) ($data['confirmed'] ?? false)) {
-            $reservation = $this->confirm($reservation->refresh(), $user);
+            // Reabrirla en silencio es opción del panel: a un huésped cuya
+            // reserva se cayó y se reabrió varias veces le llegaba una
+            // confirmación (y un contrato por correo) en cada vuelta
+            // (cabañas RES-2026-1750, 2026-09-26→29).
+            $reservation = $this->confirm($reservation->refresh(), $user, notifyGuest: (bool) ($data['notify_guest'] ?? true));
         }
 
         return $reservation;
+    }
+
+    /**
+     * Una reserva que vuelve a la vida (reabierta a mano o revivida por un
+     * pago) no hereda una fecha límite del saldo ya vencida: con ella puesta,
+     * el barrido de saldos (payments:collect-balance) la cancelaba otra vez a
+     * la siguiente hora en punto, y así cada vez que recepción la reabría.
+     * Caso real cabañas 2026-09-26→29 (RES-2026-1750): cuatro veces reabierta
+     * y cuatro veces cancelada. Reabrirla es la excepción que el hotel decide;
+     * el saldo sigue pendiente y se cobra en recepción. Las reservas que nadie
+     * reabre siguen con su fecha límite y su cancelación como siempre.
+     */
+    public static function dropOverdueBalanceDeadline(Reservation $reservation, ?User $user = null): void
+    {
+        if ($reservation->payment_due_at === null || ! $reservation->payment_due_at->isPast()) {
+            return;
+        }
+
+        $due = $reservation->payment_due_at->format('d/m/Y H:i');
+
+        $reservation->update(['payment_due_at' => null]);
+
+        activity('reservation')
+            ->performedOn($reservation)
+            ->causedBy($user)
+            ->log("Fecha límite del saldo ({$due}) retirada al reabrir: ya había vencido. El saldo se cobra en recepción.");
     }
 
     /**

@@ -312,3 +312,27 @@ it('la ficha de la reserva trae su dinero, su conversación y la historia comple
         ->and($props['reservation']['timeline'])->not->toBeEmpty()
         ->and($props['reservation']['pending_balance'])->toEqual(500);
 });
+
+// Caso real cabañas 2026-09-26→29 (RES-2026-1750): la reserva se cayó y se
+// reabrió varias veces, y en cada vuelta le llegaba al huésped otra
+// confirmación y otro contrato por correo.
+it('reabrir confirmada puede hacerse sin avisarle al huésped', function () {
+    $silent = reopenExpire(reopenHoldFor());
+    $loud = reopenExpire(reopenHoldFor(['room_id' => $this->rooms[1]->id]));
+
+    $this->mock(\App\Services\Payments\PaymentGuestNotifier::class, function ($mock) use ($loud) {
+        $mock->shouldReceive('reservationConfirmed')
+            ->once()
+            ->withArgs(fn (Reservation $r) => $r->id === $loud->id);
+    });
+
+    $controller = app(ReservationController::class);
+    $action = app(TransitionReservation::class);
+
+    $controller->reopen(Request::create('/x', 'PATCH', ['confirmed' => true, 'notify_guest' => false]), $silent, $action);
+    // Sin el campo (bot, clientes viejos) se avisa como siempre.
+    $controller->reopen(Request::create('/x', 'PATCH', ['confirmed' => true]), $loud, $action);
+
+    expect($silent->refresh()->status)->toBe(ReservationStatus::Confirmed)
+        ->and($loud->refresh()->status)->toBe(ReservationStatus::Confirmed);
+});

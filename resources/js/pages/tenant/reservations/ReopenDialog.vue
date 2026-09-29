@@ -2,7 +2,7 @@
 import axios from 'axios';
 import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormDateTime, FormLabel } from '@/components/Base/Form';
+import { FormDateTime, FormLabel, FormSwitch } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
@@ -40,6 +40,9 @@ const toast = useToasts();
 const start = ref('');
 const end = ref('');
 const confirmed = ref(true);
+// Reabrirla en silencio: a quien se le cayó y reabrió la reserva varias
+// veces le llegaba una confirmación (y el contrato por correo) en cada vuelta.
+const notifyGuest = ref(true);
 const busy = ref(false);
 
 watch(
@@ -52,6 +55,7 @@ watch(
         // Si ya pagó algo, lo normal es devolverla confirmada; si no, como
         // apartado con su plazo. Quien atiende lo cambia aquí mismo.
         confirmed.value = Number(reservation.paid_total ?? 0) > 0;
+        notifyGuest.value = true;
     },
     { immediate: true },
 );
@@ -95,12 +99,13 @@ async function submit() {
                 ? { starts_at: start.value, ends_at: end.value || null }
                 : {}),
             confirmed: confirmed.value,
+            notify_guest: notifyGuest.value,
         });
         toast.success(
             rescheduled
                 ? 'Reserva reabierta y reagendada'
                 : 'Reserva reabierta',
-            `${reservation.code} volvió ${confirmed.value ? 'confirmada' : `como apartado por ${holdLabel.value}`}.`,
+            `${reservation.code} volvió ${confirmed.value ? 'confirmada' : `como apartado por ${holdLabel.value}`}${confirmed.value && !notifyGuest.value ? ', sin avisarle al huésped' : ''}.`,
         );
         emit('done');
     } catch (error: any) {
@@ -236,7 +241,7 @@ async function submit() {
                                 </span>
                                 <span class="mt-1 block text-slate-500"
                                     >La habitación queda apartada para el
-                                    huésped y se le avisa.</span
+                                    huésped.</span
                                 >
                             </button>
                             <button
@@ -261,6 +266,28 @@ async function submit() {
                                     confirma o paga.</span
                                 >
                             </button>
+                        </div>
+                        <div
+                            v-if="confirmed"
+                            class="mt-3 flex items-center gap-2.5 border-t border-dashed border-slate-200/70 pt-3 dark:border-darkmode-400"
+                        >
+                            <FormSwitch>
+                                <FormSwitch.Input
+                                    v-model="notifyGuest"
+                                    type="checkbox"
+                                />
+                            </FormSwitch>
+                            <div class="min-w-0">
+                                <div class="text-xs font-medium">
+                                    Avisar al huésped
+                                </div>
+                                <p class="text-[11px] text-slate-500">
+                                    Le llega la confirmación por su canal y el
+                                    contrato por correo. Apágalo si ya se le
+                                    avisó o si la reserva solo se está
+                                    corrigiendo.
+                                </p>
+                            </div>
                         </div>
                     </section>
                 </div>

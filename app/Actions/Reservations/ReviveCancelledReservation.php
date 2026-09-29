@@ -58,6 +58,8 @@ class ReviveCancelledReservation
             ->causedBy($user)
             ->log('Reserva revivida: su pago llegó después de cancelarse');
 
+        TransitionReservation::dropOverdueBalanceDeadline($reservation, $user);
+
         return true;
     }
 

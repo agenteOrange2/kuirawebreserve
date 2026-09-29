@@ -170,3 +170,89 @@ it('si la habitación ya se vendió, el pago de mostrador se rechaza diciendo qu
         ->handle($reservation->refresh(), ['amount' => 500, 'method' => 'cash']))
         ->toThrow(InvalidArgumentException::class, 'reábrela con fechas nuevas');
 });
+
+/**
+ * Caso real cabañas 2026-09-26→29 (RES-2026-1750, Iris Zepeda): el barrido la
+ * canceló por saldo vencido, recepción la reabrió y a la siguiente hora en
+ * punto el barrido la volvió a cancelar — cuatro veces. Reabrir no tocaba la
+ * fecha límite ya vencida.
+ */
+it('una reserva reabierta tras cancelarse por saldo no vuelve a caer en el barrido', function () {
+    $this->property->update(['settings' => ['cancel_on_balance_overdue' => true]]);
+
+    $reservation = reservaDe(4, confirmada: true);
+    app(RegisterReservationPayment::class)->handle($reservation, ['amount' => 500, 'method' => 'cash']);
+    $reservation->update(['payment_due_at' => now()->subDays(3)]);
+
+    Conversation::create([
+        'channel_id' => Channel::webchat()->id,
+        'reservation_id' => $reservation->id,
+        'contact_name' => 'Huésped Que Pagó',
+        'status' => Conversation::STATUS_OPEN,
+        'bot_enabled' => true,
+        'last_message_at' => now(),
+    ])->markFollowup('balance_request');
+
+    // La política del hotel se cumple la primera vez.
+    $this->artisan('payments:collect-balance')->assertSuccessful();
+    expect($reservation->refresh()->status)->toBe(ReservationStatus::Cancelled);
+
+    // Recepción hace la excepción y la reabre confirmada.
+    app(TransitionReservation::class)->reopen($reservation, null, ['confirmed' => true]);
+
+    $this->artisan('payments:collect-balance')->assertSuccessful();
+
+    $reservation->refresh();
+
+    expect($reservation->status)->toBe(ReservationStatus::Confirmed)
+        ->and($reservation->payment_due_at)->toBeNull()
+        // El saldo no se perdona: sigue pendiente para recepción.
+        ->and($reservation->pendingBalance())->toEqual(500.0);
+});
+
+it('reabrir conserva una fecha límite que todavía no vence', function () {
+    $reservation = reservaDe(30, confirmada: true);
+    $due = $reservation->payment_due_at;
+
+    app(TransitionReservation::class)->cancel($reservation, null, reason: 'Prueba');
+    app(TransitionReservation::class)->reopen($reservation->refresh(), null, ['confirmed' => true]);
+
+    expect($reservation->refresh()->payment_due_at?->equalTo($due))->toBeTrue();
+});
+
+it('revivir por un pago tardío tampoco hereda la fecha límite vencida', function () {
+    $reservation = reservaDe(4, confirmada: true);
+    $reservation->update(['payment_due_at' => now()->subDays(3)]);
+    app(TransitionReservation::class)->cancel($reservation, null, reason: 'Saldo no cubierto');
+
+    app(RegisterReservationPayment::class)->handle($reservation->refresh(), ['amount' => 500, 'method' => 'cash']);
+
+    expect($reservation->refresh()->status)->not->toBe(ReservationStatus::Cancelled)
+        ->and($reservation->payment_due_at)->toBeNull();
+});
+
+it('editar la reserva sin mover la llegada no le devuelve una fecha límite vencida', function () {
+    // Reservó dentro del plazo: nació sin fecha límite.
+    $reservation = reservaDe(3, confirmada: true);
+    expect($reservation->payment_due_at)->toBeNull();
+
+    app(\App\Actions\Reservations\UpdateReservation::class)->handle($reservation, [
+        'rate_plan_id' => $this->plan->id,
+        'room_id' => $this->room->id,
+        'starts_at' => $reservation->starts_at,
+        'ends_at' => $reservation->ends_at,
+        'notes' => 'Llega tarde',
+    ]);
+
+    expect($reservation->refresh()->payment_due_at)->toBeNull();
+
+    // Moverla a un mes sí le pone su fecha límite normal.
+    app(\App\Actions\Reservations\UpdateReservation::class)->handle($reservation, [
+        'rate_plan_id' => $this->plan->id,
+        'room_id' => $this->room->id,
+        'starts_at' => now()->addDays(30)->setTime(15, 0),
+        'ends_at' => now()->addDays(31)->setTime(11, 0),
+    ]);
+
+    expect($reservation->refresh()->payment_due_at?->toDateString())->toBe(now()->addDays(23)->toDateString());
+});

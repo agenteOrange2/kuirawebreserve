@@ -172,12 +172,14 @@ class ReservationController extends Controller
             'ends_at' => ['nullable', 'date'],
             'room_id' => ['nullable', 'integer', 'exists:rooms,id'],
             'confirmed' => ['sometimes', 'boolean'],
+            'notify_guest' => ['sometimes', 'boolean'],
         ]);
 
         return $this->transition(
             fn () => $action->reopen($reservation, $request->user(), [
                 ...$data,
                 'confirmed' => $request->boolean('confirmed'),
+                'notify_guest' => $request->boolean('notify_guest', true),
             ]),
             $reservation,
         );
