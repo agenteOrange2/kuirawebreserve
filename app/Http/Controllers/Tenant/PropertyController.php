@@ -302,6 +302,7 @@ class PropertyController extends Controller
             'settings.staff_notice_events.payment' => ['sometimes', 'boolean'],
             'settings.staff_notice_events.cancellation' => ['sometimes', 'boolean'],
             'settings.staff_notice_events.checkout' => ['sometimes', 'boolean'],
+            'settings.staff_notice_events.survey' => ['sometimes', 'boolean'],
             // Aviso el día de la llegada: segundo recordatorio cuando la
             // entrada está a N horas (default 2).
             'settings.arrival_soon_enabled' => ['sometimes', 'boolean'],

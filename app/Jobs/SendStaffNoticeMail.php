@@ -56,6 +56,7 @@ class SendStaffNoticeMail implements ShouldQueue
             StaffAlerts::EVENT_PAYMENT => $this->paymentReceived(),
             StaffAlerts::EVENT_CANCELLATION => $this->reservationCancelled(),
             StaffAlerts::EVENT_CHECKOUT => $this->checkoutDue(),
+            StaffAlerts::EVENT_SURVEY => $this->surveyAnswered(),
             default => null,
         };
     }
@@ -191,6 +192,43 @@ class SendStaffNoticeMail implements ShouldQueue
                 'Saldo' => $pending > 0 ? $this->money($pending).' por cobrar' : 'Sin saldo',
             ],
             url: $stay->reservation ? $this->reservationUrl($stay->reservation) : $this->panelUrl('/plano'),
+        );
+    }
+
+    protected function surveyAnswered(): ?StaffNoticeMail
+    {
+        $survey = \App\Models\StaySurvey::with(['stay.room', 'stay.reservation', 'guest'])->find($this->context['survey_id'] ?? null);
+
+        if ($survey === null || $survey->rating === null) {
+            return null;
+        }
+
+        $stay = $survey->stay;
+        $room = $stay?->room?->number;
+        $low = (int) $survey->rating <= 2
+            || collect($survey->answers ?? [])->contains(fn ($value) => (int) $value <= 2);
+
+        $aspects = collect(\App\Models\StaySurvey::aspects())
+            ->mapWithKeys(fn (array $aspect) => [
+                $aspect['label'] => ($value = $survey->answerFor($aspect['key'])) !== null ? $value.'/5' : null,
+            ])
+            ->all();
+
+        return new StaffNoticeMail(
+            subjectLine: ($low ? 'Evaluación baja ' : 'Encuesta contestada ').$survey->rating.'/5'.($room ? ' · hab. '.$room : ''),
+            intro: $low
+                ? 'Un huésped calificó mal su estancia. Conviene contactarlo antes de que deje una reseña pública.'
+                : 'Un huésped contestó la encuesta de su estancia.',
+            lines: [
+                'Calificación general' => $survey->rating.'/5',
+                ...$aspects,
+                'Comentario' => $survey->comment ?: 'Sin comentario',
+                'Huésped' => $stay?->reservation?->guest_name ?: ($survey->guest?->full_name ?? $stay?->guest_name ?? 'Huésped'),
+                'Habitación' => $room,
+                'Reserva' => $stay?->reservation?->displayCode(),
+                'Salida' => $this->date($stay?->check_out_at),
+            ],
+            url: $this->panelUrl('/encuestas'),
         );
     }
 

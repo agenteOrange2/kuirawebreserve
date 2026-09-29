@@ -32,11 +32,14 @@ class StaffAlerts
 
     public const EVENT_CHECKOUT = 'checkout';
 
+    public const EVENT_SURVEY = 'survey';
+
     public const EVENTS = [
         self::EVENT_RESERVATION_NEW,
         self::EVENT_PAYMENT,
         self::EVENT_CANCELLATION,
         self::EVENT_CHECKOUT,
+        self::EVENT_SURVEY,
     ];
 
     /** @param  bool  $bell  la campana calla lo que capturó el propio mostrador */
@@ -165,6 +168,15 @@ class StaffAlerts
                 subject: $stay,
             );
         });
+    }
+
+    /**
+     * Un huésped contestó su encuesta. Solo correo: la campana ya avisa de
+     * las evaluaciones bajas (SurveyPageController, encuestas avanzadas).
+     */
+    public function surveyAnswered(\App\Models\StaySurvey $survey): void
+    {
+        $this->safely(fn () => $this->mail(self::EVENT_SURVEY, ['survey_id' => $survey->id]));
     }
 
     public function checkoutAlreadyNotified(Stay $stay): bool

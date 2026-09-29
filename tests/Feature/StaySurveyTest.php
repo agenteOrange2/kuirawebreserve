@@ -380,3 +380,33 @@ it('una respuesta de prueba se puede borrar y deja de contar', function () {
 
     expect(StaySurvey::query()->count())->toBe(0);
 });
+
+it('cada encuesta contestada llega por correo al hotel, y la baja va marcada', function () {
+    \Illuminate\Support\Facades\Mail::fake();
+    surveySettings(['staff_notice_emails' => ['dueno@hotel.test']]);
+
+    $answer = function (int $rating, string $comment) {
+        $survey = StaySurvey::forStay(makeSurveyStay());
+
+        app(SurveyPageController::class)->store(
+            Request::create("/api/encuesta/{$survey->token}", 'POST', [
+                'rating' => $rating,
+                'answers' => ['cleanliness' => $rating],
+                'comment' => $comment,
+            ]),
+            $survey->token,
+        );
+    };
+
+    $answer(5, 'Todo excelente');
+    $answer(2, 'La cabaña estaba fría');
+
+    $mails = \Illuminate\Support\Facades\Mail::sent(\App\Mail\StaffNoticeMail::class)->values();
+
+    expect($mails)->toHaveCount(2)
+        ->and($mails[0]->subjectLine)->toStartWith('Encuesta contestada 5/5')
+        ->and($mails[0]->lines['Comentario'])->toBe('Todo excelente')
+        ->and($mails[0]->lines['Habitación'])->toBe('801')
+        ->and($mails[1]->subjectLine)->toStartWith('Evaluación baja 2/5')
+        ->and($mails[1]->hasTo('dueno@hotel.test'))->toBeTrue();
+});

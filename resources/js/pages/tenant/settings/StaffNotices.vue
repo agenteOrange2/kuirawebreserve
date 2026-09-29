@@ -8,7 +8,12 @@ import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
-type EventKey = 'reservation_new' | 'payment' | 'cancellation' | 'checkout';
+type EventKey =
+    | 'reservation_new'
+    | 'payment'
+    | 'cancellation'
+    | 'checkout'
+    | 'survey';
 
 const props = defineProps<{
     property: { id: number; name: string };
@@ -60,6 +65,12 @@ const eventList: { key: EventKey; icon: string; label: string; help: string }[] 
         icon: 'DoorOpen',
         label: 'Salidas: revisar habitación',
         help: 'Un aviso por habitación a su hora de salida, para mandar a revisarla, con el saldo si quedó algo por cobrar.',
+    },
+    {
+        key: 'survey',
+        icon: 'MessageSquareHeart',
+        label: 'Encuesta contestada',
+        help: 'Cada respuesta del huésped con su calificación, los aspectos y el comentario. Las calificaciones bajas llegan marcadas para atenderlas rápido.',
     },
 ];
 
@@ -278,7 +289,7 @@ async function sendTest() {
                             <div
                                 v-for="event in eventList"
                                 :key="event.key"
-                                class="col-span-12 flex items-start gap-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 md:col-span-6 dark:border-darkmode-400 dark:bg-darkmode-700"
+                                class="col-span-12 flex items-start gap-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
                             >
                                 <div
                                     class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"

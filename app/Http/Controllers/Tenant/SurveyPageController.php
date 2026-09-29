@@ -152,6 +152,10 @@ class SurveyPageController extends Controller
             }
         }
 
+        // Correo al hotel por TODA respuesta (/ajustes/avisos-hotel): el
+        // dueño quiere leer también las buenas.
+        app(\App\Services\StaffAlerts::class)->surveyAnswered($survey);
+
         return response()->json(['submitted' => true]);
     }
 }
