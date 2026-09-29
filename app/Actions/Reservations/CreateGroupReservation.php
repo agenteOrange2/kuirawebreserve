@@ -60,7 +60,7 @@ class CreateGroupReservation
             throw new InvalidArgumentException('Máximo 30 habitaciones por grupo.');
         }
 
-        return DB::transaction(function () use ($data, $lines, $user) {
+        $group = DB::transaction(function () use ($data, $lines, $user) {
             $group = ReservationGroup::create([
                 'property_id' => Property::firstOrFail()->id,
                 'guest_name' => $data['guest_name'],
@@ -74,8 +74,10 @@ class CreateGroupReservation
                 $type = RoomType::query()->where('active', true)->findOrFail($line['room_type_id']);
 
                 // Misma resolución que el wizard: la tarifa activa más
-                // barata de la modalidad pedida para ese tipo.
+                // barata de la modalidad pedida para ese tipo. Wizard y bot
+                // (`online_only`) no tocan las tarifas de solo recepción.
                 $ratePlan = $type->ratePlans()
+                    ->when(! empty($data['online_only']), fn ($q) => $q->sellableOnline())
                     ->where('active', true)
                     ->where('type', $data['mode'])
                     ->orderBy('price')
@@ -111,6 +113,7 @@ class CreateGroupReservation
                         'adults' => $line['adults'] ?? 1,
                         'children' => $line['children'] ?? 0,
                         'notes' => $data['notes'] ?? null,
+                        '_group_member' => true,
                         // El grupo consolida sus propios avisos (uno por GRP-,
                         // no uno por cuarto); además esto corre dentro de la
                         // transacción del grupo, que aún puede reventar.
@@ -142,5 +145,15 @@ class CreateGroupReservation
 
             return $group;
         });
+
+        // Un solo aviso al hotel por GRP-, ya fuera de la transacción: antes
+        // la campana sonaba una vez por cabaña y de un grupo que todavía
+        // podía reventar.
+        app(\App\Services\StaffAlerts::class)->groupCreated(
+            $group,
+            bell: ! in_array($data['source_channel'] ?? 'front_desk', ['front_desk', 'walk_in'], true),
+        );
+
+        return $group;
     }
 }

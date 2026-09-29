@@ -20,6 +20,12 @@ Schedule::command('tenants:run stays:auto-checkout')
     ->everyMinute()
     ->withoutOverlapping();
 
+// Hora de salida: avisa al hotel que toca revisar la habitación (campana,
+// push y correo a /ajustes/avisos-hotel), una vez por estancia.
+Schedule::command('tenants:run stays:checkout-alerts')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();
+
 // Solicitudes de cobro cuya vigencia pasó sin pagarse (spec-pagos §4.1).
 Schedule::command('tenants:run payments:expire-requests')
     ->everyFiveMinutes()

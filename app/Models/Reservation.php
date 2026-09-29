@@ -269,6 +269,39 @@ class Reservation extends Model
         return $this->code ?: self::formatCode($this->id, $this->created_at);
     }
 
+    /**
+     * Por dónde entró, legible para el hotel. Las del asistente dicen además
+     * el canal real de su conversación (WhatsApp, Messenger, Instagram...).
+     */
+    public function channelLabel(): string
+    {
+        $label = match ($this->source_channel) {
+            'front_desk', 'counter' => 'Mostrador',
+            'walk_in' => 'Llegó sin reserva',
+            'phone' => 'Teléfono',
+            'web' => 'Sitio web',
+            'whatsapp' => 'WhatsApp',
+            'agent' => 'Asistente IA',
+            null, '' => 'Sin canal',
+            default => (string) $this->source_channel,
+        };
+
+        if ($this->source_channel === 'agent') {
+            $type = Conversation::query()
+                ->where('reservation_id', $this->id)
+                ->latest('id')
+                ->first()
+                ?->channel
+                ?->type;
+
+            if ($type) {
+                $label .= ' · '.(Channel::TYPE_LABELS[$type] ?? $type);
+            }
+        }
+
+        return $label;
+    }
+
     /** Motivo con el que el barrido de apartados (ExpireReservationHolds) cancela. */
     public const EXPIRED_HOLD_REASON = 'Apartado vencido sin pago';
 

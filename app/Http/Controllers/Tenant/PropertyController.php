@@ -293,6 +293,15 @@ class PropertyController extends Controller
             // Meta oficial, Evolution, o automático con respaldo.
             'settings.direct_notify_channel' => ['sometimes', \Illuminate\Validation\Rule::in(['auto', 'meta', 'evolution'])],
             'settings.arrival_reminder_enabled' => ['sometimes', 'boolean'],
+            // Avisos al HOTEL por correo (/ajustes/avisos-hotel, StaffAlerts):
+            // a quién y de qué.
+            'settings.staff_notice_emails' => ['sometimes', 'nullable', 'array', 'max:10'],
+            'settings.staff_notice_emails.*' => ['email', 'max:255'],
+            'settings.staff_notice_events' => ['sometimes', 'array'],
+            'settings.staff_notice_events.reservation_new' => ['sometimes', 'boolean'],
+            'settings.staff_notice_events.payment' => ['sometimes', 'boolean'],
+            'settings.staff_notice_events.cancellation' => ['sometimes', 'boolean'],
+            'settings.staff_notice_events.checkout' => ['sometimes', 'boolean'],
             // Aviso el día de la llegada: segundo recordatorio cuando la
             // entrada está a N horas (default 2).
             'settings.arrival_soon_enabled' => ['sometimes', 'boolean'],
@@ -341,6 +350,14 @@ class PropertyController extends Controller
             $number = preg_replace('/\D+/', '', (string) ($first['number'] ?? ''));
             $data['settings']['phone'] = $number !== '' ? '+'.$code.$number : null;
             $data['settings']['phone_country_code'] = $code !== '' ? $code : ($property->settings['phone_country_code'] ?? '52');
+        }
+        if (isset($data['settings']) && array_key_exists('staff_notice_emails', $data['settings'])) {
+            $data['settings']['staff_notice_emails'] = collect($data['settings']['staff_notice_emails'] ?? [])
+                ->map(fn ($email) => strtolower(trim((string) $email)))
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
         }
         if (isset($data['settings']) && array_key_exists('emails', $data['settings'])) {
             $data['settings']['email'] = collect($data['settings']['emails'] ?? [])

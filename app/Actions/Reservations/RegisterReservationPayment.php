@@ -37,7 +37,7 @@ class RegisterReservationPayment
      */
     public function handle(Reservation $reservation, array $data, ?User $user = null): Payment
     {
-        return DB::transaction(function () use ($reservation, $data, $user) {
+        $payment = DB::transaction(function () use ($reservation, $data, $user) {
             $reservation = Reservation::whereKey($reservation->id)->lockForUpdate()->firstOrFail();
 
             if (in_array($reservation->status, [ReservationStatus::Cancelled, ReservationStatus::NoShow], true)
@@ -90,6 +90,12 @@ class RegisterReservationPayment
 
             return $payment;
         });
+
+        // Fuera de la transacción: el aviso al hotel no puede deshacer un
+        // pago ya registrado.
+        app(\App\Services\StaffAlerts::class)->paymentReceived($reservation->refresh(), $payment);
+
+        return $payment;
     }
 
     /**

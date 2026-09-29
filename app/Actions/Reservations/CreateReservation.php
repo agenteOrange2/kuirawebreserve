@@ -223,24 +223,15 @@ class CreateReservation
             }
         }
 
-        // Campana del panel: solo lo que llega SOLO (wizard, bot, WhatsApp).
-        // Una reserva capturada en el mostrador ya la sabe quien la capturó.
-        if (! in_array($reservation->source_channel, ['front_desk', 'walk_in'], true)) {
-            try {
-                app(\App\Services\StaffNotifier::class)->notify(
-                    type: \App\Models\StaffNotification::TYPE_RESERVATION,
-                    title: 'Reserva nueva · '.$reservation->displayCode(),
-                    body: trim(sprintf(
-                        '%s · %s',
-                        $reservation->guest_name ?: 'Sin nombre',
-                        $reservation->starts_at->format('d/m/Y H:i'),
-                    )),
-                    url: '/reservas/operacion?reservation='.$reservation->id,
-                    subject: $reservation,
-                );
-            } catch (\Throwable $e) {
-                report($e);
-            }
+        // Aviso al hotel. La campana, solo lo que llega SOLO (wizard, bot,
+        // WhatsApp): una reserva capturada en el mostrador ya la sabe quien
+        // la capturó. El correo al dueño sí lleva todas. Las cabañas de un
+        // grupo avisan una sola vez, como grupo (CreateGroupReservation).
+        if (! ($data['_group_member'] ?? false)) {
+            app(\App\Services\StaffAlerts::class)->reservationCreated(
+                $reservation,
+                bell: ! in_array($reservation->source_channel, ['front_desk', 'walk_in'], true),
+            );
         }
 
         return $reservation;

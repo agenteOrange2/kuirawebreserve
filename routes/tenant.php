@@ -547,6 +547,14 @@ Route::middleware([
             ->middleware('can:properties.manage')
             ->name('guest-notices');
 
+        // Avisos al HOTEL por correo (StaffAlerts): destinatarios y eventos.
+        Route::get('/ajustes/avisos-hotel', \App\Http\Controllers\Tenant\StaffNoticesPageController::class)
+            ->middleware('can:properties.manage')
+            ->name('staff-notices');
+        Route::post('/ajustes/avisos-hotel/prueba', [\App\Http\Controllers\Tenant\StaffNoticesPageController::class, 'test'])
+            ->middleware(['can:properties.manage', 'throttle:6,1'])
+            ->name('staff-notices.test');
+
         // Área aislada de correo saliente: SMTP propio del hotel para
         // confirmaciones y avisos al huésped. Misma regla que wizard y
         // métodos de pago: config con superficie propia, página propia.

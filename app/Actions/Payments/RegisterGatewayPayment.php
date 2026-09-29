@@ -34,7 +34,7 @@ class RegisterGatewayPayment
      */
     public function handle(PaymentRequest $request, array $data = [], ?User $verifier = null): Payment
     {
-        return DB::transaction(function () use ($request, $data, $verifier) {
+        $payment = DB::transaction(function () use ($request, $data, $verifier) {
             $request = PaymentRequest::whereKey($request->id)->lockForUpdate()->firstOrFail();
 
             // Idempotencia: un evento repetido devuelve el pago original.
@@ -138,6 +138,22 @@ class RegisterGatewayPayment
 
             return $payment;
         });
+
+        // Aviso al hotel, fuera de la transacción y solo por dinero NUEVO: un
+        // webhook repetido o un comprobante que se ligó a lo ya capturado
+        // devuelven el pago de antes. Los tours no avisan aquí; un cobro de
+        // grupo avisa una vez, por el monto completo.
+        if ($payment->wasRecentlyCreated && $payment->reservation_id) {
+            $request->refresh();
+
+            app(\App\Services\StaffAlerts::class)->paymentReceived(
+                $payment->reservation,
+                $payment,
+                amount: $request->isForGroup() ? (float) $request->amount : null,
+            );
+        }
+
+        return $payment;
     }
 
     /**

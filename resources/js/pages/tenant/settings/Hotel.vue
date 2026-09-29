@@ -478,6 +478,29 @@ async function requestModule(mod: PlanModuleRow) {
                     />
                 </Link>
 
+                <!-- Avisos al hotel: correo al dueño de reservas, pagos, cancelaciones y salidas -->
+                <Link
+                    :href="route('tenant.staff-notices')"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="MailCheck" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="text-sm font-medium">Avisos al hotel</div>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Área aparte: a qué correos avisar de reservas
+                            nuevas, pagos, cancelaciones y salidas.
+                        </p>
+                    </div>
+                    <Lucide
+                        icon="ArrowRight"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                    />
+                </Link>
+
                 <!-- Daños: lo que se cobra al revisar la habitación al salir -->
                 <Link
                     :href="route('tenant.damage-catalog')"
@@ -553,7 +576,7 @@ async function requestModule(mod: PlanModuleRow) {
                 <!-- Datos generales: contacto, redes, horarios/moneda, políticas, FAQs -->
                 <Link
                     :href="route('tenant.general-settings')"
-                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-12"
                 >
                     <div
                         class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"

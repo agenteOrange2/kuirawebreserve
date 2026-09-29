@@ -53,6 +53,9 @@ class AutoCheckoutOverdueStays extends Command
                 $stay->forceFill(['auto_closed_at' => now()])->saveQuietly();
                 $closed++;
 
+                // Que el hotel se entere: la habitación ya está en sucia.
+                app(\App\Services\StaffAlerts::class)->stayAutoClosed($stay);
+
                 if (($pending = $stay->fresh()->folio()['grand_pending']) > 0) {
                     $withBalance++;
                     $this->warn("Estancia {$stay->id} (hab. {$stay->room?->number}) cerró con saldo de {$pending}: queda en cuentas por cerrar.");

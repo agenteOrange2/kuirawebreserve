@@ -120,6 +120,11 @@ class TransitionReservation
             report($e);
         }
 
+        // "No llegó" no es una cancelación: ese lo marca recepción en persona.
+        if ($to === ReservationStatus::Cancelled) {
+            app(\App\Services\StaffAlerts::class)->reservationCancelled($reservation, $reason);
+        }
+
         return $reservation;
     }
 
