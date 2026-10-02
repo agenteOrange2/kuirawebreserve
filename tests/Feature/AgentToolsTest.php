@@ -620,6 +620,32 @@ it('al cotizar, el aviso dice capacidad, persona extra, plazo de liquidación y 
         ->and($notice)->toContain('+526568508818');
 });
 
+it('con la tarifa al 100% no habla de anticipo ni de saldo por liquidar', function () {
+    // Caso Hotel México 2026-10-01: "anticipo de $590.00 (100% del total)"
+    // seguido de "el pago total debe quedar liquidado antes de tu llegada".
+    $this->property->update(['settings' => [
+        'balance_due_enabled' => true,
+        'balance_due_value' => 7,
+        'balance_due_unit' => 'day',
+    ]]);
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'price' => 590,
+        'deposit_percent' => 100,
+        'deposit_amount' => null,
+        'active' => true,
+    ]);
+
+    $payload = agentAvailability($plan, now()->addDays(30)->toDateString(), now()->addDays(31)->toDateString());
+    $notice = implode("\n", $payload['quote_notice']);
+
+    expect($notice)->toContain('Para apartar se paga el total de $590.00 por adelantado')
+        ->and($notice)->not->toContain('anticipo')
+        ->and($notice)->not->toContain('liquidado');
+});
+
 it('con la llegada más próxima que el plazo, el aviso no cita una fecha ya vencida', function () {
     $this->property->update(['settings' => [
         'balance_due_enabled' => true,

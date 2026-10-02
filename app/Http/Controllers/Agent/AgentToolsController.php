@@ -235,7 +235,14 @@ class AgentToolsController extends Controller
             ? (float) ($ratePlan->depositAmountFor($total) ?? 0)
             : 0.0;
 
-        if ($deposit > 0) {
+        // Anticipo = total (tarifa al 100%): no hay saldo. Decir "anticipo
+        // del 100%" y luego "el pago total debe quedar liquidado antes de tu
+        // llegada" suena a dos cobros (caso real Hotel México 2026-10-01).
+        $fullUpfront = $deposit > 0 && $total !== null && $deposit >= $total - 0.01;
+
+        if ($fullUpfront) {
+            $lines[] = 'Para apartar se paga el total de $'.number_format($total, 2).' por adelantado; no queda saldo pendiente.';
+        } elseif ($deposit > 0) {
             $share = $ratePlan?->deposit_percent !== null && (float) $ratePlan->deposit_percent > 0
                 ? ' ('.$ratePlan->depositLabel().' del total)'
                 : '';
@@ -243,7 +250,9 @@ class AgentToolsController extends Controller
             $lines[] = 'Para apartar se pide un anticipo de $'.number_format($deposit, 2).$share.'.';
         }
 
-        if ($ratePlan !== null && $start !== null) {
+        if ($fullUpfront) {
+            // Nada que liquidar después.
+        } elseif ($ratePlan !== null && $start !== null) {
             $balance = $policy->balanceDueNotice($ratePlan, $start);
 
             if ($balance !== null) {

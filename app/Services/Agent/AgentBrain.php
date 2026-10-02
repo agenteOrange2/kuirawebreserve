@@ -2009,7 +2009,13 @@ class AgentBrain
      */
     public function garbledReply(string $text, bool $guestInSpanish = true): bool
     {
-        $clean = trim($text);
+        // Las ligas no se juzgan: el id de un Google Doc ("…DrbrIsuiAZwD…")
+        // parece dos palabras pegadas y "edit?usp=sharing" parece inglés.
+        // Caso real Hotel México 2026-10-01 (conv. 2 y 3): la respuesta con
+        // el contrato se marcó como basura, la reescritura traía la misma
+        // liga y el huésped recibió "repítame su mensaje" con el apartado
+        // ya creado.
+        $clean = trim((string) preg_replace('~(?:https?://|www\.)\S+~iu', ' ', $text));
 
         if ($clean === '') {
             return false;

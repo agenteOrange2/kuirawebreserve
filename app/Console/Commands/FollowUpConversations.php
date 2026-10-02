@@ -93,7 +93,8 @@ class FollowUpConversations extends Command
                 continue;
             }
 
-            $this->send($conversation, 'hold_reminder', 'Recuerda: '.lcfirst($notice));
+            $formal = app(\App\Services\ReservationPolicy::class)->formalAddress();
+            $this->send($conversation, 'hold_reminder', ($formal ? 'Le recuerdo: ' : 'Recuerda: ').lcfirst($notice));
             $sent++;
         }
 
@@ -132,7 +133,9 @@ class FollowUpConversations extends Command
             // El asistente puede reactivarlo con el mismo código
             // (reactivar_apartado): se le ofrece eso, no "hacer uno nuevo".
             $this->send($conversation, 'hold_expired', sprintf(
-                'Tu apartado %s venció y la habitación se liberó. Si ya hiciste tu depósito o aún te interesa, respóndeme y lo reactivo con el mismo código si la habitación sigue libre.',
+                app(\App\Services\ReservationPolicy::class)->formalAddress()
+                    ? 'Su apartado %s venció y la habitación se liberó. Si ya realizó su pago o aún le interesa, respóndame y lo reactivo con el mismo código si la habitación sigue libre.'
+                    : 'Tu apartado %s venció y la habitación se liberó. Si ya hiciste tu depósito o aún te interesa, respóndeme y lo reactivo con el mismo código si la habitación sigue libre.',
                 $conversation->reservation->displayCode(),
             ));
             $sent++;
@@ -259,7 +262,9 @@ class FollowUpConversations extends Command
             $this->send(
                 $conversation,
                 'quote_nudge',
-                '¿Sigues por ahí? Quedé pendiente de ayudarte con tu reserva. Si me dices la fecha y la habitación que te interesó, reviso la disponibilidad y te ayudo a apartarla.',
+                $policy->formalAddress()
+                    ? '¿Sigue por ahí? Quedé pendiente de ayudarle con su reserva. Si me dice la fecha y la habitación que le interesó, reviso la disponibilidad y le ayudo a apartarla.'
+                    : '¿Sigues por ahí? Quedé pendiente de ayudarte con tu reserva. Si me dices la fecha y la habitación que te interesó, reviso la disponibilidad y te ayudo a apartarla.',
             );
             $sent++;
         }

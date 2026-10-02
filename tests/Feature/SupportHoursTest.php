@@ -83,6 +83,19 @@ it('le dice al huésped cuándo lo retoman, en palabras', function () {
         ->toContain('mañana a partir de las 9:00');
 });
 
+it('el hotel que habla de usted no dice que alguien lo contacta: el asistente sigue atendiendo', function () {
+    // Hotel México 2026-10-01, 18:04: "Tomo tu solicitud y alguien del hotel
+    // te contacta mañana" a quien quería reservar, de tú.
+    $this->property->update(['settings' => [...$this->property->settings, 'formal_address' => true]]);
+
+    $notice = reloadHours()->afterHoursNotice(atLocal('2026-09-08 22:00'));
+
+    expect($notice)->toContain('yo le atiendo: puedo cotizarle y apartarle')
+        ->toContain('le responden mañana a partir de las 9:00')
+        ->not->toContain('te contacta')
+        ->not->toContain('Tomo tu solicitud');
+});
+
 it('el prompt del asistente cambia cuando ya no hay quien atienda', function () {
     // Dentro del turno no estorba con avisos.
     CarbonImmutable::setTestNow(atLocal('2026-09-08 10:00'));

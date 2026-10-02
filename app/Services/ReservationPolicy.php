@@ -348,15 +348,35 @@ class ReservationPolicy
         // huésped creyó que tenía que reactivar "el 1747" (GRP-2026-0152).
         $group = $reservation->reservation_group_id ? $reservation->group : null;
 
+        $formal = $this->formalAddress();
+
         if ($group !== null) {
-            return 'Tu grupo '.$group->displayCode().' queda guardado hasta '
+            return ($formal ? 'Su grupo ' : 'Tu grupo ').$group->displayCode().' queda guardado hasta '
                 .$this->holdDeadlineLabel($reservation->hold_expires_at)
-                .'. Si no se paga antes de esa hora, las habitaciones se liberan. Si después quieres retomarlo, escríbeme y lo reactivo con el mismo código si siguen libres.';
+                .'. Si no se paga antes de esa hora, las habitaciones se liberan. '
+                .($formal
+                    ? 'Si después quiere retomarlo, escríbame y lo reactivo con el mismo código si siguen libres.'
+                    : 'Si después quieres retomarlo, escríbeme y lo reactivo con el mismo código si siguen libres.');
         }
 
-        return 'Tu apartado '.$reservation->displayCode().' queda guardado hasta '
+        return ($formal ? 'Su apartado ' : 'Tu apartado ').$reservation->displayCode().' queda guardado hasta '
             .$this->holdDeadlineLabel($reservation->hold_expires_at)
-            .'. Si no se paga antes de esa hora, la habitación se libera. Si después quieres retomarlo, escríbeme y lo reactivo con el mismo código si sigue libre.';
+            .'. Si no se paga antes de esa hora, la habitación se libera. '
+            .($formal
+                ? 'Si después quiere retomarlo, escríbame y lo reactivo con el mismo código si sigue libre.'
+                : 'Si después quieres retomarlo, escríbeme y lo reactivo con el mismo código si sigue libre.');
+    }
+
+    /**
+     * ¿El hotel le habla de usted al huésped? Opt-in (`settings.formal_address`):
+     * los avisos automáticos (recordatorio y vencimiento del apartado,
+     * reenganche, fuera de horario) son plantillas y no pasan por el modelo,
+     * así que salían de tú aunque el hotel pidiera usted (Hotel México
+     * 2026-10-01). Apagado = los textos de siempre.
+     */
+    public function formalAddress(): bool
+    {
+        return (bool) ($this->settings()['formal_address'] ?? false);
     }
 
     /**

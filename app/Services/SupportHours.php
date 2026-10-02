@@ -134,6 +134,16 @@ class SupportHours
      */
     public function afterHoursNotice(?CarbonInterface $at = null): string
     {
+        // De usted (opt-in del hotel) y sin el "alguien te contacta": el
+        // asistente SÍ cotiza y aparta fuera de horario, y decir que otro lo
+        // retoma mañana hizo que el huésped dejara de pedir (Hotel México
+        // 2026-10-01, 18:04).
+        if ((bool) ($this->settings['formal_address'] ?? false)) {
+            return 'Nuestro horario de atención con personal es '.$this->label()
+                .'. Mientras tanto yo le atiendo: puedo cotizarle y apartarle su habitación ahora mismo. '
+                .'Si necesita hablar con una persona, le responden '.$this->nextOpeningLabel($at).'.';
+        }
+
         return 'Nuestro horario de atención es '.$this->label()
             .', así que en este momento el equipo ya no está en línea. '
             .'Tomo tu solicitud y alguien del hotel te contacta '.$this->nextOpeningLabel($at).'.';

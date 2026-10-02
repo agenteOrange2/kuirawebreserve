@@ -45,3 +45,14 @@ it('respeta el inglés cuando el huésped escribe en inglés', function () {
     expect(esBasura($respuesta, enEspanol: false))->toBeFalse()
         ->and(esBasura($respuesta, enEspanol: true))->toBeTrue();
 });
+
+it('una liga no vuelve basura un mensaje bueno', function () {
+    // Hotel México 2026-10-01 (conv. 3): el id del Google Doc del contrato
+    // parecía dos palabras pegadas y el huésped recibió "repítame su mensaje".
+    $respuesta = "Su apartado está creado con el código **RES-2026-0002**.\n\n"
+        ."Es importante que lea y confirme el contrato; confírmeme de leído, por favor:\n"
+        .'https://docs.google.com/document/d/1qiEc4XtcluOOeDrbrIsuiAZwD-Px3z5myhLopgzeqzg/edit?usp=sharing';
+
+    expect(esBasura($respuesta))->toBeFalse()
+        ->and(esBasura('¿Qué díasWould you like? https://example.com/pago'))->toBeTrue();
+});
