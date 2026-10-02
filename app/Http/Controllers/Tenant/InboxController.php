@@ -481,8 +481,11 @@ class InboxController extends Controller
                 $digits = '52'.substr($digits, 3);
             }
 
+            // Y si son 10 pelones, que la lada la ponga quien sabe de ladas:
+            // con "52" fijo, la ficha de un huésped de El Paso enseñaba
+            // "+52 915…" y su enlace no abría ningún chat.
             if (strlen($digits) === 10) {
-                $digits = '52'.$digits;
+                $digits = \App\Support\Phone::whatsapp($digits);
             }
 
             $national = substr($digits, -10);

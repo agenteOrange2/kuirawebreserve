@@ -8,11 +8,16 @@ export interface TenantShell {
     plan: string;
     plan_label: string;
     suspended: boolean;
+    suspended_since?: string | null;
     domain: string | null;
     created_at: string | null;
+    mode: 'hotel' | 'motel' | 'both';
+    module_requests?: number;
 }
 
 export interface PlanOption {
     value: string;
     label: string;
+    active?: boolean;
+    price_monthly?: number;
 }

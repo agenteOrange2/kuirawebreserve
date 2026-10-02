@@ -86,9 +86,9 @@ class QuickSearchController extends Controller
                     $reservation->starts_at?->locale('es')->isoFormat('D [de] MMM') ?? '',
                     $reservation->room?->number ? ' · Hab. '.$reservation->room->number : '',
                 )),
-                // El historial es la única lista con buscador server-side:
-                // llega con el código ya tecleado, no a una lista sin filtrar.
-                'url' => route('tenant.reservations.history', [], false).'?q='.urlencode($reservation->displayCode()),
+                // A su ficha, no al historial: el historial solo lista las
+                // terminadas, así que una confirmada o en curso no aparecía.
+                'url' => route('tenant.reservations.detail', $reservation, false),
                 'badge' => $reservation->status->label(),
             ])
             ->all();

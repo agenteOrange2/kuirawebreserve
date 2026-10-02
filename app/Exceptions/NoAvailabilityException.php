@@ -38,9 +38,9 @@ class NoAvailabilityException extends Exception
         return new self('No hay habitaciones disponibles de ese tipo en el rango solicitado.');
     }
 
-    public static function minAdvance(string $label): self
+    public static function minAdvance(\App\Models\RatePlan $ratePlan): self
     {
-        return new self("Esta tarifa requiere reservar con al menos {$label} de antelación.");
+        return new self($ratePlan->minAdvanceMessage());
     }
 
     public static function exceedsCapacity(string $number, int $capacity): self

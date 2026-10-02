@@ -73,6 +73,12 @@ class SocialResponder
             return;
         }
 
+        if ($rule === SocialComment::CLASS_ELSEWHERE) {
+            $this->markIgnored($comment, SocialComment::CLASS_ELSEWHERE, ['regla' => true]);
+
+            return;
+        }
+
         if (! $this->brain->isConfigured()) {
             return;
         }
@@ -81,6 +87,10 @@ class SocialResponder
 
         if ($rule === SocialComment::CLASS_PURCHASE) {
             $result = $this->asPurchase($result, $comment);
+        }
+
+        if ($rule === SocialComment::CLASS_INTEREST) {
+            $result = $this->asInterest($result, $comment);
         }
 
         if (! $result) {
@@ -97,6 +107,7 @@ class SocialResponder
 
         match ($result['clasificacion']) {
             SocialComment::CLASS_TAG => $this->markAsTag($comment, $result['meta']),
+            SocialComment::CLASS_ELSEWHERE => $this->markIgnored($comment, SocialComment::CLASS_ELSEWHERE, $result['meta']),
             SocialComment::CLASS_COMPLAINT => $this->handleComplaint($comment, $link, $settings),
             SocialComment::CLASS_SPAM => $this->handleSpam($comment, $link, $settings),
             default => $this->handleAnswerable($comment, $link, $settings, $result),
@@ -120,6 +131,19 @@ class SocialResponder
             $comment->update(['status' => SocialComment::STATUS_IGNORED]);
 
             return;
+        }
+
+        // Lo mismo con la invitación: "me encantaría ir pero está carísimo"
+        // no se contesta con "¡te esperamos!".
+        if ($classification === SocialComment::CLASS_INTEREST && $this->rules->hasDoubt($comment->body)) {
+            $comment->update(['status' => SocialComment::STATUS_IGNORED]);
+
+            return;
+        }
+
+        // Si la IA dijo "interes" pero no redactó el privado, va el fijo.
+        if ($classification === SocialComment::CLASS_INTEREST) {
+            $result = $this->asInterest($result, $comment);
         }
 
         if ($settings->repliesPublicly($classification)) {
@@ -160,7 +184,7 @@ class SocialResponder
                 $comment->update(['conversation_id' => $open->id]);
                 $answered = true;
             } else {
-                $message = $classification === SocialComment::CLASS_PURCHASE
+                $message = in_array($classification, [SocialComment::CLASS_PURCHASE, SocialComment::CLASS_INTEREST], true)
                     ? self::withBookingLink($result['mensaje_privado'], $this->bookingUrl())
                     : $result['mensaje_privado'];
 
@@ -219,6 +243,45 @@ class SocialResponder
             'classification_meta' => $meta,
             'status' => SocialComment::STATUS_IGNORED,
         ]);
+    }
+
+    /**
+     * Comentario que no se contesta por regla fija (prefiere otro lugar):
+     * sin respuesta ni campana, a la vista en su filtro.
+     *
+     * @param  array<string, mixed>  $meta
+     */
+    protected function markIgnored(SocialComment $comment, string $classification, array $meta): void
+    {
+        $comment->update([
+            'classification' => $classification,
+            'classification_meta' => $meta,
+            'status' => SocialComment::STATUS_IGNORED,
+        ]);
+    }
+
+    /**
+     * Quiere venir: se le invita a reservar. Si el modelo no redactó el
+     * privado (o no contestó), va uno fijo que pregunta fechas y personas.
+     *
+     * @param  array{clasificacion?: string, respuesta_publica?: string, mensaje_privado?: string, meta?: array<string, mixed>}|null  $result
+     * @return array{clasificacion: string, respuesta_publica: string, mensaje_privado: string, meta: array<string, mixed>}
+     */
+    protected function asInterest(?array $result, SocialComment $comment): array
+    {
+        $result ??= ['respuesta_publica' => '', 'mensaje_privado' => '', 'meta' => []];
+        $result += ['respuesta_publica' => '', 'mensaje_privado' => '', 'meta' => []];
+
+        if (trim((string) $result['mensaje_privado']) === '') {
+            $nombre = trim((string) strtok((string) $comment->author_name, ' '));
+
+            $result['mensaje_privado'] = '¡Hola'.($nombre !== '' ? " {$nombre}" : '').'! Nos encantaría recibirte. '
+                .'¿Para qué fechas y cuántas personas te gustaría venir? Así te paso las tarifas y te confirmo la disponibilidad.';
+        }
+
+        $result['clasificacion'] = SocialComment::CLASS_INTEREST;
+
+        return $result;
     }
 
     /**

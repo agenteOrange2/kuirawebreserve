@@ -47,7 +47,10 @@ class ReservationHistoryPageController extends ReservationsPageController
 
         $statuses = $guest !== null ? ReservationStatus::cases() : self::HISTORY_STATUSES;
 
-        $status = ReservationStatus::tryFrom($request->string('status')->toString());
+        // "date_pending" no es un estado: son canceladas con lo pagado a
+        // favor del huésped, esperando fecha (TransitionReservation::setDatePending).
+        $datePending = $request->string('status')->toString() === 'date_pending';
+        $status = $datePending ? ReservationStatus::Cancelled : ReservationStatus::tryFrom($request->string('status')->toString());
 
         if (! in_array($status, $statuses, true)) {
             $status = null;
@@ -62,6 +65,7 @@ class ReservationHistoryPageController extends ReservationsPageController
             ])
             ->withSum('payments', 'amount')
             ->whereIn('status', $status ? [$status] : $statuses)
+            ->when($datePending, fn ($query) => $query->whereNotNull('date_pending_at'))
             ->when($guest, fn ($query, Guest $guest) => $query->where('guest_id', $guest->id))
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($q) use ($search) {
@@ -100,7 +104,7 @@ class ReservationHistoryPageController extends ReservationsPageController
             // Las cifras miran TODO el archivo (o el del huésped a la
             // vista), no la página ni el filtro de estado.
             'summary' => $this->summary($guest),
-            'filters' => ['q' => $search, 'status' => $status?->value ?? '', 'guest' => $guest?->id],
+            'filters' => ['q' => $search, 'status' => $datePending ? 'date_pending' : ($status?->value ?? ''), 'guest' => $guest?->id],
             'guest' => $guest === null ? null : [
                 'id' => $guest->id,
                 'full_name' => $guest->full_name ?? 'Sin nombre',
@@ -108,6 +112,7 @@ class ReservationHistoryPageController extends ReservationsPageController
             ],
             'statusOptions' => collect($statuses)
                 ->map(fn (ReservationStatus $s) => ['value' => $s->value, 'label' => $s->label()])
+                ->push(['value' => 'date_pending', 'label' => 'Fecha pendiente'])
                 ->values(),
             'canManage' => $request->user()->can('reservations.manage'),
             'holdMinutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
@@ -132,6 +137,7 @@ class ReservationHistoryPageController extends ReservationsPageController
             'completed' => $base()->where('status', ReservationStatus::Completed)->count(),
             'cancelled' => $base()->where('status', ReservationStatus::Cancelled)->count(),
             'no_show' => $base()->where('status', ReservationStatus::NoShow)->count(),
+            'date_pending' => $base()->where('status', ReservationStatus::Cancelled)->whereNotNull('date_pending_at')->count(),
             'revenue_label' => '$'.number_format($revenue, 2),
         ];
     }

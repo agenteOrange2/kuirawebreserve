@@ -4,7 +4,9 @@ import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormHelp, FormInput } from '@/components/Base/Form';
+import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
@@ -117,6 +119,78 @@ const providerGuides = [
         detail: 'Servidor mail.tudominio.com, puerto 587 o 465. Usuario: el buzón que creaste en el panel del hosting.',
     },
 ];
+
+// ── Vista previa de los correos ─────────────────────────────────────────
+type MailType = 'reservation' | 'notice' | 'staff' | 'reset' | 'changed';
+const mailTypes: Array<{
+    key: MailType;
+    label: string;
+    who: string;
+    icon: Icon;
+}> = [
+    {
+        key: 'reservation',
+        label: 'Confirmación de reserva',
+        who: 'Al huésped, al confirmar o cambiar su reserva',
+        icon: 'CalendarCheck',
+    },
+    {
+        key: 'notice',
+        label: 'Aviso al huésped',
+        who: 'Experiencias, grupos y otros avisos con folio',
+        icon: 'Ticket',
+    },
+    {
+        key: 'staff',
+        label: 'Aviso al hotel',
+        who: 'A tu equipo: reservas, pagos, cancelaciones',
+        icon: 'BellRing',
+    },
+    {
+        key: 'reset',
+        label: 'Recuperar contraseña',
+        who: 'A quien pide crear una contraseña nueva',
+        icon: 'KeyRound',
+    },
+    {
+        key: 'changed',
+        label: 'Contraseña cambiada',
+        who: 'Aviso de seguridad tras cambiar la contraseña',
+        icon: 'ShieldAlert',
+    },
+];
+
+const previewing = ref<MailType | null>(null);
+const previewLoading = ref(false);
+const sendingSample = ref<MailType | null>(null);
+const previewUrl = computed(() =>
+    previewing.value
+        ? route('tenant.mail-preview', { type: previewing.value })
+        : '',
+);
+const currentType = computed(() =>
+    mailTypes.find((type) => type.key === previewing.value),
+);
+
+function openPreview(type: MailType) {
+    previewLoading.value = true;
+    previewing.value = type;
+}
+
+async function sendSample(type: MailType) {
+    sendingSample.value = type;
+    try {
+        const { data } = await axios.post(`/api/mail-preview/${type}`);
+        toast.success('Correo de prueba enviado', data.message);
+    } catch (e: any) {
+        toast.error(
+            'No se pudo enviar',
+            e.response?.data?.message ?? 'Intenta de nuevo en un momento.',
+        );
+    } finally {
+        sendingSample.value = null;
+    }
+}
 </script>
 
 <template>
@@ -408,6 +482,203 @@ const providerGuides = [
                     </div>
                 </div>
             </div>
+
+            <!-- Vista previa de los correos -->
+            <div class="box box--stacked mt-4 overflow-hidden">
+                <div
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="MailOpen" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="text-sm font-medium">
+                            Así se ven tus correos
+                        </div>
+                        <div class="text-xs text-slate-500">
+                            Con tu logo, tu color del wizard y tus datos de
+                            contacto. Son ejemplos: no se guarda nada ni se le
+                            manda a ningún huésped.
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="type in mailTypes"
+                        :key="type.key"
+                        class="flex items-center gap-3 px-4 py-3 sm:px-5"
+                    >
+                        <div
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500 dark:bg-darkmode-400"
+                        >
+                            <Lucide :icon="type.icon" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <div class="text-sm font-medium">
+                                {{ type.label }}
+                            </div>
+                            <div class="truncate text-xs text-slate-500">
+                                {{ type.who }}
+                            </div>
+                        </div>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                            title="Ver el correo"
+                            @click="openPreview(type.key)"
+                        >
+                            <Lucide icon="Eye" class="h-4 w-4" />
+                        </button>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary disabled:opacity-50"
+                            :title="
+                                configured
+                                    ? 'Enviarme una prueba'
+                                    : 'Configura el SMTP para mandar pruebas'
+                            "
+                            :disabled="!configured || sendingSample !== null"
+                            @click="sendSample(type.key)"
+                        >
+                            <Lucide
+                                :icon="
+                                    sendingSample === type.key
+                                        ? 'Loader'
+                                        : 'Send'
+                                "
+                                :class="[
+                                    'h-4 w-4',
+                                    sendingSample === type.key &&
+                                        'animate-spin',
+                                ]"
+                            />
+                        </button>
+                    </div>
+                </div>
+            </div>
         </div>
+
+        <!-- Modal: vista previa de un correo -->
+        <Dialog
+            :open="previewing !== null"
+            size="xl"
+            @close="previewing = null"
+        >
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[760px]">
+                <div class="flex max-h-[calc(100dvh-6rem)] flex-col">
+                    <div
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide
+                                :icon="currentType?.icon ?? 'Mail'"
+                                class="h-4 w-4"
+                            />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                {{ currentType?.label }}
+                            </h2>
+                            <p class="truncate text-xs text-slate-500">
+                                {{ currentType?.who }}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            title="Cerrar"
+                            @click="previewing = null"
+                        >
+                            <Lucide icon="X" class="h-4 w-4" />
+                        </button>
+                    </div>
+                    <div
+                        class="flex gap-1 overflow-x-auto border-b border-slate-200/70 px-3 dark:border-darkmode-400"
+                    >
+                        <button
+                            v-for="type in mailTypes"
+                            :key="type.key"
+                            type="button"
+                            :class="[
+                                '-mb-px h-10 shrink-0 border-b-2 px-3 text-xs font-medium transition',
+                                previewing === type.key
+                                    ? 'border-primary text-primary'
+                                    : 'border-transparent text-slate-500 hover:text-slate-700',
+                            ]"
+                            @click="openPreview(type.key)"
+                        >
+                            {{ type.label }}
+                        </button>
+                    </div>
+                    <div
+                        class="relative min-h-0 flex-1 overflow-hidden bg-slate-100 dark:bg-darkmode-700"
+                    >
+                        <div
+                            v-if="previewLoading"
+                            class="absolute inset-0 flex items-center justify-center text-xs text-slate-500"
+                        >
+                            <Lucide
+                                icon="Loader"
+                                class="mr-2 h-4 w-4 animate-spin"
+                            />
+                            Armando el correo...
+                        </div>
+                        <iframe
+                            v-if="previewUrl"
+                            :key="previewUrl"
+                            :src="previewUrl"
+                            title="Vista previa del correo"
+                            sandbox="allow-popups allow-popups-to-escape-sandbox"
+                            class="block h-[65vh] w-full border-0"
+                            @load="previewLoading = false"
+                        ></iframe>
+                    </div>
+                    <div
+                        class="flex flex-col gap-2 border-t border-slate-200/70 px-5 py-3.5 sm:flex-row sm:items-center sm:justify-between dark:border-darkmode-400"
+                    >
+                        <span class="text-xs text-slate-500">{{
+                            configured
+                                ? 'La prueba llega a tu correo, por el SMTP del hotel.'
+                                : 'Configura el SMTP arriba para mandarte una prueba.'
+                        }}</span>
+                        <div class="flex justify-end gap-2">
+                            <Button
+                                type="button"
+                                variant="outline-secondary"
+                                class="h-9 px-5 text-xs"
+                                @click="previewing = null"
+                                >Cerrar</Button
+                            >
+                            <Button
+                                type="button"
+                                variant="primary"
+                                class="h-9 px-5 text-xs"
+                                :disabled="
+                                    !configured ||
+                                    !previewing ||
+                                    sendingSample !== null
+                                "
+                                @click="previewing && sendSample(previewing)"
+                            >
+                                <Lucide
+                                    :icon="sendingSample ? 'Loader' : 'Send'"
+                                    :class="[
+                                        'mr-1.5 h-3.5 w-3.5',
+                                        sendingSample && 'animate-spin',
+                                    ]"
+                                />
+                                Enviarme una prueba
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
     </RazeLayout>
 </template>

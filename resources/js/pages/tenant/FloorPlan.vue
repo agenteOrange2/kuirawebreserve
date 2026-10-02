@@ -94,6 +94,9 @@ const props = defineProps<{
     // walkin_charge=checkin (/ajustes/metodos-pago): el registro de llegada
     // cobra el hospedaje en el momento en vez de dejarlo al check-out.
     walkinChargeOnCheckin: boolean;
+    // Corte de madrugada (Ajustes → Horarios): antes de esa hora la llegada
+    // cuenta como la noche anterior. Null = sin corte.
+    nightCutoffTime: string | null;
     // Fotos de identificación en la ficha (mismo permiso que el CRM).
     canViewDocuments: boolean;
     // Ver la cuenta de una estancia (folio) exige ver reservas.
@@ -240,6 +243,12 @@ watch(editMode, (enabled) => {
             node.draggable = props.canManage && enabled;
         }
     });
+
+    // En pantalla completa la franja de edición entra y sale encima del
+    // canvas: sin reencuadrar, la última fila de cuartos quedaba cortada.
+    if (presenting.value) {
+        scheduleFit();
+    }
 });
 
 const selectedRoom = computed<RoomData | null>(() => {
@@ -272,9 +281,13 @@ const { fitView, zoomIn, zoomOut, setMinZoom, viewport, dimensions } =
 // y por eso el zoom se quedaba donde lo dejó el último que lo movió.
 // El tope de acercamiento existe para los hoteles chicos: sin él, nueve
 // cuartos en una pantalla de mostrador se ven como espectacular.
+// En presentación la columna de zoom (abajo a la izquierda, 48 px + margen)
+// tapaba los cuartos de la orilla en el teléfono: el encuadre la respeta.
 function fitPlan(duration = 220, nodes?: string[]) {
     void fitView({
-        padding: presenting.value ? 0.08 : 0.14,
+        padding: presenting.value
+            ? { top: '16px', right: '16px', bottom: '16px', left: '80px' }
+            : 0.14,
         maxZoom: 1.3,
         duration,
         ...(nodes?.length ? { nodes } : {}),
@@ -471,25 +484,31 @@ function fitWhenMeasured(attempt = 0) {
     }
 }
 
-// Acomodar el plano pide arrastre preciso: con el dedo el gesto casi siempre
-// empieza encima de una tarjeta, así que en vez de mover el plano movería el
-// cuarto — y el acomodo se guarda solo. Por eso editar vive donde hay ratón.
-const finePointer = ref(
-    typeof window !== 'undefined' &&
-        window.matchMedia('(pointer: fine)').matches,
-);
-
+// Editar también se puede con el dedo: antes se escondía en táctil (el gesto
+// sobre una tarjeta la mueve en vez de mover el plano) y desde el teléfono no
+// había manera de acomodar. Mientras se edita, el plano se mueve arrastrando
+// el espacio vacío o con los botones de zoom; fuera de edición nada se mueve.
 const canEditLayout = computed(
-    () => props.canManage && finePointer.value && hasModule('tablero-avanzado'),
+    () => props.canManage && hasModule('tablero-avanzado'),
 );
 
-async function enterPresentation(withNativeFullscreen = true) {
-    // En táctil se apaga el modo edición al entrar; con ratón se respeta lo
-    // que el usuario ya tenía puesto (puede seguir acomodando en grande).
-    if (!finePointer.value) {
-        editMode.value = false;
+// Por debajo de lg el canvas del panel está oculto (manda la lista): encender
+// la edición ahí no enseñaría nada, así que abre la pantalla completa ya en
+// modo edición.
+function toggleEditMode() {
+    const canvasVisible = window.matchMedia('(min-width: 1024px)').matches;
+
+    if (!editMode.value && !presenting.value && !canvasVisible) {
+        editMode.value = true;
+        void enterPresentation();
+
+        return;
     }
 
+    editMode.value = !editMode.value;
+}
+
+async function enterPresentation(withNativeFullscreen = true) {
     presenting.value = true;
     window.localStorage.setItem(PRESENTING_KEY, '1');
     document.body.style.overflow = 'hidden';
@@ -2546,7 +2565,7 @@ provide(FloorPlanKey, {
                                 ? 'Al terminar, bloquea para que nadie mueva cuartos por accidente'
                                 : 'Habilita mover los cuartos para acomodar el plano'
                         "
-                        @click="editMode = !editMode"
+                        @click="toggleEditMode"
                     >
                         <Lucide
                             :icon="editMode ? 'LockOpen' : 'Lock'"
@@ -2734,7 +2753,7 @@ provide(FloorPlanKey, {
                      pidieron no ver en pantalla completa. -->
                 <div
                     v-if="presenting"
-                    class="flex shrink-0 items-center gap-3 border-b border-slate-200/70 bg-white px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-600"
+                    class="flex shrink-0 items-center gap-2 border-b border-slate-200/70 bg-white px-3 py-2.5 sm:gap-3 sm:px-4 sm:py-3 dark:border-darkmode-400 dark:bg-darkmode-600"
                 >
                     <!-- En un teléfono, con chips de zona el nombre del hotel
                          es lo primero que sobra: quien mira ya sabe en qué
@@ -2756,7 +2775,7 @@ provide(FloorPlanKey, {
                          última quedaba cortada contra el semáforo. -->
                     <Button
                         variant="outline-secondary"
-                        class="ml-3 shrink-0 rounded-[0.5rem] text-xs whitespace-nowrap"
+                        class="shrink-0 rounded-[0.5rem] text-xs whitespace-nowrap sm:ml-3"
                         title="Buscar, filtrar y saltar a una zona"
                         @click="filtersOpen = true"
                     >
@@ -2779,7 +2798,9 @@ provide(FloorPlanKey, {
                     </Button>
                     <!-- Lado derecho junto: un solo ml-auto manda, sin que se
                          peleen varios cuando aparecen o desaparecen botones. -->
-                    <div class="ml-auto flex shrink-0 items-center gap-2">
+                    <div
+                        class="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2"
+                    >
                         <Button
                             v-if="showCashChip"
                             variant="outline-secondary"
@@ -2799,10 +2820,13 @@ provide(FloorPlanKey, {
                         <!-- Dar de alta también desde aquí: en pantalla
                              completa es donde el mostrador vive, y no tenerlo
                              obligaba a salirse. -->
+                        <!-- En el teléfono vive en el menú: en 360 px la barra
+                             no alcanzaba y "Salir" quedaba fuera de la
+                             pantalla. -->
                         <Button
                             v-if="canCreateRooms"
                             variant="outline-secondary"
-                            class="rounded-[0.5rem] text-xs whitespace-nowrap"
+                            class="hidden rounded-[0.5rem] text-xs whitespace-nowrap sm:inline-flex"
                             title="Nueva habitación"
                             @click="newRoomOpen = true"
                         >
@@ -2823,10 +2847,20 @@ provide(FloorPlanKey, {
                             </Menu.Button>
                             <Menu.Items class="w-64">
                                 <Menu.Item
+                                    v-if="canCreateRooms"
+                                    as="button"
+                                    type="button"
+                                    class="sm:hidden"
+                                    @click="newRoomOpen = true"
+                                >
+                                    <Lucide icon="Plus" class="mr-2 h-4 w-4" />
+                                    Nueva habitación
+                                </Menu.Item>
+                                <Menu.Item
                                     v-if="canEditLayout"
                                     as="button"
                                     type="button"
-                                    @click="editMode = !editMode"
+                                    @click="toggleEditMode"
                                 >
                                     <Lucide
                                         :icon="editMode ? 'LockOpen' : 'Lock'"
@@ -2882,27 +2916,57 @@ provide(FloorPlanKey, {
                             variant="outline-secondary"
                             class="rounded-[0.5rem] text-xs whitespace-nowrap"
                             title="Volver al panel (también con Esc)"
+                            aria-label="Salir de pantalla completa"
                             @click="exitPresentation"
                         >
                             <Lucide
                                 icon="Minimize"
-                                class="mr-1.5 h-3.5 w-3.5"
+                                class="h-3.5 w-3.5 sm:mr-1.5"
                             />
-                            Salir
+                            <span class="hidden sm:inline">Salir</span>
                         </Button>
                     </div>
                 </div>
 
                 <!-- Mismo aviso que en el panel: el de allá queda tapado por
                      el overlay y sin él nadie sabe que el refresco se pausó. -->
+                <!-- Con sus dos acciones a la vista: en el teléfono no había
+                     con qué terminar la edición sin buscar en el menú. -->
                 <div
                     v-if="presenting && editMode"
-                    class="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/5 px-4 py-2 text-xs text-slate-600 dark:text-slate-300"
+                    class="flex shrink-0 items-center gap-2 border-b border-warning/30 bg-warning/5 px-3 py-2 text-xs text-slate-600 sm:px-4 dark:text-slate-300"
                 >
                     <Lucide icon="Move" class="h-4 w-4 shrink-0 text-warning" />
-                    Modo edición: arrastra los cuartos para acomodarlos — se
-                    imantan a la cuadrícula y la posición se guarda sola. El
-                    refresco automático queda en pausa hasta que termines.
+                    <p class="min-w-0 flex-1">
+                        <span class="sm:hidden"
+                            >Arrastra los cuartos; se guarda solo.</span
+                        >
+                        <span class="hidden sm:inline"
+                            >Modo edición: arrastra los cuartos para acomodarlos
+                            — se imantan a la cuadrícula y la posición se guarda
+                            sola. El refresco automático queda en pausa hasta
+                            que termines.</span
+                        >
+                    </p>
+                    <Button
+                        variant="outline-secondary"
+                        class="shrink-0 rounded-[0.5rem] bg-white text-xs whitespace-nowrap dark:bg-darkmode-600"
+                        :disabled="aligning"
+                        title="Endereza los cuartos a la cuadrícula sin cambiar su acomodo"
+                        @click="alignToGrid"
+                    >
+                        <Lucide icon="Grid3x3" class="mr-1.5 h-3.5 w-3.5" />
+                        {{ aligning ? 'Alineando…' : 'Alinear' }}
+                    </Button>
+                    <Button
+                        variant="primary"
+                        class="shrink-0 rounded-[0.5rem] text-xs whitespace-nowrap"
+                        title="Bloquea el plano para que nadie mueva cuartos por accidente"
+                        @click="editMode = false"
+                    >
+                        <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
+                        Terminar
+                    </Button>
                 </div>
 
                 <div
@@ -3231,7 +3295,7 @@ provide(FloorPlanKey, {
                          tarjeta por cuarto era hablar del mismo sujeto dos
                          veces. -->
                     <PlanDock
-                        v-if="planPanelsEnabled"
+                        v-if="planPanelsEnabled && !(presenting && editMode)"
                         :counts="panelCounts"
                         :total="rooms.length"
                         :active-status="statusFilter"
@@ -3497,6 +3561,7 @@ provide(FloorPlanKey, {
             :room="selectedRoom"
             :guarantee-amount="guaranteeAmount"
             :charge-on-checkin="walkinChargeOnCheckin"
+            :night-cutoff-time="nightCutoffTime"
             @close="
                 walkInOpen = false;
                 backToRoom();
@@ -3515,91 +3580,130 @@ provide(FloorPlanKey, {
             @reserved="onReserved"
         />
 
-        <!-- Extender estancia -->
+        <!-- Extender estancia. Misma anatomía que el resto de los modales
+             del plano (cabecera con círculo a la izquierda, pie a la
+             derecha): centrado y con los botones juntos al medio se veía
+             apretado junto a la ficha. -->
         <Dialog :open="extending !== null" @close="extending = null">
-            <Dialog.Panel>
-                <div class="p-5">
-                    <div class="text-center">
-                        <div
-                            class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
-                        >
-                            <Lucide icon="CalendarPlus" class="h-6 w-6" />
-                        </div>
+            <Dialog.Panel class="sm:w-[480px]">
+                <div
+                    class="flex items-start gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                >
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="CalendarPlus" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0 flex-1">
                         <h2 class="text-base font-medium">
                             Extender la estancia de la
                             {{ extending?.number }}
                         </h2>
-                        <p class="mt-2 text-xs text-slate-500">
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Ahora sale el
-                            {{ extending?.active_stay?.planned_end_at }}. Lo que
-                            ya pagó no se toca: la diferencia se le cobra al
-                            registrar su salida.
+                            {{ extending?.active_stay?.planned_end_at }}.
                         </p>
                     </div>
+                    <button
+                        type="button"
+                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                        aria-label="Cerrar"
+                        @click="extending = null"
+                    >
+                        <Lucide icon="X" class="h-4 w-4" />
+                    </button>
+                </div>
 
-                    <div class="mt-4">
+                <div class="space-y-3 px-5 py-4">
+                    <div>
                         <label
                             for="extend-until"
-                            class="mb-1.5 block text-xs text-slate-500"
+                            class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                             >Nueva salida</label
                         >
                         <FormDateTime id="extend-until" v-model="extendUntil" />
+                        <p class="mt-1.5 text-xs text-slate-500">
+                            Lo que ya pagó no se toca: la diferencia se le cobra
+                            al registrar su salida.
+                        </p>
                     </div>
 
                     <p
                         v-if="extendError"
-                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
+                        class="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
                     >
                         {{ extendError }}
                     </p>
+                </div>
 
-                    <div class="mt-5 flex justify-center gap-2">
-                        <Button
-                            variant="outline-secondary"
-                            class="h-10 text-xs"
-                            @click="extending = null"
-                            >Cancelar</Button
-                        >
-                        <Button
-                            variant="primary"
-                            class="h-10 text-xs"
-                            :disabled="extendBusy || !extendUntil"
-                            @click="submitExtend"
-                            >{{
-                                extendBusy ? 'Extendiendo…' : 'Extender'
-                            }}</Button
-                        >
-                    </div>
+                <div
+                    class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
+                >
+                    <Button
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] px-5 text-xs"
+                        @click="extending = null"
+                        >Cancelar</Button
+                    >
+                    <Button
+                        variant="primary"
+                        class="h-9 rounded-[0.5rem] px-5 text-xs"
+                        :disabled="extendBusy || !extendUntil"
+                        @click="submitExtend"
+                    >
+                        <Lucide
+                            icon="CalendarPlus"
+                            class="mr-1.5 h-3.5 w-3.5"
+                        />
+                        {{ extendBusy ? 'Extendiendo…' : 'Extender' }}
+                    </Button>
                 </div>
             </Dialog.Panel>
         </Dialog>
 
         <!-- Cambio de habitación -->
         <Dialog :open="moving !== null" @close="moving = null">
-            <Dialog.Panel>
-                <div class="p-5">
-                    <div class="text-center">
-                        <div
-                            class="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
-                        >
-                            <Lucide icon="ArrowRightLeft" class="h-6 w-6" />
-                        </div>
+            <Dialog.Panel class="sm:w-[480px]">
+                <div
+                    class="flex items-start gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                >
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="ArrowRightLeft" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0 flex-1">
                         <h2 class="text-base font-medium">
                             Mover al huésped de la {{ moving?.number }}
                         </h2>
-                        <p class="mt-2 text-xs text-slate-500">
+                        <p class="mt-0.5 text-xs text-slate-500">
                             Su cuenta y sus consumos se van con él. La
                             {{ moving?.number }} queda marcada por limpiar.
                         </p>
                     </div>
+                    <button
+                        type="button"
+                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                        aria-label="Cerrar"
+                        @click="moving = null"
+                    >
+                        <Lucide icon="X" class="h-4 w-4" />
+                    </button>
+                </div>
 
-                    <div class="mt-4">
+                <div class="space-y-4 px-5 py-4">
+                    <div>
                         <label
                             for="move-target"
-                            class="mb-1.5 block text-xs text-slate-500"
+                            class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                             >Habitación destino</label
                         >
-                        <FormSelect id="move-target" v-model="moveTargetId">
+                        <FormSelect
+                            id="move-target"
+                            v-model="moveTargetId"
+                            class="h-9 text-xs"
+                            :disabled="!moveOptions.length"
+                        >
                             <option value="">Elige una habitación</option>
                             <option
                                 v-for="r in moveOptions"
@@ -3609,27 +3713,35 @@ provide(FloorPlanKey, {
                                 {{ r.number }}{{ r.name ? ` · ${r.name}` : '' }}
                             </option>
                         </FormSelect>
-                        <p
-                            v-if="!moveOptions.length"
-                            class="mt-2 text-xs text-warning"
-                        >
+                    </div>
+
+                    <div
+                        v-if="!moveOptions.length"
+                        class="flex items-start gap-2.5 rounded-lg border border-warning/20 bg-warning/5 px-3 py-2.5 text-xs text-slate-600 dark:text-slate-300"
+                    >
+                        <Lucide
+                            icon="TriangleAlert"
+                            class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning"
+                        />
+                        <span>
                             No hay habitaciones libres del mismo tipo. Para
                             moverlo a otro tipo hay que registrar su salida y
                             abrir una estancia nueva con su tarifa.
-                        </p>
+                        </span>
                     </div>
 
                     <label
                         v-if="moveOptions.length"
-                        class="mt-4 flex cursor-pointer items-start gap-2.5 rounded-xl bg-slate-50 p-3.5 dark:bg-darkmode-700"
+                        class="flex cursor-pointer items-start gap-2.5 rounded-lg border border-slate-200/70 bg-slate-50 px-3 py-2.5 dark:border-darkmode-400 dark:bg-darkmode-700"
                     >
                         <input
                             v-model="moveRecalculate"
                             type="checkbox"
                             class="mt-0.5 h-4 w-4 shrink-0"
                         />
-                        <span class="text-sm">
-                            <span class="font-medium"
+                        <span class="text-xs">
+                            <span
+                                class="font-medium text-slate-700 dark:text-slate-200"
                                 >Recalcular el precio</span
                             >
                             <span class="mt-0.5 block text-slate-500">
@@ -3641,26 +3753,33 @@ provide(FloorPlanKey, {
 
                     <p
                         v-if="moveError"
-                        class="mt-3 rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
+                        class="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
                     >
                         {{ moveError }}
                     </p>
+                </div>
 
-                    <div class="mt-5 flex justify-center gap-2">
-                        <Button
-                            variant="outline-secondary"
-                            class="h-10 text-xs"
-                            @click="moving = null"
-                            >Cancelar</Button
-                        >
-                        <Button
-                            variant="primary"
-                            class="h-10 text-xs"
-                            :disabled="moveBusy || !moveTargetId"
-                            @click="submitMove"
-                            >{{ moveBusy ? 'Moviendo…' : 'Mover' }}</Button
-                        >
-                    </div>
+                <div
+                    class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
+                >
+                    <Button
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] px-5 text-xs"
+                        @click="moving = null"
+                        >Cancelar</Button
+                    >
+                    <Button
+                        variant="primary"
+                        class="h-9 rounded-[0.5rem] px-5 text-xs"
+                        :disabled="moveBusy || !moveTargetId"
+                        @click="submitMove"
+                    >
+                        <Lucide
+                            icon="ArrowRightLeft"
+                            class="mr-1.5 h-3.5 w-3.5"
+                        />
+                        {{ moveBusy ? 'Moviendo…' : 'Mover' }}
+                    </Button>
                 </div>
             </Dialog.Panel>
         </Dialog>

@@ -2,8 +2,16 @@
 import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
+import BrandingLoginMock from '@/components/BrandingLoginMock.vue';
 import Button from '@/components/Base/Button';
-import { FormHelp, FormInput } from '@/components/Base/Form';
+import {
+    FormHelp,
+    FormInput,
+    FormLabel,
+    FormSwitch,
+    FormTextarea,
+} from '@/components/Base/Form';
+import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
@@ -14,6 +22,21 @@ const props = defineProps<{
         panel_primary: string | null;
         panel_menu_from: string | null;
         panel_menu_to: string | null;
+    };
+    login: {
+        enabled: boolean;
+        hint: string;
+        title: string;
+        subtitle: string;
+        logo_url: string | null;
+        background_url: string | null;
+        url: string;
+    };
+    platform: {
+        app_name: string;
+        logo_url: string | null;
+        login_subtitle: string | null;
+        login_background_url: string | null;
     };
 }>();
 
@@ -161,6 +184,155 @@ const submit = () =>
               },
     );
 
+// ── Login en el dominio del hotel ───────────────────────────────────────
+const DEFAULT_HINT = 'Ingresa tus credenciales para acceder';
+const DEFAULT_SUBTITLE =
+    'Reservas, atención por WhatsApp y cobros de tu hotel en un solo lugar.';
+const platformSubtitle = props.platform.login_subtitle || DEFAULT_SUBTITLE;
+
+const loginSaved = reactive({
+    enabled: props.login.enabled,
+    hint: props.login.hint ?? '',
+    title: props.login.title ?? '',
+    subtitle: props.login.subtitle ?? '',
+});
+const loginForm = reactive({ ...loginSaved });
+const savingLogin = ref(false);
+const loginDirty = computed(
+    () =>
+        loginForm.enabled !== loginSaved.enabled ||
+        loginForm.hint !== loginSaved.hint ||
+        loginForm.title !== loginSaved.title ||
+        loginForm.subtitle !== loginSaved.subtitle,
+);
+const loginErrors = ref<Record<string, string>>({});
+
+const backgroundUrl = ref<string | null>(props.login.background_url);
+const backgroundInput = ref<HTMLInputElement | null>(null);
+const uploadingBackground = ref(false);
+const confirmRemoveBackground = ref(false);
+const showLoginPreview = ref(false);
+
+// Lo que verá el equipo: con la marca del hotel encendida, lo del hotel y
+// lo que falte de la plataforma; apagada, el login de la plataforma tal cual.
+const preview = computed(() =>
+    loginForm.enabled
+        ? {
+              appName: props.property.name,
+              logoUrl: props.login.logo_url ?? props.platform.logo_url,
+              heading: props.property.name,
+              hint: loginForm.hint.trim() || DEFAULT_HINT,
+              title: loginForm.title.trim() || props.property.name,
+              subtitle: loginForm.subtitle.trim() || platformSubtitle,
+              backgroundUrl:
+                  backgroundUrl.value ?? props.platform.login_background_url,
+              poweredBy: props.platform.app_name,
+          }
+        : {
+              appName: props.platform.app_name,
+              logoUrl: props.platform.logo_url,
+              heading: props.platform.app_name,
+              hint: DEFAULT_HINT,
+              title: props.platform.app_name,
+              subtitle: platformSubtitle,
+              backgroundUrl: props.platform.login_background_url,
+              poweredBy: null,
+          },
+);
+
+async function saveLogin() {
+    savingLogin.value = true;
+    loginErrors.value = {};
+    try {
+        await axios.patch(`/api/properties/${props.property.id}`, {
+            settings: {
+                login_brand_enabled: loginForm.enabled,
+                login_hint: loginForm.hint.trim() || null,
+                login_title: loginForm.title.trim() || null,
+                login_subtitle: loginForm.subtitle.trim() || null,
+            },
+        });
+        Object.assign(loginSaved, loginForm);
+        toast.success(
+            'Login guardado',
+            loginForm.enabled
+                ? 'Tu equipo ya ve la marca del hotel al entrar.'
+                : 'El login vuelve a mostrar la marca de la plataforma.',
+        );
+    } catch (e: any) {
+        const errors = e.response?.data?.errors ?? {};
+        loginErrors.value = Object.fromEntries(
+            Object.entries(errors).map(([key, msgs]) => [
+                key.replace('settings.login_', ''),
+                (msgs as string[])[0],
+            ]),
+        );
+        toast.error(
+            'No se pudo guardar',
+            e.response?.data?.message ?? 'Revisa los textos del login.',
+        );
+    } finally {
+        savingLogin.value = false;
+    }
+}
+
+function discardLogin() {
+    Object.assign(loginForm, loginSaved);
+    loginErrors.value = {};
+}
+
+async function onPickBackground(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+        toast.error('Formato no admitido', 'Usa JPG, PNG o WebP.');
+        return;
+    }
+    if (file.size > 4 * 1024 * 1024) {
+        toast.error(
+            'La imagen pesa demasiado',
+            `Pesa ${(file.size / 1024 / 1024).toFixed(1)} MB; el máximo es 4 MB.`,
+        );
+        return;
+    }
+    uploadingBackground.value = true;
+    try {
+        const body = new FormData();
+        body.append('background', file);
+        const { data } = await axios.post('/api/login-background', body);
+        backgroundUrl.value = data.background_url;
+        toast.success('Fondo actualizado', 'Ya se ve en el login del hotel.');
+    } catch (e: any) {
+        toast.error(
+            'No se pudo subir',
+            e.response?.data?.errors?.background?.[0] ??
+                e.response?.data?.message ??
+                'Intenta con otra imagen.',
+        );
+    } finally {
+        uploadingBackground.value = false;
+    }
+}
+
+async function removeBackground() {
+    uploadingBackground.value = true;
+    try {
+        await axios.delete('/api/login-background');
+        backgroundUrl.value = null;
+        confirmRemoveBackground.value = false;
+        toast.success(
+            'Fondo quitado',
+            'El login usa el fondo de la plataforma.',
+        );
+    } catch {
+        toast.error('No se pudo quitar', 'Intenta de nuevo.');
+    } finally {
+        uploadingBackground.value = false;
+    }
+}
+
 function resetTheme() {
     applyPreset(presets[0]);
     save({ primary: null, menu_from: null, menu_to: null });
@@ -184,10 +356,9 @@ function resetTheme() {
                             Apariencia del panel
                         </h1>
                         <p class="mt-0.5 text-xs text-slate-500">
-                            Los colores de este panel para
-                            {{ property.name }}: el menú lateral y el color de
-                            botones y acentos. Aplica a todo tu equipo; el
-                            wizard público tiene su propia apariencia.
+                            Los colores del panel de {{ property.name }} y la
+                            pantalla de inicio de sesión de tu equipo. El wizard
+                            público tiene su propia apariencia.
                         </p>
                     </div>
                 </div>
@@ -471,6 +642,514 @@ function resetTheme() {
                     </div>
                 </div>
             </div>
+
+            <!-- Login del hotel -->
+            <div class="box box--stacked mt-4 overflow-hidden">
+                <div
+                    class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="LogIn" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="text-sm font-medium">
+                            Pantalla de inicio de sesión
+                        </div>
+                        <div class="text-xs break-words text-slate-500">
+                            Lo que ve tu equipo al entrar en
+                            {{ props.login.url.replace(/^https?:\/\//, '') }}
+                        </div>
+                    </div>
+                    <label
+                        class="flex w-full cursor-pointer items-center gap-2 pl-[46px] text-xs text-slate-600 sm:w-auto sm:pl-0 dark:text-slate-300"
+                    >
+                        <FormSwitch>
+                            <FormSwitch.Input
+                                v-model="loginForm.enabled"
+                                type="checkbox"
+                            />
+                        </FormSwitch>
+                        Usar la marca del hotel
+                    </label>
+                </div>
+
+                <div class="grid grid-cols-12">
+                    <div
+                        class="col-span-12 space-y-5 px-4 py-4 sm:px-5 xl:col-span-7"
+                    >
+                        <div
+                            v-if="!loginForm.enabled"
+                            class="flex items-start gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        >
+                            <Lucide
+                                icon="Info"
+                                class="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                            />
+                            <span
+                                >Apagado: el login de tu hotel se ve igual que
+                                el de {{ platform.app_name }}, con su logo y sus
+                                textos.</span
+                            >
+                        </div>
+
+                        <template v-else>
+                            <section>
+                                <div
+                                    class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                                >
+                                    Identidad
+                                </div>
+                                <div
+                                    class="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200/70 px-3 py-3 sm:flex-nowrap dark:border-darkmode-400"
+                                >
+                                    <div
+                                        class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300/80 bg-slate-50 dark:border-darkmode-400 dark:bg-darkmode-700"
+                                    >
+                                        <img
+                                            v-if="props.login.logo_url"
+                                            :src="props.login.logo_url"
+                                            :alt="property.name"
+                                            class="max-h-full max-w-full object-contain p-1"
+                                        />
+                                        <Lucide
+                                            v-else
+                                            icon="ImageOff"
+                                            class="h-5 w-5 text-slate-300"
+                                        />
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="text-sm font-medium">
+                                            {{ property.name }}
+                                        </div>
+                                        <div class="text-xs text-slate-500">
+                                            {{
+                                                props.login.logo_url
+                                                    ? 'Logo y nombre del hotel, los mismos del wizard y los correos.'
+                                                    : 'Sin logo: se usa el de la plataforma. Súbelo en Contacto.'
+                                            }}
+                                        </div>
+                                    </div>
+                                    <div
+                                        class="w-full pl-[68px] sm:w-auto sm:pl-0"
+                                    >
+                                        <Link
+                                            :href="
+                                                route(
+                                                    'tenant.general-settings.contact',
+                                                )
+                                            "
+                                            class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-[0.5rem] border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-300"
+                                        >
+                                            <Lucide
+                                                icon="PenLine"
+                                                class="h-3.5 w-3.5"
+                                            />
+                                            {{
+                                                props.login.logo_url
+                                                    ? 'Cambiar'
+                                                    : 'Subir logo'
+                                            }}
+                                        </Link>
+                                    </div>
+                                </div>
+                                <p class="mt-2 text-[11px] text-slate-400">
+                                    Los colores del login son los del panel
+                                    (arriba). Abajo del formulario siempre
+                                    aparece "Con la tecnología de
+                                    {{ platform.app_name }}".
+                                </p>
+                            </section>
+
+                            <section>
+                                <div
+                                    class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                                >
+                                    Textos
+                                </div>
+                                <div class="mt-3 space-y-4">
+                                    <div>
+                                        <div
+                                            class="flex items-center justify-between"
+                                        >
+                                            <FormLabel htmlFor="login-hint"
+                                                >Instrucción del
+                                                formulario</FormLabel
+                                            >
+                                            <span
+                                                class="text-[11px] text-slate-400"
+                                                >{{
+                                                    loginForm.hint.length
+                                                }}/160</span
+                                            >
+                                        </div>
+                                        <FormInput
+                                            id="login-hint"
+                                            v-model="loginForm.hint"
+                                            type="text"
+                                            maxlength="160"
+                                            :placeholder="DEFAULT_HINT"
+                                            class="h-9 text-xs"
+                                        />
+                                        <FormHelp
+                                            v-if="loginErrors.hint"
+                                            class="text-danger"
+                                            >{{ loginErrors.hint }}</FormHelp
+                                        >
+                                    </div>
+                                    <div>
+                                        <div
+                                            class="flex items-center justify-between"
+                                        >
+                                            <FormLabel htmlFor="login-title"
+                                                >Título de la portada</FormLabel
+                                            >
+                                            <span
+                                                class="text-[11px] text-slate-400"
+                                                >{{
+                                                    loginForm.title.length
+                                                }}/120</span
+                                            >
+                                        </div>
+                                        <FormTextarea
+                                            id="login-title"
+                                            v-model="loginForm.title"
+                                            rows="2"
+                                            maxlength="120"
+                                            :placeholder="property.name"
+                                            class="text-xs"
+                                        />
+                                        <FormHelp
+                                            v-if="loginErrors.title"
+                                            class="text-danger"
+                                            >{{ loginErrors.title }}</FormHelp
+                                        >
+                                        <FormHelp v-else
+                                            >Vacío = el nombre del hotel. Los
+                                            saltos de línea se
+                                            respetan.</FormHelp
+                                        >
+                                    </div>
+                                    <div>
+                                        <div
+                                            class="flex items-center justify-between"
+                                        >
+                                            <FormLabel htmlFor="login-subtitle"
+                                                >Texto de apoyo</FormLabel
+                                            >
+                                            <span
+                                                class="text-[11px] text-slate-400"
+                                                >{{
+                                                    loginForm.subtitle.length
+                                                }}/300</span
+                                            >
+                                        </div>
+                                        <FormTextarea
+                                            id="login-subtitle"
+                                            v-model="loginForm.subtitle"
+                                            rows="3"
+                                            maxlength="300"
+                                            :placeholder="platformSubtitle"
+                                            class="text-xs"
+                                        />
+                                        <FormHelp
+                                            v-if="loginErrors.subtitle"
+                                            class="text-danger"
+                                            >{{
+                                                loginErrors.subtitle
+                                            }}</FormHelp
+                                        >
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section>
+                                <div
+                                    class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                                >
+                                    Foto de fondo
+                                </div>
+                                <div
+                                    class="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-slate-200/70 px-3 py-3 sm:flex-nowrap dark:border-darkmode-400"
+                                >
+                                    <div
+                                        class="flex h-14 w-20 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-dashed border-slate-300/80 bg-slate-50 dark:border-darkmode-400 dark:bg-darkmode-700"
+                                    >
+                                        <img
+                                            v-if="backgroundUrl"
+                                            :src="backgroundUrl"
+                                            alt="Fondo del login"
+                                            class="h-full w-full object-cover"
+                                        />
+                                        <Lucide
+                                            v-else
+                                            icon="ImageUp"
+                                            class="h-5 w-5 text-slate-300"
+                                        />
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <div class="text-sm font-medium">
+                                            {{
+                                                backgroundUrl
+                                                    ? 'Foto del hotel'
+                                                    : 'Fondo de la plataforma'
+                                            }}
+                                        </div>
+                                        <div class="text-xs text-slate-500">
+                                            JPG, PNG o WebP de hasta 4 MB,
+                                            horizontal. Se tiñe con los colores
+                                            del panel para que el texto se lea.
+                                        </div>
+                                    </div>
+                                    <div
+                                        class="flex w-full shrink-0 items-center gap-1 pl-[92px] sm:w-auto sm:pl-0"
+                                    >
+                                        <Button
+                                            type="button"
+                                            variant="outline-secondary"
+                                            class="h-8 rounded-[0.5rem] bg-white px-3 text-xs dark:bg-darkmode-600"
+                                            :disabled="uploadingBackground"
+                                            @click="backgroundInput?.click()"
+                                        >
+                                            <Lucide
+                                                :icon="
+                                                    uploadingBackground
+                                                        ? 'Loader'
+                                                        : 'Upload'
+                                                "
+                                                :class="[
+                                                    'mr-1.5 h-3.5 w-3.5',
+                                                    uploadingBackground &&
+                                                        'animate-spin',
+                                                ]"
+                                            />
+                                            {{
+                                                backgroundUrl
+                                                    ? 'Cambiar'
+                                                    : 'Subir foto'
+                                            }}
+                                        </Button>
+                                        <button
+                                            v-if="backgroundUrl"
+                                            type="button"
+                                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                            title="Quitar"
+                                            :disabled="uploadingBackground"
+                                            @click="
+                                                confirmRemoveBackground = true
+                                            "
+                                        >
+                                            <Lucide
+                                                icon="Trash2"
+                                                class="h-4 w-4"
+                                            />
+                                        </button>
+                                    </div>
+                                    <input
+                                        ref="backgroundInput"
+                                        type="file"
+                                        accept=".jpg,.jpeg,.png,.webp"
+                                        class="hidden"
+                                        @change="onPickBackground"
+                                    />
+                                </div>
+                            </section>
+                        </template>
+                    </div>
+
+                    <!-- Vista previa -->
+                    <div
+                        class="col-span-12 border-t border-slate-200/60 bg-slate-50/70 px-4 py-4 sm:px-5 xl:col-span-5 xl:border-t-0 xl:border-l dark:border-darkmode-400 dark:bg-darkmode-700/40"
+                    >
+                        <div class="flex items-center justify-between gap-2">
+                            <div
+                                class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                Vista previa
+                            </div>
+                            <button
+                                type="button"
+                                class="inline-flex items-center gap-1 text-xs font-medium text-primary"
+                                @click="showLoginPreview = true"
+                            >
+                                <Lucide icon="Maximize2" class="h-3.5 w-3.5" />
+                                Ampliar
+                            </button>
+                        </div>
+                        <BrandingLoginMock
+                            class="mt-3"
+                            :app-name="preview.appName"
+                            :logo-url="preview.logoUrl"
+                            :heading="preview.heading"
+                            :hint="preview.hint"
+                            :title="preview.title"
+                            :subtitle="preview.subtitle"
+                            :background-url="preview.backgroundUrl"
+                            overlay="strong"
+                            :powered-by="preview.poweredBy"
+                        />
+                        <p class="mt-2 text-[11px] text-slate-400">
+                            Usa los colores guardados del panel. En el celular
+                            solo se ve el formulario.
+                        </p>
+                    </div>
+                </div>
+
+                <div
+                    class="flex flex-col gap-2 border-t border-slate-200/60 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5 dark:border-darkmode-400"
+                >
+                    <div
+                        class="inline-flex items-center gap-1.5 text-xs"
+                        :class="loginDirty ? 'text-warning' : 'text-slate-500'"
+                    >
+                        <Lucide
+                            :icon="loginDirty ? 'CircleDot' : 'CircleCheck'"
+                            class="h-3.5 w-3.5"
+                        />
+                        {{
+                            loginDirty
+                                ? 'Hay cambios sin guardar'
+                                : 'Todo guardado'
+                        }}
+                    </div>
+                    <div class="flex items-center justify-end gap-2">
+                        <Button
+                            v-if="loginDirty"
+                            type="button"
+                            variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] px-4 text-xs"
+                            :disabled="savingLogin"
+                            @click="discardLogin"
+                        >
+                            Descartar
+                        </Button>
+                        <Button
+                            type="button"
+                            variant="primary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="savingLogin || !loginDirty"
+                            @click="saveLogin"
+                        >
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
+                            {{ savingLogin ? 'Guardando...' : 'Guardar login' }}
+                        </Button>
+                    </div>
+                </div>
+            </div>
         </div>
+
+        <!-- Confirmar quitar la foto de fondo -->
+        <Dialog
+            :open="confirmRemoveBackground"
+            @close="confirmRemoveBackground = false"
+        >
+            <Dialog.Panel>
+                <div class="flex items-start gap-3 p-5">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
+                    >
+                        <Lucide icon="Trash2" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <h2 class="text-base font-medium">
+                            ¿Quitar la foto de fondo?
+                        </h2>
+                        <p class="mt-1 text-xs text-slate-500">
+                            El login de tu hotel vuelve al fondo de
+                            {{ platform.app_name }}. Se aplica de inmediato.
+                        </p>
+                    </div>
+                </div>
+                <div
+                    class="flex justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
+                >
+                    <Button
+                        type="button"
+                        variant="outline-secondary"
+                        class="h-9 px-5 text-xs"
+                        :disabled="uploadingBackground"
+                        @click="confirmRemoveBackground = false"
+                        >Cancelar</Button
+                    >
+                    <Button
+                        type="button"
+                        variant="danger"
+                        class="h-9 px-5 text-xs"
+                        :disabled="uploadingBackground"
+                        @click="removeBackground"
+                        >{{
+                            uploadingBackground ? 'Quitando...' : 'Sí, quitar'
+                        }}</Button
+                    >
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- Login a tamaño grande -->
+        <Dialog
+            :open="showLoginPreview"
+            size="xl"
+            @close="showLoginPreview = false"
+        >
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[1040px]">
+                <div class="flex max-h-[calc(100dvh-6rem)] flex-col">
+                    <div
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="MonitorSmartphone" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                Vista previa del login
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                {{
+                                    loginDirty
+                                        ? 'Incluye los cambios que aún no guardas.'
+                                        : 'Así lo ve hoy tu equipo.'
+                                }}
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            title="Cerrar"
+                            @click="showLoginPreview = false"
+                        >
+                            <Lucide icon="X" class="h-4 w-4" />
+                        </button>
+                    </div>
+                    <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                        <BrandingLoginMock
+                            large
+                            :app-name="preview.appName"
+                            :logo-url="preview.logoUrl"
+                            :heading="preview.heading"
+                            :hint="preview.hint"
+                            :title="preview.title"
+                            :subtitle="preview.subtitle"
+                            :background-url="preview.backgroundUrl"
+                            overlay="strong"
+                            :powered-by="preview.poweredBy"
+                        />
+                    </div>
+                    <div
+                        class="flex justify-end border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            class="h-9 px-5 text-xs"
+                            @click="showLoginPreview = false"
+                            >Cerrar</Button
+                        >
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
     </RazeLayout>
 </template>

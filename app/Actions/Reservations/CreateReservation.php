@@ -50,7 +50,7 @@ class CreateReservation
         // Ventana de reserva (spec-profundidad §2.6.2): aplica a todos los
         // canales; la ocupación inmediata es el walk-in (CreateWalkInStay).
         if ($ratePlan->violatesMinAdvance($start)) {
-            throw NoAvailabilityException::minAdvance($ratePlan->minAdvanceLabel());
+            throw NoAvailabilityException::minAdvance($ratePlan);
         }
 
         $confirmed = (bool) ($data['confirmed'] ?? false);
@@ -153,7 +153,10 @@ class CreateReservation
                 // aplica en tarifas sin anticipo configurado. El % aplica
                 // sobre el total YA con descuento: se anticipa lo que de
                 // verdad se cobrará.
-                'deposit_amount' => $ratePlan->depositAmountFor($total) ?? $data['deposit_amount'] ?? 0,
+                // Llegada a menos de N días: el anticipo de último momento
+                // del hotel (ReservationPolicy::depositFor).
+                'deposit_amount' => app(\App\Services\ReservationPolicy::class)->depositFor($ratePlan, $total, $start)
+                    ?? $data['deposit_amount'] ?? 0,
                 'coupon_code' => $coupon?->code,
                 'discount_amount' => $discount,
                 'payment_status' => \App\Enums\PaymentStatus::Unpaid,

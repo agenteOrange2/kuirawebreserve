@@ -2,8 +2,8 @@
 
 namespace App\Http\Controllers\Settings;
 
-use App\Http\Controllers\Controller;
 use App\Concerns\PasswordValidationRules;
+use App\Http\Controllers\Controller;
 use App\Http\Requests\Settings\PasswordUpdateRequest;
 use Illuminate\Http\RedirectResponse;
 use Inertia\Inertia;
@@ -33,6 +33,13 @@ class PasswordController extends Controller
         $request->user()->update([
             'password' => $request->password,
         ]);
+
+        // Aviso de seguridad: si no fue la persona, se entera por correo.
+        try {
+            $request->user()->notify(new \App\Notifications\PasswordChangedNotification('profile', $request->ip(), $request->userAgent()));
+        } catch (\Throwable $e) {
+            report($e);
+        }
 
         return back();
     }

@@ -37,7 +37,7 @@ class GroupWizardController extends Controller
         $settings = $property->settings ?? [];
 
         $activeRatePlans = RatePlan::query()
-            ->where('active', true)
+            ->sellableOnline()
             ->whereHas('roomType', fn ($q) => $q->where('active', true));
 
         // Misma apariencia que el wizard de habitaciones (/reservas/ajustes):
@@ -108,6 +108,7 @@ class GroupWizardController extends Controller
         try {
             $group = $action->handle([
                 'mode' => $data['mode'],
+                'online_only' => true,
                 'starts_at' => $start,
                 'ends_at' => $end,
                 'guest_name' => $data['guest_name'],
@@ -330,7 +331,7 @@ class GroupWizardController extends Controller
 
         foreach ($lines as $line) {
             $ratePlan = RoomType::find($line['room_type_id'])?->ratePlans()
-                ->where('active', true)
+                ->sellableOnline()
                 ->where('type', $mode)
                 ->orderBy('price')
                 ->first();

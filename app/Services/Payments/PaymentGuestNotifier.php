@@ -65,16 +65,14 @@ class PaymentGuestNotifier
         $reservation = $request->reservation()->first();
 
         $body = "Recibimos tu pago de {$request->amountLabel()} ({$request->conceptLabel()}).";
-        $body .= $reservation->status === ReservationStatus::Confirmed
+        $body .= $reservation->status === ReservationStatus::Confirmed && ! $this->confirmationJustSent($reservation)
             ? " Tu reserva {$reservation->displayCode()} está confirmada. Te esperamos — para tu registro, trae una identificación oficial."
                 .$this->guaranteeNotice($reservation)
             : " Quedó registrado en tu reserva {$reservation->displayCode()}.";
 
         // Lo que falta, dicho en el mismo aviso: con el anticipo pagado el
         // huésped preguntaba después "¿y cuánto me falta?".
-        if (($pending = $reservation->pendingBalance()) > 0) {
-            $body .= ' Saldo pendiente: $'.number_format($pending, 2).'.';
-        }
+        $body .= $this->pendingLine($reservation);
 
         $confirmed = $reservation->status === ReservationStatus::Confirmed;
 
@@ -156,15 +154,51 @@ class PaymentGuestNotifier
         $pending = $reservation->pendingBalance();
 
         $body = 'Recibimos tu pago de $'.number_format($amount, 2).$this->methodLabel($method).'.';
-        $body .= $confirmed
+        $body .= $confirmed && ! $this->confirmationJustSent($reservation)
             ? " Tu reserva {$reservation->displayCode()} está confirmada. Te esperamos — para tu registro, trae una identificación oficial."
                 .$this->guaranteeNotice($reservation)
             : " Quedó registrado en tu reserva {$reservation->displayCode()}.";
         $body .= $pending > 0
-            ? ' Saldo pendiente: $'.number_format($pending, 2).'.'
+            ? $this->pendingLine($reservation)
             : ' Tu reserva quedó liquidada.';
 
         $this->push($reservation->id, $body, wonLead: $confirmed, subject: 'Pago recibido', withCalendar: $confirmed);
+    }
+
+    /**
+     * "Saldo pendiente: $1,500.00, a más tardar el martes 13 de octubre de
+     * 2026." El aviso decía cuánto faltaba pero no para cuándo, y el huésped
+     * fue a preguntárselo al bot, que se lo inventó (cabañas 2026-09-24,
+     * RES-2026-1792).
+     */
+    protected function pendingLine(Reservation $reservation): string
+    {
+        $pending = $reservation->pendingBalance();
+
+        if ($pending <= 0) {
+            return '';
+        }
+
+        $due = app(\App\Services\ReservationPolicy::class)->balanceDueDateLabel($reservation);
+
+        return ' Saldo pendiente: $'.number_format($pending, 2)
+            .($due !== null ? ", a liquidar a más tardar el {$due}." : '.');
+    }
+
+    /**
+     * ¿El aviso de "reserva confirmada" salió hace nada? El personal suele
+     * confirmar y luego registrar el pago, y el huésped recibía dos mensajes
+     * seguidos diciendo "está confirmada" con el depósito repetido
+     * (RES-2026-1792, 10:51 y 10:52).
+     */
+    protected function confirmationJustSent(Reservation $reservation): bool
+    {
+        return \Illuminate\Support\Facades\Cache::has($this->confirmationKey($reservation));
+    }
+
+    protected function confirmationKey(Reservation $reservation): string
+    {
+        return 'guest-confirmation-sent:'.(tenant('id') ?? 'central').':'.$reservation->id;
     }
 
     protected function methodLabel(?string $method): string
@@ -340,6 +374,8 @@ class PaymentGuestNotifier
         if ($lookup = $this->bookingLookupUrl()) {
             $body .= " Puedes consultar tu reserva y adelantar tu registro de llegada (hora estimada y placa del vehículo) en {$lookup}: entra con tu código {$reservation->displayCode()} y tu número de teléfono.";
         }
+
+        \Illuminate\Support\Facades\Cache::put($this->confirmationKey($reservation), true, now()->addMinutes(30));
 
         $this->push(
             $reservation->id,

@@ -152,6 +152,7 @@ interface HoldResult {
     // elegir pagar al llegar.
     payment_optional: boolean;
     deposit: number;
+    balance_notice?: string | null;
     hold_expires_at: string | null;
     hold_minutes: number;
 }
@@ -3240,8 +3241,10 @@ async function copyCode() {
                                                 <div
                                                     class="mt-1 text-xs text-slate-500"
                                                 >
-                                                    El resto lo pagas después,
-                                                    por link o transferencia.
+                                                    {{
+                                                        hold.balance_notice ??
+                                                        'El resto lo pagas después, por link o transferencia.'
+                                                    }}
                                                 </div>
                                             </button>
                                             <button

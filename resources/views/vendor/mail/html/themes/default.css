@@ -1,0 +1,352 @@
+/*
+ * Tema de correo de KuiraWebReserve (sustituye al gris de fábrica de
+ * Laravel). Mismo lenguaje que el panel: fondo slate claro, tarjeta blanca
+ * con borde fino, texto slate, botones redondeados. El color de acento NO
+ * vive aquí: cada hotel tiene el suyo y los componentes button/panel lo
+ * ponen en línea (ver App\Mail\TenantBranding). Laravel convierte este CSS
+ * a estilos en línea, por eso solo selectores simples.
+ */
+
+body,
+body *:not(html):not(style):not(br):not(tr):not(code) {
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    position: relative;
+}
+
+body {
+    -webkit-text-size-adjust: none;
+    background-color: #f1f5f9;
+    color: #334155;
+    height: 100%;
+    line-height: 1.5;
+    margin: 0;
+    padding: 0;
+    width: 100% !important;
+}
+
+p,
+ul,
+ol,
+blockquote {
+    line-height: 1.6;
+    text-align: left;
+}
+
+a {
+    color: #0f172a;
+}
+
+a img {
+    border: none;
+}
+
+h1 {
+    color: #0f172a;
+    font-size: 19px;
+    font-weight: 600;
+    line-height: 1.35;
+    margin-top: 0;
+    margin-bottom: 12px;
+    text-align: left;
+}
+
+h2 {
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 600;
+    margin-top: 0;
+    text-align: left;
+}
+
+h3 {
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 600;
+    margin-top: 0;
+    text-align: left;
+}
+
+p {
+    color: #334155;
+    font-size: 15px;
+    line-height: 1.6;
+    margin-top: 0;
+    text-align: left;
+}
+
+p.sub {
+    font-size: 12px;
+}
+
+img {
+    max-width: 100%;
+}
+
+ul,
+ol {
+    color: #334155;
+    font-size: 15px;
+    margin-top: 0;
+    padding-left: 20px;
+}
+
+.wrapper {
+    -premailer-cellpadding: 0;
+    -premailer-cellspacing: 0;
+    -premailer-width: 100%;
+    background-color: #f1f5f9;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+}
+
+.content {
+    -premailer-cellpadding: 0;
+    -premailer-cellspacing: 0;
+    -premailer-width: 100%;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+}
+
+.header {
+    padding: 28px 0 20px;
+    text-align: center;
+}
+
+.header a {
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.body {
+    -premailer-cellpadding: 0;
+    -premailer-cellspacing: 0;
+    -premailer-width: 100%;
+    background-color: #f1f5f9;
+    border-bottom: 1px solid #f1f5f9;
+    border-top: 1px solid #f1f5f9;
+    margin: 0;
+    padding: 0;
+    width: 100%;
+}
+
+.inner-body {
+    -premailer-cellpadding: 0;
+    -premailer-cellspacing: 0;
+    -premailer-width: 570px;
+    background-color: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 14px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+    margin: 0 auto;
+    padding: 0;
+    width: 570px;
+}
+
+.inner-body a {
+    word-break: break-all;
+}
+
+.subcopy {
+    border-top: 1px solid #e2e8f0;
+    margin-top: 24px;
+    padding-top: 20px;
+}
+
+.subcopy p {
+    color: #64748b;
+    font-size: 12px;
+    line-height: 1.55;
+}
+
+.subcopy a {
+    color: #475569;
+}
+
+.footer {
+    -premailer-cellpadding: 0;
+    -premailer-cellspacing: 0;
+    -premailer-width: 570px;
+    margin: 0 auto;
+    padding: 0;
+    text-align: center;
+    width: 570px;
+}
+
+.footer p {
+    color: #94a3b8;
+    font-size: 12px;
+    line-height: 1.6;
+    margin-bottom: 4px;
+    text-align: center;
+}
+
+.footer a {
+    color: #64748b;
+    text-decoration: underline;
+}
+
+.table table {
+    -premailer-cellpadding: 0;
+    -premailer-cellspacing: 0;
+    -premailer-width: 100%;
+    margin: 24px auto;
+    width: 100%;
+}
+
+.table th {
+    border-bottom: 1px solid #e2e8f0;
+    color: #64748b;
+    font-size: 12px;
+    margin: 0;
+    padding-bottom: 8px;
+}
+
+.table td {
+    color: #334155;
+    font-size: 14px;
+    line-height: 18px;
+    margin: 0;
+    padding: 10px 0;
+}
+
+.content-cell {
+    max-width: 100vw;
+    padding: 32px;
+}
+
+.action {
+    -premailer-cellpadding: 0;
+    -premailer-cellspacing: 0;
+    -premailer-width: 100%;
+    float: unset;
+    margin: 28px auto;
+    padding: 0;
+    text-align: center;
+    width: 100%;
+}
+
+.button {
+    -webkit-text-size-adjust: none;
+    border-radius: 10px;
+    color: #ffffff;
+    display: inline-block;
+    font-size: 14px;
+    font-weight: 600;
+    overflow: hidden;
+    padding: 12px 24px;
+    text-decoration: none;
+}
+
+.button-primary {
+    background-color: #03045e;
+}
+
+.button-success {
+    background-color: #15803d;
+}
+
+.button-error {
+    background-color: #b91c1c;
+}
+
+.button-secondary {
+    background-color: #ffffff;
+    border: 1px solid #cbd5e1;
+    color: #334155;
+}
+
+.panel {
+    border-left: #03045e solid 4px;
+    margin: 22px 0;
+}
+
+.panel-content {
+    background-color: #f8fafc;
+    border-radius: 0 10px 10px 0;
+    color: #334155;
+    padding: 16px 18px;
+}
+
+.panel-content p {
+    color: #334155;
+}
+
+.panel-item {
+    padding: 0;
+}
+
+.panel-item p:last-of-type {
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+
+.rows {
+    -premailer-cellpadding: 0;
+    -premailer-cellspacing: 0;
+    background-color: #f8fafc;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    margin: 20px 0;
+    width: 100%;
+}
+
+.rows-title {
+    border-bottom: 1px solid #e2e8f0;
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 600;
+    padding: 12px 16px;
+}
+
+.rows-label {
+    border-bottom: 1px solid #eef2f6;
+    color: #64748b;
+    font-size: 13px;
+    padding: 9px 16px;
+    vertical-align: top;
+    width: 40%;
+}
+
+.rows-value {
+    border-bottom: 1px solid #eef2f6;
+    color: #0f172a;
+    font-size: 13px;
+    font-weight: 600;
+    padding: 9px 16px;
+    text-align: right;
+    vertical-align: top;
+}
+
+.notice-table {
+    margin: 4px 0 22px;
+    width: 100%;
+}
+
+.notice {
+    background-color: #fffbeb;
+    border: 1px solid #fde68a;
+    border-radius: 10px;
+    color: #92400e;
+    font-size: 13px;
+    padding: 12px 16px;
+}
+
+.notice p {
+    color: #92400e;
+    font-size: 13px;
+    margin: 0;
+}
+
+.break-all {
+    word-break: break-all;
+}
+
+.powered {
+    color: #94a3b8;
+    font-size: 11px;
+}

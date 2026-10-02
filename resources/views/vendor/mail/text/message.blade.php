@@ -1,3 +1,4 @@
+@props(['audience' => 'guest', 'preheader' => null])
 @php($brand = \App\Mail\TenantBranding::resolve())
 <x-mail::layout>
 {{-- Header --}}
@@ -22,7 +23,13 @@
 {{-- Footer --}}
 <x-slot:footer>
 <x-mail::footer>
-© {{ date('Y') }} {{ $brand->name }}. Todos los derechos reservados.
+@if ($brand->isTenant && $audience === 'guest')
+{{ $brand->name }}{{ $brand->address ? ' · '.$brand->address : '' }}{{ $brand->phone ? ' · '.$brand->phone : '' }}{{ $brand->email ? ' · '.$brand->email : '' }}
+@elseif ($brand->isTenant)
+Aviso de {{ $brand->name }} · Con la tecnología de {{ \App\Mail\TenantBranding::platformName() }}
+@else
+© {{ date('Y') }} {{ $brand->name }}
+@endif
 </x-mail::footer>
 </x-slot:footer>
 </x-mail::layout>

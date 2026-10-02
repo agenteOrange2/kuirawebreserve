@@ -38,6 +38,14 @@ const props = defineProps<{
     gatewayAvailable: boolean;
     chargeOptions?: { gateway: string | null; transfer: boolean };
     holdMinutes: number;
+    /** Contrato de hospedaje: si el hotel lo tiene, a quién y cuándo salió. */
+    contract: {
+        available: boolean;
+        email: string | null;
+        pdf_url: string;
+        sent_at: string | null;
+        sent_by: string | null;
+    };
     /** Comprobantes que el huésped mandó por el chat de esta reserva. */
     chatReceipts?: {
         media_id: number;
@@ -374,11 +382,12 @@ async function submitCheckIn() {
 }
 
 // ── No llegó / Cancelar ──
-const cancelKind = ref<'cancel' | 'no_show' | null>(null);
+// date_pending: se cancela sin reembolso y lo pagado queda para otra fecha.
+const cancelKind = ref<'cancel' | 'no_show' | 'date_pending' | null>(null);
 const cancelReason = ref('');
 const cancelBusy = ref(false);
 
-function askCancel(kind: 'cancel' | 'no_show') {
+function askCancel(kind: 'cancel' | 'no_show' | 'date_pending') {
     cancelReason.value = '';
     cancelKind.value = kind;
 }
@@ -386,17 +395,28 @@ function askCancel(kind: 'cancel' | 'no_show') {
 async function submitCancel() {
     if (!cancelKind.value || cancelBusy.value) return;
     const noShow = cancelKind.value === 'no_show';
+    const datePending = cancelKind.value === 'date_pending';
     cancelBusy.value = true;
     try {
-        await axios.patch(`/api/reservations/${r.value.id}/cancel`, {
-            no_show: noShow,
-            reason: cancelReason.value.trim() || null,
-        });
+        if (datePending) {
+            await axios.patch(`/api/reservations/${r.value.id}/date-pending`, {
+                note: cancelReason.value.trim() || null,
+            });
+        } else {
+            await axios.patch(`/api/reservations/${r.value.id}/cancel`, {
+                no_show: noShow,
+                reason: cancelReason.value.trim() || null,
+            });
+        }
         toast.success(
-            noShow
-                ? 'Se registró que el huésped no llegó'
-                : 'Reserva cancelada',
-            `${r.value.code} pasó al historial y la habitación quedó libre.`,
+            datePending
+                ? 'Reserva con fecha pendiente'
+                : noShow
+                  ? 'Se registró que el huésped no llegó'
+                  : 'Reserva cancelada',
+            datePending
+                ? `La habitación quedó libre y ${money(r.value.paid_total)} queda a favor del huésped.`
+                : `${r.value.code} pasó al historial y la habitación quedó libre.`,
         );
         cancelKind.value = null;
         router.reload();
@@ -408,6 +428,50 @@ async function submitCancel() {
     } finally {
         cancelBusy.value = false;
     }
+}
+
+/**
+ * Contrato de hospedaje.
+ *
+ * Solo salía solo, adjunto al correo de confirmación, y únicamente si el
+ * huésped tenía correo en su ficha; cuando no lo tenía no salía nada y nadie
+ * se enteraba. Aquí se ve si salió, se captura el correo que faltaba y se
+ * manda, o se abre el PDF para mandarlo por donde sea.
+ */
+const contractEmail = ref(props.contract.email ?? '');
+const sendingContract = ref(false);
+
+function sendContract() {
+    if (sendingContract.value || !contractEmail.value.trim()) return;
+    sendingContract.value = true;
+
+    router.post(
+        `/reservas/${r.value.id}/contrato`,
+        { email: contractEmail.value.trim() },
+        {
+            preserveScroll: true,
+            onSuccess: (page: any) => {
+                const flash = page.props?.flash ?? {};
+                if (flash.error) {
+                    toast.error('No se envió el contrato', flash.error);
+                    return;
+                }
+                toast.success(
+                    'Contrato enviado',
+                    flash.success ?? 'El huésped ya lo tiene en su correo.',
+                );
+            },
+            onError: (errors: Record<string, string>) => {
+                toast.error(
+                    'No se envió el contrato',
+                    Object.values(errors)[0] ?? 'Revisa el correo capturado.',
+                );
+            },
+            onFinish: () => {
+                sendingContract.value = false;
+            },
+        },
+    );
 }
 
 const sectionIcon =
@@ -450,7 +514,10 @@ const cardHeader =
                                         reservation.payment_status_label
                                     }}</span
                                 >
+                                <!-- Con fecha pendiente el saldo no se
+                                     debe: se cobra cuando tenga fechas. -->
                                 <span
+                                    v-if="!reservation.date_pending_at"
                                     class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                     :class="
                                         pending > 0
@@ -597,6 +664,22 @@ const cardHeader =
                             No llegó
                         </Button>
                         <Button
+                            v-if="
+                                canManage &&
+                                actionable &&
+                                Number(reservation.paid_total ?? 0) > 0
+                            "
+                            variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                            @click="askCancel('date_pending')"
+                        >
+                            <Lucide
+                                icon="CalendarClock"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Fecha pendiente
+                        </Button>
+                        <Button
                             v-if="canManage && actionable"
                             variant="outline-danger"
                             class="h-9 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
@@ -630,7 +713,27 @@ const cardHeader =
                     </span>
                 </div>
                 <div
-                    v-if="reservation.cancellation_reason"
+                    v-if="reservation.date_pending_at"
+                    class="flex items-start gap-2 border-t border-slate-200/60 bg-warning/5 px-5 py-3 text-xs text-slate-700 dark:border-darkmode-400 dark:text-slate-200"
+                >
+                    <Lucide
+                        icon="CalendarClock"
+                        class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning"
+                    />
+                    <span>
+                        Fecha pendiente:
+                        <span class="font-medium">{{
+                            money(reservation.paid_total)
+                        }}</span>
+                        a favor del huésped. Reábrela con fechas nuevas cuando
+                        las tenga.
+                        <template v-if="reservation.date_pending_note">
+                            Nota: {{ reservation.date_pending_note }}
+                        </template>
+                    </span>
+                </div>
+                <div
+                    v-else-if="reservation.cancellation_reason"
                     class="flex items-start gap-2 border-t border-slate-200/60 bg-danger/5 px-5 py-3 text-xs text-danger dark:border-darkmode-400"
                 >
                     <Lucide icon="Ban" class="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -1084,6 +1187,139 @@ const cardHeader =
                             </div>
                         </div>
                     </section>
+
+                    <!-- Contrato de hospedaje -->
+                    <section class="box box--stacked overflow-hidden">
+                        <div :class="cardHeader">
+                            <div
+                                :class="sectionIcon"
+                                class="border-info/10 bg-info/10 text-info"
+                            >
+                                <Lucide icon="FileText" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <h2 class="text-sm font-medium">
+                                    Contrato de hospedaje
+                                </h2>
+                                <p class="mt-0.5 text-xs text-slate-500">
+                                    Va adjunto en PDF al correo del huésped.
+                                </p>
+                            </div>
+                            <span
+                                v-if="contract.available"
+                                class="rounded-full px-2 py-0.5 text-[11px] font-medium md:ml-auto"
+                                :class="
+                                    contract.sent_at
+                                        ? toneBadge.success
+                                        : 'bg-pending/10 text-pending'
+                                "
+                                >{{
+                                    contract.sent_at
+                                        ? 'Enviado'
+                                        : 'Sin enviar'
+                                }}</span
+                            >
+                        </div>
+
+                        <!-- El hotel no ha escrito su contrato: no hay nada que mandar. -->
+                        <div
+                            v-if="!contract.available"
+                            class="px-4 py-3 text-xs text-slate-500"
+                        >
+                            Este hotel todavía no captura el texto de su
+                            contrato, así que no se le adjunta ninguno a los
+                            huéspedes. Se escribe en
+                            <Link
+                                href="/ajustes/general"
+                                class="font-medium text-primary"
+                                >Ajustes, Datos generales</Link
+                            >.
+                        </div>
+
+                        <div v-else class="space-y-3 px-4 py-3">
+                            <p
+                                v-if="contract.sent_at"
+                                class="text-xs text-slate-500"
+                            >
+                                Enviado el {{ contract.sent_at }}
+                                <template v-if="contract.sent_by"
+                                    >por {{ contract.sent_by }}</template
+                                >
+                                <template v-if="contract.email">
+                                    a {{ contract.email }}</template
+                                >.
+                            </p>
+                            <p
+                                v-else-if="contract.email"
+                                class="text-xs text-slate-500"
+                            >
+                                Todavía no se le ha enviado el contrato a
+                                {{ contract.email }}.
+                            </p>
+                            <p v-else class="text-xs text-danger">
+                                Esta reserva no tiene correo del huésped, así
+                                que su contrato no ha podido salir. Captúralo
+                                aquí: queda guardado en su ficha y los avisos
+                                siguientes ya saldrán solos.
+                            </p>
+
+                            <div
+                                class="flex flex-col gap-2 sm:flex-row sm:items-center"
+                            >
+                                <div class="relative min-w-0 flex-1">
+                                    <Lucide
+                                        icon="Mail"
+                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
+                                    />
+                                    <FormInput
+                                        v-model="contractEmail"
+                                        type="email"
+                                        class="h-9 pl-9 text-xs"
+                                        placeholder="correo@ejemplo.com"
+                                        :disabled="!canManage"
+                                    />
+                                </div>
+                                <div class="grid grid-cols-2 gap-2 sm:flex">
+                                    <Button
+                                        as="a"
+                                        :href="contract.pdf_url"
+                                        target="_blank"
+                                        rel="noopener"
+                                        variant="outline-secondary"
+                                        class="h-9 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                                    >
+                                        <Lucide
+                                            icon="FileDown"
+                                            class="mr-1.5 h-3.5 w-3.5"
+                                        />
+                                        Ver PDF
+                                    </Button>
+                                    <Button
+                                        v-if="canManage"
+                                        variant="primary"
+                                        class="h-9 rounded-[0.5rem] text-xs"
+                                        :disabled="
+                                            sendingContract ||
+                                            !contractEmail.trim()
+                                        "
+                                        @click="sendContract"
+                                    >
+                                        <Lucide
+                                            icon="Send"
+                                            class="mr-1.5 h-3.5 w-3.5"
+                                        />
+                                        {{
+                                            sendingContract
+                                                ? 'Enviando…'
+                                                : contract.sent_at
+                                                  ? 'Reenviar'
+                                                  : 'Enviar por correo'
+                                        }}
+                                    </Button>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
                 </div>
 
                 <!-- Historia -->
@@ -1278,14 +1514,18 @@ const cardHeader =
                         <div
                             class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border"
                             :class="
-                                cancelKind === 'no_show'
-                                    ? 'border-warning/10 bg-warning/10 text-warning'
-                                    : 'border-danger/10 bg-danger/10 text-danger'
+                                cancelKind === 'cancel'
+                                    ? 'border-danger/10 bg-danger/10 text-danger'
+                                    : 'border-warning/10 bg-warning/10 text-warning'
                             "
                         >
                             <Lucide
                                 :icon="
-                                    cancelKind === 'no_show' ? 'UserX' : 'Ban'
+                                    cancelKind === 'no_show'
+                                        ? 'UserX'
+                                        : cancelKind === 'date_pending'
+                                          ? 'CalendarClock'
+                                          : 'Ban'
                                 "
                                 class="h-4 w-4"
                             />
@@ -1295,10 +1535,21 @@ const cardHeader =
                                 {{
                                     cancelKind === 'no_show'
                                         ? 'El huésped no llegó'
-                                        : 'Cancelar reserva'
+                                        : cancelKind === 'date_pending'
+                                          ? 'Dejar con fecha pendiente'
+                                          : 'Cancelar reserva'
                                 }}
                             </h2>
-                            <p class="mt-0.5 text-xs text-slate-500">
+                            <p
+                                v-if="cancelKind === 'date_pending'"
+                                class="mt-0.5 text-xs text-slate-500"
+                            >
+                                La habitación queda libre y no se devuelve
+                                dinero: {{ money(reservation.paid_total) }}
+                                queda a favor del huésped. Cuando tenga fecha,
+                                reábrela desde esta ficha con las fechas nuevas.
+                            </p>
+                            <p v-else class="mt-0.5 text-xs text-slate-500">
                                 {{ reservation.code }} pasa al historial y la
                                 habitación queda libre. Se puede reabrir después
                                 desde esta misma ficha.
@@ -1311,7 +1562,11 @@ const cardHeader =
                             type="text"
                             maxlength="255"
                             class="h-9 text-xs"
-                            placeholder="Motivo (queda en el historial)"
+                            :placeholder="
+                                cancelKind === 'date_pending'
+                                    ? 'Nota (por ejemplo: quiere venir en diciembre)'
+                                    : 'Motivo (queda en el historial)'
+                            "
                         />
                     </div>
                     <div
@@ -1327,7 +1582,7 @@ const cardHeader =
                         <Button
                             type="submit"
                             :variant="
-                                cancelKind === 'no_show' ? 'warning' : 'danger'
+                                cancelKind === 'cancel' ? 'danger' : 'warning'
                             "
                             class="h-9 rounded-[0.5rem] px-5 text-xs"
                             :disabled="cancelBusy"
@@ -1337,7 +1592,9 @@ const cardHeader =
                                     ? 'Guardando…'
                                     : cancelKind === 'no_show'
                                       ? 'Confirmar que no llegó'
-                                      : 'Cancelar reserva'
+                                      : cancelKind === 'date_pending'
+                                        ? 'Dejar con fecha pendiente'
+                                        : 'Cancelar reserva'
                             }}
                         </Button>
                     </div>

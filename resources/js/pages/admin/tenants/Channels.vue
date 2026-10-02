@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { router } from '@inertiajs/vue3';
 import axios from 'axios';
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormHelp,
@@ -11,6 +11,7 @@ import {
 } from '@/components/Base/Form';
 import { Dialog, Menu } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 import TenantHeader from './TenantHeader.vue';
@@ -81,6 +82,8 @@ const props = defineProps<{
     /** Catálogo de canales que la plataforma puede habilitar por hotel. */
     channelCatalog: { key: string; label: string }[];
     channelsAllowed: string[];
+    /** Canales conectados contra el tope del plan (el admin puede pasarse). */
+    channelLimit?: { max: number | null; used: number };
 }>();
 
 const toast = useToasts();
@@ -278,31 +281,18 @@ async function submitMetaLink() {
     }
 }
 
-async function toggleMetaLink(link: MetaLinkRow) {
-    try {
-        await axios.patch(route('admin.meta.update', link.id), {
-            active: !link.active,
-        });
-        reloadChannels();
-    } catch (e: any) {
-        toast.error(
-            'No se pudo actualizar',
-            e.response?.data?.message ?? 'Ocurrió un error.',
-        );
-    }
-}
-
-async function deleteMetaLink(link: MetaLinkRow) {
-    await axios.delete(route('admin.meta.destroy', link.id));
-    toast.success('Canal desvinculado');
-    reloadChannels();
-}
-
 const copiedField = ref<string | null>(null);
 async function copyMeta(field: string, value: string) {
-    await navigator.clipboard.writeText(value);
-    copiedField.value = field;
-    setTimeout(() => (copiedField.value = null), 2000);
+    try {
+        await navigator.clipboard.writeText(value);
+        copiedField.value = field;
+        setTimeout(() => (copiedField.value = null), 2000);
+    } catch {
+        toast.error(
+            'No se pudo copiar',
+            'El navegador bloqueó el portapapeles.',
+        );
+    }
 }
 
 // ── Diagnóstico y reparación del webhook ──
@@ -488,26 +478,6 @@ async function submitTelegram() {
     }
 }
 
-async function toggleTelegram(link: TelegramRow) {
-    try {
-        await axios.patch(route('admin.telegram.update', link.id), {
-            active: !link.active,
-        });
-        reloadChannels();
-    } catch (e: any) {
-        toast.error(
-            'No se pudo actualizar',
-            e.response?.data?.message ?? 'Ocurrió un error.',
-        );
-    }
-}
-
-async function deleteTelegram(link: TelegramRow) {
-    await axios.delete(route('admin.telegram.destroy', link.id));
-    toast.success('Canal desvinculado');
-    reloadChannels();
-}
-
 const testingChannel = ref<string | null>(null);
 async function testTelegram(link: TelegramRow) {
     testingChannel.value = `telegram-${link.id}`;
@@ -598,26 +568,6 @@ async function submitTiktok() {
     }
 }
 
-async function toggleTiktok(link: TiktokRow) {
-    try {
-        await axios.patch(route('admin.tiktok.update', link.id), {
-            active: !link.active,
-        });
-        reloadChannels();
-    } catch (e: any) {
-        toast.error(
-            'No se pudo actualizar',
-            e.response?.data?.message ?? 'Ocurrió un error.',
-        );
-    }
-}
-
-async function deleteTiktok(link: TiktokRow) {
-    await axios.delete(route('admin.tiktok.destroy', link.id));
-    toast.success('Canal desvinculado');
-    reloadChannels();
-}
-
 async function testTiktok(link: TiktokRow) {
     testingChannel.value = `tiktok-${link.id}`;
     try {
@@ -642,835 +592,747 @@ async function testTiktok(link: TiktokRow) {
         testingChannel.value = null;
     }
 }
+// ── Un solo listado para los cuatro tipos de canal ──
+type ChannelKind = 'meta' | 'evolution' | 'telegram' | 'tiktok';
+interface ChannelRow {
+    key: string;
+    kind: ChannelKind;
+    id: number;
+    title: string;
+    badge: string;
+    icon: Icon;
+    tone: string;
+    detail: string;
+    active: boolean;
+    last_event_at: string | null;
+    // Telegram y TikTok: la URL que se pega del lado del proveedor.
+    webhook_url?: string;
+    raw: MetaLinkRow | EvoRow | TelegramRow | TiktokRow;
+}
+
+const ghostButton =
+    'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary';
+
+const rows = computed<ChannelRow[]>(() => [
+    ...props.meta.map((link) => ({
+        key: `meta-${link.id}`,
+        kind: 'meta' as const,
+        id: link.id,
+        title: link.name || link.type_label,
+        badge: metaTypeMeta[link.type]?.label ?? link.type_label,
+        icon: (metaTypeMeta[link.type]?.icon ?? 'MessageCircle') as Icon,
+        tone: metaTypeMeta[link.type]?.tone ?? 'bg-primary/10 text-primary',
+        detail: `${link.external_id} · ${link.masked_token}`,
+        active: link.active,
+        last_event_at: link.last_event_at,
+        raw: link,
+    })),
+    ...props.evolution.map((evo) => ({
+        key: `evo-${evo.id}`,
+        kind: 'evolution' as const,
+        id: evo.id,
+        title: evo.name || `WhatsApp ${evo.instance}`,
+        badge: 'Evolution',
+        icon: 'MessageCircle' as Icon,
+        tone: 'bg-success/10 text-success',
+        detail: `${evo.base_url} · ${evo.instance}`,
+        active: evo.active,
+        last_event_at: evo.last_event_at,
+        raw: evo,
+    })),
+    ...props.telegram.map((link) => ({
+        key: `telegram-${link.id}`,
+        kind: 'telegram' as const,
+        id: link.id,
+        title:
+            link.name ||
+            (link.bot_username ? `@${link.bot_username}` : 'Telegram'),
+        badge: 'Telegram',
+        icon: 'Send' as Icon,
+        tone: 'bg-info/10 text-info',
+        detail: [
+            link.bot_username ? `@${link.bot_username}` : null,
+            link.masked_token,
+        ]
+            .filter(Boolean)
+            .join(' · '),
+        active: link.active,
+        last_event_at: link.last_event_at,
+        webhook_url: link.webhook_url,
+        raw: link,
+    })),
+    ...props.tiktok.map((link) => ({
+        key: `tiktok-${link.id}`,
+        kind: 'tiktok' as const,
+        id: link.id,
+        title: link.name || 'TikTok',
+        badge: 'TikTok',
+        icon: 'Music2' as Icon,
+        tone: 'bg-dark/10 text-dark dark:text-slate-300',
+        detail: `${link.business_id} · ${link.masked_token}`,
+        active: link.active,
+        last_event_at: link.last_event_at,
+        webhook_url: link.webhook_url,
+        raw: link,
+    })),
+]);
+
+const activeCount = computed(() => rows.value.filter((r) => r.active).length);
+// Activo pero nunca le ha llegado nada: casi siempre un webhook mal puesto.
+const silentCount = computed(
+    () => rows.value.filter((r) => r.active && !r.last_event_at).length,
+);
+
+function editRow(row: ChannelRow) {
+    if (row.kind === 'meta') openMetaEdit(row.raw as MetaLinkRow);
+    if (row.kind === 'telegram') openTelegramForm(row.raw as TelegramRow);
+    if (row.kind === 'tiktok') openTiktokForm(row.raw as TiktokRow);
+}
+
+function testRow(row: ChannelRow) {
+    if (row.kind === 'meta') openDiagnose(row.raw as MetaLinkRow);
+    if (row.kind === 'telegram') testTelegram(row.raw as TelegramRow);
+    if (row.kind === 'tiktok') testTiktok(row.raw as TiktokRow);
+}
+
+const channelRoutes: Record<
+    Exclude<ChannelKind, 'evolution'>,
+    { update: string; destroy: string }
+> = {
+    meta: { update: 'admin.meta.update', destroy: 'admin.meta.destroy' },
+    telegram: {
+        update: 'admin.telegram.update',
+        destroy: 'admin.telegram.destroy',
+    },
+    tiktok: { update: 'admin.tiktok.update', destroy: 'admin.tiktok.destroy' },
+};
+
+// El interruptor no cambia solo (click.prevent): espera al servidor y la
+// recarga lo pinta, así un rechazo nunca lo deja mintiendo.
+const togglingKey = ref<string | null>(null);
+
+async function toggleRow(row: ChannelRow) {
+    if (row.kind === 'evolution' || togglingKey.value) return;
+    togglingKey.value = row.key;
+    try {
+        await axios.patch(route(channelRoutes[row.kind].update, row.id), {
+            active: !row.active,
+        });
+        toast.success(
+            row.active ? 'Canal pausado' : 'Canal reactivado',
+            row.title,
+        );
+        reloadChannels();
+    } catch (e: any) {
+        toast.error(
+            'No se pudo actualizar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        togglingKey.value = null;
+    }
+}
+
+// ── Desvincular: siempre con confirmación (antes era un clic directo) ──
+const unlinking = ref<ChannelRow | null>(null);
+const unlinkingBusy = ref(false);
+
+async function confirmUnlink() {
+    const row = unlinking.value;
+    if (!row || row.kind === 'evolution') return;
+    unlinkingBusy.value = true;
+    try {
+        await axios.delete(route(channelRoutes[row.kind].destroy, row.id));
+        toast.success('Canal desvinculado', row.title);
+        unlinking.value = null;
+        reloadChannels();
+    } catch (e: any) {
+        toast.error(
+            'No se pudo desvincular',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        unlinkingBusy.value = false;
+    }
+}
 </script>
 
 <template>
     <RazeLayout :title="`${tenant.name} · Canales`">
         <TenantHeader :tenant="tenant" :plans="plans" active="channels" />
 
-        <!-- App de Meta del hotel: propia (separada) o la de la plataforma -->
-        <div class="mt-5">
-            <div class="box box--stacked p-5">
-                <div class="flex flex-wrap items-center gap-4">
-                    <div
-                        class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                    >
-                        <Lucide icon="AppWindow" class="h-5 w-5" />
-                    </div>
-                    <div class="min-w-0 flex-1">
-                        <h2 class="text-base font-medium">
-                            App de Meta del hotel
-                        </h2>
-                        <p class="mt-0.5 text-xs text-slate-500">
-                            <template v-if="metaApp">
-                                App propia
-                                <span
-                                    class="font-medium text-slate-600 dark:text-slate-300"
-                                    >{{ metaApp.name || metaApp.app_id }}</span
-                                >
-                                · ID {{ metaApp.app_id }} · clave
-                                {{ metaApp.masked_app_secret }}
-                                <template v-if="metaApp.login_config_id">
-                                    · registro incrustado
-                                    {{ metaApp.login_config_id }}
-                                </template>
-                                — los webhooks y tokens de este hotel usan esta
-                                app.
-                            </template>
-                            <template v-else>
-                                Usa la app de la plataforma ({{
-                                    platformAppId || 'sin configurar'
-                                }}). Conecta una app propia para separar a este
-                                hotel — el webhook sigue siendo la misma URL con
-                                el mismo verify token.
-                            </template>
-                        </p>
-                    </div>
-                    <div class="flex shrink-0 items-center gap-2">
-                        <Button
-                            v-if="metaApp"
-                            variant="outline-secondary"
-                            size="sm"
-                            class="rounded-[0.5rem]"
-                            @click="confirmAppRemoval = true"
-                        >
-                            Usar app de la plataforma
-                        </Button>
-                        <Button
-                            variant="primary"
-                            size="sm"
-                            class="rounded-[0.5rem] shadow-md shadow-primary/20"
-                            @click="openAppForm"
-                        >
-                            <Lucide
-                                :icon="metaApp ? 'Pencil' : 'Plus'"
-                                class="mr-1.5 h-3.5 w-3.5"
-                            />
-                            {{ metaApp ? 'Editar app' : 'Conectar app propia' }}
-                        </Button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Qué canales puede conectar el hotel desde su panel -->
-        <div class="box box--stacked mt-4">
+        <!-- Lo que importa primero: qué canales tiene y si reciben -->
+        <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
             <div
-                class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
             >
                 <div
                     class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                 >
-                    <Lucide icon="ToggleRight" class="h-4 w-4" />
+                    <Lucide icon="MessagesSquare" class="h-4 w-4" />
                 </div>
                 <div class="min-w-0">
-                    <h2 class="text-sm font-medium">
-                        Qué puede conectar el hotel
-                    </h2>
-                    <p class="text-xs text-slate-500">
-                        Solo estos canales aparecen en su panel de Asistente.
-                    </p>
+                    <div class="text-sm font-medium">
+                        {{ activeCount }} de {{ channelCount() }}
+                    </div>
+                    <div class="text-xs leading-tight text-slate-500">
+                        Canales activos
+                    </div>
+                    <div
+                        v-if="channelLimit && channelLimit.max !== null"
+                        class="truncate text-[11px]"
+                        :class="
+                            channelLimit.used > channelLimit.max
+                                ? 'font-medium text-warning'
+                                : 'text-slate-400'
+                        "
+                    >
+                        {{ channelLimit.used }} de {{ channelLimit.max }} del
+                        plan
+                    </div>
                 </div>
-                <span
-                    v-if="savingChannels"
-                    class="ml-auto text-[11px] text-slate-400"
-                >
-                    Guardando...
-                </span>
             </div>
-            <div class="grid grid-cols-1 gap-2.5 p-4 sm:grid-cols-2">
-                <label
-                    v-for="channel in channelCatalog"
-                    :key="channel.key"
-                    class="flex cursor-pointer items-center justify-between gap-3 rounded-lg border px-3 py-2.5 transition"
+            <div
+                class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+            >
+                <div
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
                     :class="
-                        allowedChannels.includes(channel.key)
-                            ? 'border-primary/30 bg-primary/5'
-                            : 'border-slate-200/70 dark:border-darkmode-400'
+                        silentCount
+                            ? 'border-warning/10 bg-warning/10 text-warning'
+                            : 'border-success/10 bg-success/10 text-success'
                     "
                 >
-                    <span class="text-xs font-medium">{{ channel.label }}</span>
-                    <FormSwitch>
-                        <FormSwitch.Input
-                            :checked="allowedChannels.includes(channel.key)"
-                            type="checkbox"
-                            :disabled="savingChannels"
-                            @change="toggleAllowedChannel(channel.key)"
-                        />
-                    </FormSwitch>
-                </label>
+                    <Lucide icon="Activity" class="h-4 w-4" />
+                </div>
+                <div class="min-w-0">
+                    <div class="text-sm font-medium">{{ silentCount }}</div>
+                    <div class="text-xs leading-tight text-slate-500">
+                        Activos sin eventos
+                    </div>
+                    <div class="truncate text-[11px] text-slate-400">
+                        Nunca han recibido nada
+                    </div>
+                </div>
             </div>
-            <p
-                class="border-t border-dashed border-slate-300/70 px-4 py-2.5 text-[11px] text-slate-400 dark:border-darkmode-400"
+            <div
+                class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
             >
-                Apagar un canal no desconecta lo que el hotel ya tenga
-                funcionando: eso se sigue viendo en su panel y aquí abajo.
-            </p>
+                <div
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
+                    :class="
+                        metaConfig.mode === 'production'
+                            ? 'border-success/10 bg-success/10 text-success'
+                            : 'border-warning/10 bg-warning/10 text-warning'
+                    "
+                >
+                    <Lucide icon="Webhook" class="h-4 w-4" />
+                </div>
+                <div class="min-w-0">
+                    <div class="text-sm font-medium">
+                        {{
+                            metaConfig.mode === 'production'
+                                ? 'Producción'
+                                : 'Prueba'
+                        }}
+                    </div>
+                    <div class="text-xs leading-tight text-slate-500">
+                        Entorno de Meta
+                    </div>
+                </div>
+            </div>
+            <div
+                class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+            >
+                <div
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                >
+                    <Lucide icon="AppWindow" class="h-4 w-4" />
+                </div>
+                <div class="min-w-0">
+                    <div class="truncate text-sm font-medium">
+                        {{ metaApp ? 'Propia' : 'De la plataforma' }}
+                    </div>
+                    <div class="text-xs leading-tight text-slate-500">
+                        App de Meta
+                    </div>
+                </div>
+            </div>
         </div>
 
-        <div class="mt-5">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <div class="flex flex-wrap items-center gap-2">
-                        <h2 class="text-base font-medium">
-                            Canales de mensajería
-                        </h2>
-                        <span
-                            class="rounded-full px-2 py-0.5 text-xs font-medium"
-                            :class="
-                                metaConfig.mode === 'production'
-                                    ? 'bg-success/10 text-success'
-                                    : 'bg-warning/10 text-warning'
-                            "
-                        >
-                            {{
-                                metaConfig.mode === 'production'
-                                    ? 'Producción'
-                                    : 'Entorno de prueba'
-                            }}
-                        </span>
-                    </div>
-                    <p class="text-sm text-slate-500">
-                        WhatsApp, Messenger, Instagram, Telegram y TikTok
-                        conectados a este hotel
+        <!-- Canales conectados -->
+        <div class="box box--stacked mt-4">
+            <div
+                class="flex items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+            >
+                <div
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                >
+                    <Lucide icon="MessagesSquare" class="h-4 w-4" />
+                </div>
+                <div class="min-w-0 flex-1">
+                    <h2 class="text-sm font-medium">Canales conectados</h2>
+                    <p class="text-xs text-slate-500">
+                        Lo que llega por aquí entra a la bandeja del hotel.
                     </p>
                 </div>
-                <div class="flex flex-wrap items-center gap-2">
-                    <Menu>
-                        <Menu.Button
-                            :as="Button"
-                            variant="primary"
-                            class="rounded-[0.5rem] shadow-md shadow-primary/20"
+                <Menu>
+                    <Menu.Button
+                        :as="Button"
+                        variant="primary"
+                        class="h-9 shrink-0 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                    >
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                        Vincular canal
+                        <Lucide icon="ChevronDown" class="ml-1.5 h-3.5 w-3.5" />
+                    </Menu.Button>
+                    <Menu.Items class="w-56">
+                        <Menu.Item
+                            as="button"
+                            type="button"
+                            @click="openMetaForm()"
                         >
-                            <Lucide
-                                icon="Plus"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
-                            />
-                            Vincular canal
-                            <Lucide
-                                icon="ChevronDown"
-                                class="ml-2 h-4 w-4 stroke-[1.3]"
-                            />
-                        </Menu.Button>
-                        <Menu.Items class="w-56">
-                            <Menu.Item
-                                as="button"
+                            <Lucide icon="MessageCircle" class="mr-2 h-4 w-4" />
+                            Canal Meta (WA, FB, IG)
+                        </Menu.Item>
+                        <Menu.Item
+                            as="button"
+                            type="button"
+                            @click="openTelegramForm()"
+                        >
+                            <Lucide icon="Send" class="mr-2 h-4 w-4" />
+                            Bot de Telegram
+                        </Menu.Item>
+                        <Menu.Item
+                            as="button"
+                            type="button"
+                            @click="openTiktokForm()"
+                        >
+                            <Lucide icon="Music2" class="mr-2 h-4 w-4" />
+                            Cuenta de TikTok
+                        </Menu.Item>
+                    </Menu.Items>
+                </Menu>
+            </div>
+
+            <div
+                v-if="channelCount()"
+                class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+            >
+                <div
+                    v-for="row in rows"
+                    :key="row.key"
+                    class="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:px-5"
+                >
+                    <div class="flex min-w-0 flex-1 items-center gap-3">
+                        <div
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+                            :class="
+                                row.active
+                                    ? row.tone
+                                    : 'bg-slate-100 text-slate-400 dark:bg-darkmode-400'
+                            "
+                        >
+                            <Lucide :icon="row.icon" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                <span class="truncate text-sm font-medium">{{
+                                    row.title
+                                }}</span>
+                                <span
+                                    class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-400"
+                                    >{{ row.badge }}</span
+                                >
+                                <span
+                                    class="inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                    :class="
+                                        row.active
+                                            ? 'bg-success/10 text-success'
+                                            : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                    "
+                                >
+                                    <span
+                                        class="h-1.5 w-1.5 rounded-full"
+                                        :class="
+                                            row.active
+                                                ? 'bg-success'
+                                                : 'bg-slate-400'
+                                        "
+                                    />
+                                    {{ row.active ? 'Activo' : 'Pausado' }}
+                                </span>
+                            </div>
+                            <div
+                                class="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-3 text-[11px] text-slate-400"
+                            >
+                                <span class="truncate font-mono">{{
+                                    row.detail
+                                }}</span>
+                                <span
+                                    class="inline-flex items-center gap-1"
+                                    :class="
+                                        row.last_event_at
+                                            ? 'text-slate-500'
+                                            : row.active
+                                              ? 'text-warning'
+                                              : ''
+                                    "
+                                >
+                                    <Lucide icon="Activity" class="h-3 w-3" />
+                                    {{
+                                        row.last_event_at
+                                            ? `Último evento hace ${row.last_event_at}`
+                                            : 'Sin eventos recibidos'
+                                    }}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div
+                        class="flex items-center justify-end gap-0.5 pl-12 sm:pl-0"
+                    >
+                        <template v-if="row.kind === 'evolution'">
+                            <span
+                                class="inline-flex items-center gap-1 text-[11px] text-slate-400"
+                                title="La conectó el hotel desde su panel de Asistente"
+                            >
+                                <Lucide icon="Info" class="h-3.5 w-3.5" />
+                                La gestiona el hotel
+                            </span>
+                        </template>
+                        <template v-else>
+                            <button
+                                v-if="row.webhook_url"
                                 type="button"
-                                @click="openMetaForm()"
+                                :title="
+                                    copiedField === row.key
+                                        ? 'Copiado'
+                                        : 'Copiar la URL del webhook'
+                                "
+                                :class="ghostButton"
+                                @click="copyMeta(row.key, row.webhook_url)"
                             >
                                 <Lucide
-                                    icon="MessageCircle"
-                                    class="mr-2 h-4 w-4"
+                                    :icon="
+                                        copiedField === row.key
+                                            ? 'Check'
+                                            : 'Link'
+                                    "
+                                    class="h-4 w-4"
+                                    :class="{
+                                        'text-success': copiedField === row.key,
+                                    }"
                                 />
-                                Canal Meta (WA/FB/IG)
-                            </Menu.Item>
-                            <Menu.Item
-                                as="button"
+                            </button>
+                            <button
                                 type="button"
-                                @click="openTelegramForm()"
+                                title="Editar canal"
+                                :class="ghostButton"
+                                @click="editRow(row)"
                             >
-                                <Lucide icon="Send" class="mr-2 h-4 w-4" />
-                                Bot de Telegram
-                            </Menu.Item>
-                            <Menu.Item
-                                as="button"
+                                <Lucide icon="Pencil" class="h-4 w-4" />
+                            </button>
+                            <button
                                 type="button"
-                                @click="openTiktokForm()"
+                                :title="
+                                    row.kind === 'meta'
+                                        ? 'Diagnosticar con Meta'
+                                        : 'Probar conexión'
+                                "
+                                :class="ghostButton"
+                                :disabled="testingChannel === row.key"
+                                @click="testRow(row)"
                             >
-                                <Lucide icon="Music2" class="mr-2 h-4 w-4" />
-                                Cuenta de TikTok
-                            </Menu.Item>
-                        </Menu.Items>
-                    </Menu>
+                                <Lucide
+                                    :icon="
+                                        testingChannel === row.key
+                                            ? 'RefreshCw'
+                                            : 'Stethoscope'
+                                    "
+                                    class="h-4 w-4"
+                                    :class="{
+                                        'animate-spin':
+                                            testingChannel === row.key,
+                                    }"
+                                />
+                            </button>
+                            <button
+                                v-if="row.kind === 'meta'"
+                                type="button"
+                                title="Reparar la suscripción del webhook"
+                                :class="ghostButton"
+                                :disabled="resubscribing === row.id"
+                                @click="resubscribe(row.raw as MetaLinkRow)"
+                            >
+                                <Lucide
+                                    :icon="
+                                        resubscribing === row.id
+                                            ? 'RefreshCw'
+                                            : 'Wrench'
+                                    "
+                                    class="h-4 w-4"
+                                    :class="{
+                                        'animate-spin':
+                                            resubscribing === row.id,
+                                    }"
+                                />
+                            </button>
+                            <FormSwitch
+                                class="mx-1.5 shrink-0"
+                                :title="
+                                    row.active
+                                        ? 'Pausar: deja de recibir mensajes'
+                                        : 'Reactivar'
+                                "
+                            >
+                                <FormSwitch.Input
+                                    :checked="row.active"
+                                    type="checkbox"
+                                    :disabled="togglingKey === row.key"
+                                    @click.prevent="toggleRow(row)"
+                                />
+                            </FormSwitch>
+                            <button
+                                type="button"
+                                title="Desvincular"
+                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                @click="unlinking = row"
+                            >
+                                <Lucide icon="Trash2" class="h-4 w-4" />
+                            </button>
+                        </template>
+                    </div>
                 </div>
             </div>
 
-            <div class="mt-5 grid grid-cols-12 gap-5">
-                <!-- Config del webhook -->
-                <div class="col-span-12">
-                    <div class="box box--stacked flex flex-col p-5">
-                        <div
-                            class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                        >
-                            <Lucide icon="Webhook" class="h-3.5 w-3.5" />
-                            Configuración en developers.facebook.com
-                        </div>
-                        <div
-                            class="grid grid-cols-1 gap-3 text-sm sm:grid-cols-2"
-                        >
-                            <div>
-                                <div class="mb-1 text-xs text-slate-500">
-                                    URL del webhook (Callback URL)
-                                </div>
-                                <button
-                                    type="button"
-                                    class="flex w-full items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-left font-mono text-xs text-slate-200"
-                                    title="Copiar"
-                                    @click="
-                                        copyMeta('url', metaConfig.webhook_url)
-                                    "
-                                >
-                                    <span class="min-w-0 flex-1 truncate">{{
-                                        metaConfig.webhook_url
-                                    }}</span>
-                                    <Lucide
-                                        :icon="
-                                            copiedField === 'url'
-                                                ? 'Check'
-                                                : 'Copy'
-                                        "
-                                        class="h-3.5 w-3.5 shrink-0"
-                                        :class="{
-                                            'text-success':
-                                                copiedField === 'url',
-                                        }"
-                                    />
-                                </button>
-                            </div>
-                            <div>
-                                <div class="mb-1 text-xs text-slate-500">
-                                    Verify token
-                                </div>
-                                <button
-                                    type="button"
-                                    class="flex w-full items-center gap-2 rounded-lg bg-slate-800 px-3 py-2 text-left font-mono text-xs text-slate-200"
-                                    title="Copiar"
-                                    @click="
-                                        copyMeta(
-                                            'token',
-                                            metaConfig.verify_token,
-                                        )
-                                    "
-                                >
-                                    <span class="min-w-0 flex-1 truncate">{{
-                                        metaConfig.verify_token
-                                    }}</span>
-                                    <Lucide
-                                        :icon="
-                                            copiedField === 'token'
-                                                ? 'Check'
-                                                : 'Copy'
-                                        "
-                                        class="h-3.5 w-3.5 shrink-0"
-                                        :class="{
-                                            'text-success':
-                                                copiedField === 'token',
-                                        }"
-                                    />
-                                </button>
-                            </div>
-                        </div>
-                        <div
-                            class="mt-4 flex items-start gap-2 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3 py-2.5 text-xs text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700"
-                        >
-                            <Lucide
-                                icon="Info"
-                                class="mt-0.5 h-4 w-4 shrink-0 text-primary"
-                            />
-                            <span>
-                                Pega ambos en Webhooks de tu app de Meta y
-                                suscribe el campo "messages". En entorno de
-                                prueba usa el número de prueba de WhatsApp Cloud
-                                API (gratis, hasta 5 destinos verificados).
-                                <span
-                                    v-if="!metaConfig.app_configured"
-                                    class="font-medium text-warning"
-                                    >Falta META_APP_ID/SECRET en el .env — la
-                                    firma no se valida.</span
-                                >
-                            </span>
-                        </div>
-                    </div>
+            <div
+                v-else
+                class="flex flex-col items-center gap-2 px-4 py-10 text-center"
+            >
+                <div
+                    class="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
+                >
+                    <Lucide icon="MessageSquareDashed" class="h-4 w-4" />
                 </div>
+                <p class="text-xs text-slate-500">
+                    Este hotel no tiene canales conectados todavía.
+                </p>
+                <p class="max-w-sm text-[11px] text-slate-400">
+                    WhatsApp por Evolution lo conecta el hotel desde su propio
+                    panel; Meta, Telegram y TikTok se vinculan desde aquí.
+                </p>
+            </div>
+        </div>
 
-                <!-- Canales del hotel -->
-                <div class="col-span-12">
-                    <div class="box box--stacked flex flex-col">
+        <div class="mt-4 grid grid-cols-12 items-stretch gap-5">
+            <!-- Qué puede conectar el hotel desde su panel -->
+            <div class="col-span-12 flex flex-col xl:col-span-5">
+                <div class="box box--stacked flex flex-1 flex-col">
+                    <div
+                        class="flex items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                    >
                         <div
-                            class="flex flex-wrap items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
                         >
-                            <Lucide
-                                icon="MessagesSquare"
-                                class="h-4 w-4 stroke-[1.5] text-primary"
-                            />
-                            <h2 class="text-base font-medium">
-                                Canales conectados
+                            <Lucide icon="ToggleRight" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-sm font-medium">
+                                Qué puede conectar el hotel
                             </h2>
-                            <span
-                                class="ml-auto rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
-                            >
-                                {{ channelCount() }}
-                                {{ channelCount() === 1 ? 'canal' : 'canales' }}
-                            </span>
-                        </div>
-
-                        <div
-                            v-if="channelCount()"
-                            class="divide-y divide-dashed divide-slate-300/70 px-5 py-2"
-                        >
-                            <!-- Canales Meta -->
-                            <div
-                                v-for="link in meta"
-                                :key="`meta-${link.id}`"
-                                class="flex items-center gap-3 py-3"
-                                :class="{ 'opacity-60': !link.active }"
-                            >
-                                <div
-                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
-                                    :class="
-                                        metaTypeMeta[link.type]?.tone ??
-                                        'bg-slate-100 text-slate-500'
-                                    "
-                                >
-                                    <Lucide
-                                        :icon="
-                                            (metaTypeMeta[link.type]
-                                                ?.icon as any) ??
-                                            'MessageCircle'
-                                        "
-                                        class="h-4 w-4"
-                                    />
-                                </div>
-                                <div class="min-w-0 flex-1">
-                                    <div
-                                        class="flex flex-wrap items-center gap-2"
-                                    >
-                                        <span
-                                            class="truncate text-sm font-medium"
-                                            >{{
-                                                link.name || link.type_label
-                                            }}</span
-                                        >
-                                        <span
-                                            class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                                            :class="
-                                                link.active
-                                                    ? 'bg-success/10 text-success'
-                                                    : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
-                                            "
-                                        >
-                                            {{
-                                                link.active
-                                                    ? 'Activo'
-                                                    : 'Pausado'
-                                            }}
-                                        </span>
-                                    </div>
-                                    <div
-                                        class="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-slate-400"
-                                    >
-                                        <span class="truncate">{{
-                                            link.external_id
-                                        }}</span>
-                                        <span>{{ link.masked_token }}</span>
-                                    </div>
-                                    <div
-                                        class="mt-0.5 flex items-center gap-1 text-[10px]"
-                                        :class="
-                                            link.last_event_at
-                                                ? 'text-slate-500'
-                                                : 'text-slate-400'
-                                        "
-                                    >
-                                        <Lucide
-                                            icon="Activity"
-                                            class="h-3 w-3 shrink-0"
-                                        />
-                                        <span>{{
-                                            link.last_event_at
-                                                ? `Último evento hace ${link.last_event_at}`
-                                                : 'Sin eventos recibidos'
-                                        }}</span>
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    title="Editar canal"
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
-                                    @click="openMetaEdit(link)"
-                                >
-                                    <Lucide icon="Pencil" class="h-4 w-4" />
-                                </button>
-                                <button
-                                    type="button"
-                                    title="Diagnosticar"
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
-                                    @click="openDiagnose(link)"
-                                >
-                                    <Lucide
-                                        icon="Stethoscope"
-                                        class="h-4 w-4"
-                                    />
-                                </button>
-                                <button
-                                    type="button"
-                                    title="Reparar suscripción"
-                                    :disabled="resubscribing === link.id"
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary disabled:pointer-events-none disabled:opacity-50"
-                                    @click="resubscribe(link)"
-                                >
-                                    <Lucide
-                                        :icon="
-                                            resubscribing === link.id
-                                                ? 'RefreshCw'
-                                                : 'Wrench'
-                                        "
-                                        class="h-4 w-4"
-                                        :class="{
-                                            'animate-spin':
-                                                resubscribing === link.id,
-                                        }"
-                                    />
-                                </button>
-                                <FormSwitch
-                                    class="shrink-0"
-                                    title="Activar o pausar"
-                                >
-                                    <FormSwitch.Input
-                                        :checked="link.active"
-                                        type="checkbox"
-                                        @change="toggleMetaLink(link)"
-                                    />
-                                </FormSwitch>
-                                <button
-                                    type="button"
-                                    title="Desvincular"
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                    @click="deleteMetaLink(link)"
-                                >
-                                    <Lucide icon="Trash2" class="h-4 w-4" />
-                                </button>
-                            </div>
-
-                            <!-- Canales Evolution (los gestiona el hotel) -->
-                            <div
-                                v-for="evo in evolution"
-                                :key="`evo-${evo.id}`"
-                                class="flex items-center gap-3 py-3"
-                                :class="{ 'opacity-60': !evo.active }"
-                                title="Conectada por el hotel en su panel /asistente"
-                            >
-                                <div
-                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
-                                >
-                                    <Lucide
-                                        icon="MessageCircle"
-                                        class="h-4 w-4"
-                                    />
-                                </div>
-                                <div class="min-w-0 flex-1">
-                                    <div
-                                        class="flex flex-wrap items-center gap-2"
-                                    >
-                                        <span
-                                            class="truncate text-sm font-medium"
-                                            >{{
-                                                evo.name ||
-                                                `WhatsApp ${evo.instance}`
-                                            }}</span
-                                        >
-                                        <span
-                                            class="shrink-0 rounded-full bg-info/10 px-2 py-0.5 text-[10px] font-medium text-info"
-                                            >Evolution</span
-                                        >
-                                        <span
-                                            class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                                            :class="
-                                                evo.active
-                                                    ? 'bg-success/10 text-success'
-                                                    : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
-                                            "
-                                        >
-                                            {{
-                                                evo.active
-                                                    ? 'Activo'
-                                                    : 'Pausado'
-                                            }}
-                                        </span>
-                                    </div>
-                                    <div
-                                        class="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-slate-400"
-                                    >
-                                        <span class="truncate">{{
-                                            evo.base_url
-                                        }}</span>
-                                        <span>{{ evo.instance }}</span>
-                                    </div>
-                                    <div
-                                        class="mt-0.5 flex items-center gap-1 text-[10px]"
-                                        :class="
-                                            evo.last_event_at
-                                                ? 'text-slate-500'
-                                                : 'text-slate-400'
-                                        "
-                                    >
-                                        <Lucide
-                                            icon="Activity"
-                                            class="h-3 w-3 shrink-0"
-                                        />
-                                        <span>{{
-                                            evo.last_event_at
-                                                ? `Último evento hace ${evo.last_event_at}`
-                                                : 'Sin eventos recibidos'
-                                        }}</span>
-                                    </div>
-                                </div>
-                                <span
-                                    class="flex items-center gap-1 text-xs text-slate-400"
-                                    title="Conectada por el hotel en su panel /asistente"
-                                >
-                                    <Lucide icon="Info" class="h-3.5 w-3.5" />
-                                    Gestionada por el hotel
-                                </span>
-                            </div>
-
-                            <!-- Canales Telegram -->
-                            <div
-                                v-for="link in telegram"
-                                :key="`tg-${link.id}`"
-                                class="flex items-center gap-3 py-3"
-                                :class="{ 'opacity-60': !link.active }"
-                            >
-                                <div
-                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
-                                >
-                                    <Lucide icon="Send" class="h-4 w-4" />
-                                </div>
-                                <div class="min-w-0 flex-1">
-                                    <div
-                                        class="flex flex-wrap items-center gap-2"
-                                    >
-                                        <span
-                                            class="truncate text-sm font-medium"
-                                            >{{
-                                                link.name ||
-                                                (link.bot_username
-                                                    ? `Telegram @${link.bot_username}`
-                                                    : 'Telegram')
-                                            }}</span
-                                        >
-                                        <span
-                                            class="shrink-0 rounded-full bg-info/10 px-2 py-0.5 text-[10px] font-medium text-info"
-                                            >Telegram</span
-                                        >
-                                        <span
-                                            class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                                            :class="
-                                                link.active
-                                                    ? 'bg-success/10 text-success'
-                                                    : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
-                                            "
-                                        >
-                                            {{
-                                                link.active
-                                                    ? 'Activo'
-                                                    : 'Pausado'
-                                            }}
-                                        </span>
-                                    </div>
-                                    <div
-                                        class="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-slate-400"
-                                    >
-                                        <span
-                                            v-if="link.bot_username"
-                                            class="truncate"
-                                            >@{{ link.bot_username }}</span
-                                        >
-                                        <span>{{ link.masked_token }}</span>
-                                    </div>
-                                    <div
-                                        class="mt-0.5 flex items-center gap-1 text-[10px]"
-                                        :class="
-                                            link.last_event_at
-                                                ? 'text-slate-500'
-                                                : 'text-slate-400'
-                                        "
-                                    >
-                                        <Lucide
-                                            icon="Activity"
-                                            class="h-3 w-3 shrink-0"
-                                        />
-                                        <span>{{
-                                            link.last_event_at
-                                                ? `Último evento hace ${link.last_event_at}`
-                                                : 'Sin eventos recibidos'
-                                        }}</span>
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    title="Editar canal"
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
-                                    @click="openTelegramForm(link)"
-                                >
-                                    <Lucide icon="Pencil" class="h-4 w-4" />
-                                </button>
-                                <button
-                                    type="button"
-                                    title="Probar conexión"
-                                    :disabled="
-                                        testingChannel === `telegram-${link.id}`
-                                    "
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary disabled:pointer-events-none disabled:opacity-50"
-                                    @click="testTelegram(link)"
-                                >
-                                    <Lucide
-                                        :icon="
-                                            testingChannel ===
-                                            `telegram-${link.id}`
-                                                ? 'RefreshCw'
-                                                : 'Stethoscope'
-                                        "
-                                        class="h-4 w-4"
-                                        :class="{
-                                            'animate-spin':
-                                                testingChannel ===
-                                                `telegram-${link.id}`,
-                                        }"
-                                    />
-                                </button>
-                                <FormSwitch
-                                    class="shrink-0"
-                                    title="Activar o pausar"
-                                >
-                                    <FormSwitch.Input
-                                        :checked="link.active"
-                                        type="checkbox"
-                                        @change="toggleTelegram(link)"
-                                    />
-                                </FormSwitch>
-                                <button
-                                    type="button"
-                                    title="Desvincular"
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                    @click="deleteTelegram(link)"
-                                >
-                                    <Lucide icon="Trash2" class="h-4 w-4" />
-                                </button>
-                            </div>
-
-                            <!-- Canales TikTok -->
-                            <div
-                                v-for="link in tiktok"
-                                :key="`tt-${link.id}`"
-                                class="flex items-center gap-3 py-3"
-                                :class="{ 'opacity-60': !link.active }"
-                            >
-                                <div
-                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-dark/10 text-dark dark:text-slate-300"
-                                >
-                                    <Lucide icon="Music2" class="h-4 w-4" />
-                                </div>
-                                <div class="min-w-0 flex-1">
-                                    <div
-                                        class="flex flex-wrap items-center gap-2"
-                                    >
-                                        <span
-                                            class="truncate text-sm font-medium"
-                                            >{{ link.name || 'TikTok' }}</span
-                                        >
-                                        <span
-                                            class="shrink-0 rounded-full bg-dark/10 px-2 py-0.5 text-[10px] font-medium text-dark dark:text-slate-300"
-                                            >TikTok</span
-                                        >
-                                        <span
-                                            class="shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium"
-                                            :class="
-                                                link.active
-                                                    ? 'bg-success/10 text-success'
-                                                    : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
-                                            "
-                                        >
-                                            {{
-                                                link.active
-                                                    ? 'Activo'
-                                                    : 'Pausado'
-                                            }}
-                                        </span>
-                                    </div>
-                                    <div
-                                        class="mt-0.5 flex items-center gap-2 font-mono text-[10px] text-slate-400"
-                                    >
-                                        <span class="truncate">{{
-                                            link.business_id
-                                        }}</span>
-                                        <span>{{ link.masked_token }}</span>
-                                    </div>
-                                    <div
-                                        class="mt-0.5 flex items-center gap-1 text-[10px]"
-                                        :class="
-                                            link.last_event_at
-                                                ? 'text-slate-500'
-                                                : 'text-slate-400'
-                                        "
-                                    >
-                                        <Lucide
-                                            icon="Activity"
-                                            class="h-3 w-3 shrink-0"
-                                        />
-                                        <span>{{
-                                            link.last_event_at
-                                                ? `Último evento hace ${link.last_event_at}`
-                                                : 'Sin eventos recibidos'
-                                        }}</span>
-                                    </div>
-                                </div>
-                                <button
-                                    type="button"
-                                    title="Editar canal"
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
-                                    @click="openTiktokForm(link)"
-                                >
-                                    <Lucide icon="Pencil" class="h-4 w-4" />
-                                </button>
-                                <button
-                                    type="button"
-                                    title="Probar conexión"
-                                    :disabled="
-                                        testingChannel === `tiktok-${link.id}`
-                                    "
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary disabled:pointer-events-none disabled:opacity-50"
-                                    @click="testTiktok(link)"
-                                >
-                                    <Lucide
-                                        :icon="
-                                            testingChannel ===
-                                            `tiktok-${link.id}`
-                                                ? 'RefreshCw'
-                                                : 'Stethoscope'
-                                        "
-                                        class="h-4 w-4"
-                                        :class="{
-                                            'animate-spin':
-                                                testingChannel ===
-                                                `tiktok-${link.id}`,
-                                        }"
-                                    />
-                                </button>
-                                <FormSwitch
-                                    class="shrink-0"
-                                    title="Activar o pausar"
-                                >
-                                    <FormSwitch.Input
-                                        :checked="link.active"
-                                        type="checkbox"
-                                        @change="toggleTiktok(link)"
-                                    />
-                                </FormSwitch>
-                                <button
-                                    type="button"
-                                    title="Desvincular"
-                                    class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                    @click="deleteTiktok(link)"
-                                >
-                                    <Lucide icon="Trash2" class="h-4 w-4" />
-                                </button>
-                            </div>
-                        </div>
-
-                        <div
-                            v-else
-                            class="flex flex-col items-center gap-3 px-5 py-10 text-center"
-                        >
-                            <Lucide
-                                icon="MessageSquareDashed"
-                                class="h-8 w-8 text-slate-300"
-                            />
-                            <span class="text-sm text-slate-400"
-                                >Este hotel no tiene canales conectados
-                                todavía.</span
-                            >
-                            <Button
-                                variant="outline-primary"
-                                size="sm"
-                                class="rounded-[0.5rem] bg-white"
-                                @click="openMetaForm()"
-                            >
-                                <Lucide
-                                    icon="Plus"
-                                    class="mr-1.5 h-3.5 w-3.5"
-                                />
-                                Vincular canal Meta
-                            </Button>
-                            <p class="text-xs text-slate-400">
-                                Los canales de WhatsApp por Evolution los
-                                conecta el hotel desde su propio panel.
+                            <p class="text-xs text-slate-500">
+                                Solo estos aparecen en su panel de Asistente.
                             </p>
                         </div>
+                        <span
+                            v-if="savingChannels"
+                            class="text-[11px] text-slate-400"
+                            >Guardando...</span
+                        >
+                    </div>
+                    <div
+                        class="flex-1 divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                    >
+                        <div
+                            v-for="channel in channelCatalog"
+                            :key="channel.key"
+                            class="flex items-center justify-between gap-3 px-4 py-2.5"
+                        >
+                            <span class="text-xs font-medium">{{
+                                channel.label
+                            }}</span>
+                            <FormSwitch>
+                                <FormSwitch.Input
+                                    :checked="
+                                        allowedChannels.includes(channel.key)
+                                    "
+                                    type="checkbox"
+                                    :disabled="savingChannels"
+                                    @click.prevent="
+                                        toggleAllowedChannel(channel.key)
+                                    "
+                                />
+                            </FormSwitch>
+                        </div>
+                    </div>
+                    <p
+                        class="border-t border-slate-200/60 px-4 py-2.5 text-[11px] text-slate-400 dark:border-darkmode-400"
+                    >
+                        Apagar uno no desconecta lo que el hotel ya tenga
+                        funcionando.
+                    </p>
+                </div>
+            </div>
+
+            <!-- App de Meta y webhook -->
+            <div class="col-span-12 flex flex-col xl:col-span-7">
+                <div class="box box--stacked flex flex-1 flex-col">
+                    <div
+                        class="flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                        >
+                            <Lucide icon="AppWindow" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-sm font-medium">
+                                App de Meta y webhook
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                {{
+                                    metaApp
+                                        ? 'Usa su app propia: firma y canjea por separado.'
+                                        : 'Usa la app de la plataforma.'
+                                }}
+                            </p>
+                        </div>
+                        <div class="flex shrink-0 gap-2">
+                            <Button
+                                v-if="metaApp"
+                                variant="outline-secondary"
+                                class="h-8 rounded-[0.5rem] text-xs"
+                                @click="confirmAppRemoval = true"
+                            >
+                                Usar la de plataforma
+                            </Button>
+                            <Button
+                                variant="outline-primary"
+                                class="h-8 rounded-[0.5rem] text-xs"
+                                @click="openAppForm"
+                            >
+                                <Lucide
+                                    :icon="metaApp ? 'Pencil' : 'Plus'"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                {{ metaApp ? 'Editar app' : 'App propia' }}
+                            </Button>
+                        </div>
+                    </div>
+                    <div class="flex flex-1 flex-col gap-3 px-4 py-3 text-xs">
+                        <div
+                            class="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-slate-50 px-3 py-2 dark:bg-darkmode-600/40"
+                        >
+                            <template v-if="metaApp">
+                                <span
+                                    >App
+                                    <span class="font-medium">{{
+                                        metaApp.name || metaApp.app_id
+                                    }}</span></span
+                                >
+                                <span class="font-mono text-slate-500"
+                                    >ID {{ metaApp.app_id }}</span
+                                >
+                                <span class="font-mono text-slate-500"
+                                    >clave {{ metaApp.masked_app_secret }}</span
+                                >
+                                <span
+                                    v-if="metaApp.login_config_id"
+                                    class="font-mono text-slate-500"
+                                    >registro
+                                    {{ metaApp.login_config_id }}</span
+                                >
+                            </template>
+                            <span v-else class="text-slate-500"
+                                >App de la plataforma
+                                <span class="font-mono">{{
+                                    platformAppId || 'sin configurar'
+                                }}</span></span
+                            >
+                        </div>
+                        <div class="grid gap-3 sm:grid-cols-2">
+                            <div
+                                v-for="field in [
+                                    {
+                                        key: 'url',
+                                        label: 'URL del webhook',
+                                        value: metaConfig.webhook_url,
+                                    },
+                                    {
+                                        key: 'token',
+                                        label: 'Verify token',
+                                        value: metaConfig.verify_token,
+                                    },
+                                ]"
+                                :key="field.key"
+                                class="min-w-0"
+                            >
+                                <div class="mb-1 text-[11px] text-slate-500">
+                                    {{ field.label }}
+                                </div>
+                                <button
+                                    type="button"
+                                    class="flex h-9 w-full items-center gap-2 rounded-[0.5rem] bg-slate-800 px-3 text-left font-mono text-[11px] text-slate-200 transition hover:bg-slate-700"
+                                    title="Copiar"
+                                    @click="copyMeta(field.key, field.value)"
+                                >
+                                    <span class="min-w-0 flex-1 truncate">{{
+                                        field.value
+                                    }}</span>
+                                    <Lucide
+                                        :icon="
+                                            copiedField === field.key
+                                                ? 'Check'
+                                                : 'Copy'
+                                        "
+                                        class="h-3.5 w-3.5 shrink-0"
+                                        :class="{
+                                            'text-success':
+                                                copiedField === field.key,
+                                        }"
+                                    />
+                                </button>
+                            </div>
+                        </div>
+                        <p class="mt-auto text-[11px] text-slate-400">
+                            Pega los dos en Webhooks de la app de Meta y
+                            suscribe el campo "messages". Es la misma URL para
+                            la app propia y la de la plataforma.
+                            <span
+                                v-if="!metaConfig.app_configured"
+                                class="font-medium text-warning"
+                                >Falta META_APP_ID y SECRET en el .env: la firma
+                                no se valida.</span
+                            >
+                        </p>
                     </div>
                 </div>
             </div>
         </div>
-
         <!-- Modal vincular canal Meta -->
         <Dialog :open="showMetaForm" @close="showMetaForm = false">
             <Dialog.Panel>
-                <form class="flex flex-col" @submit.prevent="submitMetaLink">
+                <form
+                    class="flex max-h-[calc(100dvh-6rem)] flex-col"
+                    @submit.prevent="submitMetaLink"
+                >
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
                             :class="
                                 metaTypeMeta[metaForm.type]?.tone ??
                                 'bg-primary/10 text-primary'
@@ -1481,7 +1343,7 @@ async function testTiktok(link: TiktokRow) {
                                     (metaTypeMeta[metaForm.type]
                                         ?.icon as any) ?? 'Share2'
                                 "
-                                class="h-5 w-5"
+                                class="h-4 w-4"
                             />
                         </div>
                         <div class="min-w-0 flex-1">
@@ -1498,27 +1360,34 @@ async function testTiktok(link: TiktokRow) {
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                             @click="showMetaForm = false"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
-                    <div class="space-y-4 px-6 py-5">
+                    <div
+                        class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4"
+                    >
                         <div>
-                            <label class="mb-1 block text-sm">Canal</label>
-                            <FormSelect v-model="metaForm.type">
+                            <label class="mb-1.5 block text-xs font-medium"
+                                >Canal</label
+                            >
+                            <FormSelect
+                                class="h-9 text-xs"
+                                v-model="metaForm.type"
+                            >
                                 <option value="whatsapp">WhatsApp</option>
                                 <option value="messenger">Messenger</option>
                                 <option value="instagram">Instagram</option>
                             </FormSelect>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm">{{
+                            <label class="mb-1.5 block text-xs font-medium">{{
                                 metaTypeMeta[metaForm.type]?.idLabel ??
                                 'ID externo'
                             }}</label>
                             <FormInput
                                 v-model="metaForm.external_id"
                                 type="text"
-                                class="font-mono"
+                                class="h-9 font-mono text-xs"
                                 placeholder="1055XXXXXXXXXXX"
                             />
                             <p class="mt-1 text-xs text-slate-400">
@@ -1529,7 +1398,7 @@ async function testTiktok(link: TiktokRow) {
                             </p>
                         </div>
                         <div v-if="metaForm.type !== 'messenger'">
-                            <label class="mb-1 block text-sm">{{
+                            <label class="mb-1.5 block text-xs font-medium">{{
                                 metaForm.type === 'instagram'
                                     ? 'Page ID de la página de Facebook vinculada'
                                     : 'WhatsApp Business Account ID (opcional)'
@@ -1537,7 +1406,7 @@ async function testTiktok(link: TiktokRow) {
                             <FormInput
                                 v-model="metaForm.waba_id"
                                 type="text"
-                                class="font-mono"
+                                class="h-9 font-mono text-xs"
                                 placeholder="1042XXXXXXXXXXX"
                             />
                             <FormHelp>
@@ -1549,13 +1418,13 @@ async function testTiktok(link: TiktokRow) {
                             </FormHelp>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Access token</label
                             >
                             <FormInput
                                 v-model="metaForm.access_token"
                                 type="password"
-                                class="font-mono"
+                                class="h-9 font-mono text-xs"
                                 placeholder="EAAG…"
                                 autocomplete="off"
                             />
@@ -1565,10 +1434,11 @@ async function testTiktok(link: TiktokRow) {
                             </p>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Etiqueta (opcional)</label
                             >
                             <FormInput
+                                class="h-9 text-xs"
                                 v-model="metaForm.name"
                                 type="text"
                                 placeholder="WhatsApp prueba"
@@ -1576,15 +1446,16 @@ async function testTiktok(link: TiktokRow) {
                         </div>
                         <p
                             v-if="metaError"
-                            class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                            class="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
                         >
                             {{ metaError }}
                         </p>
                     </div>
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
                         <Button
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             type="button"
                             variant="outline-secondary"
                             @click="showMetaForm = false"
@@ -1593,14 +1464,14 @@ async function testTiktok(link: TiktokRow) {
                         <Button
                             type="submit"
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs shadow-md shadow-primary/20"
                             :disabled="
                                 saving ||
                                 !metaForm.external_id ||
                                 !metaForm.access_token
                             "
                         >
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                             {{ saving ? 'Vinculando…' : 'Vincular' }}
                         </Button>
                     </div>
@@ -1616,20 +1487,20 @@ async function testTiktok(link: TiktokRow) {
             <Dialog.Panel>
                 <form
                     v-if="editingMetaLink"
-                    class="flex flex-col"
+                    class="flex max-h-[calc(100dvh-6rem)] flex-col"
                     @submit.prevent="submitMetaEdit"
                 >
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
                             :class="
                                 metaTypeMeta[editingMetaLink.type]?.tone ??
                                 'bg-primary/10 text-primary'
                             "
                         >
-                            <Lucide icon="Pencil" class="h-5 w-5" />
+                            <Lucide icon="Pencil" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">Editar canal</h2>
@@ -1648,21 +1519,21 @@ async function testTiktok(link: TiktokRow) {
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                             @click="editingMetaLink = null"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
                     <div
-                        class="max-h-[85vh] space-y-4 overflow-y-auto px-6 py-5"
+                        class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4"
                     >
                         <div>
-                            <label class="mb-1 block text-sm">{{
+                            <label class="mb-1.5 block text-xs font-medium">{{
                                 metaTypeMeta[editingMetaLink.type]?.idLabel ??
                                 'ID externo'
                             }}</label>
                             <FormInput
                                 v-model="metaEditForm.external_id"
                                 type="text"
-                                class="font-mono"
+                                class="h-9 font-mono text-xs"
                             />
                             <FormHelp>
                                 {{
@@ -1673,17 +1544,18 @@ async function testTiktok(link: TiktokRow) {
                             </FormHelp>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Nombre (opcional)</label
                             >
                             <FormInput
+                                class="h-9 text-xs"
                                 v-model="metaEditForm.name"
                                 type="text"
                                 placeholder="WhatsApp prueba"
                             />
                         </div>
                         <div v-if="editingMetaLink.type !== 'messenger'">
-                            <label class="mb-1 block text-sm">{{
+                            <label class="mb-1.5 block text-xs font-medium">{{
                                 editingMetaLink.type === 'instagram'
                                     ? 'Page ID de la página de Facebook vinculada (solo ruta vía página)'
                                     : 'WhatsApp Business Account ID'
@@ -1691,7 +1563,7 @@ async function testTiktok(link: TiktokRow) {
                             <FormInput
                                 v-model="metaEditForm.waba_id"
                                 type="text"
-                                class="font-mono"
+                                class="h-9 font-mono text-xs"
                                 placeholder="1042XXXXXXXXXXX"
                             />
                             <FormHelp>
@@ -1703,13 +1575,13 @@ async function testTiktok(link: TiktokRow) {
                             </FormHelp>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Identificador de acceso (token)</label
                             >
                             <FormInput
                                 v-model="metaEditForm.access_token"
                                 type="password"
-                                class="font-mono"
+                                class="h-9 font-mono text-xs"
                                 placeholder="Dejar vacío para conservar el actual"
                                 autocomplete="off"
                             />
@@ -1721,9 +1593,10 @@ async function testTiktok(link: TiktokRow) {
                         </div>
                     </div>
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
                         <Button
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             type="button"
                             variant="outline-secondary"
                             @click="editingMetaLink = null"
@@ -1732,10 +1605,10 @@ async function testTiktok(link: TiktokRow) {
                         <Button
                             type="submit"
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs shadow-md shadow-primary/20"
                             :disabled="saving"
                         >
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                             {{ saving ? 'Guardando…' : 'Guardar' }}
                         </Button>
                     </div>
@@ -1746,14 +1619,17 @@ async function testTiktok(link: TiktokRow) {
         <!-- Modal conectar/editar bot de Telegram -->
         <Dialog :open="showTelegramForm" @close="showTelegramForm = false">
             <Dialog.Panel>
-                <form class="flex flex-col" @submit.prevent="submitTelegram">
+                <form
+                    class="flex max-h-[calc(100dvh-6rem)] flex-col"
+                    @submit.prevent="submitTelegram"
+                >
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
                         >
-                            <Lucide icon="Send" class="h-5 w-5" />
+                            <Lucide icon="Send" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">
@@ -1779,18 +1655,20 @@ async function testTiktok(link: TiktokRow) {
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                             @click="showTelegramForm = false"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
-                    <div class="space-y-4 px-6 py-5">
+                    <div
+                        class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4"
+                    >
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Token del bot</label
                             >
                             <FormInput
                                 v-model="telegramForm.bot_token"
                                 type="password"
-                                class="font-mono"
+                                class="h-9 font-mono text-xs"
                                 :placeholder="
                                     editingTelegram
                                         ? 'Dejar vacío para conservar el actual'
@@ -1805,10 +1683,11 @@ async function testTiktok(link: TiktokRow) {
                             </p>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Etiqueta (opcional)</label
                             >
                             <FormInput
+                                class="h-9 text-xs"
                                 v-model="telegramForm.name"
                                 type="text"
                                 placeholder="Telegram recepción"
@@ -1816,15 +1695,16 @@ async function testTiktok(link: TiktokRow) {
                         </div>
                         <p
                             v-if="telegramError"
-                            class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                            class="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
                         >
                             {{ telegramError }}
                         </p>
                     </div>
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
                         <Button
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             type="button"
                             variant="outline-secondary"
                             @click="showTelegramForm = false"
@@ -1833,13 +1713,13 @@ async function testTiktok(link: TiktokRow) {
                         <Button
                             type="submit"
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs shadow-md shadow-primary/20"
                             :disabled="
                                 saving ||
                                 (!editingTelegram && !telegramForm.bot_token)
                             "
                         >
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 saving
                                     ? 'Guardando…'
@@ -1856,14 +1736,17 @@ async function testTiktok(link: TiktokRow) {
         <!-- Modal conectar/editar cuenta de TikTok -->
         <Dialog :open="showTiktokForm" @close="showTiktokForm = false">
             <Dialog.Panel>
-                <form class="flex flex-col" @submit.prevent="submitTiktok">
+                <form
+                    class="flex max-h-[calc(100dvh-6rem)] flex-col"
+                    @submit.prevent="submitTiktok"
+                >
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-dark/10 text-dark dark:text-slate-300"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-dark/10 text-dark dark:text-slate-300"
                         >
-                            <Lucide icon="Music2" class="h-5 w-5" />
+                            <Lucide icon="Music2" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">
@@ -1883,20 +1766,20 @@ async function testTiktok(link: TiktokRow) {
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                             @click="showTiktokForm = false"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
                     <div
-                        class="max-h-[85vh] space-y-4 overflow-y-auto px-6 py-5"
+                        class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4"
                     >
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >ID de la cuenta business</label
                             >
                             <FormInput
                                 v-model="tiktokForm.business_id"
                                 type="text"
-                                class="font-mono"
+                                class="h-9 font-mono text-xs"
                                 placeholder="74123456789…"
                             />
                             <p class="mt-1 text-xs text-slate-400">
@@ -1905,13 +1788,13 @@ async function testTiktok(link: TiktokRow) {
                             </p>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Access token</label
                             >
                             <FormInput
                                 v-model="tiktokForm.access_token"
                                 type="password"
-                                class="font-mono"
+                                class="h-9 font-mono text-xs"
                                 :placeholder="
                                     editingTiktok
                                         ? 'Dejar vacío para conservar el actual'
@@ -1925,10 +1808,11 @@ async function testTiktok(link: TiktokRow) {
                             </p>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Etiqueta (opcional)</label
                             >
                             <FormInput
+                                class="h-9 text-xs"
                                 v-model="tiktokForm.name"
                                 type="text"
                                 placeholder="TikTok del hotel"
@@ -1946,22 +1830,23 @@ async function testTiktok(link: TiktokRow) {
                                 Webhook del canal (pégalo en el panel de la app
                                 de TikTok):
                                 <span
-                                    class="mt-1 block rounded bg-slate-800 px-2 py-1 font-mono text-[10px] break-all text-slate-200"
+                                    class="mt-1 block rounded bg-slate-800 px-2 py-1 font-mono text-[11px] break-all text-slate-200"
                                     >{{ editingTiktok.webhook_url }}</span
                                 >
                             </span>
                         </div>
                         <p
                             v-if="tiktokError"
-                            class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                            class="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
                         >
                             {{ tiktokError }}
                         </p>
                     </div>
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
                         <Button
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             type="button"
                             variant="outline-secondary"
                             @click="showTiktokForm = false"
@@ -1970,14 +1855,14 @@ async function testTiktok(link: TiktokRow) {
                         <Button
                             type="submit"
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs shadow-md shadow-primary/20"
                             :disabled="
                                 saving ||
                                 !tiktokForm.business_id ||
                                 (!editingTiktok && !tiktokForm.access_token)
                             "
                         >
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 saving
                                     ? 'Guardando…'
@@ -1994,14 +1879,14 @@ async function testTiktok(link: TiktokRow) {
         <!-- Modal diagnóstico de canal -->
         <Dialog :open="diagnosingLink !== null" @close="diagnosingLink = null">
             <Dialog.Panel>
-                <div class="flex flex-col">
+                <div class="flex max-h-[calc(100dvh-6rem)] flex-col">
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
                         >
-                            <Lucide icon="Stethoscope" class="h-5 w-5" />
+                            <Lucide icon="Stethoscope" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">
@@ -2022,10 +1907,10 @@ async function testTiktok(link: TiktokRow) {
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                             @click="diagnosingLink = null"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
-                    <div class="max-h-[85vh] overflow-y-auto px-6 py-5">
+                    <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
                         <div
                             v-if="diagnoseLoading"
                             class="flex items-center justify-center gap-2 py-10 text-sm text-slate-500"
@@ -2038,7 +1923,7 @@ async function testTiktok(link: TiktokRow) {
                         </div>
                         <p
                             v-else-if="diagnoseError"
-                            class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
+                            class="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
                         >
                             {{ diagnoseError }}
                         </p>
@@ -2107,7 +1992,7 @@ async function testTiktok(link: TiktokRow) {
                                         }}</span>
                                         <span
                                             v-if="diagnoseResult.quality"
-                                            class="rounded-full px-2 py-0.5 text-[10px] font-medium"
+                                            class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                             :class="
                                                 qualityMeta[
                                                     diagnoseResult.quality
@@ -2280,7 +2165,7 @@ async function testTiktok(link: TiktokRow) {
                                                 <span
                                                     v-for="field in diagnoseResult.subscribed_fields"
                                                     :key="field"
-                                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+                                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
                                                     >{{ field }}</span
                                                 >
                                                 <span
@@ -2336,9 +2221,10 @@ async function testTiktok(link: TiktokRow) {
                         </div>
                     </div>
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
                         <Button
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             type="button"
                             variant="outline-secondary"
                             @click="diagnosingLink = null"
@@ -2351,7 +2237,7 @@ async function testTiktok(link: TiktokRow) {
                             "
                             type="button"
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs shadow-md shadow-primary/20"
                             :disabled="
                                 resubscribing !== null || diagnoseLoading
                             "
@@ -2359,7 +2245,7 @@ async function testTiktok(link: TiktokRow) {
                                 diagnosingLink && resubscribe(diagnosingLink)
                             "
                         >
-                            <Lucide icon="Wrench" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Wrench" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 resubscribing !== null
                                     ? 'Reparando…'
@@ -2374,12 +2260,12 @@ async function testTiktok(link: TiktokRow) {
         <!-- Modal app de Meta propia del hotel -->
         <Dialog :open="showAppForm" @close="showAppForm = false">
             <Dialog.Panel>
-                <form class="p-6" @submit.prevent="submitApp">
-                    <div class="mb-4 flex items-center gap-3.5">
+                <form class="p-5" @submit.prevent="submitApp">
+                    <div class="mb-4 flex items-center gap-3">
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
                         >
-                            <Lucide icon="AppWindow" class="h-5 w-5" />
+                            <Lucide icon="AppWindow" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">
@@ -2404,20 +2290,22 @@ async function testTiktok(link: TiktokRow) {
                     </div>
                     <div class="space-y-4">
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Nombre (opcional)</label
                             >
                             <FormInput
+                                class="h-9 text-xs"
                                 v-model="appForm.name"
                                 type="text"
                                 placeholder="App Real de la Sierra"
                             />
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Identificador de la aplicacion (app_id)</label
                             >
                             <FormInput
+                                class="h-9 text-xs"
                                 v-model="appForm.app_id"
                                 type="text"
                                 placeholder="2350925339051747"
@@ -2429,10 +2317,11 @@ async function testTiktok(link: TiktokRow) {
                             </FormHelp>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Clave secreta de la aplicacion</label
                             >
                             <FormInput
+                                class="h-9 text-xs"
                                 v-model="appForm.app_secret"
                                 type="text"
                                 :placeholder="
@@ -2451,10 +2340,11 @@ async function testTiktok(link: TiktokRow) {
                             </FormHelp>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Clave secreta de Instagram (opcional)</label
                             >
                             <FormInput
+                                class="h-9 text-xs"
                                 v-model="appForm.ig_app_secret"
                                 type="text"
                                 :placeholder="
@@ -2477,11 +2367,12 @@ async function testTiktok(link: TiktokRow) {
                             </FormHelp>
                         </div>
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label class="mb-1.5 block text-xs font-medium"
                                 >Configuracion de registro incrustado
                                 (opcional)</label
                             >
                             <FormInput
+                                class="h-9 text-xs"
                                 v-model="appForm.login_config_id"
                                 type="text"
                                 placeholder="ID de la configuracion de Embedded Signup"
@@ -2492,12 +2383,16 @@ async function testTiktok(link: TiktokRow) {
                                 Facebook en el panel del hotel.
                             </FormHelp>
                         </div>
-                        <p v-if="appError" class="text-sm text-danger">
+                        <p
+                            v-if="appError"
+                            class="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger"
+                        >
                             {{ appError }}
                         </p>
                     </div>
-                    <div class="mt-6 flex justify-end gap-3">
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             type="button"
                             variant="outline-secondary"
                             :disabled="savingApp"
@@ -2506,6 +2401,7 @@ async function testTiktok(link: TiktokRow) {
                             Cancelar
                         </Button>
                         <Button
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             type="submit"
                             variant="primary"
                             :disabled="savingApp"
@@ -2520,26 +2416,27 @@ async function testTiktok(link: TiktokRow) {
         <!-- Confirmar volver a la app de la plataforma -->
         <Dialog :open="confirmAppRemoval" @close="confirmAppRemoval = false">
             <Dialog.Panel>
-                <div class="p-6">
-                    <div class="mb-4 flex items-center gap-3.5">
+                <div class="p-5">
+                    <div class="mb-4 flex items-center gap-3">
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning"
                         >
-                            <Lucide icon="TriangleAlert" class="h-5 w-5" />
+                            <Lucide icon="TriangleAlert" class="h-4 w-4" />
                         </div>
                         <h2 class="text-base font-medium">
                             Volver a la app de la plataforma
                         </h2>
                     </div>
-                    <p class="text-sm text-slate-500">
+                    <p class="text-xs text-slate-500">
                         Se elimina la app propia de este hotel. Sus canales
                         seguiran funcionando SOLO si sus tokens y suscripciones
                         pertenecen a la app de la plataforma — si fueron
                         emitidos por la app propia, dejaran de validar. Confirma
                         solo si sabes lo que haces.
                     </p>
-                    <div class="mt-6 flex justify-end gap-3">
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             variant="outline-secondary"
                             :disabled="savingApp"
                             @click="confirmAppRemoval = false"
@@ -2547,12 +2444,80 @@ async function testTiktok(link: TiktokRow) {
                             Cancelar
                         </Button>
                         <Button
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             variant="danger"
                             :disabled="savingApp"
                             @click="removeApp"
                         >
                             {{
                                 savingApp ? 'Quitando...' : 'Quitar app propia'
+                            }}
+                        </Button>
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+        <!-- Confirmación: desvincular canal -->
+        <Dialog
+            :open="unlinking !== null"
+            @close="!unlinkingBusy && (unlinking = null)"
+        >
+            <Dialog.Panel>
+                <div v-if="unlinking" class="p-5">
+                    <div class="flex items-start gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
+                        >
+                            <Lucide icon="Unplug" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <h2 class="text-base font-medium">
+                                Desvincular {{ unlinking.title }}
+                            </h2>
+                            <p class="mt-1 text-xs text-slate-500">
+                                Los mensajes de este {{ unlinking.badge }} dejan
+                                de entrar a la bandeja de {{ tenant.name }} y el
+                                bot deja de contestarlos. Para volver hay que
+                                vincularlo otra vez con su token. Si solo
+                                quieres dejar de recibir por un rato, mejor
+                                páusalo con el interruptor.
+                            </p>
+                            <p
+                                v-if="unlinking.active"
+                                class="mt-3 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
+                            >
+                                <Lucide
+                                    icon="TriangleAlert"
+                                    class="mt-px h-3.5 w-3.5 shrink-0"
+                                />
+                                Está activo<template
+                                    v-if="unlinking.last_event_at"
+                                >
+                                    y recibió mensajes hace
+                                    {{ unlinking.last_event_at }}</template
+                                >.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
+                        <Button
+                            variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="unlinkingBusy"
+                            @click="unlinking = null"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            variant="danger"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="unlinkingBusy"
+                            @click="confirmUnlink"
+                        >
+                            <Lucide icon="Unplug" class="mr-1.5 h-3.5 w-3.5" />
+                            {{
+                                unlinkingBusy
+                                    ? 'Desvinculando...'
+                                    : 'Sí, desvincular'
                             }}
                         </Button>
                     </div>

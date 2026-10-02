@@ -34,6 +34,20 @@ class SocialComment extends Model
      */
     public const CLASS_TAG = 'etiqueta';
 
+    /**
+     * Admira el lugar o quiere venir y no habla de una estancia propia ("se
+     * ve hermoso", "quiero ir"): se le invita a reservar, en público y por
+     * privado. Agradecerle "por recomendarnos" a quien nunca ha venido era
+     * el defecto (cabañas, 2026-10-01).
+     */
+    public const CLASS_INTEREST = 'interes';
+
+    /**
+     * Dice que prefiere otro lugar ("mejor vamos a otro lado"): no se
+     * contesta. Comportamiento fijo, como la etiqueta.
+     */
+    public const CLASS_ELSEWHERE = 'otro_lugar';
+
     public const CLASSIFICATIONS = [
         self::CLASS_PURCHASE,
         self::CLASS_QUESTION,
@@ -41,6 +55,8 @@ class SocialComment extends Model
         self::CLASS_PRAISE,
         self::CLASS_SPAM,
         self::CLASS_TAG,
+        self::CLASS_INTEREST,
+        self::CLASS_ELSEWHERE,
     ];
 
     public const CLASSIFICATION_LABELS = [
@@ -48,8 +64,10 @@ class SocialComment extends Model
         self::CLASS_QUESTION => 'Pregunta',
         self::CLASS_COMPLAINT => 'Queja',
         self::CLASS_PRAISE => 'Elogio',
+        self::CLASS_INTEREST => 'Quiere venir',
         self::CLASS_SPAM => 'Spam',
         self::CLASS_TAG => 'Etiqueta a un amigo',
+        self::CLASS_ELSEWHERE => 'Prefiere otro lugar',
     ];
 
     /** Recién llegado: nadie lo ha atendido todavía. */

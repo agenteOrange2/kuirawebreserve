@@ -59,15 +59,20 @@ export function useSettingsRoutes() {
             },
         ];
 
-        // Apariencia de la cuenta y correo de salida son de plataforma: el
+        // Marca, modo de color y correo de salida son de plataforma: el
         // panel del hotel tiene su propio tema en /ajustes/general/apariencia.
         return isTenantPanel.value
             ? base
             : [
                   ...base,
                   {
-                      label: 'Apariencia',
-                      icon: 'Sun',
+                      label: 'Marca',
+                      icon: 'Palette',
+                      routeName: 'admin.branding',
+                  },
+                  {
+                      label: 'Modo de color',
+                      icon: 'SunMoon',
                       routeName: 'admin.settings.appearance.edit',
                   },
                   {

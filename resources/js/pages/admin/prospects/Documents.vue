@@ -1,56 +1,68 @@
 <script setup lang="ts">
-import { Link, router, useForm } from '@inertiajs/vue3';
-import { ref } from 'vue';
+import { Link, router, usePage } from '@inertiajs/vue3';
+import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormHelp, FormInput, FormSelect } from '@/components/Base/Form';
+import { FormSelect } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
-
-interface DocumentRow {
-    uuid: string;
-    title: string;
-    service: string;
-    service_label: string;
-    original_name: string;
-    size: number;
-    sort: number;
-    url: string;
-    updated_at: string | null;
-}
+import DocumentFormModal from './DocumentFormModal.vue';
+import type { DocumentRow } from './types';
 
 const props = defineProps<{
     documents: DocumentRow[];
     services: { key: string; label: string }[];
+    demand: Record<string, number>;
 }>();
 
-const uploadOpen = ref(false);
-const editing = ref<DocumentRow | null>(null);
-const deleting = ref<DocumentRow | null>(null);
-const uploadInput = ref<HTMLInputElement | null>(null);
-const editInput = ref<HTMLInputElement | null>(null);
+const page = usePage();
+const toasts = useToasts();
 
-const serviceTone: Record<string, string> = {
-    web: 'bg-primary/10 text-primary',
-    social: 'bg-info/10 text-info',
-    reservas: 'bg-success/10 text-success',
-    general: 'bg-pending/10 text-pending',
+const rowAction =
+    'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition';
+
+const serviceTone: Record<string, { badge: string; circle: string }> = {
+    web: {
+        badge: 'bg-primary/10 text-primary',
+        circle: 'border-primary/10 bg-primary/10 text-primary',
+    },
+    social: {
+        badge: 'bg-info/10 text-info',
+        circle: 'border-info/10 bg-info/10 text-info',
+    },
+    reservas: {
+        badge: 'bg-success/10 text-success',
+        circle: 'border-success/10 bg-success/10 text-success',
+    },
+    general: {
+        badge: 'bg-pending/10 text-pending',
+        circle: 'border-pending/10 bg-pending/10 text-pending',
+    },
+};
+const fallbackTone = {
+    badge: 'bg-slate-100 text-slate-500 dark:bg-darkmode-400',
+    circle: 'border-slate-200 bg-slate-100 text-slate-500',
+};
+const toneOf = (service: string) => serviceTone[service] ?? fallbackTone;
+
+const serviceIcon: Record<string, string> = {
+    web: 'Globe',
+    social: 'Share2',
+    reservas: 'CalendarCheck',
+    general: 'Files',
 };
 
-const uploadForm = useForm({
-    title: '',
-    service: props.services[0]?.key ?? 'general',
-    sort: 0,
-    file: null as File | null,
-});
-
-const editForm = useForm({
-    _method: 'patch',
-    title: '',
-    service: 'general',
-    sort: 0,
-    file: null as File | null,
-});
+function toastFlash(): void {
+    const flash = page.props.flash as
+        | { success?: string | null; error?: string | null }
+        | undefined;
+    if (flash?.success) {
+        toasts.success(flash.success);
+    } else if (flash?.error) {
+        toasts.error(flash.error);
+    }
+}
 
 function formatSize(bytes: number): string {
     if (bytes >= 1_000_000) {
@@ -59,69 +71,79 @@ function formatSize(bytes: number): string {
     return `${Math.max(1, Math.round(bytes / 1000))} KB`;
 }
 
-function openUpload(): void {
-    uploadForm.reset();
-    uploadForm.clearErrors();
-    uploadOpen.value = true;
+// ── Cobertura por servicio ──
+const coverage = computed(() =>
+    props.services.map((service) => {
+        const count = props.documents.filter(
+            (d) => d.service === service.key,
+        ).length;
+        const asking = props.demand[service.key] ?? 0;
+        return {
+            ...service,
+            count,
+            asking,
+            // Un servicio que piden y no tiene PDF propio solo manda los generales.
+            uncovered: service.key !== 'general' && count === 0 && asking > 0,
+        };
+    }),
+);
+
+const uncovered = computed(() => coverage.value.filter((c) => c.uncovered));
+
+// ── Filtro ──
+const serviceFilter = ref('');
+const visible = computed(() =>
+    serviceFilter.value
+        ? props.documents.filter((d) => d.service === serviceFilter.value)
+        : props.documents,
+);
+
+function toggleService(key: string): void {
+    serviceFilter.value = serviceFilter.value === key ? '' : key;
 }
 
-function pickUploadFile(event: Event): void {
-    uploadForm.file = (event.target as HTMLInputElement).files?.[0] ?? null;
-}
+// ── Alta / edición ──
+const formOpen = ref(false);
+const editing = ref<DocumentRow | null>(null);
 
-function submitUpload(): void {
-    uploadForm.post(route('admin.prospects.documents.store'), {
-        forceFormData: true,
-        preserveScroll: true,
-        onSuccess: () => {
-            uploadOpen.value = false;
-            uploadForm.reset();
-        },
-    });
-}
-
-function openEdit(document: DocumentRow): void {
+function openForm(document: DocumentRow | null = null): void {
     editing.value = document;
-    editForm.clearErrors();
-    editForm.title = document.title;
-    editForm.service = document.service;
-    editForm.sort = document.sort;
-    editForm.file = null;
+    formOpen.value = true;
 }
 
-function pickEditFile(event: Event): void {
-    editForm.file = (event.target as HTMLInputElement).files?.[0] ?? null;
+function onSaved(): void {
+    toastFlash();
+    formOpen.value = false;
 }
 
-function submitEdit(): void {
-    if (!editing.value) {
-        return;
+async function copyLink(document: DocumentRow): Promise<void> {
+    try {
+        await navigator.clipboard.writeText(document.url);
+        toasts.success('Enlace copiado.');
+    } catch {
+        toasts.error('No se pudo copiar el enlace.');
     }
-
-    // POST con _method patch: PATCH multipart no llega parseado a PHP.
-    editForm.post(
-        route('admin.prospects.documents.update', editing.value.uuid),
-        {
-            forceFormData: true,
-            preserveScroll: true,
-            onSuccess: () => {
-                editing.value = null;
-            },
-        },
-    );
 }
+
+// ── Borrado ──
+const deleting = ref<DocumentRow | null>(null);
+const deletingBusy = ref(false);
 
 function confirmDelete(): void {
     if (!deleting.value) {
         return;
     }
-
+    deletingBusy.value = true;
     router.delete(
         route('admin.prospects.documents.destroy', deleting.value.uuid),
         {
             preserveScroll: true,
             onSuccess: () => {
+                toastFlash();
                 deleting.value = null;
+            },
+            onFinish: () => {
+                deletingBusy.value = false;
             },
         },
     );
@@ -130,341 +152,349 @@ function confirmDelete(): void {
 
 <template>
     <RazeLayout title="Documentos de prospectos">
-        <div
-            class="mt-2 flex flex-col gap-y-3 md:h-10 md:flex-row md:items-center"
-        >
-            <div>
-                <h1 class="text-lg font-medium group-[.mode--light]:text-white">
-                    Documentos de prospectos
-                </h1>
-                <p class="text-sm text-slate-500">
-                    PDF que se envían por correo y WhatsApp según los servicios
-                    elegidos en el registro
-                </p>
-            </div>
-            <div class="flex gap-2 md:ml-auto">
-                <Button
-                    :as="Link"
-                    :href="route('admin.prospects')"
-                    variant="outline-secondary"
-                    class="bg-white/80 dark:bg-darkmode-400/80"
-                >
-                    <Lucide icon="ArrowLeft" class="mr-2 h-4 w-4" />
-                    Volver a prospectos
-                </Button>
-                <Button variant="primary" @click="openUpload">
-                    <Lucide icon="Plus" class="mr-2 h-4 w-4" />
-                    Subir documento
-                </Button>
-            </div>
-        </div>
-
-        <div v-if="documents.length" class="mt-5 grid grid-cols-12 gap-5">
+        <div class="mt-2">
+            <!-- Encabezado -->
             <div
-                v-for="document in documents"
-                :key="document.uuid"
-                class="col-span-12 md:col-span-6 xl:col-span-4"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
-                <div class="box box--stacked flex h-full flex-col p-5">
-                    <div class="flex items-start gap-3">
-                        <span
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                            ><Lucide icon="FileText" class="h-5 w-5"
-                        /></span>
-                        <div class="min-w-0">
-                            <div
-                                class="font-medium text-slate-800 dark:text-slate-200"
-                            >
-                                {{ document.title }}
-                            </div>
-                            <span
-                                class="mt-1.5 inline-flex rounded-md px-2 py-0.5 text-xs font-medium"
-                                :class="
-                                    serviceTone[document.service] ??
-                                    'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
-                                "
-                                >{{ document.service_label }}</span
-                            >
-                        </div>
-                    </div>
-                    <div class="mt-4 flex-1 text-xs text-slate-500">
-                        <div class="truncate">{{ document.original_name }}</div>
-                        <div class="mt-1">
-                            {{ formatSize(document.size) }}
-                            <template v-if="document.updated_at">
-                                · Actualizado {{ document.updated_at }}
-                            </template>
-                        </div>
-                    </div>
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="mt-4 flex gap-1.5 border-t border-dashed border-slate-200 pt-4"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Button
-                            :as="'a'"
-                            :href="document.url"
-                            target="_blank"
-                            variant="outline-secondary"
-                            size="sm"
-                        >
-                            <Lucide
-                                icon="ExternalLink"
-                                class="mr-1.5 h-3.5 w-3.5"
-                            />
-                            Ver
-                        </Button>
-                        <Button
-                            variant="outline-secondary"
-                            size="sm"
-                            @click="openEdit(document)"
-                        >
-                            <Lucide icon="Pencil" class="mr-1.5 h-3.5 w-3.5" />
-                            Editar
-                        </Button>
-                        <Button
-                            variant="outline-danger"
-                            size="sm"
-                            class="ml-auto"
-                            @click="deleting = document"
-                        >
-                            <Lucide icon="Trash2" class="h-3.5 w-3.5" />
-                        </Button>
+                        <Lucide icon="FileText" class="h-4 w-4" />
                     </div>
+                    <div class="min-w-0">
+                        <h1 class="text-base font-medium">
+                            Documentos de prospectos
+                        </h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Los PDF que reciben por correo y WhatsApp según los
+                            servicios que eligieron.
+                        </p>
+                    </div>
+                </div>
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2"
+                >
+                    <Link
+                        :href="route('admin.prospects')"
+                        class="inline-flex h-9 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-500 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600"
+                    >
+                        <Lucide icon="ArrowLeft" class="h-3.5 w-3.5" />
+                        Volver a prospectos
+                    </Link>
+                    <Button
+                        variant="primary"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                        @click="openForm()"
+                    >
+                        <Lucide icon="FileUp" class="mr-1.5 h-3.5 w-3.5" />
+                        Subir documento
+                    </Button>
+                </div>
+            </div>
+
+            <!-- Cobertura: un renglón por servicio, filtra al tocarlo -->
+            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
+                <button
+                    v-for="service in coverage"
+                    :key="service.key"
+                    type="button"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-slate-300 xl:col-span-3"
+                    :class="
+                        serviceFilter === service.key
+                            ? 'ring-2 ring-primary/30'
+                            : ''
+                    "
+                    :title="
+                        serviceFilter === service.key
+                            ? 'Quitar filtro'
+                            : 'Ver solo los de este servicio'
+                    "
+                    @click="toggleService(service.key)"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
+                        :class="toneOf(service.key).circle"
+                    >
+                        <Lucide
+                            :icon="
+                                (serviceIcon[service.key] ?? 'FileText') as any
+                            "
+                            class="h-4 w-4"
+                        />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ service.count }}
+                            <span class="text-xs font-normal text-slate-500">{{
+                                service.count === 1 ? 'documento' : 'documentos'
+                            }}</span>
+                        </div>
+                        <div
+                            class="truncate text-xs leading-tight text-slate-500"
+                        >
+                            {{
+                                service.key === 'general'
+                                    ? 'Generales'
+                                    : service.label
+                            }}
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] sm:block"
+                            :class="
+                                service.uncovered
+                                    ? 'text-pending'
+                                    : 'text-slate-400'
+                            "
+                        >
+                            {{
+                                service.key === 'general'
+                                    ? 'Le llegan a todos'
+                                    : service.uncovered
+                                      ? `${service.asking} lo piden y no hay PDF`
+                                      : `${service.asking} prospectos activos lo piden`
+                            }}
+                        </div>
+                    </div>
+                </button>
+            </div>
+
+            <!-- Aviso de servicios sin documento propio -->
+            <div
+                v-if="uncovered.length"
+                class="box box--stacked mt-4 flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center"
+            >
+                <div
+                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
+                >
+                    <Lucide icon="TriangleAlert" class="h-4 w-4" />
+                </div>
+                <p class="min-w-0 flex-1 text-xs text-slate-500">
+                    <span
+                        class="font-medium text-slate-700 dark:text-slate-300"
+                    >
+                        {{ uncovered.map((c) => c.label).join(', ') }}
+                    </span>
+                    {{ uncovered.length === 1 ? 'no tiene' : 'no tienen' }}
+                    documento propio: quien lo pide solo recibe los generales.
+                </p>
+                <Button
+                    variant="outline-secondary"
+                    class="h-8 shrink-0 rounded-[0.5rem] text-xs"
+                    @click="openForm()"
+                >
+                    <Lucide icon="FileUp" class="mr-1.5 h-3.5 w-3.5" />
+                    Subir ahora
+                </Button>
+            </div>
+
+            <!-- Listado -->
+            <div class="box box--stacked mt-4 overflow-hidden">
+                <div
+                    class="flex flex-col gap-2 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                >
+                    <FormSelect
+                        v-model="serviceFilter"
+                        class="h-9 text-xs sm:w-60"
+                    >
+                        <option value="">Todos los servicios</option>
+                        <option
+                            v-for="service in services"
+                            :key="service.key"
+                            :value="service.key"
+                        >
+                            {{ service.label }}
+                        </option>
+                    </FormSelect>
+                    <span class="text-xs text-slate-500 sm:ml-auto">
+                        {{ visible.length }}
+                        {{ visible.length === 1 ? 'documento' : 'documentos' }}
+                        · se envían en este orden
+                    </span>
+                </div>
+
+                <div
+                    v-if="visible.length"
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="document in visible"
+                        :key="document.uuid"
+                        class="flex flex-col gap-3 px-4 py-3 transition hover:bg-slate-50/70 sm:flex-row sm:items-center sm:px-5 dark:hover:bg-darkmode-400/30"
+                    >
+                        <div class="flex min-w-0 flex-1 items-center gap-3">
+                            <div
+                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-danger/10 text-danger"
+                            >
+                                <Lucide icon="FileText" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <div class="flex min-w-0 items-center gap-2">
+                                    <a
+                                        :href="document.url"
+                                        target="_blank"
+                                        rel="noopener"
+                                        class="truncate text-sm font-medium hover:text-primary"
+                                        >{{ document.title }}</a
+                                    >
+                                    <span
+                                        class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                        :class="toneOf(document.service).badge"
+                                        >{{
+                                            document.service === 'general'
+                                                ? 'General'
+                                                : document.service_label
+                                        }}</span
+                                    >
+                                </div>
+                                <div
+                                    class="truncate text-xs leading-tight text-slate-500"
+                                >
+                                    {{ document.original_name }} ·
+                                    {{ formatSize(document.size) }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div
+                            class="flex items-center justify-between gap-3 pl-12 sm:contents"
+                        >
+                            <div
+                                class="text-xs whitespace-nowrap text-slate-500 sm:w-48 sm:shrink-0"
+                            >
+                                <div v-if="document.updated_at">
+                                    Actualizado {{ document.updated_at }}
+                                </div>
+                                <div class="text-[11px] text-slate-400">
+                                    Orden {{ document.sort }}
+                                </div>
+                            </div>
+                            <div
+                                class="flex items-center justify-end gap-1 sm:shrink-0"
+                            >
+                                <a
+                                    :href="document.url"
+                                    target="_blank"
+                                    rel="noopener"
+                                    :class="rowAction"
+                                    class="hover:bg-primary/10 hover:text-primary"
+                                    title="Ver PDF"
+                                >
+                                    <Lucide
+                                        icon="ExternalLink"
+                                        class="h-4 w-4"
+                                    />
+                                </a>
+                                <button
+                                    type="button"
+                                    :class="rowAction"
+                                    class="hover:bg-primary/10 hover:text-primary"
+                                    title="Copiar enlace público"
+                                    @click="copyLink(document)"
+                                >
+                                    <Lucide icon="Link2" class="h-4 w-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    :class="rowAction"
+                                    class="hover:bg-primary/10 hover:text-primary"
+                                    title="Editar o reemplazar"
+                                    @click="openForm(document)"
+                                >
+                                    <Lucide icon="Pencil" class="h-4 w-4" />
+                                </button>
+                                <button
+                                    type="button"
+                                    :class="rowAction"
+                                    class="hover:bg-danger/10 hover:text-danger"
+                                    title="Eliminar"
+                                    @click="deleting = document"
+                                >
+                                    <Lucide icon="Trash2" class="h-4 w-4" />
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div
+                    v-else
+                    class="flex flex-col items-center gap-2 px-6 py-12 text-center"
+                >
+                    <div
+                        class="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
+                    >
+                        <Lucide icon="FileText" class="h-4 w-4" />
+                    </div>
+                    <p class="text-xs text-slate-500">
+                        {{
+                            serviceFilter
+                                ? 'Este servicio todavía no tiene documentos.'
+                                : 'Aún no hay documentos. Sube los PDF de cada servicio: se adjuntan al correo del registro y se comparten por WhatsApp.'
+                        }}
+                    </p>
+                    <Button
+                        variant="outline-primary"
+                        class="mt-1 h-9 rounded-[0.5rem] text-xs"
+                        @click="openForm()"
+                    >
+                        <Lucide icon="FileUp" class="mr-1.5 h-3.5 w-3.5" />
+                        Subir documento
+                    </Button>
                 </div>
             </div>
         </div>
 
-        <div
-            v-else
-            class="box box--stacked mt-5 flex min-h-72 flex-col items-center justify-center p-8 text-center"
-        >
-            <span
-                class="flex h-16 w-16 items-center justify-center rounded-full bg-primary/5"
-                ><Lucide icon="FileText" class="h-7 w-7 text-primary"
-            /></span>
-            <h2 class="mt-4 text-base font-medium">Aún no hay documentos</h2>
-            <p class="mt-1 max-w-sm text-sm text-slate-500">
-                Sube los PDF de cada servicio: se adjuntan al correo del
-                registro y se comparten por WhatsApp.
-            </p>
-            <Button class="mt-5" variant="primary" @click="openUpload">
-                <Lucide icon="Plus" class="mr-2 h-4 w-4" />
-                Subir documento
-            </Button>
-        </div>
+        <DocumentFormModal
+            :open="formOpen"
+            :document="editing"
+            :services="services"
+            :default-service="serviceFilter || undefined"
+            @close="formOpen = false"
+            @saved="onSaved"
+        />
 
-        <Dialog :open="uploadOpen" @close="uploadOpen = false">
-            <Dialog.Panel>
-                <div class="p-6 sm:p-8">
-                    <div class="flex items-center gap-3">
-                        <span
-                            class="flex h-10 w-10 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                            ><Lucide icon="Plus" class="h-5 w-5"
-                        /></span>
-                        <Dialog.Title class="text-lg font-medium"
-                            >Subir documento</Dialog.Title
-                        >
-                    </div>
-                    <div class="mt-6 space-y-5">
-                        <label class="block"
-                            ><span class="mb-2 block text-sm font-medium"
-                                >Título</span
-                            ><FormInput
-                                v-model="uploadForm.title"
-                                type="text"
-                                placeholder="Ej. Presentación de páginas web"
-                            />
-                            <FormHelp
-                                v-if="uploadForm.errors.title"
-                                class="text-danger"
-                                >{{ uploadForm.errors.title }}</FormHelp
-                            ></label
-                        >
-                        <label class="block"
-                            ><span class="mb-2 block text-sm font-medium"
-                                >Servicio</span
-                            ><FormSelect v-model="uploadForm.service">
-                                <option
-                                    v-for="service in services"
-                                    :key="service.key"
-                                    :value="service.key"
-                                >
-                                    {{ service.label }}
-                                </option></FormSelect
-                            >
-                            <FormHelp
-                                v-if="uploadForm.errors.service"
-                                class="text-danger"
-                                >{{ uploadForm.errors.service }}</FormHelp
-                            ></label
-                        >
-                        <div>
-                            <span class="mb-2 block text-sm font-medium"
-                                >Archivo PDF</span
-                            >
-                            <Button
-                                variant="outline-secondary"
-                                type="button"
-                                @click="uploadInput?.click()"
-                            >
-                                <Lucide icon="FileText" class="mr-2 h-4 w-4" />
-                                {{ uploadForm.file?.name ?? 'Elegir archivo' }}
-                            </Button>
-                            <input
-                                ref="uploadInput"
-                                type="file"
-                                accept="application/pdf"
-                                class="hidden"
-                                @change="pickUploadFile"
-                            />
-                            <FormHelp
-                                v-if="uploadForm.errors.file"
-                                class="text-danger"
-                                >{{ uploadForm.errors.file }}</FormHelp
-                            >
-                            <FormHelp v-else>Solo PDF, máx. 10 MB.</FormHelp>
-                        </div>
-                    </div>
-                    <div class="mt-6 flex justify-end gap-3">
-                        <Button
-                            variant="outline-secondary"
-                            @click="uploadOpen = false"
-                            >Cancelar</Button
-                        >
-                        <Button
-                            variant="primary"
-                            :disabled="uploadForm.processing"
-                            @click="submitUpload"
-                            >{{
-                                uploadForm.processing
-                                    ? 'Subiendo...'
-                                    : 'Subir documento'
-                            }}</Button
-                        >
-                    </div>
-                </div>
-            </Dialog.Panel>
-        </Dialog>
-
-        <Dialog :open="editing !== null" @close="editing = null">
-            <Dialog.Panel>
-                <div v-if="editing" class="p-6 sm:p-8">
-                    <div class="flex items-center gap-3">
-                        <span
-                            class="flex h-10 w-10 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                            ><Lucide icon="Pencil" class="h-5 w-5"
-                        /></span>
-                        <Dialog.Title class="text-lg font-medium"
-                            >Editar documento</Dialog.Title
-                        >
-                    </div>
-                    <div class="mt-6 space-y-5">
-                        <label class="block"
-                            ><span class="mb-2 block text-sm font-medium"
-                                >Título</span
-                            ><FormInput v-model="editForm.title" type="text" />
-                            <FormHelp
-                                v-if="editForm.errors.title"
-                                class="text-danger"
-                                >{{ editForm.errors.title }}</FormHelp
-                            ></label
-                        >
-                        <label class="block"
-                            ><span class="mb-2 block text-sm font-medium"
-                                >Servicio</span
-                            ><FormSelect v-model="editForm.service">
-                                <option
-                                    v-for="service in services"
-                                    :key="service.key"
-                                    :value="service.key"
-                                >
-                                    {{ service.label }}
-                                </option></FormSelect
-                            >
-                            <FormHelp
-                                v-if="editForm.errors.service"
-                                class="text-danger"
-                                >{{ editForm.errors.service }}</FormHelp
-                            ></label
-                        >
-                        <div>
-                            <span class="mb-2 block text-sm font-medium"
-                                >Reemplazar archivo (opcional)</span
-                            >
-                            <Button
-                                variant="outline-secondary"
-                                type="button"
-                                @click="editInput?.click()"
-                            >
-                                <Lucide icon="FileText" class="mr-2 h-4 w-4" />
-                                {{
-                                    editForm.file?.name ??
-                                    'Conservar archivo actual'
-                                }}
-                            </Button>
-                            <input
-                                ref="editInput"
-                                type="file"
-                                accept="application/pdf"
-                                class="hidden"
-                                @change="pickEditFile"
-                            />
-                            <FormHelp
-                                v-if="editForm.errors.file"
-                                class="text-danger"
-                                >{{ editForm.errors.file }}</FormHelp
-                            >
-                            <FormHelp v-else
-                                >El enlace público no cambia: lo que ya
-                                compartiste seguirá abriendo la versión
-                                nueva.</FormHelp
-                            >
-                        </div>
-                    </div>
-                    <div class="mt-6 flex justify-end gap-3">
-                        <Button
-                            variant="outline-secondary"
-                            @click="editing = null"
-                            >Cancelar</Button
-                        >
-                        <Button
-                            variant="primary"
-                            :disabled="editForm.processing"
-                            @click="submitEdit"
-                            >{{
-                                editForm.processing
-                                    ? 'Guardando...'
-                                    : 'Guardar cambios'
-                            }}</Button
-                        >
-                    </div>
-                </div>
-            </Dialog.Panel>
-        </Dialog>
-
+        <!-- Confirmar borrado -->
         <Dialog :open="deleting !== null" @close="deleting = null">
             <Dialog.Panel>
-                <div v-if="deleting" class="p-6 text-center sm:p-8">
-                    <span
-                        class="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
-                        ><Lucide icon="Trash2" class="h-6 w-6"
-                    /></span>
-                    <Dialog.Title class="mt-4 text-lg font-medium"
-                        >Eliminar documento</Dialog.Title
-                    >
-                    <p class="mt-2 text-sm text-slate-500">
-                        Se eliminará "{{ deleting.title }}" y su enlace público
-                        dejará de funcionar, incluido en los mensajes ya
-                        enviados.
-                    </p>
-                    <div class="mt-6 flex justify-center gap-3">
+                <div v-if="deleting" class="p-5">
+                    <div class="flex items-start gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
+                        >
+                            <Lucide icon="Trash2" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <Dialog.Title
+                                class="block border-0 p-0 text-base font-medium"
+                                >Eliminar "{{ deleting.title }}"</Dialog.Title
+                            >
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Su enlace público deja de abrir, también en los
+                                mensajes que ya se mandaron. No se puede
+                                deshacer.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
                             variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             @click="deleting = null"
                             >Cancelar</Button
                         >
-                        <Button variant="danger" @click="confirmDelete"
-                            >Eliminar</Button
+                        <Button
+                            variant="danger"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="deletingBusy"
+                            @click="confirmDelete"
                         >
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
+                            {{
+                                deletingBusy ? 'Eliminando...' : 'Sí, eliminar'
+                            }}
+                        </Button>
                     </div>
                 </div>
             </Dialog.Panel>

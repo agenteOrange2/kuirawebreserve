@@ -165,6 +165,10 @@ class Coupon extends Model
         ?int $nights,
         ?int $roomTypeId,
         ?CarbonInterface $end = null,
+        // La búsqueda de la fecha alternativa llama aquí en bucle: ahí NO se
+        // vuelve a sugerir (si no, cada candidata buscaría otra candidata y
+        // el proceso se queda sin memoria — pasó en la primera corrida).
+        bool $withHint = true,
     ): ?string {
         if ($this->min_nights !== null && ($nights === null || $nights < $this->min_nights)) {
             return "Este cupón aplica en estancias de al menos {$this->min_nights} noches.";
@@ -186,7 +190,13 @@ class Coupon extends Model
             $allowed = array_map('intval', $this->weekdays);
 
             if (array_diff(self::stayWeekdays($start, $end), $allowed) !== []) {
-                return 'Este cupón aplica solo para estancias en '.$this->weekdaysLabel().'.';
+                // Decir solo "no aplica" es perder al huésped: 40 de los 48
+                // rechazos de PACHEPACHE (cabañas, 30 días) fueron por el día
+                // de la semana — el video de la promoción trae gente de fin
+                // de semana. Con la fecha cercana que SÍ aplica, el bot vende
+                // en vez de negar.
+                return 'Este cupón aplica solo para estancias en '.$this->weekdaysLabel().'.'
+                    .($withHint ? $this->nextQualifyingHint($start, $end) : '');
             }
         }
 
@@ -209,7 +219,8 @@ class Coupon extends Model
             }
 
             if ($this->ends_at !== null && $lastNight->gt($this->ends_at->startOfDay())) {
-                return 'Este cupón aplica solo para estancias hasta el '.$this->ends_at->format('d/m/Y').'.';
+                return 'Este cupón aplica solo para estancias hasta el '.$this->ends_at->format('d/m/Y').'.'
+                    .($withHint ? $this->nextQualifyingHint($start, $end) : '');
             }
         }
 
@@ -247,6 +258,52 @@ class Coupon extends Model
         }
 
         return null;
+    }
+
+    /**
+     * La estancia más cercana que SÍ cumple las condiciones del cupón, dicha
+     * en una frase lista para mandar. Vacío si no hay ninguna (p. ej. el
+     * cupón ya venció): ahí no se le da esperanza a nadie.
+     */
+    public function nextQualifyingHint(?CarbonInterface $start, ?CarbonInterface $end = null): string
+    {
+        $noches = 1;
+
+        if ($start !== null && $end !== null) {
+            $noches = max(1, (int) CarbonImmutable::instance($start)->startOfDay()
+                ->diffInDays(CarbonImmutable::instance($end)->startOfDay()));
+        }
+
+        // Se busca a partir de la fecha que el huésped pidió, no de hoy:
+        // a quien quiere el sábado 26 se le ofrece el lunes 28, no "hoy
+        // jueves", que no es lo que anda buscando.
+        $desde = CarbonImmutable::today();
+
+        if ($start !== null && CarbonImmutable::instance($start)->startOfDay()->gt($desde)) {
+            $desde = CarbonImmutable::instance($start)->startOfDay();
+        }
+
+        if ($this->starts_at !== null && $desde->lt($this->starts_at->startOfDay())) {
+            $desde = CarbonImmutable::instance($this->starts_at)->startOfDay();
+        }
+
+        $tope = $this->ends_at !== null
+            ? CarbonImmutable::instance($this->ends_at)->startOfDay()
+            : $desde->addDays(120);
+
+        for ($dia = $desde; $dia->lte($tope); $dia = $dia->addDay()) {
+            $salida = $dia->addDays($noches);
+
+            if ($this->stayRejectionReason($dia, $noches, $this->room_type_id, $salida, withHint: false) === null) {
+                $llegada = $dia->locale('es')->isoFormat('dddd D [de] MMMM');
+
+                return $noches === 1
+                    ? " La fecha más cercana en la que sí aplica es llegando el {$llegada}."
+                    : " La fecha más cercana en la que sí aplica es llegando el {$llegada} ({$noches} noches).";
+            }
+        }
+
+        return '';
     }
 
     /**

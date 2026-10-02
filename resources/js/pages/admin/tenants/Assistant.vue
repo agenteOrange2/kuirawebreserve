@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Link } from '@inertiajs/vue3';
+import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
@@ -48,8 +48,13 @@ const props = defineProps<{
 
 const toast = useToasts();
 
-// Ajustes del bot: se guardan al vuelo, con reversión si el servidor
-// rechaza (mismo patrón que la vista vieja de contexto).
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const cardHeader =
+    'flex items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400';
+
+// Ajustes del bot: se guardan al vuelo. El interruptor solo cambia cuando
+// el servidor lo acepta (click.prevent), así un rechazo no lo deja mintiendo.
 const settings = reactive({
     enabled: props.ai.enabled,
     byok_allowed: props.ai.byok_allowed,
@@ -57,6 +62,7 @@ const settings = reactive({
     context_editable: props.contextEditable,
     guidelines_editable: props.guidelinesEditable,
 });
+const savingKey = ref<string | null>(null);
 
 async function patch(
     payload: Record<string, unknown>,
@@ -68,23 +74,25 @@ async function patch(
             payload,
         );
         toast.success(success);
-
         return true;
     } catch (e: any) {
+        const errors = e.response?.data?.errors;
         toast.error(
             'No se pudo guardar',
-            e.response?.data?.message ?? 'Ocurrió un error.',
+            (errors && (Object.values(errors)[0] as string[])?.[0]) ??
+                e.response?.data?.message ??
+                'Ocurrió un error.',
         );
-
         return false;
     }
 }
 
 async function toggle(key: keyof typeof settings, label: string) {
+    if (savingKey.value) return;
+    savingKey.value = key;
     const value = !settings[key];
-    settings[key] = value;
-    const ok = await patch({ [key]: value }, label);
-    if (!ok) settings[key] = !value;
+    if (await patch({ [key]: value }, label)) settings[key] = value;
+    savingKey.value = null;
 }
 
 // Cuota: vacío = la que traiga el plan; un número la fija para este hotel.
@@ -94,9 +102,22 @@ const limitInput = ref(
         : String(props.ai.monthly_reply_limit),
 );
 const providerInput = ref<string | number>(props.ai.provider_id ?? '');
+const limitDirty = computed(
+    () =>
+        limitInput.value.trim() !==
+        (props.ai.monthly_reply_limit === null
+            ? ''
+            : String(props.ai.monthly_reply_limit)),
+);
+const limitInvalid = computed(() => {
+    const raw = limitInput.value.trim();
+    return raw !== '' && !(Number.isInteger(Number(raw)) && Number(raw) >= 0);
+});
 
-function saveLimit() {
-    patch(
+async function saveLimit() {
+    if (limitInvalid.value || savingKey.value) return;
+    savingKey.value = 'limit';
+    const ok = await patch(
         {
             monthly_reply_limit:
                 limitInput.value.trim() === ''
@@ -105,21 +126,40 @@ function saveLimit() {
         },
         'Cuota actualizada',
     );
+    savingKey.value = null;
+    // La barra de uso se recalcula con la cuota nueva.
+    if (ok) router.reload({ only: ['ai'] });
 }
 
-function saveProvider() {
-    patch(
+async function saveProvider() {
+    savingKey.value = 'provider';
+    const ok = await patch(
         {
             platform_ai_provider_id:
                 providerInput.value === '' ? null : Number(providerInput.value),
         },
         'Proveedor actualizado',
     );
+    if (!ok) providerInput.value = props.ai.provider_id ?? '';
+    savingKey.value = null;
 }
 
+// limit 0 es "sin respuestas", no "sin límite": solo null es ilimitado.
+const quotaPercent = computed(() => {
+    if (props.ai.limit === null) return null;
+    if (props.ai.limit === 0) return 100;
+    return Math.min(100, Math.round((props.ai.used / props.ai.limit) * 100));
+});
+const quotaTone = computed(() =>
+    (quotaPercent.value ?? 0) >= 90
+        ? 'bg-danger'
+        : (quotaPercent.value ?? 0) >= 70
+          ? 'bg-warning'
+          : 'bg-success',
+);
+
 // Permisos en dos grupos: lo que el hotel VE en su panel y lo que puede
-// USAR por su cuenta. Son cuatro interruptores; en cuatro tarjetas se
-// veían como cuatro secciones distintas y dejaban huecos.
+// USAR por su cuenta.
 const permisos: Array<{
     title: string;
     icon: Icon;
@@ -141,13 +181,13 @@ const permisos: Array<{
             {
                 key: 'context_editable',
                 label: 'Ver y editar su contexto',
-                help: 'Habilita /asistente/contexto; apagado, el contexto lo gestiona solo la plataforma.',
+                help: 'Abre Asistente, Contexto en su panel; apagado, el contexto lo lleva solo la plataforma.',
                 toast: 'Visibilidad actualizada',
             },
             {
                 key: 'guidelines_editable',
                 label: 'Capturar aprendizajes',
-                help: 'Habilita /asistente/aprendizajes y el botón "Enseñar al asistente" en su Bandeja.',
+                help: 'Abre Asistente, Aprendizajes y el botón "Enseñar al asistente" en su Bandeja.',
                 toast: 'Visibilidad actualizada',
             },
         ],
@@ -172,24 +212,26 @@ const permisos: Array<{
     },
 ];
 
-const quotaPercent = computed(() => {
-    if (!props.ai.limit) return null;
-
-    return Math.min(100, Math.round((props.ai.used / props.ai.limit) * 100));
-});
-
 // ── Instrucciones de plataforma y prompt efectivo ──
-const instructions = ref(props.platformInstructions ?? '');
+const savedInstructions = ref(props.platformInstructions ?? '');
+const instructions = ref(savedInstructions.value);
+const instructionsDirty = computed(
+    () => instructions.value.trim() !== savedInstructions.value.trim(),
+);
 const promptText = ref(props.prompt);
 const savingInstructions = ref(false);
 const refreshing = ref(false);
 const confirmTemplate = ref(false);
+const copied = ref(false);
+
+// Estimación gruesa (~4 caracteres por token): para darse idea de cuánto
+// pesa el prompt en cada respuesta.
+const promptTokens = computed(() => Math.round(promptText.value.length / 4));
 
 function useTemplate() {
     // Con texto capturado se pide confirmación antes de reemplazarlo.
     if (instructions.value.trim()) {
         confirmTemplate.value = true;
-
         return;
     }
     applyTemplate();
@@ -218,13 +260,30 @@ async function refreshPrompt() {
     }
 }
 
+async function copyPrompt() {
+    try {
+        await navigator.clipboard.writeText(promptText.value);
+        copied.value = true;
+        setTimeout(() => (copied.value = false), 2000);
+    } catch {
+        toast.error(
+            'No se pudo copiar',
+            'El navegador bloqueó el portapapeles.',
+        );
+    }
+}
+
 async function saveInstructions() {
     savingInstructions.value = true;
+    const value = instructions.value.trim();
     const ok = await patch(
-        { platform_instructions: instructions.value.trim() || null },
+        { platform_instructions: value || null },
         'Instrucciones guardadas',
     );
-    if (ok) await refreshPrompt();
+    if (ok) {
+        savedInstructions.value = value;
+        await refreshPrompt();
+    }
     savingInstructions.value = false;
 }
 </script>
@@ -233,153 +292,159 @@ async function saveInstructions() {
     <RazeLayout :title="`${tenant.name} · Asistente`">
         <TenantHeader :tenant="tenant" :plans="plans" active="assistant" />
 
-        <div class="mt-5 grid grid-cols-12 gap-5">
+        <div class="mt-4 grid grid-cols-12 items-stretch gap-5">
             <!-- Estado y cuota -->
-            <div class="col-span-12 xl:col-span-4">
-                <div class="box box--stacked flex h-full flex-col">
-                    <div
-                        class="flex flex-wrap items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
-                    >
-                        <Lucide
-                            icon="Bot"
-                            class="h-4 w-4 stroke-[1.5] text-primary"
-                        />
-                        <h2 class="text-base font-medium">Estado del bot</h2>
-                        <Link
-                            :href="route('admin.ai')"
-                            class="flex w-full items-center text-xs text-primary sm:ml-auto sm:w-auto"
+            <div class="col-span-12 flex flex-col xl:col-span-5">
+                <div class="box box--stacked flex flex-1 flex-col">
+                    <div :class="cardHeader">
+                        <div
+                            :class="[
+                                sectionIcon,
+                                settings.enabled
+                                    ? 'border-success/10 bg-success/10 text-success'
+                                    : 'border-slate-200 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400',
+                            ]"
                         >
-                            Llaves de plataforma
-                            <Lucide icon="ArrowRight" class="ml-1 h-3 w-3" />
-                        </Link>
+                            <Lucide icon="Bot" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-sm font-medium">Estado del bot</h2>
+                            <p class="text-xs text-slate-500">
+                                {{
+                                    settings.enabled
+                                        ? 'Contesta solo en sus canales.'
+                                        : 'Apagado: nadie contesta solo.'
+                                }}
+                            </p>
+                        </div>
+                        <FormSwitch
+                            class="shrink-0"
+                            :title="
+                                settings.enabled
+                                    ? 'Apagar el bot'
+                                    : 'Encender el bot'
+                            "
+                        >
+                            <FormSwitch.Input
+                                :checked="settings.enabled"
+                                type="checkbox"
+                                :disabled="savingKey === 'enabled'"
+                                @click.prevent="
+                                    toggle(
+                                        'enabled',
+                                        settings.enabled
+                                            ? 'Bot apagado'
+                                            : 'Bot encendido',
+                                    )
+                                "
+                            />
+                        </FormSwitch>
                     </div>
-                    <div class="flex flex-1 flex-col gap-4 p-5 text-sm">
+                    <div class="flex flex-1 flex-col gap-4 px-4 py-3 text-xs">
                         <div
                             v-if="!ai.ai_in_plan"
-                            class="flex items-start gap-2 rounded-lg bg-pending/10 px-3 py-2.5 text-xs text-pending"
+                            class="flex items-start gap-2 rounded-lg bg-pending/10 px-3 py-2 text-pending"
                         >
                             <Lucide
                                 icon="Info"
-                                class="mt-0.5 h-4 w-4 shrink-0"
+                                class="mt-px h-3.5 w-3.5 shrink-0"
                             />
-                            <span>
-                                Su plan no incluye IA. Se puede encender igual
-                                (cortesía o prueba), pero es la palanca natural
-                                de upsell.
-                            </span>
+                            Su plan no incluye IA. Se puede encender igual
+                            (cortesía o prueba), pero es la palanca natural de
+                            venta.
                         </div>
 
-                        <div
-                            class="flex items-center justify-between rounded-lg border border-dashed border-slate-300/70 px-3 py-2.5 dark:border-darkmode-400"
-                        >
-                            <div class="pr-3">
-                                <span class="text-sm">Bot encendido</span>
-                                <FormHelp class="mt-0">
-                                    Apagado, sus canales siguen recibiendo pero
-                                    nadie contesta solo.
-                                </FormHelp>
-                            </div>
-                            <FormSwitch class="shrink-0">
-                                <FormSwitch.Input
-                                    :checked="settings.enabled"
-                                    type="checkbox"
-                                    @change="
-                                        toggle(
-                                            'enabled',
-                                            settings.enabled
-                                                ? 'Bot apagado'
-                                                : 'Bot encendido',
-                                        )
-                                    "
-                                />
-                            </FormSwitch>
-                        </div>
-
-                        <div
-                            class="rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
-                        >
-                            <div
-                                class="mb-1.5 flex items-center justify-between"
-                            >
+                        <div>
+                            <div class="flex items-center justify-between">
                                 <span class="text-slate-500"
                                     >Respuestas del mes</span
                                 >
-                                <span class="text-xs text-slate-500"
-                                    >{{ ai.used
-                                    }}{{
-                                        ai.limit
-                                            ? ` / ${ai.limit}`
-                                            : ' · sin límite'
-                                    }}</span
+                                <span class="font-medium tabular-nums"
+                                    >{{ ai.used.toLocaleString('es-MX')
+                                    }}<span
+                                        class="font-normal text-slate-400"
+                                        >{{
+                                            ai.limit !== null
+                                                ? ` de ${ai.limit.toLocaleString('es-MX')}`
+                                                : ' · sin límite'
+                                        }}</span
+                                    ></span
                                 >
                             </div>
                             <div
-                                v-if="ai.limit"
-                                class="h-2 rounded-full bg-slate-200/70 dark:bg-darkmode-400"
+                                v-if="ai.limit !== null"
+                                class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-darkmode-400"
                             >
                                 <div
-                                    class="h-2 rounded-full"
-                                    :class="
-                                        (quotaPercent ?? 0) >= 90
-                                            ? 'bg-danger'
-                                            : (quotaPercent ?? 0) >= 70
-                                              ? 'bg-warning'
-                                              : 'bg-success'
-                                    "
+                                    class="h-full rounded-full"
+                                    :class="quotaTone"
                                     :style="{ width: `${quotaPercent}%` }"
                                 />
                             </div>
-                            <div class="mt-1 text-xs text-slate-400">
+                            <div class="mt-1 text-[11px] text-slate-400">
                                 {{ ai.tokens.toLocaleString('es-MX') }} tokens
                                 consumidos este mes
+                                <template v-if="ai.limit === 0">
+                                    · con cuota 0 el bot no contesta</template
+                                >
                             </div>
                         </div>
 
                         <div
-                            class="mt-auto border-t border-dashed border-slate-300/70 pt-4 dark:border-darkmode-400"
+                            class="border-t border-dashed border-slate-200/70 pt-3 dark:border-darkmode-400"
                         >
-                            <div
-                                class="mb-2 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                            >
-                                <Lucide
-                                    icon="SlidersHorizontal"
-                                    class="h-3.5 w-3.5"
-                                />
-                                Ajustes de este hotel
-                            </div>
-                            <label class="mb-1 block text-sm"
+                            <label
+                                for="ai-limit"
+                                class="mb-1.5 block font-medium"
                                 >Cuota mensual de respuestas</label
                             >
                             <div class="flex gap-2">
                                 <FormInput
+                                    id="ai-limit"
                                     v-model="limitInput"
                                     type="number"
                                     min="0"
+                                    step="1"
+                                    class="h-9 text-xs"
                                     :placeholder="
                                         ai.plan_replies === null
                                             ? 'Sin límite'
                                             : `${ai.plan_replies} (del plan)`
                                     "
+                                    @keydown.enter.prevent="saveLimit"
                                 />
                                 <Button
                                     variant="outline-primary"
-                                    class="shrink-0 bg-white"
+                                    class="h-9 shrink-0 rounded-[0.5rem] px-4 text-xs"
+                                    :disabled="
+                                        !limitDirty ||
+                                        limitInvalid ||
+                                        savingKey === 'limit'
+                                    "
                                     @click="saveLimit"
                                     >Guardar</Button
                                 >
                             </div>
-                            <FormHelp>
-                                Vacío = la que traiga su plan más lo que sumen
-                                sus servicios adicionales.
-                            </FormHelp>
+                            <FormHelp v-if="limitInvalid" class="text-danger"
+                                >Debe ser un número entero, 0 o más.</FormHelp
+                            >
+                            <FormHelp v-else
+                                >Vacío = la de su plan más lo que sumen sus
+                                servicios adicionales.</FormHelp
+                            >
                         </div>
 
                         <div>
-                            <label class="mb-1 block text-sm"
+                            <label
+                                for="ai-provider"
+                                class="mb-1.5 block font-medium"
                                 >Proveedor forzado</label
                             >
                             <FormSelect
+                                id="ai-provider"
                                 v-model="providerInput"
+                                class="h-9 text-xs"
+                                :disabled="savingKey === 'provider'"
                                 @change="saveProvider"
                             >
                                 <option value="">
@@ -395,38 +460,44 @@ async function saveInstructions() {
                                 </option>
                             </FormSelect>
                             <FormHelp>
-                                Sin forzar, el bot usa la cadena de proveedores
-                                de la plataforma en orden.
+                                Sin forzar, usa los proveedores de la plataforma
+                                en orden.
+                                <Link
+                                    :href="route('admin.ai')"
+                                    class="text-primary"
+                                    >Ver llaves</Link
+                                >
                             </FormHelp>
                         </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Permisos: renglones agrupados por naturaleza. En rejilla
-                 de tarjetas quedaban cuatro cajas con un hueco enorme
-                 debajo de cada texto corto -->
-            <div class="col-span-12 xl:col-span-8">
-                <div class="box box--stacked flex h-full flex-col">
-                    <div
-                        class="flex items-center gap-2 border-b border-dashed border-slate-300/70 px-5 py-4"
-                    >
-                        <Lucide
-                            icon="KeyRound"
-                            class="h-4 w-4 stroke-[1.5] text-primary"
-                        />
-                        <h2 class="text-base font-medium">
-                            Qué puede tocar el hotel
-                        </h2>
-                    </div>
-                    <div class="flex flex-1 flex-col gap-5 p-5">
+            <!-- Permisos -->
+            <div class="col-span-12 flex flex-col xl:col-span-7">
+                <div class="box box--stacked flex flex-1 flex-col">
+                    <div :class="cardHeader">
                         <div
-                            v-for="grupo in permisos"
-                            :key="grupo.title"
-                            class="flex flex-1 flex-col"
+                            :class="[
+                                sectionIcon,
+                                'border-primary/10 bg-primary/10 text-primary',
+                            ]"
                         >
+                            <Lucide icon="KeyRound" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <h2 class="text-sm font-medium">
+                                Qué puede tocar el hotel
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Se aplica al instante en su panel.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="flex flex-1 flex-col">
+                        <template v-for="grupo in permisos" :key="grupo.title">
                             <div
-                                class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                class="flex items-center gap-1.5 border-b border-slate-200/60 bg-slate-50/70 px-4 py-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase dark:border-darkmode-400 dark:bg-darkmode-600/40"
                             >
                                 <Lucide
                                     :icon="grupo.icon"
@@ -435,12 +506,12 @@ async function saveInstructions() {
                                 {{ grupo.title }}
                             </div>
                             <div
-                                class="mt-2 flex flex-1 flex-col divide-y divide-dashed divide-slate-200/70 rounded-lg border border-slate-200/70 dark:divide-darkmode-400 dark:border-darkmode-400"
+                                class="flex flex-1 flex-col divide-y divide-slate-200/60 border-b border-slate-200/60 last:border-b-0 dark:divide-darkmode-400 dark:border-darkmode-400"
                             >
                                 <div
                                     v-for="row in grupo.rows"
                                     :key="row.key"
-                                    class="flex flex-1 items-center gap-4 px-3.5 py-3"
+                                    class="flex flex-1 items-center gap-4 px-4 py-3"
                                 >
                                     <div class="min-w-0 flex-1">
                                         <div class="text-sm font-medium">
@@ -456,160 +527,182 @@ async function saveInstructions() {
                                         <FormSwitch.Input
                                             :checked="settings[row.key]"
                                             type="checkbox"
-                                            @change="toggle(row.key, row.toast)"
+                                            :disabled="savingKey === row.key"
+                                            @click.prevent="
+                                                toggle(row.key, row.toast)
+                                            "
                                         />
                                     </FormSwitch>
                                 </div>
                             </div>
-                        </div>
+                        </template>
                     </div>
                 </div>
             </div>
-        </div>
 
-        <div class="mt-5 grid grid-cols-12 gap-5">
             <!-- Instrucciones de plataforma -->
-            <div class="col-span-12 xl:col-span-6">
-                <div
-                    class="box box--stacked flex h-full flex-col p-5 xl:h-[38rem]"
-                >
-                    <h2 class="text-base font-medium">
-                        Instrucciones de plataforma
-                    </h2>
-                    <p class="mt-1 text-sm text-slate-500">
-                        Definen cómo cotiza, cómo aparta y qué dice de pagos
-                        este bot; van por encima de las instrucciones del hotel
-                        y debajo de las reglas de seguridad — nunca cobra ni
-                        confirma reservas.
-                    </p>
-                    <FormTextarea
-                        v-model="instructions"
-                        rows="10"
-                        class="mt-4 min-h-0 flex-1 resize-none font-mono text-xs"
-                        placeholder="Ej. — Cotiza siempre primero la opción más económica. — El pago se registra en recepción: nunca pidas datos de tarjeta. — Para reservar exige nombre completo y teléfono."
-                    />
-                    <FormHelp
-                        >Vacío = sin instrucciones extra de
-                        plataforma.</FormHelp
-                    >
+            <div class="col-span-12 flex flex-col xl:col-span-6">
+                <div class="box box--stacked flex flex-1 flex-col">
+                    <div :class="cardHeader">
+                        <div
+                            :class="[
+                                sectionIcon,
+                                'border-info/10 bg-info/10 text-info',
+                            ]"
+                        >
+                            <Lucide icon="ScrollText" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-sm font-medium">
+                                Instrucciones de plataforma
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Por encima de las del hotel y debajo de las
+                                reglas de seguridad.
+                            </p>
+                        </div>
+                        <span
+                            v-if="instructionsDirty"
+                            class="shrink-0 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
+                            >Sin guardar</span
+                        >
+                    </div>
+                    <div class="flex min-h-0 flex-1 flex-col px-4 py-3">
+                        <FormTextarea
+                            v-model="instructions"
+                            rows="12"
+                            class="h-[24rem] resize-none font-mono text-xs"
+                            placeholder="Ej. Cotiza siempre primero la opción más económica. El pago se registra en recepción."
+                        />
+                        <div
+                            class="mt-1.5 flex items-center justify-between text-[11px] text-slate-400"
+                        >
+                            <span>Vacío = sin instrucciones extra.</span>
+                            <span>{{ instructions.length }} caracteres</span>
+                        </div>
+                    </div>
                     <div
-                        class="mt-4 flex flex-wrap items-center justify-end gap-2"
+                        class="flex flex-wrap items-center justify-end gap-2 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
                     >
                         <Button
-                            variant="outline-primary"
-                            class="rounded-[0.5rem] bg-white"
+                            variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] text-xs"
+                            :title="'Cubre los errores más comunes: mezclar tarifas de otro tipo, confundir precio por unidad con el total y apartar sin confirmar el monto'"
                             @click="useTemplate"
                         >
                             <Lucide
                                 icon="FileText"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
+                                class="mr-1.5 h-3.5 w-3.5"
                             />
                             Usar plantilla base
                         </Button>
                         <Button
                             variant="primary"
-                            class="rounded-[0.5rem] shadow-md shadow-primary/20"
-                            :disabled="savingInstructions"
+                            class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                            :disabled="savingInstructions || !instructionsDirty"
                             @click="saveInstructions"
                         >
-                            <Lucide
-                                icon="Check"
-                                class="mr-2 h-4 w-4 stroke-[1.3]"
-                            />
-                            {{ savingInstructions ? 'Guardando…' : 'Guardar' }}
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
+                            {{
+                                savingInstructions ? 'Guardando...' : 'Guardar'
+                            }}
                         </Button>
                     </div>
-                    <p
-                        class="mt-4 flex items-start gap-2 border-t border-dashed border-slate-300/70 pt-4 text-xs text-slate-500 dark:border-darkmode-400"
-                    >
-                        <Lucide
-                            icon="Info"
-                            class="mt-0.5 h-4 w-4 shrink-0 text-slate-500"
-                        />
-                        <span>
-                            La plantilla cubre los errores más comunes del bot:
-                            mezclar tarifas de otro tipo de habitación,
-                            confundir el precio por unidad con el total, y
-                            apartar sin confirmar el monto.
-                        </span>
-                    </p>
                 </div>
             </div>
 
             <!-- Prompt efectivo -->
-            <div class="col-span-12 xl:col-span-6">
-                <div
-                    class="box box--stacked flex h-full flex-col p-5 xl:h-[38rem]"
-                >
-                    <div
-                        class="flex flex-wrap items-start justify-between gap-2"
-                    >
-                        <div class="min-w-0">
-                            <h2 class="text-base font-medium">
-                                Prompt efectivo
-                            </h2>
-                            <p class="mt-1 text-sm text-slate-500">
-                                Así ve el mundo este bot: identidad, datos del
-                                hotel, tarifas, FAQs, tus instrucciones y las
-                                reglas — armado en vivo.
+            <div class="col-span-12 flex flex-col xl:col-span-6">
+                <div class="box box--stacked flex flex-1 flex-col">
+                    <div :class="cardHeader">
+                        <div
+                            :class="[
+                                sectionIcon,
+                                'border-dark/10 bg-dark/10 text-dark dark:text-slate-300',
+                            ]"
+                        >
+                            <Lucide icon="Eye" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-sm font-medium">Prompt efectivo</h2>
+                            <p class="truncate text-xs text-slate-500">
+                                Lo que recibe el modelo, armado en vivo · ~{{
+                                    promptTokens.toLocaleString('es-MX')
+                                }}
+                                tokens
                             </p>
                         </div>
-                        <Button
-                            variant="outline-secondary"
-                            size="sm"
-                            class="shrink-0 rounded-[0.5rem] bg-white"
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                            :title="copied ? 'Copiado' : 'Copiar'"
+                            @click="copyPrompt"
+                        >
+                            <Lucide
+                                :icon="copied ? 'Check' : 'Copy'"
+                                class="h-4 w-4"
+                                :class="{ 'text-success': copied }"
+                            />
+                        </button>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                            title="Volver a armarlo"
                             :disabled="refreshing"
                             @click="refreshPrompt"
                         >
                             <Lucide
                                 icon="RefreshCw"
-                                class="mr-1.5 h-3.5 w-3.5"
+                                class="h-4 w-4"
                                 :class="{ 'animate-spin': refreshing }"
                             />
-                            Actualizar
-                        </Button>
+                        </button>
                     </div>
                     <pre
-                        class="mt-4 max-h-96 min-h-0 flex-1 overflow-auto rounded bg-slate-50 p-4 font-mono text-xs break-words whitespace-pre-wrap text-slate-600 xl:max-h-none dark:bg-darkmode-700 dark:text-slate-300"
+                        class="m-4 h-[28rem] overflow-auto rounded-lg bg-slate-50 p-3 font-mono text-[11px] leading-relaxed break-words whitespace-pre-wrap text-slate-600 dark:bg-darkmode-800 dark:text-slate-300"
                         >{{ promptText }}</pre
                     >
                 </div>
             </div>
         </div>
 
-        <!-- Confirmación para reemplazar con la plantilla base -->
+        <!-- Confirmación: reemplazar con la plantilla base -->
         <Dialog :open="confirmTemplate" @close="confirmTemplate = false">
             <Dialog.Panel>
-                <div class="p-6">
-                    <div class="flex items-start gap-3.5">
+                <div class="p-5">
+                    <div class="flex items-start gap-3">
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-warning/10 text-warning"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10 text-warning"
                         >
-                            <Lucide icon="FileText" class="h-5 w-5" />
+                            <Lucide icon="FileText" class="h-4 w-4" />
                         </div>
-                        <div>
+                        <div class="min-w-0">
                             <h2 class="text-base font-medium">
-                                ¿Reemplazar con la plantilla base?
+                                Reemplazar con la plantilla base
                             </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
-                                El texto actual del cuadro se perderá. No se
+                            <p class="mt-1 text-xs text-slate-500">
+                                El texto actual del cuadro se pierde. No se
                                 guarda nada hasta que presiones Guardar.
                             </p>
                         </div>
                     </div>
-                    <div class="mt-6 flex justify-end gap-2">
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
                             variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             @click="confirmTemplate = false"
                             >Cancelar</Button
                         >
                         <Button
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs shadow-md shadow-primary/20"
                             @click="applyTemplate"
                         >
-                            <Lucide icon="FileText" class="mr-2 h-4 w-4" /> Sí,
-                            reemplazar
+                            <Lucide
+                                icon="FileText"
+                                class="mr-1.5 h-3.5 w-3.5"
+                            />
+                            Sí, reemplazar
                         </Button>
                     </div>
                 </div>

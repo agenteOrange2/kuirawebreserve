@@ -45,12 +45,55 @@ class GuestReservationMail extends Mailable
 
     public function content(): Content
     {
+        $brand = TenantBranding::resolve();
+        $reservation = $this->reservation;
+        $currency = (string) ((Property::query()->first()?->settings ?? [])['currency'] ?? 'MXN');
+        $money = fn (float $amount) => '$'.number_format($amount, 2).' '.$currency;
+        $paid = $reservation->exists ? $reservation->paidTotal() : 0.0;
+        $pending = max(0, round((float) $reservation->total_amount - $paid, 2));
+        $guests = trim(collect([
+            $reservation->adults ? $reservation->adults.' '.($reservation->adults === 1 ? 'adulto' : 'adultos') : null,
+            $reservation->children ? $reservation->children.' '.($reservation->children === 1 ? 'niño' : 'niños') : null,
+        ])->filter()->implode(', '));
+
+        $code = $reservation->displayCode();
+
         return new Content(
             markdown: 'emails.guest-reservation',
             with: [
-                'hotelName' => TenantBranding::resolve()->name,
+                'hotelName' => $brand->name,
+                'code' => $code,
+                'rows' => [
+                    'Habitación' => $reservation->roomType?->name ?? 'Habitación',
+                    'Llegada' => ucfirst($reservation->starts_at->locale('es')->isoFormat('dddd D [de] MMMM, HH:mm')),
+                    'Salida' => ucfirst($reservation->ends_at->locale('es')->isoFormat('dddd D [de] MMMM, HH:mm')),
+                    'Huéspedes' => $guests ?: null,
+                    'Total' => $money((float) $reservation->total_amount),
+                    'Pagado' => $paid > 0 ? $money($paid) : null,
+                    'Saldo pendiente' => $paid > 0 && $pending > 0 ? $money($pending) : null,
+                ],
+                // Consulta pública de la reserva (/reserva) con el folio ya
+                // puesto; solo si el hotel tiene el motor web.
+                'lookupUrl' => $this->lookupUrl($code),
+                'mapsUrl' => $brand->mapsUrl,
             ],
         );
+    }
+
+    protected function lookupUrl(string $code): ?string
+    {
+        try {
+            if (! tenant()?->hasModule('motor-web')) {
+                return null;
+            }
+
+            $domain = tenant()->domains()->value('domain');
+            $scheme = parse_url((string) config('app.url'), PHP_URL_SCHEME) ?: 'https';
+
+            return $domain ? "{$scheme}://{$domain}/reserva?codigo=".urlencode($code) : null;
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

@@ -155,6 +155,33 @@ class DirectGuestMessenger
         return $this->whatsAppTo((string) $reservation->guest?->phone, $body);
     }
 
+    /**
+     * El número con el que esa persona YA nos escribió por WhatsApp.
+     *
+     * `contact_phone` de una conversación de WhatsApp es el wa_id que manda
+     * Meta: trae la lada de país de verdad (1 para Estados Unidos, 52 para
+     * México) y no hay nada que adivinar. Se busca por los últimos 10
+     * dígitos, que es lo único que el hotel teclea en la ficha.
+     */
+    protected function knownWhatsAppNumber(string $digits): ?string
+    {
+        if (strlen($digits) < 10) {
+            return null;
+        }
+
+        $ultimos = substr($digits, -10);
+
+        $conversation = \App\Models\Conversation::query()
+            ->whereHas('channel', fn ($query) => $query->whereIn('type', ['whatsapp', \App\Models\Channel::TYPE_WHATSAPP_EVOLUTION]))
+            ->where('contact_phone', 'like', '%'.$ultimos)
+            ->latest('last_message_at')
+            ->value('contact_phone');
+
+        $limpio = $conversation === null ? '' : (preg_replace('/\D+/', '', $conversation) ?? '');
+
+        return strlen($limpio) >= 11 ? $limpio : null;
+    }
+
     protected function whatsAppTo(string $rawPhone, string $body): bool
     {
         $phone = preg_replace('/\D+/', '', $rawPhone);
@@ -166,12 +193,13 @@ class DirectGuestMessenger
         $settings = Property::query()->first()?->settings ?? [];
 
         // El wizard pide "10 dígitos": sin lada de país WhatsApp no enruta.
-        // La lada default del hotel (México si no dice otra cosa) se antepone
-        // solo cuando falta.
-        if (strlen($phone) === 10) {
-            $code = preg_replace('/\D+/', '', (string) ($settings['phone_country_code'] ?? '52'));
-            $phone = $code.$phone;
-        }
+        // ANTES de adivinar la lada se busca el número REAL con el que esa
+        // persona nos escribe por WhatsApp: ese no se discute, lo dio Meta.
+        // Sin esto, a los huéspedes de El Paso se les armaba "52 + 915…" y
+        // sus avisos morían con el error 131026 (88 entregas rechazadas entre
+        // el 12 y el 24 de septiembre).
+        $phone = $this->knownWhatsAppNumber($phone)
+            ?? \App\Support\Phone::whatsapp($phone, (string) ($settings['phone_country_code'] ?? '52'));
 
         // Un número imposible ni siquiera llega a la API: la Cloud API
         // contesta "(#131009) el formato del número de teléfono es
@@ -293,6 +321,15 @@ class DirectGuestMessenger
         $email = $reservation->guest?->email;
 
         if (! $email) {
+            // El contrato SOLO viaja por correo: sin correo no sale, y hasta
+            // hoy eso no dejaba rastro en ninguna parte. El WhatsApp de la
+            // confirmación sí salía, así que alertUndelivered() tampoco se
+            // disparaba y el hotel daba por enviado un contrato que nunca
+            // existió (cabañas 2026-09-18, Daysi Gómez RES-2026-1773).
+            if ($withContract) {
+                $this->alertContractNotSent($reservation, 'no tiene correo en su ficha');
+            }
+
             return false;
         }
 
@@ -302,11 +339,69 @@ class DirectGuestMessenger
 
             ($mailer ?? Mail::mailer())->to($email)->send(new GuestReservationMail($reservation, $body, $subject, $withCalendar, $withContract));
 
+            if ($withContract) {
+                // Queda en la historia de la reserva, y de ahí lo lee la
+                // tarjeta de la ficha. Se registra AQUÍ y no en quien manda
+                // porque el contrato sale por dos caminos —la confirmación
+                // automática y el botón de recepción—: si solo se anotara el
+                // botón, la ficha diría "Sin enviar" de un contrato que ya
+                // llegó, y alguien lo mandaría dos veces.
+                $this->logContractSent($reservation, $email);
+            }
+
             return true;
         } catch (Throwable $e) {
             report($e);
 
+            if ($withContract) {
+                $this->alertContractNotSent($reservation, "no recibió el correo ({$email}): el envío falló");
+            }
+
             return false;
+        }
+    }
+
+    /**
+     * Constancia de que el contrato salió: quién lo mandó (o el sistema, si
+     * fue la confirmación automática) y a qué correo.
+     */
+    protected function logContractSent(Reservation $reservation, string $email): void
+    {
+        try {
+            activity('reservation')
+                ->performedOn($reservation)
+                ->causedBy(auth()->user())
+                ->log("Contrato de hospedaje enviado a {$email}");
+        } catch (Throwable $e) {
+            report($e);
+        }
+    }
+
+    /**
+     * Campana cuando un contrato de hospedaje se quedó sin salir. Solo para
+     * correos que lo llevaban adjunto: que un aviso cualquiera no tenga
+     * correo es normal y no merece interrumpir a nadie; que un huésped con
+     * reserva confirmada se quede sin su contrato, sí. Desde la ficha se
+     * captura el correo y se manda (ReservationContractController).
+     */
+    protected function alertContractNotSent(Reservation $reservation, string $motivo): void
+    {
+        try {
+            if (! app(\App\Services\Guests\ReservationContract::class)->available()) {
+                // El hotel no tiene contrato capturado: no faltó nada.
+                return;
+            }
+
+            app(\App\Services\StaffNotifier::class)->notify(
+                type: \App\Models\StaffNotification::TYPE_RESERVATION,
+                title: 'Contrato sin enviar · '.$reservation->displayCode(),
+                body: ($reservation->guest_name ?: 'El huésped').' '.$motivo
+                    .', así que su contrato de hospedaje no salió. Ábrela para capturar el correo y enviarlo.',
+                url: '/reservas/'.$reservation->id,
+                subject: $reservation,
+            );
+        } catch (Throwable $e) {
+            report($e);
         }
     }
 }

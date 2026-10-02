@@ -134,12 +134,8 @@ class WaitlistEntry extends Model
             return null;
         }
 
-        if (strlen($digits) === 10) {
-            $code = preg_replace('/\D+/', '', $countryCode ?: '52');
-
-            return $code.$digits;
-        }
-
-        return $digits;
+        // La lada la decide App\Support\Phone: un 915 es de El Paso, no de
+        // México, y con "52" adelante el aviso de lista de espera no llega.
+        return \App\Support\Phone::whatsapp($digits, (string) ($countryCode ?: '52'));
     }
 }

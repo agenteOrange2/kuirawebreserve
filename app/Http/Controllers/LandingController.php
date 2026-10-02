@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Http\Requests\StorePlanProspectRequest;
+use App\Models\Central\AddonService;
 use App\Models\Central\Plan;
 use App\Models\Central\PlanProspect;
 use Illuminate\Http\RedirectResponse;
@@ -16,6 +17,7 @@ class LandingController extends Controller
     public function __invoke(): Response
     {
         $moduleCatalog = config('modules', []);
+        $groups = config('module_groups', []);
 
         return Inertia::render('Welcome', [
             'canRegister' => Features::enabled(Features::registration()),
@@ -30,6 +32,7 @@ class LandingController extends Controller
                     'label' => $plan->label,
                     'description' => $plan->description,
                     'price_monthly' => (int) $plan->price_monthly,
+                    'activation_fee' => (int) $plan->activation_fee,
                     'max_rooms' => $plan->max_rooms,
                     'max_users' => $plan->max_users,
                     'max_channels' => $plan->max_channels,
@@ -42,12 +45,38 @@ class LandingController extends Controller
                     'ai_monthly_replies' => $plan->ai_monthly_replies,
                 ])
                 ->values(),
-            'modules' => collect($moduleCatalog)
+            'modules' => $modules = collect($moduleCatalog)
                 ->filter(fn (array $module) => $module['available'] ?? true)
                 ->map(fn (array $module, string $key) => [
                     'key' => $key,
                     'label' => $module['label'],
                     'description' => $module['description'],
+                    'group' => isset($groups[$module['group'] ?? '']) ? $module['group'] : 'otros',
+                ])
+                ->values(),
+            // Las familias de config/module_groups.php, en su orden y sin
+            // las vacías: 25 tarjetas seguidas no se leen.
+            'moduleGroups' => collect($groups)
+                ->map(fn (array $group, string $key) => [
+                    'key' => $key,
+                    'label' => $group['label'],
+                    'description' => $group['description'],
+                    'icon' => $group['icon'] ?? 'Blocks',
+                    'count' => $modules->where('group', $key)->count(),
+                ])
+                ->filter(fn (array $group) => $group['count'] > 0)
+                ->values(),
+            // Servicios que se contratan aparte del plan (los activos), sin precio.
+            'addons' => AddonService::query()
+                ->where('active', true)
+                ->ordered()
+                ->get()
+                ->map(fn (AddonService $service) => [
+                    'key' => $service->key,
+                    'name' => $service->name,
+                    'summary' => $service->summary,
+                    // Sin precio: los servicios se cotizan en la demo.
+                    'requires' => $service->requires,
                 ])
                 ->values(),
         ]);

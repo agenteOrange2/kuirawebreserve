@@ -407,14 +407,18 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 </a>
             </div>
 
+            <!-- Una fila, no una rejilla: con cuatro o cinco acciones en tres
+                 columnas, "Registrar salida" —la principal— quedaba sola en
+                 otro renglón. Las de apoyo a la izquierda y la salida al
+                 extremo derecho, como el pie de un modal. -->
             <div
                 v-if="canManageReservations || canChargeConsumption"
-                class="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3"
+                class="mt-4 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center [&>button]:min-h-10 [&>button]:justify-center [&>button]:px-4 [&>button]:text-xs"
             >
                 <Button
                     v-if="canChargeConsumption"
                     variant="outline-primary"
-                    class="min-h-11 justify-center text-xs"
+                    class="rounded-[0.5rem]"
                     @click="openPos(room.active_stay.id)"
                 >
                     <Lucide icon="ReceiptText" class="mr-1.5 h-3.5 w-3.5" />
@@ -425,7 +429,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                         canManageReservations && room.active_stay.reservation_id
                     "
                     variant="outline-primary"
-                    class="min-h-11 justify-center text-xs"
+                    class="rounded-[0.5rem]"
                     @click="
                         openReservationDetail(room.active_stay.reservation_id)
                     "
@@ -440,7 +444,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 <Button
                     v-if="canManageReservations"
                     variant="outline-primary"
-                    class="min-h-11 justify-center text-xs"
+                    class="rounded-[0.5rem]"
                     @click="openExtend(room)"
                 >
                     <Lucide icon="CalendarPlus" class="mr-1.5 h-3.5 w-3.5" />
@@ -449,7 +453,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 <Button
                     v-if="canManageReservations"
                     variant="outline-primary"
-                    class="min-h-11 justify-center text-xs"
+                    class="rounded-[0.5rem]"
                     @click="openMove(room)"
                 >
                     <Lucide icon="ArrowRightLeft" class="mr-1.5 h-3.5 w-3.5" />
@@ -458,7 +462,7 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 <Button
                     v-if="canManageReservations"
                     variant="primary"
-                    class="min-h-11 justify-center text-xs"
+                    class="col-span-2 rounded-[0.5rem] sm:ml-auto"
                     :disabled="busyAction === `stay:${room.active_stay.id}`"
                     @click="requestCheckout(room)"
                 >

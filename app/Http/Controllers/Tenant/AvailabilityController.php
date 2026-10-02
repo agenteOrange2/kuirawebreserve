@@ -38,7 +38,7 @@ class AvailabilityController extends Controller
         // Aviso temprano de antelación mínima (spec §2.6.2): el panel/bot lo
         // muestran antes de intentar crear la reserva.
         $advanceError = $ratePlan->violatesMinAdvance($start)
-            ? "Esta tarifa requiere reservar con al menos {$ratePlan->minAdvanceLabel()} de antelación."
+            ? $ratePlan->minAdvanceMessage()
             : null;
 
         return response()->json([

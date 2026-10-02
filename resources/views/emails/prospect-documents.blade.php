@@ -1,5 +1,5 @@
-<x-mail::message>
-# {{ $brandName }}
+<x-mail::message preheader="Te compartimos la información de los servicios que te interesan.">
+# Gracias por tu interés
 
 Hola {{ $prospect->name }}, gracias por registrarte. Nos da gusto tu interés en:
 

@@ -28,14 +28,14 @@ return [
 
     'cobros' => [
         'label' => 'Cobros en línea',
-        'description' => 'Pasarelas de pago (Stripe, Mercado Pago) y links de cobro. Las transferencias con verificación van en todos los planes.',
+        'description' => 'Pasarelas de pago (Stripe, Mercado Pago, PayPal) y ligas de cobro. Las transferencias con verificación van en todos los planes.',
         'available' => true,
         'group' => 'cobros',
     ],
 
     'mensajeria' => [
         'label' => 'Bandeja de mensajes',
-        'description' => 'Bandeja unificada de conversaciones y canales conectados (WhatsApp, Messenger, Instagram, webchat); el número de canales lo limita el plan.',
+        'description' => 'Bandeja unificada de conversaciones y canales conectados (WhatsApp, Messenger, Instagram, Telegram, TikTok, webchat); el número de canales lo limita el plan.',
         'available' => true,
         'group' => 'atencion',
     ],
@@ -49,7 +49,7 @@ return [
 
     'motor-web' => [
         'label' => 'Motor de reservas web',
-        'description' => 'Integración con sitios (WordPress): catálogo con precios en vivo, tokens e importador; el wizard público de reservas viene en camino.',
+        'description' => 'Reservas directas desde tu sitio: formulario público de reserva con precios en vivo, widget embebible por habitación e integración con WordPress.',
         'available' => true,
         'group' => 'reservas',
     ],

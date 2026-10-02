@@ -161,11 +161,13 @@ const cardFooter =
 </script>
 
 <template>
-    <!-- Tres listas parejas: lo que ya pasó, lo que viene y lo que se movió
-         hoy, cada una con su tope y su salida al historial completo. -->
-    <div class="grid items-start gap-4 xl:grid-cols-3">
+    <!-- Lo que ya pasó manda y se lleva el ancho; lo que viene y lo que se
+         movió hoy se apilan al lado. En tres columnas iguales la lista de
+         estancias quedaba apretada (fechas cortadas) junto a dos tarjetas
+         casi vacías. -->
+    <div class="grid items-start gap-4 lg:grid-cols-5">
         <section
-            class="overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
+            class="overflow-hidden rounded-xl border border-slate-200/70 lg:col-span-3 dark:border-darkmode-400"
         >
             <div :class="cardHeader">
                 <div
@@ -275,138 +277,152 @@ const cardFooter =
             </a>
         </section>
 
-        <!-- Lo que viene: sirve para saber hasta cuándo se puede extender a
+        <div class="grid gap-4 lg:col-span-2">
+            <!-- Lo que viene: sirve para saber hasta cuándo se puede extender a
              quien está adentro sin pisar a nadie. -->
-        <section
-            class="overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
-        >
-            <div :class="cardHeader">
-                <div
-                    :class="sectionIcon"
-                    class="border-info/10 bg-info/10 text-info"
-                >
-                    <Lucide icon="CalendarClock" class="h-4 w-4" />
-                </div>
-                <div class="min-w-0 flex-1">
-                    <h3 class="text-sm font-medium">Lo que viene</h3>
-                    <p class="mt-0.5 text-xs text-slate-500">
-                        Reservas vivas de esta habitación.
-                    </p>
-                </div>
-                <span v-if="upcomingTotal" :class="countBadge">{{
-                    countLabel(upcoming.length, upcomingTotal)
-                }}</span>
-            </div>
-
-            <p
-                v-if="loading && !loaded"
-                class="px-4 py-3 text-xs text-slate-500"
+            <section
+                class="overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
             >
-                Leyendo las reservas…
-            </p>
-
-            <p
-                v-else-if="!upcoming.length"
-                class="px-4 py-3 text-xs text-slate-500"
-            >
-                No hay reservas por venir en esta habitación.
-            </p>
-
-            <div
-                v-else
-                class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
-            >
-                <div
-                    v-for="reservation in upcoming"
-                    :key="reservation.id"
-                    class="flex items-center gap-3 px-4 py-2.5"
-                >
+                <div :class="cardHeader">
+                    <div
+                        :class="sectionIcon"
+                        class="border-info/10 bg-info/10 text-info"
+                    >
+                        <Lucide icon="CalendarClock" class="h-4 w-4" />
+                    </div>
                     <div class="min-w-0 flex-1">
-                        <div class="flex items-center gap-x-2">
-                            <span class="truncate text-xs font-medium">{{
-                                reservation.guest_name
-                            }}</span>
-                            <span
-                                v-if="reservation.starts_today"
-                                class="shrink-0 rounded-full bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info"
-                                >Llega hoy</span
-                            >
-                        </div>
-                        <p class="mt-0.5 truncate text-[11px] text-slate-500">
-                            {{ reservation.code }} ·
-                            {{ reservation.starts_at }} →
-                            {{ reservation.ends_at }}
+                        <h3 class="text-sm font-medium">Lo que viene</h3>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Reservas vivas de esta habitación.
                         </p>
                     </div>
-                    <span class="shrink-0 text-xs font-medium">{{
-                        formatMoney(reservation.total_amount)
+                    <span v-if="upcomingTotal" :class="countBadge">{{
+                        countLabel(upcoming.length, upcomingTotal)
                     }}</span>
                 </div>
-            </div>
 
-            <a :href="historyUrl('proximas')" :class="cardFooter">
-                Ver todo en el historial
-                <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
-            </a>
-        </section>
-
-        <section
-            class="overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
-        >
-            <div :class="cardHeader">
-                <div
-                    :class="sectionIcon"
-                    class="border-slate-200 bg-slate-100 text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-400"
+                <p
+                    v-if="loading && !loaded"
+                    class="px-4 py-3 text-xs text-slate-500"
                 >
-                    <Lucide icon="History" class="h-4 w-4" />
-                </div>
-                <div class="min-w-0 flex-1">
-                    <h3 class="text-sm font-medium">Cambios de hoy</h3>
-                    <p class="mt-0.5 text-xs text-slate-500">
-                        Movimientos del semáforo de esta habitación.
-                    </p>
-                </div>
-                <span v-if="room.today_history.length" :class="countBadge">{{
-                    countLabel(todayChanges.length, room.today_history.length)
-                }}</span>
-            </div>
+                    Leyendo las reservas…
+                </p>
 
-            <div
-                v-if="todayChanges.length"
-                class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                <p
+                    v-else-if="!upcoming.length"
+                    class="px-4 py-3 text-xs text-slate-500"
+                >
+                    No hay reservas por venir en esta habitación.
+                </p>
+
+                <div
+                    v-else
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="reservation in upcoming"
+                        :key="reservation.id"
+                        class="flex items-center gap-3 px-4 py-2.5"
+                    >
+                        <div class="min-w-0 flex-1">
+                            <div class="flex items-center gap-x-2">
+                                <span class="truncate text-xs font-medium">{{
+                                    reservation.guest_name
+                                }}</span>
+                                <span
+                                    v-if="reservation.starts_today"
+                                    class="shrink-0 rounded-full bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info"
+                                    >Llega hoy</span
+                                >
+                            </div>
+                            <p
+                                class="mt-0.5 truncate text-[11px] text-slate-500"
+                            >
+                                {{ reservation.code }} ·
+                                {{ reservation.starts_at }} →
+                                {{ reservation.ends_at }}
+                            </p>
+                        </div>
+                        <span class="shrink-0 text-xs font-medium">{{
+                            formatMoney(reservation.total_amount)
+                        }}</span>
+                    </div>
+                </div>
+
+                <a :href="historyUrl('proximas')" :class="cardFooter">
+                    Ver todo en el historial
+                    <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
+                </a>
+            </section>
+
+            <section
+                class="overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
             >
-                <div
-                    v-for="entry in todayChanges"
-                    :key="entry.id"
-                    class="flex items-center justify-between gap-3 px-4 py-2.5"
-                >
-                    <div class="min-w-0">
-                        <div class="truncate text-xs font-medium">
-                            {{ entry.from_label ? `${entry.from_label} → ` : ''
-                            }}{{ entry.to_label }}
-                        </div>
-                        <div class="mt-0.5 text-[11px] text-slate-500">
-                            {{
-                                entry.auto
-                                    ? 'Sistema'
-                                    : (entry.changed_by ?? 'Sistema')
-                            }}
-                        </div>
+                <div :class="cardHeader">
+                    <div
+                        :class="sectionIcon"
+                        class="border-slate-200 bg-slate-100 text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-400"
+                    >
+                        <Lucide icon="History" class="h-4 w-4" />
                     </div>
-                    <div class="shrink-0 text-[11px] text-slate-500">
-                        {{ entry.created_at ?? '—' }}
+                    <div class="min-w-0 flex-1">
+                        <h3 class="text-sm font-medium">Cambios de hoy</h3>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Movimientos del semáforo de esta habitación.
+                        </p>
+                    </div>
+                    <span
+                        v-if="room.today_history.length"
+                        :class="countBadge"
+                        >{{
+                            countLabel(
+                                todayChanges.length,
+                                room.today_history.length,
+                            )
+                        }}</span
+                    >
+                </div>
+
+                <div
+                    v-if="todayChanges.length"
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="entry in todayChanges"
+                        :key="entry.id"
+                        class="flex items-center justify-between gap-3 px-4 py-2.5"
+                    >
+                        <div class="min-w-0">
+                            <div class="truncate text-xs font-medium">
+                                {{
+                                    entry.from_label
+                                        ? `${entry.from_label} → `
+                                        : ''
+                                }}{{ entry.to_label }}
+                            </div>
+                            <div class="mt-0.5 text-[11px] text-slate-500">
+                                {{
+                                    entry.auto
+                                        ? 'Sistema'
+                                        : (entry.changed_by ?? 'Sistema')
+                                }}
+                            </div>
+                        </div>
+                        <div class="shrink-0 text-[11px] text-slate-500">
+                            {{ entry.created_at ?? '—' }}
+                        </div>
                     </div>
                 </div>
-            </div>
-            <p v-else class="px-4 py-3 text-xs text-slate-500">
-                Sin cambios registrados hoy.
-            </p>
+                <p v-else class="px-4 py-3 text-xs text-slate-500">
+                    Sin cambios registrados hoy.
+                </p>
 
-            <a :href="historyUrl('semaforo')" :class="cardFooter">
-                Ver todo en el historial
-                <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
-            </a>
-        </section>
+                <a :href="historyUrl('semaforo')" :class="cardFooter">
+                    Ver todo en el historial
+                    <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
+                </a>
+            </section>
+        </div>
 
         <StayFolioDialog
             :open="openStay !== null"

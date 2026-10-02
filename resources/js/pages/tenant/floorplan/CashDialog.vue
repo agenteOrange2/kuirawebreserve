@@ -30,14 +30,14 @@ const emit = defineEmits<{
          el conteo caía abajo del borde. -->
     <Dialog size="xl" :open="open" @close="emit('close')">
         <Dialog.Panel class="sm:w-[680px] lg:w-[860px]">
-            <div class="flex max-h-[88vh] flex-col">
+            <div class="flex max-h-[calc(100dvh-6rem)] flex-col">
                 <div
                     class="flex shrink-0 items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                 >
                     <div
                         class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
                     >
-                        <Lucide icon="Wallet" class="h-5 w-5 text-primary" />
+                        <Lucide icon="Wallet" class="h-4 w-4 text-primary" />
                     </div>
                     <div class="min-w-0 flex-1">
                         <h2 class="text-base font-medium">Caja del turno</h2>
@@ -45,18 +45,26 @@ const emit = defineEmits<{
                             Cómo va el corte en curso, sin salir del plano.
                         </p>
                     </div>
+                    <button
+                        type="button"
+                        class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                        aria-label="Cerrar"
+                        @click="emit('close')"
+                    >
+                        <Lucide icon="X" class="h-4 w-4" />
+                    </button>
                 </div>
 
-                <div class="flex-1 overflow-y-auto">
+                <div class="min-h-0 flex-1 overflow-y-auto">
                     <CashPanel @error="(message) => emit('error', message)" />
                 </div>
 
                 <div
-                    class="flex shrink-0 items-center justify-end border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    class="flex shrink-0 items-center justify-end border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                 >
                     <Button
                         variant="outline-secondary"
-                        class="rounded-[0.5rem] text-xs"
+                        class="h-9 rounded-[0.5rem] px-5 text-xs"
                         @click="emit('close')"
                         >Cerrar</Button
                     >

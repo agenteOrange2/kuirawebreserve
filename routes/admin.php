@@ -20,10 +20,16 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin.')->group(function () {
+Route::middleware(['auth', 'role:platform-admin', \App\Http\Middleware\RecordAdminActivity::class])->prefix('admin')->name('admin.')->group(function () {
     Route::get('/', DashboardController::class)->name('dashboard');
 
     // Búsqueda rápida del header (⌘K): hoteles y personas.
+    // Avisos de la plataforma sobre los hoteles (PlatformAlertScanner).
+    Route::get('notificaciones', [\App\Http\Controllers\Admin\PlatformAlertController::class, 'index'])->name('alerts');
+    Route::post('notificaciones/revisar', [\App\Http\Controllers\Admin\PlatformAlertController::class, 'scan'])->name('alerts.scan');
+    Route::patch('notificaciones', [\App\Http\Controllers\Admin\PlatformAlertController::class, 'update'])->name('alerts.update');
+    Route::post('notificaciones/leidas', [\App\Http\Controllers\Admin\PlatformAlertController::class, 'readAll'])->name('alerts.read-all');
+
     Route::get('api/quick-search', \App\Http\Controllers\Admin\QuickSearchController::class)->name('quick-search');
 
     Route::resource('tenants', TenantController::class)
@@ -55,6 +61,8 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
     // Usuarios del propio panel de plataforma (BD central, rol platform-admin).
     Route::get('usuarios', [\App\Http\Controllers\Admin\AdminUserController::class, 'index'])
         ->name('users');
+    Route::get('usuarios/{user}', [\App\Http\Controllers\Admin\AdminUserController::class, 'show'])
+        ->name('users.show');
     Route::post('usuarios', [\App\Http\Controllers\Admin\AdminUserController::class, 'store'])
         ->name('users.store');
     Route::patch('usuarios/{user}', [\App\Http\Controllers\Admin\AdminUserController::class, 'update'])
@@ -90,6 +98,7 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
     Route::delete('prospectos/documentos/{prospectDocument}', [\App\Http\Controllers\Admin\ProspectDocumentController::class, 'destroy'])->name('prospects.documents.destroy');
 
     Route::get('prospectos', [PlanProspectController::class, 'index'])->name('prospects');
+    Route::get('prospectos/exportar', [PlanProspectController::class, 'export'])->name('prospects.export');
     Route::delete('prospectos', [PlanProspectController::class, 'destroyBulk'])->name('prospects.destroyBulk');
     Route::patch('prospectos/{planProspect}', [PlanProspectController::class, 'update'])->name('prospects.update');
     Route::post('prospectos/{planProspect}/enviar-documentos', [PlanProspectController::class, 'sendDocuments'])->name('prospects.sendDocuments');
@@ -98,6 +107,7 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
     // Agentes IA de plataforma: keys maestras + asignación por tenant.
     Route::get('agentes-ia', [AiAgentsController::class, 'index'])->name('ai');
     Route::post('ai-providers', [AiAgentsController::class, 'storeProvider'])->name('ai.providers.store');
+    Route::post('ai-providers/orden', [AiAgentsController::class, 'reorderProviders'])->name('ai.providers.reorder');
     Route::patch('ai-providers/{platformAiProvider}', [AiAgentsController::class, 'updateProvider'])->name('ai.providers.update');
     Route::delete('ai-providers/{platformAiProvider}', [AiAgentsController::class, 'destroyProvider'])->name('ai.providers.destroy');
     Route::post('ai-providers/{platformAiProvider}/test', [AiAgentsController::class, 'testProvider'])->name('ai.providers.test');
@@ -111,14 +121,17 @@ Route::middleware(['auth', 'role:platform-admin'])->prefix('admin')->name('admin
     Route::get('agentes-ia/{tenant}/canales', fn (Tenant $tenant) => redirect()
         ->route('admin.tenants.channels', $tenant))->name('ai.channels');
 
-    // Apariencia de la plataforma (branding del login, nombre, favicon).
-    Route::get('apariencia', [\App\Http\Controllers\Admin\BrandingController::class, 'index'])->name('branding');
-    Route::post('apariencia', [\App\Http\Controllers\Admin\BrandingController::class, 'update'])->name('branding.update');
+    // Marca de la plataforma (nombre, logo, favicon y el login). Vive junto
+    // a la configuración de la cuenta; /admin/apariencia queda como liga vieja.
+    Route::get('settings/brand', [\App\Http\Controllers\Admin\BrandingController::class, 'index'])->name('branding');
+    Route::post('settings/brand', [\App\Http\Controllers\Admin\BrandingController::class, 'update'])->name('branding.update');
+    Route::redirect('apariencia', '/admin/settings/brand');
 
     // Métodos de pago: interruptores de plataforma + override por hotel.
     Route::get('payments', [\App\Http\Controllers\Admin\PaymentSettingsController::class, 'index'])->name('payments');
     Route::patch('payments/methods', [\App\Http\Controllers\Admin\PaymentSettingsController::class, 'updateMethod'])->name('payments.methods');
     Route::patch('tenants/{tenant}/payment-methods', [\App\Http\Controllers\Admin\PaymentSettingsController::class, 'updateTenant'])->name('payments.tenant');
+    Route::delete('payments/gateways/{paymentGatewayLink}', [\App\Http\Controllers\Admin\PaymentSettingsController::class, 'destroyOrphan'])->name('payments.gateways.destroy');
 
     // App de Meta propia por hotel (separación de apps; sin ella se usa la
     // app de la plataforma).

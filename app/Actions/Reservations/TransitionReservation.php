@@ -129,6 +129,34 @@ class TransitionReservation
     }
 
     /**
+     * Fecha pendiente: el huésped cancela sin reembolso y su pago se queda
+     * a favor para otra fecha (regla de cabañas para reservas de último
+     * momento). Es una cancelación como cualquier otra —libera la cabaña,
+     * avisa a la lista de espera y al personal— más la marca que dice que
+     * hay dinero esperando una fecha. Se reagenda con reopen(), que limpia
+     * la marca.
+     */
+    public function setDatePending(Reservation $reservation, ?User $user = null, ?string $note = null): Reservation
+    {
+        $note = trim((string) $note) ?: null;
+
+        $reservation = $this->cancel($reservation, $user, ReservationStatus::Cancelled, 'Fecha pendiente'.($note ? ': '.$note : ''));
+
+        $reservation->update([
+            'date_pending_at' => now(),
+            'date_pending_note' => $note,
+        ]);
+
+        activity('reservation')
+            ->performedOn($reservation)
+            ->causedBy($user)
+            ->withProperties(['paid' => $reservation->paidTotal(), 'note' => $note])
+            ->log('Reserva con fecha pendiente');
+
+        return $reservation;
+    }
+
+    /**
      * Reabre una reserva cancelada o de "no llegó" con el MISMO código, en
      * sus fechas o en unas nuevas (reagendar).
      *
@@ -212,6 +240,9 @@ class TransitionReservation
                 'status' => ReservationStatus::Pending,
                 'hold_expires_at' => now()->addMinutes(max(1, $holdMinutes)),
                 'cancellation_reason' => null,
+                // Ya tiene fecha: deja de estar "pendiente".
+                'date_pending_at' => null,
+                'date_pending_note' => null,
             ]);
 
             activity('reservation')

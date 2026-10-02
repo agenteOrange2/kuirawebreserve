@@ -40,7 +40,13 @@ class SocialSettings
         SocialComment::CLASS_PRAISE => [
             'responder_publico' => true,
             'mandar_privado' => false,
-            'plantilla' => 'Gracias por tu comentario, te esperamos pronto.',
+            // Solo agradecer: quien dice "qué bonito" no necesariamente vino.
+            'plantilla' => '¡Muchas gracias por tus palabras, [Nombre]!',
+        ],
+        SocialComment::CLASS_INTEREST => [
+            'responder_publico' => true,
+            'mandar_privado' => true,
+            'plantilla' => '¡Gracias, [Nombre]! Nos encantaría recibirte. Te mandamos la información por mensaje privado.',
         ],
         SocialComment::CLASS_SPAM => [
             'responder_publico' => false,

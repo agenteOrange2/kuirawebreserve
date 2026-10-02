@@ -29,7 +29,7 @@ class SocialSettingsPageController extends Controller
             // La etiqueta a un amigo no se configura: nunca se contesta.
             'classifications' => array_diff_key(
                 SocialComment::CLASSIFICATION_LABELS,
-                [SocialComment::CLASS_TAG => true],
+                [SocialComment::CLASS_TAG => true, SocialComment::CLASS_ELSEWHERE => true],
             ),
             'privateLocked' => [SocialComment::CLASS_COMPLAINT],
             'agentReady' => $brain->isConfigured(),

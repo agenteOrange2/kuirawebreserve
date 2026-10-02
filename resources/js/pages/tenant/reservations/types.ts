@@ -88,6 +88,8 @@ export interface ReservationRow {
     notes: string | null;
     guest_notes: string | null;
     cancellation_reason: string | null;
+    date_pending_at?: string | null;
+    date_pending_note?: string | null;
     deposit_amount: string;
     payment_status: string;
     payment_status_label: string;

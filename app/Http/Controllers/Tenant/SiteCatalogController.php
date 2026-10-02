@@ -45,8 +45,8 @@ class SiteCatalogController extends Controller
             'generated_at' => now()->toIso8601String(),
             'room_types' => RoomType::query()
                 ->where('active', true)
-                ->with(['media', 'ratePlans' => fn ($q) => $q->where('active', true)->orderBy('price')])
-                ->withMin(['ratePlans as price_from' => fn ($q) => $q->where('active', true)], 'price')
+                ->with(['media', 'ratePlans' => fn ($q) => $q->sellableOnline()->orderBy('price')])
+                ->withMin(['ratePlans as price_from' => fn ($q) => $q->sellableOnline()], 'price')
                 ->orderBy('sort_order')
                 ->orderBy('name')
                 ->get()

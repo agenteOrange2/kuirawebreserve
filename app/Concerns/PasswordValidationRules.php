@@ -40,6 +40,31 @@ trait PasswordValidationRules
     }
 
     /**
+     * Los errores de la contraseña en español. La app corre con locale `en`
+     * y sin archivos de idioma, así que sin esto el usuario leía "The
+     * password field must contain at least one symbol." El Password rule
+     * hereda los mensajes del validador padre, por eso basta con las llaves
+     * `password.<regla>`.
+     *
+     * @return array<string, string>
+     */
+    public function passwordMessages(): array
+    {
+        return [
+            'password.required' => 'Escribe la contraseña nueva.',
+            'password.min' => 'La contraseña debe tener al menos :min caracteres.',
+            'password.confirmed' => 'Las dos contraseñas no coinciden.',
+            'password.mixed' => 'La contraseña necesita mayúsculas y minúsculas.',
+            'password.letters' => 'La contraseña necesita al menos una letra.',
+            'password.numbers' => 'La contraseña necesita al menos un número.',
+            'password.symbols' => 'La contraseña necesita al menos un símbolo.',
+            'password.uncompromised' => 'Esta contraseña aparece en filtraciones conocidas de internet. Elige otra.',
+            'current_password.required' => 'Escribe tu contraseña actual.',
+            'current_password.current_password' => 'La contraseña actual no es correcta.',
+        ];
+    }
+
+    /**
      * Get the validation rules used to validate the current password.
      *
      * @return array<int, Rule|array<mixed>|string>

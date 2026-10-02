@@ -74,6 +74,9 @@ class PropertyController extends Controller
             // Ajustes del hotel (los consume el panel y el get_policies() de agentes).
             'settings.check_in_time' => ['nullable', 'date_format:H:i'],
             'settings.check_out_time' => ['nullable', 'date_format:H:i'],
+            // Corte de madrugada (opcional): llegar antes de esta hora cuenta
+            // como la noche anterior y se sale ese mismo día.
+            'settings.night_cutoff_time' => ['sometimes', 'nullable', 'date_format:H:i'],
             'settings.currency' => ['nullable', 'string', 'size:3'],
             // Doble moneda opcional (Datos generales → Horarios y moneda): una
             // segunda moneda + tipo de cambio para mostrar el "aprox" al
@@ -124,6 +127,12 @@ class PropertyController extends Controller
             'settings.panel_primary' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
             'settings.panel_menu_from' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
             'settings.panel_menu_to' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            // Login en el dominio del hotel (misma pantalla): su marca con
+            // textos propios; apagado = el login de la plataforma tal cual.
+            'settings.login_brand_enabled' => ['sometimes', 'boolean'],
+            'settings.login_hint' => ['sometimes', 'nullable', 'string', 'max:160'],
+            'settings.login_title' => ['sometimes', 'nullable', 'string', 'max:120'],
+            'settings.login_subtitle' => ['sometimes', 'nullable', 'string', 'max:300'],
             'settings.wizard_theme' => ['sometimes', \Illuminate\Validation\Rule::in(['light', 'dark', 'auto'])],
             // Control explícito de si el wizard pide pago en línea al
             // reservar (spec-wizard-precios-y-pasos §5.2): por default lo
@@ -230,6 +239,11 @@ class PropertyController extends Controller
             'settings.cancel_free_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['hour', 'day', 'week'])],
             'settings.cancel_penalty_percent' => ['sometimes', 'numeric', 'min:0', 'max:100'],
             'settings.cancel_policy_text' => ['sometimes', 'nullable', 'string', 'max:2000'],
+            // Reservas de último momento: llegada a menos de N días pide otro
+            // anticipo y el saldo se paga en el hotel. 0 días = apagado.
+            'settings.short_notice_days' => ['sometimes', 'integer', 'min:0', 'max:60'],
+            'settings.short_notice_deposit_percent' => ['sometimes', 'numeric', 'min:1', 'max:100'],
+            'settings.short_notice_policy_text' => ['sometimes', 'nullable', 'string', 'max:2000'],
             // Contrato de hospedaje del hotel: se adjunta en PDF al correo de
             // confirmación con los datos de la reserva. "## " abre un
             // apartado y "- " es una regla de la lista.
@@ -242,6 +256,7 @@ class PropertyController extends Controller
             // es escribirle a quien solo preguntó el precio y se fue.
             'settings.nudge_silence_minutes' => ['sometimes', 'integer', 'min:5', 'max:1440'],
             'settings.nudge_min_messages' => ['sometimes', 'integer', 'min:0', 'max:20'],
+            'settings.nudge_only_after_data_request' => ['sometimes', 'boolean'],
             // Cierre automático de la bandeja: días de silencio tras los que
             // una consulta suelta se da por terminada. 0 = apagado. Quien
             // llegó a una cotización real nunca se cierra solo (ver

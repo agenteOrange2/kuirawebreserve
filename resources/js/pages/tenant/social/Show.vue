@@ -68,6 +68,8 @@ const classificationTone: Record<string, string> = {
     elogio: 'primary',
     spam: 'dark',
     etiqueta: 'dark',
+    interes: 'success',
+    otro_lugar: 'dark',
 };
 
 const statusTone: Record<string, string> = {
@@ -378,6 +380,10 @@ function rerun(comment: Comment) {
                             <option value="pregunta">Preguntas</option>
                             <option value="queja">Quejas</option>
                             <option value="elogio">Elogios</option>
+                            <option value="interes">Quieren venir</option>
+                            <option value="otro_lugar">
+                                Prefieren otro lugar
+                            </option>
                             <option value="spam">Spam</option>
                             <option value="etiqueta">Etiquetas a amigos</option>
                         </FormSelect>

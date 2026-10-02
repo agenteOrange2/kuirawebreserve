@@ -74,7 +74,7 @@ class BookingController extends Controller
             ->get()
             ->map(function (RoomType $type) use ($data, $start, $end, $availability, $guests) {
                 $ratePlan = $type->ratePlans()
-                    ->where('active', true)
+                    ->sellableOnline()
                     ->where('type', $data['mode'])
                     ->orderBy('price')
                     ->first();
@@ -95,7 +95,7 @@ class BookingController extends Controller
                 $planEnd = $end ?? $ratePlan->suggestedEnd($start);
 
                 $advanceError = $ratePlan->violatesMinAdvance($start)
-                    ? "Requiere reservar con al menos {$ratePlan->minAdvanceLabel()} de antelación."
+                    ? $ratePlan->minAdvanceMessage()
                     : null;
 
                 // Habitación representativa: cada cuarto puede tener su
@@ -244,7 +244,7 @@ class BookingController extends Controller
         [$start, $end] = $this->resolveDates($data);
 
         $type = RoomType::findOrFail($data['room_type_id']);
-        $ratePlan = $type->ratePlans()->where('active', true)->where('type', $data['mode'])->orderBy('price')->first();
+        $ratePlan = $type->ratePlans()->sellableOnline()->where('type', $data['mode'])->orderBy('price')->first();
 
         if (! $ratePlan) {
             return response()->json(['message' => 'Esa habitación ya no tiene tarifa disponible en esa modalidad.'], 422);
@@ -339,6 +339,12 @@ class BookingController extends Controller
             // Efectivo activo: el paso de pago ofrece también "pagar en el hotel".
             'payment_optional' => $this->paymentIsOptional(),
             'deposit' => (float) $reservation->deposit_amount,
+            // Último momento: el saldo NO se paga después por link, se paga
+            // en el hotel. Null = la leyenda de siempre.
+            'balance_notice' => (float) $reservation->deposit_amount > 0
+                && app(\App\Services\ReservationPolicy::class)->isShortNotice($reservation->starts_at, $reservation->created_at)
+                    ? app(\App\Services\ReservationPolicy::class)->shortNoticeBalanceNotice()
+                    : null,
             'hold_expires_at' => $reservation->hold_expires_at?->toIso8601String(),
             'hold_minutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
         ];

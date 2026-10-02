@@ -1,16 +1,14 @@
 {{-- Aviso al hotel. El encabezado ya rotula al hotel (logo o nombre). --}}
-<x-mail::message>
+<x-mail::message audience="staff" :preheader="$intro">
 {{ $intro }}
 
-<x-mail::panel>
-@foreach ($rows as $label => $value)
-**{{ $label }}:** {{ $value }}<br>
-@endforeach
-</x-mail::panel>
+<x-mail::rows :rows="$rows" />
 
 <x-mail::button :url="$url">
 Abrir en el panel
 </x-mail::button>
 
-Aviso automático de {{ $hotelName }}. Los destinatarios se cambian en Ajustes → Avisos al hotel.
+<x-slot:subcopy>
+Aviso automático. Quién lo recibe se cambia en Ajustes → Avisos al hotel.
+</x-slot:subcopy>
 </x-mail::message>

@@ -259,12 +259,24 @@ class FollowUpConversations extends Command
                 continue;
             }
 
+            // Modo del hotel "solo tras pedir datos": se reengancha únicamente
+            // a quien se quedó en el paso de dar sus datos para apartar. Si lo
+            // último fue contestarle un precio, no se le escribe.
+            $afterDataRequest = $policy->nudgeOnlyAfterDataRequest();
+
+            if ($afterDataRequest && ! $this->askedForBookingData($last->body)) {
+                continue;
+            }
+
             $this->send(
                 $conversation,
                 'quote_nudge',
-                $policy->formalAddress()
-                    ? '¿Sigue por ahí? Quedé pendiente de ayudarle con su reserva. Si me dice la fecha y la habitación que le interesó, reviso la disponibilidad y le ayudo a apartarla.'
-                    : '¿Sigues por ahí? Quedé pendiente de ayudarte con tu reserva. Si me dices la fecha y la habitación que te interesó, reviso la disponibilidad y te ayudo a apartarla.',
+                match (true) {
+                    $policy->formalAddress() && $afterDataRequest => '¿Sigue por ahí? Quedé pendiente de sus datos para apartar su habitación. Si aún le interesa, compártamelos y se la aparto.',
+                    $policy->formalAddress() => '¿Sigue por ahí? Quedé pendiente de ayudarle con su reserva. Si me dice la fecha y la habitación que le interesó, reviso la disponibilidad y le ayudo a apartarla.',
+                    $afterDataRequest => '¿Sigues por ahí? Quedé pendiente de tus datos para apartar tu habitación. Si aún te interesa, compártemelos y te la aparto.',
+                    default => '¿Sigues por ahí? Quedé pendiente de ayudarte con tu reserva. Si me dices la fecha y la habitación que te interesó, reviso la disponibilidad y te ayudo a apartarla.',
+                },
             );
             $sent++;
         }
@@ -289,6 +301,18 @@ class FollowUpConversations extends Command
             '/(gracias|ser[ií]a todo|es todo por (el momento|ahora|hoy)|hasta luego|nos vemos|'
             .'(te|le|les) aviso|(se )?l[oe] hago saber|luego (te|le) (aviso|escribo|marco)|'
             .'ah[ií] (te|le) (aviso|escribo)|quedamos as[ií])/iu',
+            $body,
+        );
+    }
+
+    /**
+     * ¿Nuestro último mensaje le pedía los datos para apartar? ("necesito su
+     * nombre completo y correo electrónico... ¿Me los proporciona?").
+     */
+    protected function askedForBookingData(string $body): bool
+    {
+        return (bool) preg_match(
+            '/nombre completo|correo|tel[eé]fono|(sus|tus) datos|me (los|lo) (proporciona|compartes?|pasas?)|liga de pago|link de pago/iu',
             $body,
         );
     }

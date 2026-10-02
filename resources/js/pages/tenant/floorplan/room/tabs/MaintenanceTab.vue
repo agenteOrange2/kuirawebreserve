@@ -149,7 +149,10 @@ const sectionIcon =
                     >
                         <Lucide icon="PowerOff" class="h-4 w-4" />
                     </div>
-                    <div class="min-w-0">
+                    <!-- basis-0: con el subtítulo largo, la cabecera (que
+                         envuelve) mandaba el texto a otro renglón y el
+                         círculo quedaba solo arriba. -->
+                    <div class="min-w-0 flex-1 basis-0">
                         <h3 class="text-sm font-medium">Estado del cuarto</h3>
                         <p class="mt-0.5 text-xs text-slate-500">
                             {{

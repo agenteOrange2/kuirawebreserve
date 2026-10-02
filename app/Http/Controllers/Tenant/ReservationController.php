@@ -145,6 +145,18 @@ class ReservationController extends Controller
         return $this->transition(fn () => $action->confirm($reservation, $request->user()), $reservation);
     }
 
+    public function datePending(Request $request, Reservation $reservation, TransitionReservation $action): JsonResponse
+    {
+        $data = $request->validate([
+            'note' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        return $this->transition(
+            fn () => $action->setDatePending($reservation, $request->user(), $data['note'] ?? null),
+            $reservation,
+        );
+    }
+
     public function cancel(Request $request, Reservation $reservation, TransitionReservation $action): JsonResponse
     {
         $data = $request->validate([
@@ -475,6 +487,8 @@ class ReservationController extends Controller
             'eta' => $r->eta ? substr($r->eta, 0, 5) : null,
             'guest_notes' => $r->guest_notes,
             'cancellation_reason' => $r->cancellation_reason,
+            'date_pending_at' => $r->date_pending_at?->toIso8601String(),
+            'date_pending_note' => $r->date_pending_note,
             'room' => $r->room?->number,
             'room_id' => $r->room_id,
             'room_type' => $r->roomType?->name,

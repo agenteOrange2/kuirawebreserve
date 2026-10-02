@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\Central\AdminActivity;
 use App\Models\Central\Plan;
 use App\Models\Tenant;
 use Illuminate\Http\RedirectResponse;
@@ -22,6 +23,17 @@ class PlanController extends Controller
     {
         $byPlan = Tenant::query()->get()->countBy('plan');
 
+        // Último cambio de cada plan según la bitácora del admin: una sola
+        // consulta (el renglón más nuevo por plan), no una por tarjeta.
+        $lastChange = AdminActivity::query()
+            ->with('user:id,name')
+            ->whereIn('id', AdminActivity::query()
+                ->selectRaw('MAX(id)')
+                ->where('subject_type', 'plan')
+                ->groupBy('subject_id'))
+            ->get()
+            ->keyBy('subject_id');
+
         return Inertia::render('admin/plans/Index', [
             'plans' => Plan::query()->ordered()->get()->map(fn (Plan $plan) => [
                 'key' => $plan->key,
@@ -40,6 +52,12 @@ class PlanController extends Controller
                 'active' => $plan->active,
                 'public' => $plan->public,
                 'tenants' => (int) ($byPlan[$plan->key] ?? 0),
+                'last_change' => ($row = $lastChange->get($plan->key)) ? [
+                    'ago' => $row->created_at?->diffForHumans(),
+                    'at' => $row->created_at?->format('d/m/Y H:i'),
+                    'by' => $row->user?->name,
+                    'by_id' => $row->user_id,
+                ] : null,
             ]),
             // Catálogo de módulos (config/modules.php): key => label,
             // description, available (false = en desarrollo).

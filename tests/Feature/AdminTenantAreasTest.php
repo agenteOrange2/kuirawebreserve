@@ -62,6 +62,9 @@ it('la identidad del hotel viaja a todas las áreas', function () {
         ->and($shell['tenant']['name'])->toBe('Hotel Demo')
         ->and($shell['tenant']['plan_label'])->toBe(config('plans.profesional.label'))
         ->and($shell['tenant']['suspended'])->toBeFalse()
+        // El modal "Editar" manda el modo de vuelta; sin él, update() lo
+        // rechazaba y no se guardaba ni el plan.
+        ->and($shell['tenant']['mode'])->toBe('hotel')
         // El catálogo de planes va también: la cabecera trae el modal de
         // "Editar hotel" en todas las áreas.
         ->and($shell['plans'])->toHaveCount(count(config('plans')));

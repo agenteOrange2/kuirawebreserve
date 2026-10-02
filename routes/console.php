@@ -115,3 +115,10 @@ Schedule::command('tenants:run experiences:generate-sessions')
 Schedule::command('tenants:run waitlist:expire')
     ->dailyAt('03:20')
     ->withoutOverlapping();
+
+// Avisos del panel de plataforma (/admin/notificaciones): cuota de IA,
+// registros nuevos, canales mudos, huéspedes esperando... Central: el
+// escáner entra a cada hotel por su cuenta.
+Schedule::command('admin:scan-alerts')
+    ->everyTenMinutes()
+    ->withoutOverlapping();

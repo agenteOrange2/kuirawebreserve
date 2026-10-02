@@ -8,198 +8,118 @@ import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
-
-interface ProviderRow {
-    id: number;
-    provider: string;
-    label: string;
-    model: string;
-    masked_key: string;
-    active: boolean;
-}
-interface CatalogModel {
-    id: string;
-    tier: 'new' | 'mid' | 'cheap';
-}
-interface CatalogEntry {
-    key: string;
-    label: string;
-    placeholder_model: string;
-    key_hint: string;
-    models: CatalogModel[];
-}
-interface TenantRow {
-    id: string;
-    name: string;
-    domain: string | null;
-    plan: string;
-    plan_label: string;
-    plan_ai_enabled: boolean;
-    plan_ai_limit: number | null;
-    enabled: boolean;
-    provider_id: number | null;
-    monthly_reply_limit: number | null;
-    byok_allowed: boolean;
-    api_allowed: boolean;
-    used_replies: number;
-    used_tokens: number;
-    suspended: boolean;
-    channels: {
-        type: string;
-        label: string;
-        active: boolean;
-        last_event_at: string | null;
-    }[];
-}
+import ProviderFormModal from './ai/ProviderFormModal.vue';
+import TenantAiModal from './ai/TenantAiModal.vue';
+import type { CatalogEntry, ProviderRow, TenantAiRow } from './ai/types';
+import {
+    axiosMessage,
+    channelIcon,
+    effectiveLimit,
+    providerTone,
+    usagePercent,
+} from './ai/types';
 
 const props = defineProps<{
     providers: ProviderRow[];
     catalog: CatalogEntry[];
-    tenants: TenantRow[];
+    tenants: TenantAiRow[];
 }>();
 
 const toast = useToasts();
 
-const providerTone: Record<string, string> = {
-    anthropic: 'bg-pending/10 text-pending',
-    openai: 'bg-success/10 text-success',
-    deepseek: 'bg-info/10 text-info',
-    kimi: 'bg-primary/10 text-primary',
-    minimax: 'bg-warning/10 text-warning',
-};
-
-const saving = ref(false);
-
-// ── Proveedores de plataforma ──
-const showForm = ref(false);
-const editing = ref<ProviderRow | null>(null);
-const form = reactive({
-    provider: 'anthropic',
-    model: '',
-    api_key: '',
-    active: true,
-});
-const formError = ref<string | null>(null);
-const catalogFor = (key: string) => props.catalog.find((c) => c.key === key);
-
-// Modelos sugeridos del proveedor elegido, agrupados por nivel; el modelo
-// se elige de la lista y "__custom" libera el campo de texto manual.
-const tierLabels: Record<string, string> = {
-    new: 'Los más nuevos',
-    mid: 'Intermedios',
-    cheap: 'Económicos',
-};
-const modelChoice = ref('');
-const modelGroups = computed(() => {
-    const models = catalogFor(form.provider)?.models ?? [];
-    return (['new', 'mid', 'cheap'] as const)
-        .map((tier) => ({
-            tier,
-            label: tierLabels[tier],
-            models: models.filter((m) => m.tier === tier),
-        }))
-        .filter((g) => g.models.length);
-});
-
-watch(modelChoice, (v) => {
-    // "__custom" no toca el campo: conserva lo escrito (o lo guardado al editar).
-    if (v !== '__custom') form.model = v;
-});
+// Copias locales: los interruptores y el orden se ven al instante y se
+// revierten si el servidor dice que no. Cada recarga las vuelve a alinear.
+const providers = ref<ProviderRow[]>([]);
+const tenants = ref<TenantAiRow[]>([]);
 watch(
-    () => form.provider,
-    (key) => {
-        // Al cambiar de proveedor, proponer su primer modelo (el más nuevo).
-        if (!editing.value)
-            modelChoice.value = catalogFor(key)?.models[0]?.id ?? '__custom';
-    },
+    () => props.providers,
+    (rows) => (providers.value = rows.map((r) => ({ ...r }))),
+    { immediate: true },
+);
+watch(
+    () => props.tenants,
+    (rows) => (tenants.value = rows.map((r) => ({ ...r }))),
+    { immediate: true },
 );
 
-function openCreate() {
-    editing.value = null;
-    form.provider = 'anthropic';
-    form.api_key = '';
-    form.active = true;
-    formError.value = null;
-    modelChoice.value = catalogFor('anthropic')?.models[0]?.id ?? '__custom';
-    form.model = modelChoice.value === '__custom' ? '' : modelChoice.value;
-    showForm.value = true;
-}
-function openEdit(p: ProviderRow) {
+const rowAction =
+    'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition';
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const cardHeader =
+    'flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400';
+
+// ── Cifras ──
+const activeProviders = computed(() => providers.value.filter((p) => p.active));
+const stats = computed(() => {
+    const withAi = tenants.value.filter((t) => t.ai_available);
+    return {
+        withAi: withAi.length,
+        botOn: withAi.filter((t) => t.enabled && !t.suspended).length,
+        replies: tenants.value.reduce((s, t) => s + t.used_replies, 0),
+        tokens: tenants.value.reduce((s, t) => s + t.used_tokens, 0),
+        nearLimit: withAi.filter((t) => usagePercent(t) >= 80).length,
+    };
+});
+const fmt = (n: number) => n.toLocaleString('es-MX');
+
+// ── Keys maestras ──
+const formOpen = ref(false);
+const editing = ref<ProviderRow | null>(null);
+
+function openForm(p: ProviderRow | null = null): void {
     editing.value = p;
-    form.provider = p.provider;
-    form.model = p.model;
-    form.api_key = '';
-    form.active = p.active;
-    formError.value = null;
-    // Si el modelo guardado está en el catálogo se selecciona; si no, manual.
-    const known = catalogFor(p.provider)?.models.some((m) => m.id === p.model);
-    modelChoice.value = known ? p.model : '__custom';
-    showForm.value = true;
+    formOpen.value = true;
 }
 
-async function submitProvider() {
-    saving.value = true;
-    formError.value = null;
+function onProviderSaved(): void {
+    formOpen.value = false;
+    toast.success('Key guardada');
+    router.reload({ only: ['providers'] });
+}
+
+async function toggleProvider(p: ProviderRow): Promise<void> {
+    const next = !p.active;
+    p.active = next;
     try {
-        const model =
-            form.model || catalogFor(form.provider)?.placeholder_model || '';
-        if (editing.value) {
-            await axios.patch(
-                route('admin.ai.providers.update', editing.value.id),
-                { model, api_key: form.api_key || null, active: form.active },
-            );
-        } else {
-            await axios.post(route('admin.ai.providers.store'), {
-                provider: form.provider,
-                model,
-                api_key: form.api_key,
-                active: form.active,
-            });
-        }
-        showForm.value = false;
-        toast.success('Proveedor guardado');
-        router.reload({ only: ['providers'] });
-    } catch (e: any) {
-        formError.value =
-            e.response?.data?.message ??
-            (
-                Object.values(e.response?.data?.errors ?? {})[0] as
-                    | string[]
-                    | undefined
-            )?.[0] ??
-            'No se pudo guardar.';
-    } finally {
-        saving.value = false;
+        await axios.patch(route('admin.ai.providers.update', p.id), {
+            active: next,
+        });
+        toast.success(next ? 'Key activada' : 'Key pausada', p.label);
+    } catch (e) {
+        p.active = !next;
+        toast.error('No se pudo cambiar', axiosMessage(e, 'Ocurrió un error.'));
     }
 }
 
-async function toggleProvider(p: ProviderRow) {
-    await axios.patch(route('admin.ai.providers.update', p.id), {
-        active: !p.active,
-    });
-    p.active = !p.active;
-}
-
-const deleting = ref<ProviderRow | null>(null);
-async function submitDelete() {
-    if (!deleting.value) return;
-    saving.value = true;
+const reordering = ref(false);
+async function move(index: number, delta: -1 | 1): Promise<void> {
+    const target = index + delta;
+    if (target < 0 || target >= providers.value.length) return;
+    const before = [...providers.value];
+    const next = [...providers.value];
+    [next[index], next[target]] = [next[target], next[index]];
+    providers.value = next;
+    reordering.value = true;
     try {
-        await axios.delete(
-            route('admin.ai.providers.destroy', deleting.value.id),
+        await axios.post(route('admin.ai.providers.reorder'), {
+            ids: next.map((p) => p.id),
+        });
+    } catch (e) {
+        providers.value = before;
+        toast.error(
+            'No se pudo reordenar',
+            axiosMessage(e, 'Ocurrió un error.'),
         );
-        deleting.value = null;
-        toast.success('Proveedor eliminado');
-        router.reload({ only: ['providers', 'tenants'] });
     } finally {
-        saving.value = false;
+        reordering.value = false;
     }
 }
 
 const testResults = reactive<
     Record<number, { ok: boolean; ms: number; text: string } | 'loading'>
 >({});
-async function testProvider(p: ProviderRow) {
+async function testProvider(p: ProviderRow): Promise<void> {
     testResults[p.id] = 'loading';
     try {
         const { data } = await axios.post(
@@ -208,157 +128,461 @@ async function testProvider(p: ProviderRow) {
         testResults[p.id] = {
             ok: true,
             ms: data.ms,
-            text: `"${data.reply}" · ${data.tokens} tokens`,
+            text: `Respondió "${data.reply}" · ${data.tokens} tokens`,
         };
     } catch (e: any) {
         const d = e.response?.data;
         testResults[p.id] = {
             ok: false,
             ms: d?.ms ?? 0,
-            text: d?.error ?? 'Error de conexión',
+            text: d?.error ?? axiosMessage(e, 'Error de conexión'),
         };
     }
 }
-
-// ── Canales por hotel (iconos; se gestionan en la ficha del hotel) ──
-const channelIcon: Record<string, string> = {
-    whatsapp: 'MessageCircle',
-    whatsapp_evo: 'MessageCircle',
-    messenger: 'Facebook',
-    instagram: 'Instagram',
-    telegram: 'Send',
-    tiktok: 'Music2',
+const testOf = (id: number) => {
+    const r = testResults[id];
+    return r && r !== 'loading' ? r : null;
 };
 
-// ── Configuración por tenant ──
-async function patchTenant(t: TenantRow, payload: Record<string, unknown>) {
+const deleting = ref<ProviderRow | null>(null);
+const deletingBusy = ref(false);
+const assignedTo = (id: number) =>
+    tenants.value.filter((t) => t.provider_id === id);
+
+async function confirmDelete(): Promise<void> {
+    if (!deleting.value) return;
+    deletingBusy.value = true;
     try {
-        await axios.patch(route('admin.ai.tenants.update', t.id), payload);
-        Object.assign(t, payload);
-        toast.success('Configuración guardada', t.name);
-    } catch (e: any) {
-        toast.error(
-            'No se pudo guardar',
-            e.response?.data?.message ?? 'Ocurrió un error.',
+        await axios.delete(
+            route('admin.ai.providers.destroy', deleting.value.id),
         );
+        deleting.value = null;
+        toast.success('Key eliminada');
+        router.reload({ only: ['providers', 'tenants'] });
+    } catch (e) {
+        toast.error(
+            'No se pudo eliminar',
+            axiosMessage(e, 'Ocurrió un error.'),
+        );
+    } finally {
+        deletingBusy.value = false;
     }
 }
 
-const effectiveLimit = (t: TenantRow) =>
-    t.monthly_reply_limit ?? t.plan_ai_limit;
-const usagePercent = (t: TenantRow) => {
-    const limit = effectiveLimit(t);
-    if (!limit) return 0;
-    return Math.min(100, Math.round((t.used_replies / limit) * 100));
+// ── Hoteles ──
+const search = ref('');
+type TenantFilter = '' | 'on' | 'off' | 'no_ai' | 'near';
+const filter = ref<TenantFilter>('');
+
+const filtered = computed(() => {
+    const q = search.value.trim().toLowerCase();
+    return tenants.value.filter((t) => {
+        if (filter.value === 'on' && !(t.ai_available && t.enabled))
+            return false;
+        if (filter.value === 'off' && !(t.ai_available && !t.enabled))
+            return false;
+        if (filter.value === 'no_ai' && t.ai_available) return false;
+        if (
+            filter.value === 'near' &&
+            !(t.ai_available && usagePercent(t) >= 80)
+        )
+            return false;
+        if (!q) return true;
+        return (
+            t.name.toLowerCase().includes(q) ||
+            t.id.toLowerCase().includes(q) ||
+            (t.domain ?? '').toLowerCase().includes(q)
+        );
+    });
+});
+
+function shortcut(value: TenantFilter): void {
+    filter.value = filter.value === value ? '' : value;
+}
+
+const providerName = (t: TenantAiRow) => {
+    if (!t.provider_id) return 'Automático';
+    const p = providers.value.find((x) => x.id === t.provider_id);
+    return p ? `${p.label} · ${p.model}` : 'Automático';
 };
 
-const cellClass =
-    'box shadow-[5px_3px_5px_#00000005] first:border-l last:border-r first:rounded-l-[0.6rem] last:rounded-r-[0.6rem] rounded-l-none rounded-r-none border-x-0 dark:bg-darkmode-600';
+async function toggleBot(t: TenantAiRow): Promise<void> {
+    const next = !t.enabled;
+    t.enabled = next;
+    try {
+        await axios.patch(route('admin.ai.tenants.update', t.id), {
+            enabled: next,
+        });
+        toast.success(next ? 'Bot encendido' : 'Bot apagado', t.name);
+    } catch (e) {
+        t.enabled = !next;
+        toast.error('No se pudo guardar', axiosMessage(e, 'Ocurrió un error.'));
+    }
+}
+
+const configuringId = ref<string | null>(null);
+const configuring = computed(
+    () => tenants.value.find((t) => t.id === configuringId.value) ?? null,
+);
+
+function onTenantSaved(payload: Partial<TenantAiRow>): void {
+    const t = configuring.value;
+    if (t) {
+        Object.assign(t, payload);
+        toast.success('Asistente guardado', t.name);
+    }
+    configuringId.value = null;
+}
 </script>
 
 <template>
     <RazeLayout title="Agentes IA">
         <div class="mt-2">
-            <div class="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                    <div class="flex items-center gap-2">
-                        <h1 class="text-lg font-medium">
-                            Agentes IA de la plataforma
-                        </h1>
-                        <span
-                            class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium"
-                            :class="
-                                providers.some((p) => p.active)
-                                    ? 'bg-success/10 text-success'
-                                    : 'bg-danger/10 text-danger'
-                            "
-                        >
-                            <span
-                                class="h-1.5 w-1.5 rounded-full"
-                                :class="
-                                    providers.some((p) => p.active)
-                                        ? 'bg-success'
-                                        : 'bg-danger'
-                                "
-                            />
-                            {{
-                                providers.some((p) => p.active)
-                                    ? 'Operando'
-                                    : 'Sin keys maestras'
-                            }}
-                        </span>
+            <!-- Encabezado -->
+            <div
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Bot" class="h-4 w-4" />
                     </div>
-                    <p class="text-sm text-slate-500">
-                        Keys maestras, asignación por hotel, cuotas y consumo —
-                        la IA es producto de la plataforma
-                    </p>
+                    <div class="min-w-0">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <h1 class="text-base font-medium">Agentes IA</h1>
+                            <span
+                                class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                :class="
+                                    activeProviders.length
+                                        ? 'bg-success/10 text-success'
+                                        : 'bg-danger/10 text-danger'
+                                "
+                            >
+                                <span
+                                    class="h-1.5 w-1.5 rounded-full"
+                                    :class="
+                                        activeProviders.length
+                                            ? 'bg-success'
+                                            : 'bg-danger'
+                                    "
+                                />
+                                {{
+                                    activeProviders.length
+                                        ? 'Operando'
+                                        : 'Sin keys activas'
+                                }}
+                            </span>
+                        </div>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Keys maestras de la plataforma y el asistente de
+                            cada hotel.
+                        </p>
+                    </div>
                 </div>
-                <div class="flex flex-wrap items-center gap-2">
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:shrink-0 md:items-center md:gap-2"
+                >
                     <Button
                         variant="primary"
-                        class="rounded-[0.5rem] shadow-md shadow-primary/20"
-                        @click="openCreate"
+                        class="col-span-2 h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                        @click="openForm()"
                     >
-                        <Lucide icon="Plus" class="mr-2 h-4 w-4 stroke-[1.3]" />
-                        Key maestra
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                        Nueva key maestra
                     </Button>
                 </div>
             </div>
 
-            <!-- Proveedores de plataforma -->
-            <div class="mt-5">
-                <div class="flex items-center gap-2 md:h-10">
-                    <Lucide
-                        icon="KeyRound"
-                        class="h-4 w-4 stroke-[1.5] text-primary"
-                    />
-                    <div class="text-base font-medium">Keys maestras</div>
-                </div>
+            <!-- Cifras -->
+            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
                 <div
-                    v-if="providers.length"
-                    class="mt-2 grid grid-cols-12 gap-5"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
                 >
                     <div
-                        v-for="p in providers"
-                        :key="p.id"
-                        class="box box--stacked col-span-12 p-5 md:col-span-6 2xl:col-span-4"
-                        :class="{ 'opacity-60': !p.active }"
+                        :class="sectionIcon"
+                        class="border-primary/10 bg-primary/10 text-primary"
                     >
-                        <div class="flex items-start gap-3">
-                            <div
-                                class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
-                                :class="
-                                    providerTone[p.provider] ??
-                                    'bg-slate-100 text-slate-500'
+                        <Lucide icon="KeyRound" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ activeProviders.length }} de
+                            {{ providers.length }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Keys activas
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-slate-400 sm:block"
+                        >
+                            {{
+                                activeProviders[0]
+                                    ? `Primera: ${activeProviders[0].label}`
+                                    : 'Ningún bot puede contestar'
+                            }}
+                        </div>
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-slate-300 xl:col-span-3"
+                    :class="filter === 'on' ? 'ring-2 ring-success/40' : ''"
+                    @click="shortcut('on')"
+                >
+                    <div
+                        :class="sectionIcon"
+                        class="border-success/10 bg-success/10 text-success"
+                    >
+                        <Lucide icon="Bot" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.botOn }} de {{ stats.withAi }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Bots encendidos
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-slate-400 sm:block"
+                        >
+                            Hoteles con IA y bot activo
+                        </div>
+                    </div>
+                </button>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        :class="sectionIcon"
+                        class="border-info/10 bg-info/10 text-info"
+                    >
+                        <Lucide icon="MessagesSquare" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ fmt(stats.replies) }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Respuestas del mes
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-slate-400 sm:block"
+                        >
+                            {{ fmt(stats.tokens) }} tokens
+                        </div>
+                    </div>
+                </div>
+                <button
+                    type="button"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-slate-300 xl:col-span-3"
+                    :class="filter === 'near' ? 'ring-2 ring-warning/40' : ''"
+                    @click="shortcut('near')"
+                >
+                    <div
+                        :class="sectionIcon"
+                        class="border-warning/10 bg-warning/10 text-warning"
+                    >
+                        <Lucide icon="Gauge" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.nearLimit }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Cerca del tope
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-slate-400 sm:block"
+                        >
+                            80% o más de su cuota
+                        </div>
+                    </div>
+                </button>
+            </div>
+
+            <!-- Keys maestras -->
+            <div class="box box--stacked mt-4 overflow-hidden">
+                <div :class="cardHeader">
+                    <div
+                        :class="sectionIcon"
+                        class="border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="KeyRound" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <h2 class="text-sm font-medium">Keys maestras</h2>
+                        <p class="text-xs text-slate-500">
+                            Los hoteles en automático las prueban de arriba
+                            abajo hasta que una responde.
+                        </p>
+                    </div>
+                </div>
+
+                <div
+                    v-if="providers.length"
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="(p, index) in providers"
+                        :key="p.id"
+                        class="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:px-5"
+                    >
+                        <div class="flex min-w-0 flex-1 items-center gap-3">
+                            <span
+                                class="w-5 shrink-0 text-center text-xs font-medium text-slate-400"
+                                :title="
+                                    p.active
+                                        ? `Lugar ${index + 1} de la cadena`
+                                        : 'Pausada: la cadena la salta'
                                 "
+                                >{{ index + 1 }}</span
                             >
-                                <Lucide icon="Sparkles" class="h-5 w-5" />
+                            <div
+                                :class="[
+                                    sectionIcon,
+                                    providerTone[p.provider] ??
+                                        'border-slate-200 bg-slate-100 text-slate-500',
+                                    p.active ? '' : 'opacity-50',
+                                ]"
+                            >
+                                <Lucide icon="Sparkles" class="h-4 w-4" />
                             </div>
-                            <div class="min-w-0 flex-1">
-                                <div class="flex items-center gap-2">
+                            <div class="min-w-0">
+                                <div class="flex min-w-0 items-center gap-2">
                                     <span
                                         class="truncate text-sm font-medium"
+                                        :class="
+                                            p.active ? '' : 'text-slate-400'
+                                        "
                                         >{{ p.label }}</span
                                     >
                                     <span
-                                        v-if="p.active"
-                                        class="rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success"
-                                        >Activo</span
+                                        class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                        :class="
+                                            p.active
+                                                ? 'bg-success/10 text-success'
+                                                : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                        "
+                                        >{{
+                                            p.active ? 'Activa' : 'Pausada'
+                                        }}</span
+                                    >
+                                    <span
+                                        v-if="assignedTo(p.id).length"
+                                        class="hidden shrink-0 text-[11px] text-slate-400 sm:inline"
+                                        >·
+                                        {{ assignedTo(p.id).length }}
+                                        {{
+                                            assignedTo(p.id).length === 1
+                                                ? 'hotel fijo'
+                                                : 'hoteles fijos'
+                                        }}</span
                                     >
                                 </div>
                                 <div
-                                    class="mt-0.5 flex items-center gap-2 text-xs text-slate-500"
+                                    class="flex min-w-0 items-center gap-2 text-xs text-slate-500"
                                 >
-                                    <span
-                                        class="rounded bg-slate-100 px-1.5 py-0.5 font-mono dark:bg-darkmode-400"
-                                        >{{ p.model }}</span
-                                    >
-                                    <span class="font-mono">{{
-                                        p.masked_key
+                                    <span class="truncate font-mono">{{
+                                        p.model
                                     }}</span>
+                                    <span
+                                        class="shrink-0 font-mono text-slate-400"
+                                        >{{ p.masked_key }}</span
+                                    >
+                                </div>
+                                <div
+                                    v-if="testResults[p.id] === 'loading'"
+                                    class="mt-0.5 flex items-center gap-1 text-[11px] text-slate-500"
+                                >
+                                    <Lucide
+                                        icon="LoaderCircle"
+                                        class="h-3 w-3 animate-spin"
+                                    />
+                                    Probando conexión...
+                                </div>
+                                <div
+                                    v-else-if="testOf(p.id)"
+                                    class="mt-0.5 flex min-w-0 items-start gap-1 text-[11px]"
+                                    :class="
+                                        testOf(p.id)!.ok
+                                            ? 'text-success'
+                                            : 'text-danger'
+                                    "
+                                >
+                                    <Lucide
+                                        :icon="
+                                            testOf(p.id)!.ok
+                                                ? 'CircleCheck'
+                                                : 'TriangleAlert'
+                                        "
+                                        class="mt-px h-3 w-3 shrink-0"
+                                    />
+                                    <span class="min-w-0 break-words"
+                                        >{{ testOf(p.id)!.ms }} ms ·
+                                        {{ testOf(p.id)!.text }}</span
+                                    >
                                 </div>
                             </div>
-                            <FormSwitch class="shrink-0">
+                        </div>
+
+                        <div
+                            class="flex items-center justify-end gap-1 pl-8 sm:shrink-0 sm:pl-0"
+                        >
+                            <button
+                                type="button"
+                                :class="rowAction"
+                                class="hover:bg-slate-100 disabled:pointer-events-none disabled:opacity-30 dark:hover:bg-darkmode-400"
+                                title="Subir en la cadena"
+                                :disabled="index === 0 || reordering"
+                                @click="move(index, -1)"
+                            >
+                                <Lucide icon="ArrowUp" class="h-4 w-4" />
+                            </button>
+                            <button
+                                type="button"
+                                :class="rowAction"
+                                class="hover:bg-slate-100 disabled:pointer-events-none disabled:opacity-30 dark:hover:bg-darkmode-400"
+                                title="Bajar en la cadena"
+                                :disabled="
+                                    index === providers.length - 1 || reordering
+                                "
+                                @click="move(index, 1)"
+                            >
+                                <Lucide icon="ArrowDown" class="h-4 w-4" />
+                            </button>
+                            <button
+                                type="button"
+                                :class="rowAction"
+                                class="hover:bg-primary/10 hover:text-primary disabled:pointer-events-none disabled:opacity-40"
+                                title="Probar la key con una pregunta real"
+                                :disabled="testResults[p.id] === 'loading'"
+                                @click="testProvider(p)"
+                            >
+                                <Lucide icon="Zap" class="h-4 w-4" />
+                            </button>
+                            <button
+                                type="button"
+                                :class="rowAction"
+                                class="hover:bg-primary/10 hover:text-primary"
+                                title="Editar modelo o llave"
+                                @click="openForm(p)"
+                            >
+                                <Lucide icon="Pencil" class="h-4 w-4" />
+                            </button>
+                            <button
+                                type="button"
+                                :class="rowAction"
+                                class="hover:bg-danger/10 hover:text-danger"
+                                title="Eliminar"
+                                @click="deleting = p"
+                            >
+                                <Lucide icon="Trash2" class="h-4 w-4" />
+                            </button>
+                            <FormSwitch
+                                class="ml-1 shrink-0"
+                                :title="p.active ? 'Pausar' : 'Activar'"
+                            >
                                 <FormSwitch.Input
                                     :checked="p.active"
                                     type="checkbox"
@@ -366,194 +590,119 @@ const cellClass =
                                 />
                             </FormSwitch>
                         </div>
-                        <div
-                            v-if="testResults[p.id]"
-                            class="mt-3 flex items-start gap-2 rounded-lg px-3 py-2 text-xs"
-                            :class="
-                                testResults[p.id] === 'loading'
-                                    ? 'bg-slate-50 text-slate-500 dark:bg-darkmode-700'
-                                    : (testResults[p.id] as any).ok
-                                      ? 'bg-success/10 text-success'
-                                      : 'bg-danger/10 text-danger'
-                            "
-                        >
-                            <Lucide
-                                :icon="
-                                    testResults[p.id] === 'loading'
-                                        ? 'RefreshCw'
-                                        : (testResults[p.id] as any).ok
-                                          ? 'CircleCheck'
-                                          : 'TriangleAlert'
-                                "
-                                class="mt-0.5 h-3.5 w-3.5 shrink-0"
-                                :class="{
-                                    'animate-spin':
-                                        testResults[p.id] === 'loading',
-                                }"
-                            />
-                            <span v-if="testResults[p.id] === 'loading'"
-                                >Probando conexión…</span
-                            >
-                            <span v-else class="min-w-0 break-words"
-                                >{{ (testResults[p.id] as any).ms }} ms ·
-                                {{ (testResults[p.id] as any).text }}</span
-                            >
-                        </div>
-                        <div class="mt-3.5 flex gap-2">
-                            <Button
-                                variant="outline-primary"
-                                size="sm"
-                                class="flex-1 rounded-[0.5rem] bg-white"
-                                :disabled="testResults[p.id] === 'loading'"
-                                @click="testProvider(p)"
-                            >
-                                <Lucide icon="Zap" class="mr-1.5 h-3.5 w-3.5" />
-                                Probar
-                            </Button>
-                            <button
-                                type="button"
-                                title="Editar"
-                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
-                                @click="openEdit(p)"
-                            >
-                                <Lucide icon="Pencil" class="h-4 w-4" />
-                            </button>
-                            <button
-                                type="button"
-                                title="Eliminar"
-                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
-                                @click="deleting = p"
-                            >
-                                <Lucide icon="Trash2" class="h-4 w-4" />
-                            </button>
-                        </div>
                     </div>
                 </div>
                 <div
                     v-else
-                    class="box box--stacked mt-2 flex flex-col items-center gap-3 py-10 text-center"
+                    class="flex flex-col items-center gap-2 px-6 py-10 text-center"
                 >
                     <div
-                        class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
+                        class="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
                     >
-                        <Lucide icon="Sparkles" class="h-6 w-6" />
+                        <Lucide icon="KeyRound" class="h-4 w-4" />
                     </div>
-                    <p class="max-w-md text-sm text-slate-500">
-                        Da de alta tus keys maestras (Anthropic, ChatGPT,
-                        DeepSeek, Kimi, MiniMax). Con ellas operan los bots de
-                        todos los hoteles con plan que incluya IA.
+                    <p class="max-w-md text-xs text-slate-500">
+                        Da de alta una key maestra (Anthropic, ChatGPT,
+                        DeepSeek, Kimi o MiniMax). Con ellas contestan los bots
+                        de todos los hoteles que tengan IA.
                     </p>
                     <Button
-                        variant="primary"
-                        size="sm"
-                        class="rounded-[0.5rem]"
-                        @click="openCreate"
-                        ><Lucide icon="Plus" class="mr-1.5 h-4 w-4" /> Agregar
-                        key</Button
+                        variant="outline-primary"
+                        class="mt-1 h-9 rounded-[0.5rem] text-xs"
+                        @click="openForm()"
                     >
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                        Nueva key maestra
+                    </Button>
                 </div>
             </div>
 
-            <!-- Tenants -->
-            <div class="mt-8">
-                <div class="flex items-center gap-2 md:h-10">
-                    <Lucide
-                        icon="Building2"
-                        class="h-4 w-4 stroke-[1.5] text-primary"
-                    />
-                    <div class="text-base font-medium">Hoteles</div>
-                    <span
-                        class="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
-                        >{{ tenants.length }}</span
-                    >
+            <!-- Hoteles -->
+            <div class="box box--stacked mt-4 overflow-hidden">
+                <div
+                    class="flex flex-col gap-2 border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 sm:flex-row sm:items-center dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                >
+                    <div class="relative sm:w-72">
+                        <Lucide
+                            icon="Search"
+                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
+                        />
+                        <FormInput
+                            v-model="search"
+                            type="text"
+                            class="h-9 pl-9 text-xs"
+                            placeholder="Buscar hotel o subdominio"
+                        />
+                    </div>
+                    <FormSelect v-model="filter" class="h-9 text-xs sm:w-52">
+                        <option value="">Todos los hoteles</option>
+                        <option value="on">Bot encendido</option>
+                        <option value="off">Bot apagado</option>
+                        <option value="near">Cerca del tope</option>
+                        <option value="no_ai">Sin IA</option>
+                    </FormSelect>
+                    <span class="text-xs text-slate-500 sm:ml-auto">
+                        {{ filtered.length }}
+                        {{ filtered.length === 1 ? 'hotel' : 'hoteles' }}
+                    </span>
                 </div>
-                <div class="mt-2 overflow-auto lg:overflow-visible">
-                    <table
-                        v-if="tenants.length"
-                        class="w-full min-w-[1100px] border-separate border-spacing-y-[8px] text-sm"
+
+                <div
+                    v-if="filtered.length"
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="t in filtered"
+                        :key="t.id"
+                        class="flex flex-col gap-3 px-4 py-3 transition hover:bg-slate-50/70 sm:px-5 lg:flex-row lg:items-center lg:gap-4 dark:hover:bg-darkmode-400/30"
                     >
-                        <thead>
-                            <tr>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Hotel
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Plan
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Canales
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Bot
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Proveedor asignado
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Cuota / mes
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Uso del mes
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-center text-xs font-medium text-slate-500"
-                                >
-                                    BYOK
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-center text-xs font-medium text-slate-500"
-                                    title="Tokens y playground de la Agent API en el panel del hotel"
-                                >
-                                    API
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="t in tenants" :key="t.id">
-                                <td :class="cellClass" class="px-5 py-3.5">
-                                    <div
-                                        class="font-medium"
-                                        :class="{
-                                            'text-slate-400 line-through':
-                                                t.suspended,
-                                        }"
+                        <!-- Hotel -->
+                        <div class="flex min-w-0 flex-1 items-center gap-3">
+                            <div
+                                :class="sectionIcon"
+                                class="border-slate-200 bg-slate-100 text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-400"
+                            >
+                                <Lucide icon="Building2" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0">
+                                <div class="flex min-w-0 items-center gap-2">
+                                    <Link
+                                        :href="
+                                            route(
+                                                'admin.tenants.assistant',
+                                                t.id,
+                                            )
+                                        "
+                                        class="truncate text-sm font-medium hover:text-primary"
+                                        :class="
+                                            t.suspended
+                                                ? 'text-slate-400 line-through'
+                                                : ''
+                                        "
+                                        >{{ t.name }}</Link
                                     >
-                                        {{ t.name }}
-                                    </div>
-                                    <div class="text-xs text-slate-500">
-                                        {{ t.domain ?? '—' }}
-                                    </div>
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
                                     <span
-                                        class="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary capitalize"
+                                        class="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
                                         >{{ t.plan_label }}</span
                                     >
-                                    <div
-                                        class="mt-1 text-[10px] text-slate-400"
+                                    <span
+                                        v-if="t.ai_from_addon"
+                                        class="hidden shrink-0 rounded-full bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info sm:inline"
+                                        title="La IA llega por un servicio adicional, no por el plan"
+                                        >IA por servicio</span
                                     >
-                                        {{
-                                            t.plan_ai_enabled
-                                                ? `IA incluida · ${t.plan_ai_limit ?? '∞'} resp/mes`
-                                                : 'Plan sin IA'
-                                        }}
-                                    </div>
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
+                                    <span
+                                        v-if="t.suspended"
+                                        class="shrink-0 rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
+                                        >Suspendido</span
+                                    >
+                                </div>
+                                <div
+                                    class="flex min-w-0 items-center gap-2 text-xs text-slate-500"
+                                >
+                                    <span class="truncate">{{
+                                        t.domain ?? t.id
+                                    }}</span>
                                     <Link
                                         :href="
                                             route(
@@ -561,8 +710,8 @@ const cellClass =
                                                 t.id,
                                             )
                                         "
-                                        title="Gestionar canales de este hotel"
-                                        class="inline-flex items-center gap-1.5"
+                                        class="inline-flex shrink-0 items-center gap-1 hover:text-primary"
+                                        title="Canales del hotel"
                                     >
                                         <template v-if="t.channels.length">
                                             <Lucide
@@ -573,7 +722,7 @@ const cellClass =
                                                         c.type
                                                     ] as any) ?? 'MessageCircle'
                                                 "
-                                                class="h-4 w-4 stroke-[1.5]"
+                                                class="h-3.5 w-3.5"
                                                 :class="
                                                     c.active
                                                         ? 'text-success'
@@ -582,391 +731,227 @@ const cellClass =
                                                 :title="`${c.label}${c.last_event_at ? ' · último evento hace ' + c.last_event_at : ' · sin eventos'}`"
                                             />
                                         </template>
-                                        <span
-                                            v-else
-                                            class="inline-flex items-center gap-1 text-xs text-primary"
+                                        <span v-else class="text-primary"
+                                            >Sin canales</span
                                         >
-                                            <Lucide
-                                                icon="Plus"
-                                                class="h-3.5 w-3.5"
-                                            />
-                                            Conectar
-                                        </span>
                                     </Link>
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
-                                    <div class="flex items-center gap-1.5">
-                                        <FormSwitch>
-                                            <FormSwitch.Input
-                                                :checked="t.enabled"
-                                                :disabled="!t.plan_ai_enabled"
-                                                type="checkbox"
-                                                @change="
-                                                    patchTenant(t, {
-                                                        enabled: !t.enabled,
-                                                    })
-                                                "
-                                            />
-                                        </FormSwitch>
-                                        <button
-                                            type="button"
-                                            title="Abrir el asistente de este hotel"
-                                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-primary/10 hover:text-primary"
-                                            @click="
-                                                router.visit(
-                                                    route(
-                                                        'admin.tenants.assistant',
-                                                        t.id,
-                                                    ),
-                                                )
-                                            "
-                                        >
-                                            <Lucide
-                                                icon="Eye"
-                                                class="h-4 w-4"
-                                            />
-                                        </button>
-                                    </div>
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
-                                    <FormSelect
-                                        :model-value="t.provider_id ?? ''"
-                                        :disabled="!t.plan_ai_enabled"
-                                        class="!w-44 !py-1.5 text-xs"
-                                        @update:model-value="
-                                            (v: string) =>
-                                                patchTenant(t, {
-                                                    platform_ai_provider_id:
-                                                        v || null,
-                                                })
-                                        "
+                                </div>
+                            </div>
+                        </div>
+
+                        <template v-if="t.ai_available">
+                            <!-- Uso -->
+                            <div
+                                class="pl-12 text-xs lg:w-44 lg:shrink-0 lg:pl-0"
+                            >
+                                <div class="flex items-baseline gap-1">
+                                    <span class="font-medium">{{
+                                        fmt(t.used_replies)
+                                    }}</span>
+                                    <span class="text-slate-400"
+                                        >/
+                                        {{
+                                            effectiveLimit(t) === null
+                                                ? 'sin límite'
+                                                : fmt(effectiveLimit(t)!)
+                                        }}</span
                                     >
-                                        <option value="">Auto (cadena)</option>
-                                        <option
-                                            v-for="p in providers"
-                                            :key="p.id"
-                                            :value="p.id"
-                                        >
-                                            {{ p.label }} · {{ p.model }}
-                                        </option>
-                                    </FormSelect>
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
-                                    <FormInput
-                                        :model-value="
-                                            t.monthly_reply_limit ?? ''
+                                    <span
+                                        v-if="t.monthly_reply_limit !== null"
+                                        class="text-[11px] text-slate-400"
+                                        title="Cuota fijada a mano para este hotel"
+                                        >· a mano</span
+                                    >
+                                </div>
+                                <div
+                                    class="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-slate-100 lg:w-36 dark:bg-darkmode-400"
+                                >
+                                    <div
+                                        class="h-full rounded-full"
+                                        :class="
+                                            usagePercent(t) >= 90
+                                                ? 'bg-danger'
+                                                : usagePercent(t) >= 75
+                                                  ? 'bg-warning'
+                                                  : 'bg-primary/70'
                                         "
-                                        :disabled="!t.plan_ai_enabled"
-                                        type="number"
-                                        min="0"
-                                        class="!w-24 !py-1.5 text-xs"
-                                        :placeholder="
-                                            String(t.plan_ai_limit ?? '∞')
-                                        "
-                                        @change="
-                                            (e: Event) =>
-                                                patchTenant(t, {
-                                                    monthly_reply_limit:
-                                                        (
-                                                            e.target as HTMLInputElement
-                                                        ).value === ''
-                                                            ? null
-                                                            : Number(
-                                                                  (
-                                                                      e.target as HTMLInputElement
-                                                                  ).value,
-                                                              ),
-                                                })
-                                        "
+                                        :style="{
+                                            width: `${usagePercent(t)}%`,
+                                        }"
                                     />
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
-                                    <div
-                                        class="flex items-center gap-2 text-sm"
-                                    >
-                                        <span class="font-medium">{{
-                                            t.used_replies
-                                        }}</span>
-                                        <span class="text-xs text-slate-400"
-                                            >/
-                                            {{ effectiveLimit(t) ?? '∞' }}</span
-                                        >
-                                    </div>
-                                    <div
-                                        class="mt-1 h-1.5 w-24 overflow-hidden rounded-full bg-slate-100 dark:bg-darkmode-400"
-                                    >
-                                        <div
-                                            class="h-full rounded-full"
-                                            :class="
-                                                usagePercent(t) >= 90
-                                                    ? 'bg-danger'
-                                                    : 'bg-primary/70'
-                                            "
-                                            :style="{
-                                                width: `${usagePercent(t)}%`,
-                                            }"
-                                        />
-                                    </div>
-                                    <div
-                                        class="mt-0.5 text-[10px] text-slate-400"
-                                    >
-                                        {{ t.used_tokens.toLocaleString() }}
-                                        tokens
-                                    </div>
-                                </td>
-                                <td
-                                    :class="cellClass"
-                                    class="px-5 py-3.5 text-center"
+                                </div>
+                                <div class="mt-0.5 text-[11px] text-slate-400">
+                                    {{ fmt(t.used_tokens) }} tokens
+                                </div>
+                            </div>
+
+                            <!-- Proveedor y permisos -->
+                            <div
+                                class="flex min-w-0 flex-wrap items-center gap-1 pl-12 lg:w-56 lg:shrink-0 lg:pl-0"
+                            >
+                                <span
+                                    class="max-w-full truncate text-xs text-slate-600 dark:text-slate-300"
+                                    :title="providerName(t)"
+                                    >{{ providerName(t) }}</span
                                 >
-                                    <FormSwitch class="justify-center">
-                                        <FormSwitch.Input
-                                            :checked="t.byok_allowed"
-                                            type="checkbox"
-                                            @change="
-                                                patchTenant(t, {
-                                                    byok_allowed:
-                                                        !t.byok_allowed,
-                                                })
-                                            "
-                                        />
-                                    </FormSwitch>
-                                </td>
-                                <td
-                                    :class="cellClass"
-                                    class="px-5 py-3.5 text-center"
+                                <span
+                                    v-if="t.byok_allowed"
+                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-400"
+                                    title="Puede usar sus propias keys"
+                                    >BYOK</span
                                 >
-                                    <FormSwitch class="justify-center">
-                                        <FormSwitch.Input
-                                            :checked="t.api_allowed"
-                                            type="checkbox"
-                                            @change="
-                                                patchTenant(t, {
-                                                    api_allowed: !t.api_allowed,
-                                                })
-                                            "
-                                        />
-                                    </FormSwitch>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                    <div
-                        v-else
-                        class="box box--stacked py-10 text-center text-sm text-slate-500"
-                    >
-                        Sin hoteles registrados.
+                                <span
+                                    v-if="t.api_allowed"
+                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-400"
+                                    title="Ve la Agent API en su panel"
+                                    >API</span
+                                >
+                            </div>
+
+                            <!-- Acciones -->
+                            <div
+                                class="flex items-center justify-end gap-1 lg:w-28 lg:shrink-0"
+                            >
+                                <FormSwitch
+                                    class="shrink-0"
+                                    :title="
+                                        t.enabled
+                                            ? 'Apagar el bot'
+                                            : 'Encender el bot'
+                                    "
+                                >
+                                    <FormSwitch.Input
+                                        :checked="t.enabled"
+                                        type="checkbox"
+                                        @change="toggleBot(t)"
+                                    />
+                                </FormSwitch>
+                                <button
+                                    type="button"
+                                    :class="rowAction"
+                                    class="ml-1 hover:bg-primary/10 hover:text-primary"
+                                    title="Configurar key, cuota y permisos"
+                                    @click="configuringId = t.id"
+                                >
+                                    <Lucide
+                                        icon="SlidersHorizontal"
+                                        class="h-4 w-4"
+                                    />
+                                </button>
+                                <Link
+                                    :href="
+                                        route('admin.tenants.assistant', t.id)
+                                    "
+                                    :class="rowAction"
+                                    class="hover:bg-primary/10 hover:text-primary"
+                                    title="Instrucciones y prompt del bot"
+                                >
+                                    <Lucide icon="Eye" class="h-4 w-4" />
+                                </Link>
+                            </div>
+                        </template>
+
+                        <!-- Sin IA: ni plan, ni servicio, ni ajuste -->
+                        <div
+                            v-else
+                            class="flex items-center justify-between gap-3 pl-12 lg:w-[30rem] lg:shrink-0 lg:pl-0"
+                        >
+                            <span class="text-xs text-slate-400">
+                                Sin IA: su plan no la incluye ni tiene el
+                                servicio contratado.
+                            </span>
+                            <Link
+                                :href="route('admin.tenants.modules', t.id)"
+                                class="shrink-0 text-xs font-medium text-primary hover:underline"
+                                >Ver módulos</Link
+                            >
+                        </div>
                     </div>
                 </div>
-                <p class="mt-2 flex items-center gap-2 text-xs text-slate-400">
-                    <Lucide icon="Info" class="h-3.5 w-3.5" />
-                    Cuota vacía = la del plan. "Auto" prueba las keys activas en
-                    orden (fallback). BYOK = el hotel usa sus propias llaves (no
-                    consume cuota). API = ve tokens y playground de
-                    integraciones en su panel.
-                </p>
+
+                <div
+                    v-else
+                    class="flex flex-col items-center gap-2 px-6 py-12 text-center"
+                >
+                    <div
+                        class="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
+                    >
+                        <Lucide icon="Building2" class="h-4 w-4" />
+                    </div>
+                    <p class="text-xs text-slate-500">
+                        {{
+                            tenants.length
+                                ? 'Ningún hotel coincide con el filtro.'
+                                : 'Aún no hay hoteles registrados.'
+                        }}
+                    </p>
+                </div>
             </div>
         </div>
 
-        <!-- Modal key maestra -->
-        <Dialog size="lg" :open="showForm" @close="showForm = false">
-            <Dialog.Panel>
-                <form class="flex flex-col" @submit.prevent="submitProvider">
-                    <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
-                    >
-                        <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
-                            :class="
-                                providerTone[form.provider] ??
-                                'bg-primary/10 text-primary'
-                            "
-                        >
-                            <Lucide icon="Sparkles" class="h-5 w-5" />
-                        </div>
-                        <div class="min-w-0 flex-1">
-                            <h2 class="text-base font-medium">
-                                {{
-                                    editing
-                                        ? `Editar ${editing.label}`
-                                        : 'Nueva key maestra'
-                                }}
-                            </h2>
-                            <p class="mt-0.5 text-xs text-slate-500">
-                                Con esta llave operan los bots de los hoteles
-                                (se guarda cifrada)
-                            </p>
-                        </div>
-                        <button
-                            type="button"
-                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                            @click="showForm = false"
-                        >
-                            <Lucide icon="X" class="h-5 w-5" />
-                        </button>
-                    </div>
-                    <div class="space-y-4 px-6 py-5">
-                        <div v-if="!editing">
-                            <label class="mb-2 block text-sm">Proveedor</label>
-                            <div class="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                                <label
-                                    v-for="c in catalog"
-                                    :key="c.key"
-                                    class="flex cursor-pointer items-center gap-2.5 rounded-lg border p-3 transition"
-                                    :class="
-                                        form.provider === c.key
-                                            ? 'border-primary/40 bg-primary/5'
-                                            : 'border-slate-200/70 hover:bg-slate-50 dark:border-darkmode-400'
-                                    "
-                                >
-                                    <input
-                                        v-model="form.provider"
-                                        type="radio"
-                                        :value="c.key"
-                                        class="h-4 w-4 border-slate-300 text-primary focus:ring-primary/30"
-                                    />
-                                    <span class="min-w-0">
-                                        <span
-                                            class="block truncate text-sm font-medium"
-                                            >{{ c.label }}</span
-                                        >
-                                        <span
-                                            class="block truncate font-mono text-[10px] text-slate-400"
-                                            >{{
-                                                c.models[0]?.id ??
-                                                c.placeholder_model
-                                            }}</span
-                                        >
-                                    </span>
-                                </label>
-                            </div>
-                        </div>
-                        <div>
-                            <label class="mb-1 block text-sm">Modelo</label>
-                            <FormSelect v-model="modelChoice" class="font-mono">
-                                <optgroup
-                                    v-for="g in modelGroups"
-                                    :key="g.tier"
-                                    :label="g.label"
-                                >
-                                    <option
-                                        v-for="m in g.models"
-                                        :key="m.id"
-                                        :value="m.id"
-                                    >
-                                        {{ m.id }}
-                                    </option>
-                                </optgroup>
-                                <option value="__custom">
-                                    Otro (escribir manual)…
-                                </option>
-                            </FormSelect>
-                            <div
-                                v-if="modelChoice === '__custom'"
-                                class="relative mt-2"
-                            >
-                                <Lucide
-                                    icon="Cpu"
-                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                />
-                                <FormInput
-                                    v-model="form.model"
-                                    type="text"
-                                    class="pl-9 font-mono"
-                                    :placeholder="
-                                        catalogFor(form.provider)
-                                            ?.placeholder_model
-                                    "
-                                />
-                            </div>
-                        </div>
-                        <div>
-                            <label class="mb-1 block text-sm"
-                                >API key
-                                {{
-                                    editing
-                                        ? '(vacía = conservar la actual)'
-                                        : ''
-                                }}</label
-                            >
-                            <div class="relative">
-                                <Lucide
-                                    icon="KeyRound"
-                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                />
-                                <FormInput
-                                    v-model="form.api_key"
-                                    type="password"
-                                    class="pl-9 font-mono"
-                                    :placeholder="
-                                        catalogFor(form.provider)?.key_hint
-                                    "
-                                    autocomplete="off"
-                                />
-                            </div>
-                        </div>
-                        <p
-                            v-if="formError"
-                            class="rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
-                        >
-                            {{ formError }}
-                        </p>
-                    </div>
-                    <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
-                    >
-                        <Button
-                            type="button"
-                            variant="outline-secondary"
-                            @click="showForm = false"
-                            >Cancelar</Button
-                        >
-                        <Button
-                            type="submit"
-                            variant="primary"
-                            class="shadow-md shadow-primary/20"
-                            :disabled="saving || (!editing && !form.api_key)"
-                        >
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
-                            {{ saving ? 'Guardando…' : 'Guardar' }}
-                        </Button>
-                    </div>
-                </form>
-            </Dialog.Panel>
-        </Dialog>
+        <ProviderFormModal
+            :open="formOpen"
+            :provider="editing"
+            :catalog="catalog"
+            @close="formOpen = false"
+            @saved="onProviderSaved"
+        />
 
-        <!-- Modal eliminar -->
+        <TenantAiModal
+            :tenant="configuring"
+            :providers="providers"
+            @close="configuringId = null"
+            @saved="onTenantSaved"
+        />
+
+        <!-- Confirmar borrado de key -->
         <Dialog :open="deleting !== null" @close="deleting = null">
             <Dialog.Panel>
-                <div v-if="deleting" class="p-6">
-                    <div class="flex items-start gap-3.5">
+                <div v-if="deleting" class="p-5">
+                    <div class="flex items-start gap-3">
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-danger/10 text-danger"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
                         >
-                            <Lucide icon="Trash2" class="h-5 w-5" />
+                            <Lucide icon="Trash2" class="h-4 w-4" />
                         </div>
-                        <div>
-                            <h2 class="text-base font-medium">
-                                ¿Eliminar {{ deleting.label }}?
-                            </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
-                                Los hoteles que lo tengan asignado pasarán a la
-                                cadena automática.
+                        <div class="min-w-0 flex-1">
+                            <Dialog.Title
+                                class="block border-0 p-0 text-base font-medium"
+                                >Eliminar {{ deleting.label }}</Dialog.Title
+                            >
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                {{
+                                    assignedTo(deleting.id).length
+                                        ? `${assignedTo(deleting.id).length} ${assignedTo(deleting.id).length === 1 ? 'hotel la tiene fija y pasa' : 'hoteles la tienen fija y pasan'} a la cadena automática.`
+                                        : 'Ningún hotel la tiene fija.'
+                                }}
+                                {{
+                                    deleting.active &&
+                                    activeProviders.length === 1
+                                        ? 'Es la única key activa: los bots dejarán de contestar.'
+                                        : ''
+                                }}
                             </p>
                         </div>
                     </div>
-                    <div class="mt-6 flex justify-end gap-2">
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
                             variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             @click="deleting = null"
                             >Cancelar</Button
                         >
                         <Button
                             variant="danger"
-                            :disabled="saving"
-                            @click="submitDelete"
-                            ><Lucide icon="Trash2" class="mr-2 h-4 w-4" /> Sí,
-                            eliminar</Button
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="deletingBusy"
+                            @click="confirmDelete"
                         >
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
+                            {{
+                                deletingBusy ? 'Eliminando...' : 'Sí, eliminar'
+                            }}
+                        </Button>
                     </div>
                 </div>
             </Dialog.Panel>

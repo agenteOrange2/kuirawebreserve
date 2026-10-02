@@ -94,10 +94,8 @@ class ReservationContractController extends Controller
             return back()->with('error', 'No se pudo enviar el correo. Revisa la configuración de correo del hotel e inténtalo de nuevo.');
         }
 
-        activity('reservation')
-            ->performedOn($reservation)
-            ->causedBy($request->user())
-            ->log("Contrato de hospedaje enviado a {$email}");
+        // La constancia la deja DirectGuestMessenger al mandarlo, para que
+        // cuente igual el envío automático de la confirmación.
 
         return back()->with('success', "Contrato enviado a {$email}.");
     }

@@ -24,7 +24,7 @@ class TenantUserController extends Controller
 {
     public function store(Request $request, Tenant $tenant): JsonResponse
     {
-        return $tenant->run(function () use ($request, $tenant) {
+        return $this->inTenant($tenant, function () use ($request, $tenant) {
             $data = $request->validate([
                 'name' => ['required', 'string', 'max:255'],
                 'email' => ['required', 'email', 'max:255', 'unique:users,email'],
@@ -34,7 +34,9 @@ class TenantUserController extends Controller
             ]);
 
             $maxUsers = $tenant->planLimit('max_users');
-            if ($maxUsers !== null && User::count() >= $maxUsers) {
+            // El bot (rol agent) no es personal: no cuenta contra el tope,
+            // igual que en la pestaña Equipo.
+            if ($maxUsers !== null && User::whereDoesntHave('roles', fn ($q) => $q->where('name', 'agent'))->count() >= $maxUsers) {
                 return response()->json([
                     'message' => "El plan de este hotel permite hasta {$maxUsers} usuarios; cámbialo para agregar más.",
                 ], 422);
@@ -54,7 +56,7 @@ class TenantUserController extends Controller
 
     public function update(Request $request, Tenant $tenant, int $userId): JsonResponse
     {
-        return $tenant->run(function () use ($request, $userId) {
+        return $this->inTenant($tenant, function () use ($request, $userId) {
             $user = User::findOrFail($userId);
 
             $data = $request->validate([
@@ -88,7 +90,7 @@ class TenantUserController extends Controller
 
     public function destroy(Tenant $tenant, int $userId): JsonResponse
     {
-        return $tenant->run(function () use ($userId) {
+        return $this->inTenant($tenant, function () use ($userId) {
             $user = User::findOrFail($userId);
 
             if ($this->isLastOwner($user)) {
@@ -116,6 +118,22 @@ class TenantUserController extends Controller
         });
     }
 
+    /**
+     * $tenant->run() no regresa a la base central si el callback lanza
+     * (una validación fallida, un 404): el resto de la petición, incluida
+     * la bitácora del admin, se quedaba escribiendo en la base del hotel.
+     */
+    protected function inTenant(Tenant $tenant, callable $callback): JsonResponse
+    {
+        try {
+            return $tenant->run($callback);
+        } finally {
+            if (tenancy()->initialized) {
+                tenancy()->end();
+            }
+        }
+    }
+
     protected function isLastOwner(User $user): bool
     {
         return $user->hasRole('owner') && User::role('owner')->count() <= 1;
@@ -136,7 +154,7 @@ class TenantUserController extends Controller
             'phone' => $user->phone,
             'role' => $role,
             'role_label' => \App\Http\Controllers\Tenant\UsersPageController::ROLE_META[$role]['label'] ?? $role,
-            'rank' => $role ? (array_search($role, $orden, true) ?: 0) : count($orden),
+            'rank' => ($i = $role ? array_search($role, $orden, true) : false) === false ? count($orden) : $i,
             'on_shift' => false,
             'two_factor' => $user->two_factor_confirmed_at !== null,
             'created_at' => $user->created_at?->format('d/m/Y'),

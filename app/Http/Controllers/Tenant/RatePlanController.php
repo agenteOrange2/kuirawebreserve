@@ -81,6 +81,9 @@ class RatePlanController extends Controller
                 Rule::in(array_map(fn (RateDurationUnit $unit) => $unit->value, RateDurationUnit::advanceUnits())),
             ],
             'min_advance_value' => ['nullable', 'required_with:min_advance_unit', 'integer', 'min:1', 'max:365'],
+            // Días de llegada en que aplica la antelación (vacío = toda la semana).
+            'min_advance_weekdays' => ['sometimes', 'nullable', 'array', 'max:7'],
+            'min_advance_weekdays.*' => ['integer', 'between:0,6', 'distinct'],
             'deposit_percent' => ['nullable', 'numeric', 'min:0.01', 'max:100'],
             'deposit_amount' => ['nullable', 'numeric', 'min:0.01', 'max:99999999'],
             'payment_due_unit' => [
@@ -99,6 +102,7 @@ class RatePlanController extends Controller
             'cancel_free_value' => ['nullable', 'required_with:cancel_free_unit', 'integer', 'min:1', 'max:365'],
             'cancel_penalty_percent' => ['nullable', 'numeric', 'min:0', 'max:100'],
             'active' => ['sometimes', 'boolean'],
+            'online' => ['sometimes', 'boolean'],
         ], [
             'duration_unit.required_if' => 'Las tarifas por periodo necesitan una unidad de duración.',
             'duration_value.required_if' => 'Las tarifas por periodo necesitan la duración.',
@@ -140,6 +144,13 @@ class RatePlanController extends Controller
                 : null;
         }
 
+        // Sin días marcados (o sin antelación) la regla vale toda la semana:
+        // se guarda null, no un arreglo vacío.
+        if (array_key_exists('min_advance_weekdays', $data)
+            && (empty($data['min_advance_weekdays']) || empty($data['min_advance_value']))) {
+            $data['min_advance_weekdays'] = null;
+        }
+
         return $data;
     }
 
@@ -161,6 +172,7 @@ class RatePlanController extends Controller
             'price' => $plan->price,
             'min_advance_unit' => $plan->min_advance_unit?->value,
             'min_advance_value' => $plan->min_advance_value,
+            'min_advance_weekdays' => $plan->minAdvanceWeekdays(),
             'min_advance_label' => $plan->minAdvanceLabel(),
             'deposit_percent' => $plan->deposit_percent,
             'deposit_amount' => $plan->deposit_amount,
@@ -172,6 +184,7 @@ class RatePlanController extends Controller
             'cancel_penalty_percent' => $plan->cancel_penalty_percent,
             'cancellation_policy_label' => $plan->cancellationPolicyLabel(),
             'active' => $plan->active,
+            'online' => $plan->online,
             'seasons_count' => $plan->seasons_count ?? $plan->seasons()->count(),
         ];
     }

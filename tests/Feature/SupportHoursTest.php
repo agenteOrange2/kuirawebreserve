@@ -105,7 +105,10 @@ it('el prompt del asistente cambia cuando ya no hay quien atienda', function () 
     CarbonImmutable::setTestNow(atLocal('2026-09-08 22:00'));
     expect(app(AgentBrain::class)->supportHoursBlock())
         ->toContain('AHORA MISMO ESTÁ FUERA DE HORARIO')
-        ->toContain('mañana a partir de las 9:00');
+        ->toContain('mañana a partir de las 9:00')
+        // El horario es de quien contesta, no del sistema: la liga de pago y
+        // el apartado siguen a cualquier hora (caso Hotel México 2026-09-30).
+        ->toContain('NO limita cotizar, apartar, reservar para hoy ni pagar');
 
     // Sin horario configurado el prompt ni se entera.
     $this->property->update(['settings' => ['support_hours_enabled' => false]]);

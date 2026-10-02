@@ -24,8 +24,10 @@ class FilterPlanProspectsRequest extends FormRequest
     {
         return [
             'search' => ['nullable', 'string', 'max:120'],
-            'status' => ['nullable', 'string', 'in:all,new,contacted,qualified,won,lost'],
+            'status' => ['nullable', 'string', 'in:all,new,contacted,qualified,won,lost,open'],
             'plan' => ['nullable', 'string', 'max:40'],
+            'source' => ['nullable', 'string', 'in:landing,evento'],
+            'docs' => ['nullable', 'string', 'in:pending,sent'],
         ];
     }
 }

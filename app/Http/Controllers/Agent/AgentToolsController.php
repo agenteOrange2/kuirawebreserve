@@ -66,11 +66,23 @@ class AgentToolsController extends Controller
             'check_out_time' => $settings['check_out_time'] ?? null,
             'currency' => $settings['currency'] ?? 'MXN',
             // Fuente única de verdad: si no está aquí, el agente no lo sabe.
-            'policies' => $settings['policies'] ?? null,
+            'policies' => app(\App\Services\ReservationPolicy::class)->fillTerms($settings['policies'] ?? null),
             // Política de cancelación default del hotel (una tarifa puede
             // definir la suya; el bot responde con la general).
             'cancellation_policy' => app(\App\Services\ReservationPolicy::class)->cancellationPolicyLabel(),
             'cancellation_policy_notes' => app(\App\Services\ReservationPolicy::class)->cancellationPolicyText(),
+            // Reservas con llegada a menos de N días: otro anticipo, saldo
+            // en el hotel y sus propias reglas de cancelar o reagendar. El
+            // bot no cancela: explica esto y pasa el caso al personal.
+            'short_notice' => app(\App\Services\ReservationPolicy::class)->shortNoticeDays() > 0
+                && app(\App\Services\ReservationPolicy::class)->shortNoticeDepositPercent() > 0
+                ? array_filter([
+                    'applies_when' => 'La llegada es en menos de '.app(\App\Services\ReservationPolicy::class)->shortNoticeDays().' días desde que se reserva.',
+                    'deposit_percent' => app(\App\Services\ReservationPolicy::class)->shortNoticeDepositPercent(),
+                    'balance' => app(\App\Services\ReservationPolicy::class)->shortNoticeBalanceNotice(),
+                    'cancellation' => app(\App\Services\ReservationPolicy::class)->shortNoticePolicyText(),
+                ])
+                : null,
             // Fianza: el bot la menciona al cotizar para que nadie llegue
             // sin ese dinero. Es aparte del precio; `tiers_label` trae los
             // escalones por volumen cuando el hotel los configuró.
@@ -91,7 +103,7 @@ class AgentToolsController extends Controller
                 ->get()
                 ->map(fn (\App\Models\Faq $faq) => [
                     'q' => $faq->question,
-                    'a' => $faq->answer,
+                    'a' => app(\App\Services\ReservationPolicy::class)->fillTerms($faq->answer),
                 ])->values(),
             'room_types' => RoomType::query()
                 ->where('active', true)
@@ -201,7 +213,7 @@ class AgentToolsController extends Controller
         if ($occupancy['extra_guest_fee'] !== null) {
             // "por noche" o "por periodo" según cómo venda ESTE tipo: decir
             // solo "$250" deja creer que es un cobro único por la estancia.
-            $unit = ($ratePlan?->type->value ?? $type->ratePlans()->where('active', true)->value('type')) === 'block'
+            $unit = ($ratePlan?->type->value ?? $type->ratePlans()->sellableOnline()->value('type')) === 'block'
                 ? 'por periodo'
                 : 'por noche';
 
@@ -209,6 +221,66 @@ class AgentToolsController extends Controller
         }
 
         return $notice;
+    }
+
+    /**
+     * Total por número de personas, con la persona extra cobrada igual que
+     * al crear la reserva (Room::extraChargeLines: sin descuento de
+     * temporada). Caso real Hotel México 2026-09-30: con la tarifa del mes
+     * el bot le sacó el 20% también a la persona extra y cotizó $536 por
+     * noche cuando el sistema cobra $552.
+     *
+     * @return list<array{people: int, total: float, total_label: string, per_unit_label: string|null}>
+     */
+    protected function totalsByPeople(RatePlan $ratePlan, float $total, int $units): array
+    {
+        $occupancy = $this->occupancyOf($ratePlan->roomType);
+        $fee = (float) ($occupancy['extra_guest_fee'] ?? 0);
+        $included = max(1, $occupancy['included_guests']);
+        $max = max($included, $occupancy['max_guests']);
+
+        $rows = [];
+
+        for ($people = $included; $people <= $max; $people++) {
+            $amount = round($total + max(0, $people - $included) * $fee * max(1, $units), 2);
+
+            $rows[] = [
+                'people' => $people,
+                'total' => $amount,
+                'total_label' => '$'.number_format($amount, 2),
+                'per_unit_label' => $units > 1 ? '$'.number_format($amount / $units, 2) : null,
+            ];
+
+            if ($fee <= 0) {
+                break;
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * La misma tabla en una frase para quote_notice: "1 persona: $14,160.00
+     * ($472.00 por noche); 2 personas: $16,560.00 ($552.00 por noche)". Solo
+     * cuando hay persona extra o más de una unidad: si no, el total ya lo dice.
+     *
+     * @param  list<array<string, mixed>>  $rows
+     */
+    protected function totalsByPeopleLine(RatePlan $ratePlan, array $rows, int $units): ?string
+    {
+        if ($rows === [] || (count($rows) === 1 && $units <= 1)) {
+            return null;
+        }
+
+        $unit = $ratePlan->type->value === 'block' ? 'por periodo' : 'por noche';
+
+        $parts = array_map(
+            fn (array $row) => $row['people'].' '.($row['people'] === 1 ? 'persona' : 'personas').': '.$row['total_label']
+                .($row['per_unit_label'] !== null ? " ({$row['per_unit_label']} {$unit})" : ''),
+            $rows,
+        );
+
+        return 'Total según personas: '.implode('; ', $parts).'. Usa estas cifras tal cual; no calcules otras.';
     }
 
     /**
@@ -232,8 +304,12 @@ class AgentToolsController extends Controller
         $lines = [];
 
         $deposit = $ratePlan !== null && $total !== null
-            ? (float) ($ratePlan->depositAmountFor($total) ?? 0)
+            ? (float) (($start !== null ? $policy->depositFor($ratePlan, $total, $start) : $ratePlan->depositAmountFor($total)) ?? 0)
             : 0.0;
+
+        // Último momento: el anticipo es el del hotel y se dice el porqué,
+        // o el huésped que ya leyó "50%" en otro lado discute la cifra.
+        $shortNotice = $deposit > 0 && $start !== null && $policy->isShortNotice($start);
 
         // Anticipo = total (tarifa al 100%): no hay saldo. Decir "anticipo
         // del 100%" y luego "el pago total debe quedar liquidado antes de tu
@@ -242,6 +318,9 @@ class AgentToolsController extends Controller
 
         if ($fullUpfront) {
             $lines[] = 'Para apartar se paga el total de $'.number_format($total, 2).' por adelantado; no queda saldo pendiente.';
+        } elseif ($shortNotice) {
+            $lines[] = 'Como tu llegada es en menos de '.$policy->shortNoticeDays().' días, para apartar se pide un anticipo del '
+                .rtrim(rtrim(number_format($policy->shortNoticeDepositPercent(), 2), '0'), '.').'% ($'.number_format($deposit, 2).').';
         } elseif ($deposit > 0) {
             $share = $ratePlan?->deposit_percent !== null && (float) $ratePlan->deposit_percent > 0
                 ? ' ('.$ratePlan->depositLabel().' del total)'
@@ -383,13 +462,24 @@ class AgentToolsController extends Controller
     }
 
     /**
+     * Tarifa que el hotel solo vende en recepción (rate_plans.online=false):
+     * el asistente no la cotiza ni la aparta aunque el modelo recuerde su id.
+     */
+    protected function counterOnlyRate(RatePlan $ratePlan): JsonResponse
+    {
+        return response()->json([
+            'message' => "La tarifa \"{$ratePlan->name}\" solo se contrata directamente en recepción. No la cotices ni la apartes: ofrece las tarifas de get_rate_plans o, si el huésped la quiere, dile que se contrata al llegar al hotel.",
+        ], 422);
+    }
+
+    /**
      * get_rate_plans: tarifas activas con las que se puede cotizar.
      */
     public function ratePlans(): JsonResponse
     {
         return response()->json([
             'rate_plans' => RatePlan::query()
-                ->where('active', true)
+                ->sellableOnline()
                 ->with(['roomType:id,name,capacity', 'seasons' => fn ($q) => $q->where('active', true)])
                 ->orderBy('price')
                 ->get()
@@ -432,6 +522,11 @@ class AgentToolsController extends Controller
         ]);
 
         $ratePlan = RatePlan::findOrFail($data['rate_plan_id']);
+
+        if (! $ratePlan->online) {
+            return $this->counterOnlyRate($ratePlan);
+        }
+
         $start = Carbon::parse($data['starts_at']);
         $end = ! empty($data['ends_at']) ? Carbon::parse($data['ends_at']) : $ratePlan->suggestedEnd($start);
 
@@ -458,9 +553,13 @@ class AgentToolsController extends Controller
             ? "{$typeName}, {$range}: disponible, total $".number_format($total, 2).'.'
             : "{$typeName}, {$range}: NO está disponible. No la ofrezcas ni la cotices.";
 
+        $units = $ratePlan->unitsFor($start, $end);
+        $byPeople = $ratePlan->roomType ? $this->totalsByPeople($ratePlan, $total, $units) : [];
+
         $noticeLines = array_values(array_filter([
             $headline,
             $rooms->isNotEmpty() && $ratePlan->roomType ? $this->occupancyNotice($ratePlan->roomType, $ratePlan) : null,
+            $rooms->isNotEmpty() ? $this->totalsByPeopleLine($ratePlan, $byPeople, $units) : null,
             ...($rooms->isNotEmpty() ? $this->paymentNoticeLines($ratePlan, $start, $total) : []),
         ]));
 
@@ -470,18 +569,19 @@ class AgentToolsController extends Controller
             'rooms_count' => $rooms->count(),
             'starts_at' => $start->toIso8601String(),
             'ends_at' => $end->toIso8601String(),
-            'units' => $ratePlan->unitsFor($start, $end),
+            'units' => $units,
             'duration_label' => $ratePlan->durationLabel(),
             'total' => $total,
             'total_label' => '$'.number_format($total, 2),
+            'totals_by_people' => $byPeople,
             'occupancy' => $ratePlan->roomType ? $this->occupancyOf($ratePlan->roomType) : null,
             'deposit_label' => $ratePlan->depositLabel(),
-            'deposit_amount' => $ratePlan->depositAmountFor($total),
+            'deposit_amount' => app(\App\Services\ReservationPolicy::class)->depositFor($ratePlan, $total, $start),
             // OBLIGATORIO al cotizar: renglones textuales que el bot repite
             // tal cual después del precio.
             'quote_notice' => $noticeLines,
             'advance_error' => $ratePlan->violatesMinAdvance($start)
-                ? "Esta tarifa requiere reservar con al menos {$ratePlan->minAdvanceLabel()} de antelación."
+                ? $ratePlan->minAdvanceMessage()
                 : null,
             'date_notice' => $dateNotice,
         ]);
@@ -537,7 +637,7 @@ class AgentToolsController extends Controller
             // Una tarifa por tipo para cotizar el rango: por noche primero
             // (es lo que pide quien da fechas) y la más barata a igualdad.
             $plan = RatePlan::query()
-                ->where('active', true)
+                ->sellableOnline()
                 ->where('room_type_id', $type->id)
                 ->get()
                 ->sortBy(fn (RatePlan $candidate) => [$candidate->type->value === 'night' ? 0 : 1, (float) $candidate->price])
@@ -903,7 +1003,7 @@ class AgentToolsController extends Controller
 
         foreach ($types as $type) {
             $plan = RatePlan::query()
-                ->where('active', true)
+                ->sellableOnline()
                 ->where('room_type_id', $type->id)
                 ->get()
                 ->sortBy(fn (RatePlan $candidate) => [$candidate->type->value === 'night' ? 0 : 1, (float) $candidate->price])
@@ -998,21 +1098,38 @@ class AgentToolsController extends Controller
             return null;
         }
 
-        $years = max(1, $today->year - $start->year);
-        if ($start->copy()->addYearsNoOverflow($years)->startOfDay()->lt($today)) {
-            $years++;
+        // Un día de ESTE mes que ya pasó es un día sin mes que el modelo
+        // rellenó con el mes en curso: el huésped habla del próximo día con
+        // ese número, el del mes que entra. Caso real cabañas 2026-09-29
+        // (Messenger, conv. 1631): "¿tiene disponible 24 y 25?", el modelo
+        // mandó 24 de septiembre y el candado lo llevó a septiembre de 2027
+        // en vez del 24 de octubre.
+        if ($start->month === $today->month) {
+            $moved = $start->copy()->setDate($today->year, $today->month, 1);
+            do {
+                $moved->addMonthNoOverflow();
+            } while (! checkdate($moved->month, $start->day, $moved->year));
+            $moved->day($start->day);
+        } else {
+            $years = max(1, $today->year - $start->year);
+            if ($start->copy()->addYearsNoOverflow($years)->startOfDay()->lt($today)) {
+                $years++;
+            }
+            $moved = $start->copy()->addYearsNoOverflow($years);
         }
 
         $format = fn (string $raw) => preg_match('/\d{1,2}:\d{2}/', $raw) ? 'Y-m-d H:i' : 'Y-m-d';
-        $moved = $start->copy()->addYearsNoOverflow($years);
         $merge = ['starts_at' => $moved->format($format($rawStart))];
 
+        // La salida viaja igual que la llegada: mismas noches.
         $rawEnd = $request->input('ends_at');
         if (is_string($rawEnd) && trim($rawEnd) !== '') {
             try {
                 $end = Carbon::parse($rawEnd);
-                if ($end->copy()->startOfDay()->lt($today)) {
-                    $merge['ends_at'] = $end->copy()->addYearsNoOverflow($years)->format($format($rawEnd));
+                if ($end->copy()->startOfDay()->lte($moved->copy()->startOfDay())) {
+                    $merge['ends_at'] = $moved->copy()->addDays($start->copy()->startOfDay()->diffInDays($end->copy()->startOfDay(), false))
+                        ->setTime($end->hour, $end->minute)
+                        ->format($format($rawEnd));
                 }
             } catch (\Throwable) {
                 // la validación lo rechaza
@@ -1064,9 +1181,24 @@ class AgentToolsController extends Controller
         }
 
         $activeRequest = $reservation->paymentRequests()->active()->latest('id')->first();
+        $policy = app(\App\Services\ReservationPolicy::class);
+        $balanceDue = $reservation->pendingBalance() > 0 ? $policy->balanceDueDateLabel($reservation) : null;
 
         // Privacidad: el agente solo confirma datos no sensibles.
         return response()->json([
+            // Fechas ya redactadas, con su día de la semana: el bot hacía el
+            // calendario de cabeza y le dijo a un huésped que el martes 13
+            // de octubre era lunes (cabañas 2026-09-24, RES-2026-1792).
+            'arrival_label' => $reservation->starts_at->locale('es')->isoFormat('dddd D [de] MMMM [de] YYYY').' a las '.$reservation->starts_at->format('g:i A'),
+            'departure_label' => $reservation->ends_at->locale('es')->isoFormat('dddd D [de] MMMM [de] YYYY').' a las '.$reservation->ends_at->format('g:i A'),
+            'payment_summary' => $policy->paymentSummary($reservation),
+            'balance_due_label' => $balanceDue,
+            'instructions' => 'Cita arrival_label, departure_label y balance_due_label TAL CUAL, con su día de la semana: no calcules fechas ni días tú. '
+                .'La fecha límite del saldo de ESTA reserva es balance_due_label y manda sobre cualquier regla general de las políticas o FAQs. '
+                .($reservation->pendingBalance() > 0 && $balanceDue === null
+                    ? 'Esta reserva NO tiene fecha límite registrada: no inventes una; dile que el personal le confirma el día y usa transferir_a_humano si insiste. '
+                    : '')
+                .'Si el huésped dice que en otro lado vio una fecha distinta, NO le des la razón ni la corrijas de memoria: dile la que marca el sistema y que el personal se lo aclara, y usa transferir_a_humano.',
             'code' => $reservation->displayCode(),
             'status' => $reservation->status->value,
             'status_label' => $reservation->status->label(),
@@ -1562,6 +1694,19 @@ class AgentToolsController extends Controller
      *
      * @return array{pasarelas: array<int, array{provider: string, label: string}>, transferencia: bool, efectivo: bool}
      */
+    /**
+     * Las mismas opciones, para quien las necesita fuera de una herramienta
+     * (el prompt del cerebro las dicta desde el primer mensaje: sin esto el
+     * modelo enumeraba las tres genéricas —incluido "efectivo al llegar"—
+     * antes de que ninguna herramienta le dijera cuáles existen de verdad).
+     *
+     * @return array{pasarelas: array<int, array{provider: string, label: string}>, transferencia: bool, efectivo: bool}
+     */
+    public function paymentOptions(): array
+    {
+        return $this->paymentOptionsSummary();
+    }
+
     protected function paymentOptionsSummary(): array
     {
         $enabled = app(\App\Services\Payments\PaymentMethodGate::class)->methodsFor((string) tenant('id'));
@@ -1908,6 +2053,11 @@ class AgentToolsController extends Controller
         // Mismas horas normalizadas que ofreció get_availability: lo
         // cotizado es lo que se aparta.
         $holdPlan = RatePlan::findOrFail($data['rate_plan_id']);
+
+        if (! $holdPlan->online) {
+            return $this->counterOnlyRate($holdPlan);
+        }
+
         $holdStart = Carbon::parse($data['starts_at']);
         $holdEnd = ! empty($data['ends_at']) ? Carbon::parse($data['ends_at']) : $holdPlan->suggestedEnd($holdStart);
         [$holdStart, $holdEnd] = $this->normalizeNightTimes($holdPlan, $holdStart, $holdEnd);
@@ -2203,7 +2353,7 @@ class AgentToolsController extends Controller
         // Modalidad: por noche cuando el tipo tiene tarifa de noche (el caso
         // de quien da fechas); si el hotel solo cobra por bloque, se respeta.
         $firstType = RoomType::query()->find($data['lines'][0]['room_type_id']);
-        $mode = $firstType?->ratePlans()->where('active', true)->where('type', 'night')->exists()
+        $mode = $firstType?->ratePlans()->sellableOnline()->where('type', 'night')->exists()
             ? 'night'
             : 'block';
 
@@ -2211,6 +2361,7 @@ class AgentToolsController extends Controller
             $group = $action->handle([
                 ...$data,
                 'mode' => $mode,
+                'online_only' => true,
                 'confirmed' => false, // igual que un apartado: lo confirma el hotel
                 'source_channel' => 'agent',
                 'notes' => 'Creada por asistente IA',

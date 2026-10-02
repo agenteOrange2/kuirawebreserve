@@ -51,6 +51,8 @@ class Reservation extends Model
         'cancellation_reason',
         'settlement_closed_at',
         'settlement_note',
+        'date_pending_at',
+        'date_pending_note',
         'created_by',
     ];
 
@@ -75,6 +77,9 @@ class Reservation extends Model
             // Alguien resolvió la cuenta sin cobrarla, con el porqué en
             // settlement_note.
             'settlement_closed_at' => 'datetime',
+            // Cancelada sin reembolso con lo pagado a favor del huésped
+            // para otra fecha (TransitionReservation::setDatePending).
+            'date_pending_at' => 'datetime',
         ];
     }
 
@@ -187,6 +192,11 @@ class Reservation extends Model
      */
     public function suggestedRefund(?\DateTimeInterface $at = null): ?float
     {
+        // Fecha pendiente: el dinero se queda para otra fecha, no se devuelve.
+        if ($this->date_pending_at !== null) {
+            return null;
+        }
+
         $policy = app(\App\Services\ReservationPolicy::class)->cancellationPolicyFor($this->ratePlan);
 
         if ($policy === null) {

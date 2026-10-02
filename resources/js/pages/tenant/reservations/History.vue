@@ -90,6 +90,7 @@ const props = defineProps<{
         completed: number;
         cancelled: number;
         no_show: number;
+        date_pending?: number;
         revenue_label: string;
     };
     filters: { q: string; status: string; guest?: number | null };
@@ -395,7 +396,15 @@ async function submitDelete() {
                                     : 'Canceladas'
                             }}
                         </div>
-                        <div class="truncate text-[11px] text-slate-400">
+                        <button
+                            v-if="summary.date_pending"
+                            type="button"
+                            class="truncate text-[11px] text-warning hover:underline"
+                            @click="status = 'date_pending'"
+                        >
+                            {{ summary.date_pending }} con fecha pendiente
+                        </button>
+                        <div v-else class="truncate text-[11px] text-slate-400">
                             Se pueden reabrir
                         </div>
                     </div>

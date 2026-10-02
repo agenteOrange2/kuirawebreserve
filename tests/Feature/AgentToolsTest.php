@@ -620,6 +620,31 @@ it('al cotizar, el aviso dice capacidad, persona extra, plazo de liquidación y 
         ->and($notice)->toContain('+526568508818');
 });
 
+it('al cotizar da el total por número de personas, con la persona extra sin descuento de temporada', function () {
+    // Caso Hotel México 2026-09-30: con la tarifa del mes el bot le sacó el
+    // descuento también a la persona extra y cotizó menos de lo que se cobra.
+    $this->room->update(['max_occupancy' => 3]);
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'price' => 1000,
+        'active' => true,
+    ]);
+    $plan->seasons()->create([
+        'name' => 'Estancia larga', 'kind' => 'promo', 'min_nights' => 3, 'price' => 800, 'priority' => 1, 'active' => true,
+    ]);
+
+    $payload = agentAvailability($plan, now()->addDays(30)->toDateString(), now()->addDays(33)->toDateString());
+
+    expect($payload['total'])->toEqual(2400)
+        ->and($payload['totals_by_people'])->toHaveCount(2)
+        ->and($payload['totals_by_people'][1]['people'])->toBe(3)
+        ->and($payload['totals_by_people'][1]['total'])->toEqual(4350)
+        ->and(implode("\n", $payload['quote_notice']))
+        ->toContain('2 personas: $2,400.00 ($800.00 por noche); 3 personas: $4,350.00 ($1,450.00 por noche)');
+});
+
 it('con la tarifa al 100% no habla de anticipo ni de saldo por liquidar', function () {
     // Caso Hotel México 2026-10-01: "anticipo de $590.00 (100% del total)"
     // seguido de "el pago total debe quedar liquidado antes de tu llegada".
@@ -917,4 +942,28 @@ it('sin fianza activa el apartado no trae guarantee_for_this_booking', function 
     )->getData(true);
 
     expect($payload['guarantee_for_this_booking'])->toBeNull();
+});
+
+it('un día de este mes que ya pasó se cotiza el mes que entra, no el año que entra', function () {
+    // Caso real cabañas 2026-09-29 (Messenger, conv. 1631): "¿tiene
+    // disponible 24 y 25?", el modelo mandó el 24 de septiembre y el
+    // huésped recibió "viernes 24 de septiembre de 2027".
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-29 16:56'));
+
+    $plan = RatePlan::factory()->create([
+        'property_id' => $this->property->id,
+        'room_type_id' => $this->roomType->id,
+        'type' => 'night',
+        'active' => true,
+    ]);
+
+    $payload = agentAvailability($plan, '2026-09-24', '2026-09-25');
+
+    expect(substr($payload['starts_at'], 0, 10))->toBe('2026-10-24')
+        ->and(substr($payload['ends_at'], 0, 10))->toBe('2026-10-25')
+        ->and($payload['date_notice'])->toContain('24 de octubre de 2026');
+
+    // El 31 salta al próximo mes que lo tenga.
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-31 18:00'));
+    expect(substr(agentAvailability($plan, '2026-10-30', '2026-11-01')['starts_at'], 0, 10))->toBe('2026-11-30');
 });

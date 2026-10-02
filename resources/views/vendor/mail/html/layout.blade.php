@@ -28,6 +28,10 @@ width: 100% !important;
 {!! $head ?? '' !!}
 </head>
 <body>
+@isset($preheader)
+{{-- Texto de vista previa del buzón; invisible dentro del correo. --}}
+<div style="display: none; max-height: 0; overflow: hidden; mso-hide: all; font-size: 1px; line-height: 1px; color: #f1f5f9; opacity: 0;">{{ $preheader }}&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;&#8203;&nbsp;</div>
+@endisset
 
 <table class="wrapper" width="100%" cellpadding="0" cellspacing="0" role="presentation">
 <tr>

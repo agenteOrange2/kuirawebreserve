@@ -90,6 +90,19 @@ class RoomType extends Model implements HasMedia
     }
 
     /**
+     * Corte de madrugada del hotel (settings.night_cutoff_time): una llegada
+     * antes de esa hora cuenta como la noche anterior. Null = sin corte.
+     *
+     * @return array{0: int, 1: int}|null
+     */
+    public function nightCutoffTime(): ?array
+    {
+        $time = $this->property?->settings['night_cutoff_time'] ?? null;
+
+        return $time ? array_map('intval', array_pad(explode(':', (string) $time), 2, '0')) : null;
+    }
+
+    /**
      * Payload de fotos para el panel y el wizard: la primera es la portada.
      *
      * @return array<int, array<string, mixed>>

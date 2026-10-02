@@ -49,11 +49,35 @@ watchEffect(() => {
 });
 
 const { menu, isTenantPanel } = useMenu();
+
+// Campana del panel de plataforma: lleva a /admin/notificaciones. Roja si
+// hay algo urgente abierto.
+const adminAlerts = computed(
+    () =>
+        page.props.adminAlerts as {
+            open: number;
+            unread: number;
+            danger: number;
+        } | null,
+);
+const platformBranding = computed(
+    () =>
+        (page.props.branding ?? {}) as {
+            app_name?: string | null;
+            logo_url?: string | null;
+        },
+);
+// Logo del encabezado del menú: el del hotel en su panel; en el panel
+// central, el de la plataforma (/admin/settings/brand).
+const sidebarLogo = computed(() =>
+    tenant.value
+        ? tenant.value.logo_url
+        : (platformBranding.value.logo_url ?? null),
+);
 const brandName = computed(
     () =>
         tenant.value?.name ??
-        ((page.props.branding as { app_name?: string } | undefined)?.app_name ||
-            'KuiraReserve'),
+        (platformBranding.value.app_name || 'KuiraReserve'),
 );
 const userInitials = computed(() => {
     const name = (auth.value?.user?.name ?? '').trim();
@@ -112,8 +136,13 @@ const userMenu = computed<Array<{ label: string; icon: Icon; href: string }>>(
                       href: route('admin.settings.two-factor.show'),
                   },
                   {
-                      label: 'Apariencia',
+                      label: 'Marca de la plataforma',
                       icon: 'Palette',
+                      href: route('admin.branding'),
+                  },
+                  {
+                      label: 'Modo de color',
+                      icon: 'SunMoon',
                       href: route('admin.settings.appearance.edit'),
                   },
                   {
@@ -264,8 +293,8 @@ const requestFullscreen = () => {
                             class="flex h-[38px] w-[38px] shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white/8 transition-transform ease-in-out group-[.side-menu--collapsed.side-menu--on-hover]:xl:-rotate-180"
                         >
                             <img
-                                v-if="tenant?.logo_url"
-                                :src="tenant.logo_url"
+                                v-if="sidebarLogo"
+                                :src="sidebarLogo"
                                 :alt="brandName"
                                 class="h-full w-full rounded-lg bg-white object-contain p-0.5"
                             />
@@ -565,6 +594,38 @@ const requestFullscreen = () => {
                                 <!-- Avisos: solo en el panel del hotel, que
                                      es donde hay mensajes, reservas y
                                      comprobantes de los que enterarse. -->
+                                <Link
+                                    v-if="!isTenantPanel && adminAlerts"
+                                    :href="route('admin.alerts')"
+                                    class="relative rounded-full p-2 hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                                    :title="
+                                        adminAlerts.open
+                                            ? `${adminAlerts.open} avisos abiertos` +
+                                              (adminAlerts.danger
+                                                  ? `, ${adminAlerts.danger} urgentes`
+                                                  : '')
+                                            : 'Sin avisos abiertos'
+                                    "
+                                >
+                                    <Lucide
+                                        icon="Bell"
+                                        class="h-[18px] w-[18px]"
+                                    />
+                                    <span
+                                        v-if="adminAlerts.unread"
+                                        class="absolute top-0.5 right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[10px] font-medium text-white"
+                                        :class="
+                                            adminAlerts.danger
+                                                ? 'bg-danger'
+                                                : 'bg-primary'
+                                        "
+                                        >{{
+                                            adminAlerts.unread > 99
+                                                ? '99+'
+                                                : adminAlerts.unread
+                                        }}</span
+                                    >
+                                </Link>
                                 <StaffBell
                                     v-if="isTenantPanel && tenant"
                                     :tenant-id="tenant.id"

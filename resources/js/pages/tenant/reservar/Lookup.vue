@@ -95,7 +95,10 @@ const { isDark, rootStyle } = useWizardAppearance(props.appearance);
 const money = (n: number) =>
     `$${Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2 })} ${props.property.currency}`;
 
-const code = ref('');
+// El correo de la reserva trae ?codigo= para no teclear el folio.
+const code = ref(
+    new URLSearchParams(window.location.search).get('codigo') ?? '',
+);
 const phone = ref('');
 const searching = ref(false);
 const error = ref<string | null>(null);
@@ -552,13 +555,15 @@ const holdCountdown = computed(() => {
                                             class="mt-2 border-t border-slate-200 pt-2"
                                         >
                                             <div class="text-xs text-slate-500">
-                                                Si tu app solo permite transferir a
-                                                tarjeta:
+                                                Si tu app solo permite
+                                                transferir a tarjeta:
                                             </div>
                                             <div class="text-xs text-slate-500">
                                                 {{ acc.alternativa.tipo }}
                                             </div>
-                                            <div class="font-mono text-slate-700">
+                                            <div
+                                                class="font-mono text-slate-700"
+                                            >
                                                 {{ acc.alternativa.cuenta }}
                                             </div>
                                         </div>

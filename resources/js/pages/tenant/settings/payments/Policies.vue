@@ -22,6 +22,9 @@ const props = defineProps<{
         cancel_free_unit: string;
         cancel_penalty_percent: number;
         cancel_policy_text: string;
+        short_notice_days: number;
+        short_notice_deposit_percent: number;
+        short_notice_policy_text: string;
         contract_text: string;
         walkin_charge: 'checkout' | 'checkin';
         counter_methods: string[];
@@ -43,6 +46,12 @@ const form = reactive({
     cancel_free_unit: props.settings.cancel_free_unit,
     cancel_penalty_percent: props.settings.cancel_penalty_percent,
     cancel_policy_text: props.settings.cancel_policy_text,
+    // Último momento: el interruptor solo existe en pantalla; guardado es
+    // short_notice_days = 0.
+    short_notice_enabled: props.settings.short_notice_days > 0,
+    short_notice_days: props.settings.short_notice_days || 7,
+    short_notice_deposit_percent: props.settings.short_notice_deposit_percent,
+    short_notice_policy_text: props.settings.short_notice_policy_text,
     contract_text: props.settings.contract_text,
     walkin_charge: props.settings.walkin_charge,
     counter_methods: [...props.settings.counter_methods],
@@ -164,6 +173,11 @@ async function submit() {
                 cancel_free_unit: form.cancel_free_unit,
                 cancel_penalty_percent: form.cancel_penalty_percent,
                 cancel_policy_text: form.cancel_policy_text,
+                short_notice_days: form.short_notice_enabled
+                    ? form.short_notice_days
+                    : 0,
+                short_notice_deposit_percent: form.short_notice_deposit_percent,
+                short_notice_policy_text: form.short_notice_policy_text,
                 contract_text: form.contract_text,
                 walkin_charge: form.walkin_charge,
                 counter_methods: form.counter_methods,
@@ -405,6 +419,127 @@ async function submit() {
                             tarifa(s) activa(s) definen su propia política de
                             cancelación y mandan sobre esta para sus reservas.
                         </p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="box box--stacked mt-4">
+                <div
+                    class="border-b border-slate-200/60 px-5 py-4 dark:border-darkmode-400"
+                >
+                    <div class="flex items-center gap-2">
+                        <Lucide
+                            icon="CalendarClock"
+                            class="h-4 w-4 stroke-[1.5] text-primary"
+                        />
+                        <h2 class="text-sm font-medium">
+                            Reservas de último momento
+                        </h2>
+                    </div>
+                    <p class="mt-1 text-xs text-slate-500">
+                        Quien reserva con poca anticipación deja un anticipo
+                        mayor y paga el resto al llegar.
+                    </p>
+                </div>
+                <div
+                    class="divide-y divide-dashed divide-slate-200/80 px-5 dark:divide-darkmode-400"
+                >
+                    <div
+                        class="flex flex-wrap items-start justify-between gap-4 py-4"
+                    >
+                        <div class="max-w-2xl min-w-0">
+                            <div class="text-sm font-medium">
+                                Aplicar regla de último momento
+                            </div>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Aplica en el sitio, el asistente y el panel, solo
+                                a tarifas que piden anticipo. El saldo de estas
+                                reservas no tiene fecha límite: se cobra en
+                                recepción.
+                            </p>
+                        </div>
+                        <FormSwitch class="mt-1 shrink-0">
+                            <FormSwitch.Input
+                                :checked="form.short_notice_enabled"
+                                type="checkbox"
+                                @change="
+                                    form.short_notice_enabled =
+                                        !form.short_notice_enabled
+                                "
+                            />
+                        </FormSwitch>
+                    </div>
+
+                    <div
+                        v-if="form.short_notice_enabled"
+                        class="flex flex-wrap items-start justify-between gap-4 py-4"
+                    >
+                        <div class="max-w-2xl min-w-0">
+                            <div class="text-sm font-medium">
+                                Cuando la llegada es en menos de
+                            </div>
+                            <p class="mt-0.5 text-xs text-slate-500">
+                                Se cuenta por fechas desde el día en que se
+                                reserva.
+                            </p>
+                            <FormHelp
+                                v-if="
+                                    errors.short_notice_days ||
+                                    errors.short_notice_deposit_percent
+                                "
+                                class="text-danger"
+                                >{{
+                                    errors.short_notice_days ??
+                                    errors.short_notice_deposit_percent
+                                }}</FormHelp
+                            >
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <FormInput
+                                v-model.number="form.short_notice_days"
+                                type="number"
+                                min="1"
+                                max="60"
+                                class="!w-20 text-center"
+                            />
+                            <span class="text-xs text-slate-500"
+                                >días, pedir</span
+                            >
+                            <FormInput
+                                v-model.number="
+                                    form.short_notice_deposit_percent
+                                "
+                                type="number"
+                                min="1"
+                                max="100"
+                                class="!w-20 text-center"
+                            />
+                            <span class="text-xs text-slate-500"
+                                >% de anticipo</span
+                            >
+                        </div>
+                    </div>
+
+                    <div v-if="form.short_notice_enabled" class="py-4">
+                        <div class="text-sm font-medium">
+                            Si cancela (opcional)
+                        </div>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Lo que se le dice al huésped de estas reservas al
+                            reservar y si pide cancelar.
+                        </p>
+                        <FormTextarea
+                            v-model="form.short_notice_policy_text"
+                            class="mt-2"
+                            rows="3"
+                            maxlength="2000"
+                            placeholder="Ej. No hay reembolso. Puedes reagendar si el hotel lo autoriza; si no, tu pago queda como fecha pendiente."
+                        />
+                        <FormHelp
+                            v-if="errors.short_notice_policy_text"
+                            class="text-danger"
+                            >{{ errors.short_notice_policy_text }}</FormHelp
+                        >
                     </div>
                 </div>
             </div>

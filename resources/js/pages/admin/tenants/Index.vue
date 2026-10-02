@@ -1,17 +1,16 @@
 <script setup lang="ts">
-import { Link, router, useForm } from '@inertiajs/vue3';
-import axios from 'axios';
-import { computed, ref } from 'vue';
+import { Link, useForm, usePage } from '@inertiajs/vue3';
+import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
-import {
-    FormHelp,
-    FormInput,
-    FormLabel,
-    FormSelect,
-} from '@/components/Base/Form';
-import { Dialog, Menu } from '@/components/Base/Headless';
-import Lucide, { type Icon } from '@/components/Base/Lucide';
+import { FormHelp, FormInput, FormSelect } from '@/components/Base/Form';
+import { Dialog } from '@/components/Base/Headless';
+import Lucide from '@/components/Base/Lucide';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import { modeOption, modeOptions, tenantUrl } from './modes';
+import TenantEditModal from './TenantEditModal.vue';
+import TenantSuspendDialog from './TenantSuspendDialog.vue';
+import type { TenantShell } from './types';
+import { useImpersonate } from './useImpersonate';
 
 interface TenantRow {
     id: string;
@@ -24,11 +23,12 @@ interface TenantRow {
     suspended: boolean;
     domain: string | null;
     created_at: string | null;
-    users: number;
-    rooms: number;
-    reservations_month: number;
-    mode: string;
+    users: number | null;
+    rooms: number | null;
+    reservations_month: number | null;
+    mode: TenantShell['mode'];
     ai_replies: number;
+    reachable: boolean;
 }
 
 interface PlanInfo {
@@ -37,6 +37,7 @@ interface PlanInfo {
     max_properties: number | null;
     max_rooms: number | null;
     max_users: number | null;
+    price_monthly: number;
     active: boolean;
 }
 
@@ -55,6 +56,12 @@ const props = defineProps<{
     plans: PlanInfo[];
 }>();
 
+const money = (n: number) => `$${n.toLocaleString('es-MX')}`;
+const ghostButton =
+    'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition';
+const sectionLabel =
+    'mb-3 text-[11px] font-medium tracking-wide text-slate-400 uppercase';
+
 const initials = (name: string) =>
     name
         .trim()
@@ -63,54 +70,19 @@ const initials = (name: string) =>
         .map((p) => p.charAt(0).toUpperCase())
         .join('') || '?';
 
-const cellClass =
-    'box shadow-[5px_3px_5px_#00000005] first:border-l last:border-r first:rounded-l-[0.6rem] last:rounded-r-[0.6rem] rounded-l-none rounded-r-none border-x-0 dark:bg-darkmode-600';
-
-// ── Modo de operación (spec-modo-motel) ──
-// Lo administra SOLO la plataforma, al crear y al editar. "Ambos" es una
-// propiedad que opera hotel y motel a la vez: no apaga nada, suma los
-// atajos de caseta a la operación de hotel.
-type PropertyMode = 'hotel' | 'motel' | 'both';
-
-const modeOptions: {
-    value: PropertyMode;
-    label: string;
-    icon: Icon;
-    description: string;
-}[] = [
-    {
-        value: 'hotel',
-        label: 'Hotel',
-        icon: 'Building2',
-        description: 'Flujo clásico de reservas y recepción.',
-    },
-    {
-        value: 'motel',
-        label: 'Motel',
-        icon: 'CarFront',
-        description:
-            'Registro exprés en el plano con placa o identificación y cobro en la llegada.',
-    },
-    {
-        value: 'both',
-        label: 'Ambos',
-        // No "Layers": ese icono ya es el de Planes en esta misma página.
-        icon: 'Blend',
-        description:
-            'Opera como hotel y como motel: conserva las dos funcionalidades.',
-    },
-];
-
-const modeOption = (mode: string) =>
-    modeOptions.find((option) => option.value === mode) ?? modeOptions[0];
-
-// ── Búsqueda y filtros (en cliente: el listado carga completo) ──
+// ── Búsqueda, filtros y orden (en cliente: el listado carga completo) ──
 const search = ref('');
 const statusFilter = ref<'all' | 'active' | 'suspended'>('all');
-const planFilter = ref('all');
+// ?plan=clave llega desde las tarjetas de /admin/planes ("N hoteles").
+const planFilter = ref(
+    new URLSearchParams(usePage().url.split('?')[1] ?? '').get('plan') ?? 'all',
+);
+const modeFilter = ref<'all' | TenantShell['mode']>('all');
+const sort = ref<'recent' | 'name' | 'price' | 'reservations'>('recent');
 
-const filtered = computed(() =>
-    props.tenants
+const filtered = computed(() => {
+    const q = search.value.trim().toLowerCase();
+    const rows = props.tenants
         .filter(
             (t) =>
                 statusFilter.value === 'all' ||
@@ -119,108 +91,162 @@ const filtered = computed(() =>
         .filter(
             (t) => planFilter.value === 'all' || t.plan === planFilter.value,
         )
-        .filter((t) => {
-            const q = search.value.trim().toLowerCase();
-            if (!q) return true;
-            return (
+        .filter(
+            (t) => modeFilter.value === 'all' || t.mode === modeFilter.value,
+        )
+        .filter(
+            (t) =>
+                !q ||
                 t.name.toLowerCase().includes(q) ||
-                (t.domain ?? '').toLowerCase().includes(q)
-            );
-        }),
+                t.id.toLowerCase().includes(q) ||
+                (t.domain ?? '').toLowerCase().includes(q),
+        );
+
+    // El servidor ya los manda del más reciente al más viejo.
+    if (sort.value === 'name') {
+        return [...rows].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+    }
+    if (sort.value === 'price') {
+        return [...rows].sort((a, b) => b.price_monthly - a.price_monthly);
+    }
+    if (sort.value === 'reservations') {
+        return [...rows].sort(
+            (a, b) =>
+                (b.reservations_month ?? -1) - (a.reservations_month ?? -1),
+        );
+    }
+    return rows;
+});
+
+const hasFilters = computed(
+    () =>
+        !!search.value.trim() ||
+        statusFilter.value !== 'all' ||
+        planFilter.value !== 'all' ||
+        modeFilter.value !== 'all',
 );
+
+function clearFilters() {
+    search.value = '';
+    statusFilter.value = 'all';
+    planFilter.value = 'all';
+    modeFilter.value = 'all';
+}
+
+// Tope + paginación: el listado no debe crecer sin fin con la cartera.
+const perPage = 20;
+const page = ref(1);
+const pages = computed(() =>
+    Math.max(1, Math.ceil(filtered.value.length / perPage)),
+);
+const visible = computed(() =>
+    filtered.value.slice((page.value - 1) * perPage, page.value * perPage),
+);
+watch([search, statusFilter, planFilter, modeFilter, sort], () => {
+    page.value = 1;
+});
 
 // ── Crear ──
 const showCreate = ref(false);
+const activePlans = computed(() => props.plans.filter((p) => p.active));
 const createForm = useForm({
     name: '',
     subdomain: '',
-    plan: props.plans.find((p) => p.active)?.value ?? 'basic',
-    // Modo de operación: motel y ambos encienden el registro exprés del
-    // plano; motel puro además siembra wizard solo-adultos + menú pagado al
-    // recibir (semillas editables por el hotel).
-    mode: 'hotel',
+    plan: activePlans.value[0]?.value ?? props.plans[0]?.value ?? '',
+    // Motel y ambos encienden el registro exprés del plano; motel puro
+    // además siembra wizard solo-adultos + menú pagado al recibir.
+    mode: 'hotel' as string,
     owner_name: '',
     owner_email: '',
     owner_password: '',
 });
-
-const activePlans = computed(() => props.plans.filter((p) => p.active));
 const createPlanInfo = computed(() =>
     props.plans.find((p) => p.value === createForm.plan),
 );
 
+// El subdominio se sugiere del nombre mientras no lo toquen a mano.
+const subdomainTouched = ref(false);
+const slugify = (text: string) =>
+    text
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .replace(/^(hotel|motel)\s+/, '')
+        .replace(/[^a-z0-9]+/g, '')
+        .slice(0, 40);
+watch(
+    () => createForm.name,
+    (name) => {
+        if (!subdomainTouched.value) createForm.subdomain = slugify(name);
+    },
+);
+function onSubdomainInput() {
+    subdomainTouched.value = true;
+    createForm.subdomain = createForm.subdomain
+        .toLowerCase()
+        .replace(/[^a-z0-9-]/g, '');
+}
+const subdomainTaken = computed(() =>
+    props.tenants.some((t) => t.id === createForm.subdomain),
+);
+
+const showPassword = ref(false);
+function generatePassword() {
+    // Sin caracteres que se confunden al dictarla (0/O, 1/l/I).
+    const alphabet = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    const bytes = new Uint32Array(12);
+    crypto.getRandomValues(bytes);
+    createForm.owner_password = Array.from(
+        bytes,
+        (b) => alphabet[b % alphabet.length],
+    ).join('');
+    showPassword.value = true;
+}
+
+function openCreate() {
+    createForm.reset();
+    createForm.clearErrors();
+    subdomainTouched.value = false;
+    showPassword.value = false;
+    showCreate.value = true;
+}
+
+function closeCreate() {
+    if (createForm.processing) return;
+    showCreate.value = false;
+}
+
 function submitCreate() {
     createForm.post(route('admin.tenants.store'), {
-        onSuccess: () => {
-            showCreate.value = false;
-            createForm.reset();
-        },
+        // Al terminar se abre la ficha del hotel nuevo.
+        onSuccess: () => (showCreate.value = false),
     });
 }
 
-// ── Editar ──
+// ── Editar / suspender / entrar como ──
 const editing = ref<TenantRow | null>(null);
-const editForm = useForm({ name: '', plan: '', mode: 'hotel' });
+const suspending = ref<TenantRow | null>(null);
+const { impersonating, impersonateError, impersonate } = useImpersonate();
 
-function openEdit(tenant: TenantRow) {
-    editing.value = tenant;
-    editForm.name = tenant.name;
-    editForm.plan = tenant.plan;
-    editForm.mode = tenant.mode;
-}
-
-function submitEdit() {
-    if (!editing.value) return;
-    editForm.put(route('admin.tenants.update', editing.value.id), {
-        onSuccess: () => (editing.value = null),
-    });
-}
-
-// ── Suspender / reactivar ──
-function toggleSuspend(tenant: TenantRow) {
-    router.patch(
-        route('admin.tenants.suspend', tenant.id),
-        {},
-        { preserveScroll: true },
-    );
-}
-
-// ── Entrar como (impersonación de soporte) ──
-const impersonating = ref<string | null>(null);
-const impersonateError = ref<string | null>(null);
-
-async function impersonate(tenant: TenantRow) {
-    impersonating.value = tenant.id;
-    impersonateError.value = null;
-    // Abrir la pestaña ANTES del await: tras una respuesta asíncrona el
-    // navegador ya no lo trata como gesto del usuario y bloquea el popup
-    // (y el token de impersonación solo vive 60 s, no admite copiar/pegar).
-    const win = window.open('', '_blank');
-    try {
-        const { data } = await axios.post<{ url: string }>(
-            route('admin.tenants.impersonate', tenant.id),
-        );
-        if (win) {
-            win.location.href = data.url;
-        } else {
-            window.location.href = data.url;
-        }
-    } catch (error: any) {
-        win?.close();
-        impersonateError.value =
-            error?.response?.data?.message ?? 'No se pudo generar el acceso.';
-    } finally {
-        impersonating.value = null;
-    }
-}
-
-// ── Eliminar ──
+// ── Eliminar: hay que teclear el subdominio ──
 const deleting = ref<TenantRow | null>(null);
-const deleteForm = useForm({});
+const deleteForm = useForm({ confirm: '' });
+
+function openDelete(tenant: TenantRow) {
+    deleteForm.reset();
+    deleteForm.clearErrors();
+    deleting.value = tenant;
+}
+
+function closeDelete() {
+    if (deleteForm.processing) return;
+    deleting.value = null;
+}
 
 function submitDelete() {
-    if (!deleting.value) return;
+    if (!deleting.value || deleteForm.confirm !== deleting.value.id) return;
     deleteForm.delete(route('admin.tenants.destroy', deleting.value.id), {
+        preserveScroll: true,
         onSuccess: () => (deleting.value = null),
     });
 }
@@ -228,680 +254,694 @@ function submitDelete() {
 
 <template>
     <RazeLayout title="Hoteles">
-        <!-- Encabezado -->
-        <div
-            class="mt-2 flex flex-col gap-y-3 md:h-10 md:flex-row md:items-center"
-        >
-            <div class="text-base font-medium group-[.mode--light]:text-white">
-                Hoteles
-            </div>
-            <div class="flex flex-col gap-x-3 gap-y-2 sm:flex-row md:ml-auto">
-                <Button
-                    :as="Link"
-                    :href="route('admin.plans')"
-                    variant="outline-secondary"
-                    class="bg-white/80 dark:bg-darkmode-400/80"
-                >
-                    <Lucide icon="Layers" class="mr-2 h-4 w-4 stroke-[1.3]" />
-                    Planes
-                </Button>
-                <Button
-                    variant="primary"
-                    class="shadow-md shadow-primary/20"
-                    @click="showCreate = true"
-                >
-                    <Lucide icon="Plus" class="mr-2 h-4 w-4 stroke-[1.3]" />
-                    Nuevo hotel
-                </Button>
-            </div>
-        </div>
-
-        <div class="mt-3.5 grid grid-cols-12 gap-5">
-            <!-- KPIs -->
-            <div class="col-span-12 sm:col-span-6 xl:col-span-3">
-                <div class="box box--stacked h-full p-5">
-                    <div class="flex items-center">
-                        <div
-                            class="flex h-12 w-12 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
-                        >
-                            <Lucide
-                                icon="Building2"
-                                class="h-6 w-6 fill-primary/10 text-primary"
-                            />
-                        </div>
-                        <div class="ml-4">
-                            <div class="text-2xl font-medium">
-                                {{ stats.total }}
-                            </div>
-                            <div class="mt-0.5 text-xs text-slate-500">
-                                Hoteles registrados
-                            </div>
-                        </div>
-                    </div>
+        <div class="mt-2">
+            <!-- Encabezado -->
+            <div
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
+            >
+                <div class="flex min-w-0 items-center gap-3">
                     <div
-                        class="mt-4 flex items-center gap-3 border-t border-dashed border-slate-300/70 pt-3 text-xs"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <span class="flex items-center gap-1.5 text-success">
-                            <span class="h-1.5 w-1.5 rounded-full bg-success" />
-                            {{ stats.active }} activos
-                        </span>
-                        <span
-                            class="flex items-center gap-1.5"
+                        <Lucide icon="Building2" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-base font-medium">Hoteles</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            La cartera de clientes: plan, cómo operan y acceso
+                            de soporte a su panel.
+                        </p>
+                    </div>
+                </div>
+                <div
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2"
+                >
+                    <Link
+                        :href="route('admin.plans')"
+                        class="inline-flex h-9 items-center justify-center gap-1.5 rounded-[0.5rem] border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-300"
+                    >
+                        <Lucide icon="Layers" class="h-3.5 w-3.5" />
+                        Planes
+                    </Link>
+                    <Link
+                        :href="route('admin.services')"
+                        class="inline-flex h-9 items-center justify-center gap-1.5 rounded-[0.5rem] border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-600 shadow-sm transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-300"
+                    >
+                        <Lucide icon="PackagePlus" class="h-3.5 w-3.5" />
+                        Servicios
+                    </Link>
+                    <Button
+                        variant="primary"
+                        class="col-span-2 h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                        @click="openCreate"
+                    >
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                        Nuevo hotel
+                    </Button>
+                </div>
+            </div>
+
+            <!-- Cifras -->
+            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Building2" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.active }} de {{ stats.total }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Hoteles activos
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] sm:block"
                             :class="
                                 stats.suspended
-                                    ? 'text-danger'
+                                    ? 'font-medium text-danger'
                                     : 'text-slate-400'
                             "
                         >
-                            <span
-                                class="h-1.5 w-1.5 rounded-full"
-                                :class="
-                                    stats.suspended
-                                        ? 'bg-danger'
-                                        : 'bg-slate-300'
-                                "
-                            />
-                            {{ stats.suspended }} suspendidos
-                        </span>
+                            {{
+                                stats.suspended
+                                    ? `${stats.suspended} suspendido${stats.suspended === 1 ? '' : 's'}`
+                                    : 'Ninguno suspendido'
+                            }}
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="col-span-12 sm:col-span-6 xl:col-span-3">
-                <div class="box box--stacked h-full p-5">
-                    <div class="flex items-center">
-                        <div
-                            class="flex h-12 w-12 items-center justify-center rounded-full border border-success/10 bg-success/10"
-                        >
-                            <Lucide
-                                icon="Banknote"
-                                class="h-6 w-6 fill-success/10 text-success"
-                            />
-                        </div>
-                        <div class="ml-4">
-                            <div class="text-2xl font-medium">
-                                ${{ stats.mrr.toLocaleString('es-MX') }}
-                            </div>
-                            <div class="mt-0.5 text-xs text-slate-500">
-                                Ingreso mensual (lista)
-                            </div>
-                        </div>
-                    </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
                     <div
-                        class="mt-4 border-t border-dashed border-slate-300/70 pt-3 text-xs text-slate-500"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
                     >
-                        Suma de precios de plan de los hoteles activos.
+                        <Lucide icon="Banknote" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ money(stats.mrr) }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Ingreso mensual
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-slate-400 sm:block"
+                        >
+                            Plan + servicios, hoteles activos
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="col-span-12 sm:col-span-6 xl:col-span-3">
-                <div class="box box--stacked h-full p-5">
-                    <div class="flex items-center">
-                        <div
-                            class="flex h-12 w-12 items-center justify-center rounded-full border border-info/10 bg-info/10"
-                        >
-                            <Lucide
-                                icon="TrendingUp"
-                                class="h-6 w-6 fill-info/10 text-info"
-                            />
-                        </div>
-                        <div class="ml-4">
-                            <div class="text-2xl font-medium">
-                                {{ stats.new_month }}
-                            </div>
-                            <div class="mt-0.5 text-xs text-slate-500">
-                                Altas en {{ monthLabel }}
-                            </div>
-                        </div>
-                    </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
                     <div
-                        class="mt-4 border-t border-dashed border-slate-300/70 pt-3 text-xs text-slate-500"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
                     >
-                        Hoteles nuevos este mes.
+                        <Lucide icon="TrendingUp" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.new_month }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Altas del mes
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-slate-400 first-letter:uppercase sm:block"
+                        >
+                            {{ monthLabel }}
+                        </div>
                     </div>
                 </div>
-            </div>
-            <div class="col-span-12 sm:col-span-6 xl:col-span-3">
-                <div class="box box--stacked h-full p-5">
-                    <div class="flex items-center">
-                        <div
-                            class="flex h-12 w-12 items-center justify-center rounded-full border border-warning/10 bg-warning/10"
-                        >
-                            <Lucide
-                                icon="MessagesSquare"
-                                class="h-6 w-6 fill-warning/10 text-warning"
-                            />
-                        </div>
-                        <div class="ml-4">
-                            <div class="text-2xl font-medium">
-                                {{ stats.ai_replies_month }}
-                            </div>
-                            <div class="mt-0.5 text-xs text-slate-500">
-                                Respuestas IA del mes
-                            </div>
-                        </div>
-                    </div>
+                <Link
+                    :href="route('admin.ai')"
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 transition hover:ring-1 hover:ring-primary/20 xl:col-span-3"
+                    title="Ver consumo por hotel"
+                >
                     <div
-                        class="mt-4 border-t border-dashed border-slate-300/70 pt-3 text-xs"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-warning/10 bg-warning/10 text-warning"
                     >
-                        <Link
-                            :href="route('admin.ai')"
-                            class="flex items-center text-primary"
+                        <Lucide icon="Bot" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.ai_replies_month.toLocaleString('es-MX') }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Respuestas IA del mes
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-primary sm:block"
                         >
                             Ver consumo por hotel
-                            <Lucide
-                                icon="ArrowRight"
-                                class="ml-1 h-3.5 w-3.5"
-                            />
-                        </Link>
+                        </div>
                     </div>
-                </div>
+                </Link>
             </div>
 
             <!-- Listado -->
-            <div class="col-span-12">
+            <div class="box box--stacked mt-4">
                 <div
-                    v-if="impersonateError"
-                    class="mb-1 flex items-center rounded-md border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger"
+                    class="flex flex-col gap-2 rounded-t-[0.6rem] border-b border-slate-200/60 bg-slate-50/70 px-4 py-3 lg:flex-row lg:flex-wrap lg:items-center dark:border-darkmode-400 dark:bg-darkmode-600/40"
                 >
-                    <Lucide
-                        icon="TriangleAlert"
-                        class="mr-2 h-4 w-4 shrink-0"
-                    />
-                    {{ impersonateError }}
-                </div>
-
-                <!-- Filtros -->
-                <div class="flex flex-col gap-3 lg:flex-row lg:items-center">
-                    <div class="relative lg:w-72">
+                    <div class="relative lg:w-64">
                         <Lucide
                             icon="Search"
-                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
                         />
                         <FormInput
                             v-model="search"
                             type="text"
-                            class="pl-9"
-                            placeholder="Buscar hotel o dominio…"
+                            class="h-9 pl-9 text-xs"
+                            placeholder="Buscar hotel o subdominio"
                         />
                     </div>
-                    <div
-                        class="inline-flex gap-1 rounded-[0.6rem] bg-slate-100/80 p-1 dark:bg-darkmode-700"
-                    >
-                        <button
-                            v-for="f in [
-                                { key: 'all', label: `Todos (${stats.total})` },
-                                {
-                                    key: 'active',
-                                    label: `Activos (${stats.active})`,
-                                },
-                                {
-                                    key: 'suspended',
-                                    label: `Suspendidos (${stats.suspended})`,
-                                },
-                            ]"
-                            :key="f.key"
-                            type="button"
-                            class="rounded-[0.5rem] px-3 py-1.5 text-xs font-medium transition"
-                            :class="
-                                statusFilter === f.key
-                                    ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
-                                    : 'text-slate-500 hover:text-slate-700'
-                            "
-                            @click="statusFilter = f.key as typeof statusFilter"
+                    <div class="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:flex">
+                        <FormSelect
+                            v-model="statusFilter"
+                            class="h-9 text-xs lg:w-40"
                         >
-                            {{ f.label }}
-                        </button>
+                            <option value="all">
+                                Todos ({{ stats.total }})
+                            </option>
+                            <option value="active">
+                                Activos ({{ stats.active }})
+                            </option>
+                            <option value="suspended">
+                                Suspendidos ({{ stats.suspended }})
+                            </option>
+                        </FormSelect>
+                        <FormSelect
+                            v-model="planFilter"
+                            class="h-9 text-xs lg:w-40"
+                        >
+                            <option value="all">Todos los planes</option>
+                            <option
+                                v-for="p in plans"
+                                :key="p.value"
+                                :value="p.value"
+                            >
+                                {{ p.label }}
+                            </option>
+                        </FormSelect>
+                        <FormSelect
+                            v-model="modeFilter"
+                            class="h-9 text-xs lg:w-40"
+                        >
+                            <option value="all">Todos los modos</option>
+                            <option
+                                v-for="m in modeOptions"
+                                :key="m.value"
+                                :value="m.value"
+                            >
+                                {{ m.label }}
+                            </option>
+                        </FormSelect>
+                        <FormSelect v-model="sort" class="h-9 text-xs lg:w-44">
+                            <option value="recent">Más recientes</option>
+                            <option value="name">Por nombre</option>
+                            <option value="price">Pagan más al mes</option>
+                            <option value="reservations">
+                                Más reservas del mes
+                            </option>
+                        </FormSelect>
                     </div>
-                    <FormSelect
-                        v-model="planFilter"
-                        class="!w-auto !py-1.5 text-xs lg:ml-auto"
-                    >
-                        <option value="all">Plan: todos</option>
-                        <option
-                            v-for="p in plans"
-                            :key="p.value"
-                            :value="p.value"
+                    <div class="flex items-center gap-3 text-xs lg:ml-auto">
+                        <button
+                            v-if="hasFilters"
+                            type="button"
+                            class="font-medium text-primary"
+                            @click="clearFilters"
                         >
-                            {{ p.label }}
-                        </option>
-                    </FormSelect>
+                            Quitar filtros
+                        </button>
+                        <span class="text-slate-500">
+                            {{ filtered.length }}
+                            {{ filtered.length === 1 ? 'hotel' : 'hoteles' }}
+                        </span>
+                    </div>
                 </div>
 
-                <!-- Tabla card-row -->
-                <div class="mt-2 overflow-auto lg:overflow-visible">
-                    <table
-                        v-if="filtered.length"
-                        class="w-full min-w-[1000px] border-separate border-spacing-y-[8px] text-sm"
+                <div
+                    v-if="impersonateError"
+                    class="flex items-start gap-2 border-b border-danger/15 bg-danger/5 px-4 py-3 text-xs text-danger"
+                >
+                    <Lucide
+                        icon="TriangleAlert"
+                        class="mt-px h-3.5 w-3.5 shrink-0"
+                    />
+                    {{ impersonateError }}
+                </div>
+
+                <div
+                    v-if="visible.length"
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="t in visible"
+                        :key="t.id"
+                        class="flex flex-col gap-3 px-4 py-3 sm:px-5 lg:flex-row lg:items-center"
                     >
-                        <thead>
-                            <tr>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
+                        <!-- Quién es -->
+                        <div class="flex min-w-0 flex-1 items-center gap-3">
+                            <div
+                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold text-white"
+                                :class="
+                                    t.suspended
+                                        ? 'bg-slate-300 dark:bg-darkmode-400'
+                                        : 'bg-linear-to-br from-theme-1 to-theme-2'
+                                "
+                            >
+                                {{ initials(t.name) }}
+                            </div>
+                            <div class="min-w-0">
+                                <div
+                                    class="flex flex-wrap items-center gap-1.5"
                                 >
-                                    Hotel
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Plan
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Operación
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    IA (mes)
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Estado
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-left text-xs font-medium text-slate-500"
-                                >
-                                    Alta
-                                </th>
-                                <th
-                                    class="border-b-0 px-5 pb-1 text-right text-xs font-medium text-slate-500"
-                                >
-                                    Acciones
-                                </th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            <tr v-for="t in filtered" :key="t.id">
-                                <td :class="cellClass" class="px-5 py-3.5">
-                                    <div class="flex items-center gap-3">
-                                        <div
-                                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
-                                        >
-                                            {{ initials(t.name) }}
-                                        </div>
-                                        <div class="min-w-0">
-                                            <Link
-                                                :href="
-                                                    route(
-                                                        'admin.tenants.show',
-                                                        t.id,
-                                                    )
-                                                "
-                                                class="block truncate font-medium text-primary hover:underline"
-                                                :class="{
-                                                    '!text-slate-400 line-through':
-                                                        t.suspended,
-                                                }"
-                                            >
-                                                {{ t.name }}
-                                            </Link>
-                                            <a
-                                                v-if="t.domain"
-                                                :href="`http://${t.domain}`"
-                                                target="_blank"
-                                                class="block truncate text-xs text-slate-500 hover:text-primary"
-                                            >
-                                                {{ t.domain }}
-                                            </a>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
-                                    <span
-                                        class="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
-                                        >{{ t.plan_label }}</span
-                                    >
-                                    <div
-                                        class="mt-1 text-[10px] text-slate-400"
-                                        :title="
-                                            t.addons
-                                                ? 'Plan base + servicios adicionales contratados'
-                                                : undefined
+                                    <Link
+                                        :href="
+                                            route('admin.tenants.show', t.id)
                                         "
+                                        class="truncate text-sm font-medium hover:text-primary"
+                                        :class="{
+                                            'text-slate-400': t.suspended,
+                                        }"
+                                        >{{ t.name }}</Link
                                     >
-                                        ${{
-                                            t.price_monthly.toLocaleString(
-                                                'es-MX',
-                                            )
-                                        }}
-                                        MXN/mes<template v-if="t.addons">
-                                            ·
-                                            {{ t.addons }} servicio(s)</template
-                                        >
-                                    </div>
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
                                     <span
-                                        class="mb-1.5 flex w-fit items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-400"
-                                        title="Modo de operación"
+                                        v-if="t.suspended"
+                                        class="rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
+                                        >Suspendido</span
+                                    >
+                                    <span
+                                        v-if="!t.reachable"
+                                        class="inline-flex items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
+                                        title="Su base de datos no respondió al cargar el listado"
                                     >
                                         <Lucide
-                                            :icon="modeOption(t.mode).icon"
-                                            class="h-3 w-3 stroke-[1.5]"
+                                            icon="TriangleAlert"
+                                            class="h-3 w-3"
                                         />
-                                        {{ modeOption(t.mode).label }}
+                                        Base sin respuesta
                                     </span>
-                                    <div
-                                        class="flex items-center gap-3 text-xs text-slate-500"
-                                    >
-                                        <span
-                                            class="flex items-center gap-1"
-                                            title="Usuarios"
-                                        >
-                                            <Lucide
-                                                icon="Users"
-                                                class="h-3.5 w-3.5 stroke-[1.5]"
-                                            />
-                                            {{ t.users }}
-                                        </span>
-                                        <span
-                                            class="flex items-center gap-1"
-                                            title="Habitaciones"
-                                        >
-                                            <Lucide
-                                                icon="BedDouble"
-                                                class="h-3.5 w-3.5 stroke-[1.5]"
-                                            />
-                                            {{ t.rooms }}
-                                        </span>
-                                        <span
-                                            class="flex items-center gap-1"
-                                            title="Reservas del mes"
-                                        >
-                                            <Lucide
-                                                icon="CalendarCheck"
-                                                class="h-3.5 w-3.5 stroke-[1.5]"
-                                            />
-                                            {{ t.reservations_month }}
-                                        </span>
-                                    </div>
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
-                                    <span
-                                        v-if="t.ai_in_plan"
-                                        class="flex w-fit items-center gap-1.5 rounded-full bg-info/10 px-2 py-0.5 text-xs text-info"
-                                    >
-                                        <Lucide icon="Bot" class="h-3 w-3" />
-                                        {{ t.ai_replies }} resp.
-                                    </span>
-                                    <span v-else class="text-xs text-slate-400"
-                                        >Sin IA</span
-                                    >
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
-                                    <span
-                                        class="flex w-fit items-center gap-1.5 rounded-full px-2 py-0.5 text-xs"
-                                        :class="
-                                            t.suspended
-                                                ? 'bg-danger/10 text-danger'
-                                                : 'bg-success/10 text-success'
-                                        "
-                                    >
-                                        <span
-                                            class="h-1.5 w-1.5 rounded-full"
-                                            :class="
-                                                t.suspended
-                                                    ? 'bg-danger'
-                                                    : 'bg-success'
-                                            "
-                                        />
-                                        {{
-                                            t.suspended
-                                                ? 'Suspendido'
-                                                : 'Activo'
-                                        }}
-                                    </span>
-                                </td>
-                                <td
-                                    :class="cellClass"
-                                    class="px-5 py-3.5 text-xs text-slate-500"
+                                </div>
+                                <a
+                                    v-if="t.domain"
+                                    :href="tenantUrl(t.domain)"
+                                    target="_blank"
+                                    rel="noopener"
+                                    class="block truncate text-xs text-slate-500 hover:text-primary"
+                                    >{{ t.domain }}</a
                                 >
-                                    {{ t.created_at ?? '—' }}
-                                </td>
-                                <td :class="cellClass" class="px-5 py-3.5">
-                                    <div
-                                        class="flex items-center justify-end gap-2"
-                                    >
-                                        <Button
-                                            v-if="!t.suspended"
-                                            variant="outline-primary"
-                                            size="sm"
-                                            class="rounded-[0.5rem] bg-white whitespace-nowrap"
-                                            :disabled="impersonating === t.id"
-                                            title="Abre el panel del hotel como su dueño (acceso de soporte, un solo uso)"
-                                            @click="impersonate(t)"
-                                        >
-                                            <Lucide
-                                                icon="LogIn"
-                                                class="mr-1.5 h-3.5 w-3.5"
-                                            />
-                                            {{
-                                                impersonating === t.id
-                                                    ? 'Abriendo…'
-                                                    : 'Entrar como'
-                                            }}
-                                        </Button>
-                                        <Menu>
-                                            <Menu.Button
-                                                class="flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:bg-slate-100 dark:border-darkmode-400 dark:hover:bg-darkmode-400"
-                                            >
-                                                <Lucide
-                                                    icon="MoreVertical"
-                                                    class="h-4 w-4"
-                                                />
-                                            </Menu.Button>
-                                            <Menu.Items class="w-48">
-                                                <Menu.Item
-                                                    :as="Link"
-                                                    :href="
-                                                        route(
-                                                            'admin.tenants.show',
-                                                            t.id,
-                                                        )
-                                                    "
-                                                >
-                                                    <Lucide
-                                                        icon="Eye"
-                                                        class="mr-2 h-4 w-4"
-                                                    />
-                                                    Ver ficha
-                                                </Menu.Item>
-                                                <Menu.Item
-                                                    as="button"
-                                                    type="button"
-                                                    @click="openEdit(t)"
-                                                >
-                                                    <Lucide
-                                                        icon="Pencil"
-                                                        class="mr-2 h-4 w-4"
-                                                    />
-                                                    Editar
-                                                </Menu.Item>
-                                                <Menu.Item
-                                                    as="button"
-                                                    type="button"
-                                                    :class="
-                                                        t.suspended
-                                                            ? 'text-success'
-                                                            : 'text-warning'
-                                                    "
-                                                    @click="toggleSuspend(t)"
-                                                >
-                                                    <Lucide
-                                                        :icon="
-                                                            t.suspended
-                                                                ? 'Play'
-                                                                : 'Pause'
-                                                        "
-                                                        class="mr-2 h-4 w-4"
-                                                    />
-                                                    {{
-                                                        t.suspended
-                                                            ? 'Reactivar'
-                                                            : 'Suspender'
-                                                    }}
-                                                </Menu.Item>
-                                                <Menu.Item
-                                                    as="button"
-                                                    type="button"
-                                                    class="text-danger"
-                                                    @click="deleting = t"
-                                                >
-                                                    <Lucide
-                                                        icon="Trash2"
-                                                        class="mr-2 h-4 w-4"
-                                                    />
-                                                    Eliminar
-                                                </Menu.Item>
-                                            </Menu.Items>
-                                        </Menu>
-                                    </div>
-                                </td>
-                            </tr>
-                        </tbody>
-                    </table>
-                    <div
-                        v-else
-                        class="box box--stacked flex flex-col items-center gap-3 py-14 text-center"
-                    >
-                        <div
-                            class="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary"
-                        >
-                            <Lucide icon="Building2" class="h-6 w-6" />
+                            </div>
                         </div>
-                        <p class="max-w-md px-6 text-sm text-slate-500">
-                            {{
-                                tenants.length
-                                    ? 'Ningún hotel coincide con los filtros.'
-                                    : 'Aún no hay hoteles. Crea el primero con "Nuevo hotel".'
-                            }}
-                        </p>
+
+                        <!-- Datos duros -->
+                        <div
+                            class="flex flex-wrap items-center gap-x-5 gap-y-2 pl-12 lg:contents"
+                        >
+                            <div class="lg:w-40 lg:shrink-0">
+                                <span
+                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                                    >{{ t.plan_label }}</span
+                                >
+                                <div
+                                    class="mt-1 text-[11px] text-slate-500"
+                                    :title="
+                                        t.addons
+                                            ? 'Plan base + servicios adicionales contratados'
+                                            : 'Plan base'
+                                    "
+                                >
+                                    {{ money(t.price_monthly) }}/mes<template
+                                        v-if="t.addons"
+                                    >
+                                        · {{ t.addons }}
+                                        {{
+                                            t.addons === 1
+                                                ? 'servicio'
+                                                : 'servicios'
+                                        }}</template
+                                    >
+                                </div>
+                            </div>
+                            <div class="lg:w-44 lg:shrink-0">
+                                <span
+                                    class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                    title="Modo de operación"
+                                >
+                                    <Lucide
+                                        :icon="modeOption(t.mode).icon"
+                                        class="h-3 w-3"
+                                    />
+                                    {{ modeOption(t.mode).label }}
+                                </span>
+                                <div
+                                    v-if="t.reachable"
+                                    class="mt-1 flex items-center gap-3 text-[11px] text-slate-500"
+                                >
+                                    <span
+                                        class="inline-flex items-center gap-1"
+                                        title="Usuarios del equipo"
+                                    >
+                                        <Lucide
+                                            icon="Users"
+                                            class="h-3 w-3"
+                                        />{{ t.users }}
+                                    </span>
+                                    <span
+                                        class="inline-flex items-center gap-1"
+                                        title="Habitaciones"
+                                    >
+                                        <Lucide
+                                            icon="BedDouble"
+                                            class="h-3 w-3"
+                                        />{{ t.rooms }}
+                                    </span>
+                                    <span
+                                        class="inline-flex items-center gap-1"
+                                        title="Reservas creadas este mes"
+                                    >
+                                        <Lucide
+                                            icon="CalendarCheck"
+                                            class="h-3 w-3"
+                                        />{{ t.reservations_month }}
+                                    </span>
+                                </div>
+                            </div>
+                            <div class="text-[11px] lg:w-24 lg:shrink-0">
+                                <span
+                                    v-if="t.ai_in_plan"
+                                    class="inline-flex items-center gap-1 rounded-full bg-info/10 px-2 py-0.5 font-medium text-info"
+                                    title="Respuestas del asistente este mes"
+                                >
+                                    <Lucide icon="Bot" class="h-3 w-3" />
+                                    {{ t.ai_replies.toLocaleString('es-MX') }}
+                                </span>
+                                <span v-else class="text-slate-400"
+                                    >Sin IA</span
+                                >
+                            </div>
+                            <div
+                                class="text-[11px] text-slate-500 lg:w-20 lg:shrink-0"
+                                title="Fecha de alta"
+                            >
+                                {{ t.created_at ?? '' }}
+                            </div>
+                        </div>
+
+                        <!-- Acciones -->
+                        <div
+                            class="flex items-center justify-end gap-0.5 border-t border-dashed border-slate-200/70 pt-2 lg:border-0 lg:pt-0 dark:border-darkmode-400"
+                        >
+                            <button
+                                v-if="!t.suspended"
+                                type="button"
+                                :class="[
+                                    ghostButton,
+                                    'hover:bg-primary/10 hover:text-primary',
+                                ]"
+                                :disabled="impersonating === t.id"
+                                title="Entrar como el dueño (acceso de soporte, un solo uso)"
+                                @click="impersonate(t.id)"
+                            >
+                                <Lucide
+                                    :icon="
+                                        impersonating === t.id
+                                            ? 'LoaderCircle'
+                                            : 'LogIn'
+                                    "
+                                    class="h-4 w-4"
+                                    :class="{
+                                        'animate-spin': impersonating === t.id,
+                                    }"
+                                />
+                            </button>
+                            <button
+                                type="button"
+                                :class="[
+                                    ghostButton,
+                                    'hover:bg-primary/10 hover:text-primary',
+                                ]"
+                                title="Editar nombre, plan y modo"
+                                @click="editing = t"
+                            >
+                                <Lucide icon="Pencil" class="h-4 w-4" />
+                            </button>
+                            <button
+                                type="button"
+                                :class="[
+                                    ghostButton,
+                                    t.suspended
+                                        ? 'hover:bg-success/10 hover:text-success'
+                                        : 'hover:bg-warning/10 hover:text-warning',
+                                ]"
+                                :title="t.suspended ? 'Reactivar' : 'Suspender'"
+                                @click="suspending = t"
+                            >
+                                <Lucide
+                                    :icon="t.suspended ? 'Play' : 'Pause'"
+                                    class="h-4 w-4"
+                                />
+                            </button>
+                            <button
+                                type="button"
+                                :class="[
+                                    ghostButton,
+                                    'hover:bg-danger/10 hover:text-danger',
+                                ]"
+                                title="Eliminar hotel y su base de datos"
+                                @click="openDelete(t)"
+                            >
+                                <Lucide icon="Trash2" class="h-4 w-4" />
+                            </button>
+                            <Link
+                                :href="route('admin.tenants.show', t.id)"
+                                :class="[
+                                    ghostButton,
+                                    'hover:bg-primary/10 hover:text-primary',
+                                ]"
+                                title="Abrir la ficha"
+                            >
+                                <Lucide icon="ChevronRight" class="h-4 w-4" />
+                            </Link>
+                        </div>
+                    </div>
+                </div>
+
+                <div
+                    v-else
+                    class="flex flex-col items-center gap-2 px-4 py-10 text-center"
+                >
+                    <div
+                        class="flex h-10 w-10 items-center justify-center rounded-full bg-slate-100 text-slate-400 dark:bg-darkmode-400"
+                    >
+                        <Lucide
+                            :icon="tenants.length ? 'SearchX' : 'Building2'"
+                            class="h-4 w-4"
+                        />
+                    </div>
+                    <p class="text-xs text-slate-500">
+                        {{
+                            tenants.length
+                                ? 'Ningún hotel coincide con los filtros.'
+                                : 'Aún no hay hoteles. Crea el primero con "Nuevo hotel".'
+                        }}
+                    </p>
+                    <button
+                        v-if="hasFilters"
+                        type="button"
+                        class="text-xs font-medium text-primary"
+                        @click="clearFilters"
+                    >
+                        Quitar filtros
+                    </button>
+                </div>
+
+                <div
+                    v-if="pages > 1"
+                    class="flex items-center justify-between gap-2 border-t border-slate-200/60 px-4 py-3 text-xs dark:border-darkmode-400"
+                >
+                    <span class="text-slate-500"
+                        >Página {{ page }} de {{ pages }}</span
+                    >
+                    <div class="flex gap-1">
+                        <button
+                            v-for="n in pages"
+                            :key="n"
+                            type="button"
+                            class="rounded-md px-2.5 py-1"
+                            :class="
+                                n === page
+                                    ? 'bg-primary text-white'
+                                    : 'text-slate-500 hover:bg-slate-100 dark:hover:bg-darkmode-400'
+                            "
+                            @click="page = n"
+                        >
+                            {{ n }}
+                        </button>
                     </div>
                 </div>
             </div>
         </div>
 
         <!-- Modal: crear -->
-        <Dialog :open="showCreate" size="lg" @close="showCreate = false">
-            <Dialog.Panel>
-                <form class="flex flex-col" @submit.prevent="submitCreate">
+        <Dialog :open="showCreate" size="lg" @close="closeCreate">
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[720px]">
+                <form
+                    class="flex max-h-[calc(100dvh-6rem)] flex-col"
+                    @submit.prevent="submitCreate"
+                >
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <Lucide
-                                icon="Building2"
-                                class="h-5 w-5 text-primary"
-                            />
+                            <Lucide icon="Building2" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">Nuevo hotel</h2>
                             <p class="mt-0.5 text-xs text-slate-500">
-                                Se aprovisiona su base de datos con roles, dueño
-                                y primera propiedad (tarda unos segundos)
+                                Se le crea su base de datos con roles, dueño y
+                                primera propiedad. Tarda unos segundos.
                             </p>
                         </div>
                         <button
                             type="button"
-                            class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                            @click="showCreate = false"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            title="Cerrar"
+                            @click="closeCreate"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
 
                     <div
-                        class="max-h-[70vh] space-y-4 overflow-y-auto px-6 py-5"
+                        class="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4"
                     >
-                        <div>
-                            <FormLabel htmlFor="create-name"
-                                >Nombre del hotel</FormLabel
-                            >
-                            <FormInput
-                                id="create-name"
-                                v-model="createForm.name"
-                                type="text"
-                                placeholder="Hotel Las Palmas"
-                            />
-                            <FormHelp
-                                v-if="createForm.errors.name"
-                                class="text-danger"
-                                >{{ createForm.errors.name }}</FormHelp
-                            >
-                        </div>
-                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <div>
-                                <FormLabel htmlFor="create-subdomain"
-                                    >Subdominio</FormLabel
-                                >
-                                <div class="flex items-center">
+                        <section>
+                            <div :class="sectionLabel">El hotel</div>
+                            <div class="grid grid-cols-12 gap-4">
+                                <div class="col-span-12">
+                                    <label
+                                        for="create-name"
+                                        class="mb-1.5 block text-xs font-medium"
+                                        >Nombre del hotel</label
+                                    >
                                     <FormInput
-                                        id="create-subdomain"
-                                        v-model="createForm.subdomain"
+                                        id="create-name"
+                                        v-model="createForm.name"
                                         type="text"
-                                        placeholder="laspalmas"
-                                        class="rounded-r-none"
+                                        maxlength="255"
+                                        class="h-9 text-xs"
+                                        placeholder="Hotel Las Palmas"
                                     />
-                                    <span
-                                        class="rounded-r-md border border-l-0 border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500 dark:border-transparent dark:bg-darkmode-700"
+                                    <FormHelp
+                                        v-if="createForm.errors.name"
+                                        class="text-danger"
+                                        >{{ createForm.errors.name }}</FormHelp
                                     >
-                                        .{{ domainSuffix }}
-                                    </span>
                                 </div>
-                                <FormHelp
-                                    v-if="createForm.errors.subdomain"
-                                    class="text-danger"
-                                    >{{ createForm.errors.subdomain }}</FormHelp
-                                >
-                            </div>
-                            <div>
-                                <FormLabel htmlFor="create-plan"
-                                    >Plan</FormLabel
-                                >
-                                <FormSelect
-                                    id="create-plan"
-                                    v-model="createForm.plan"
-                                >
-                                    <option
-                                        v-for="plan in activePlans"
-                                        :key="plan.value"
-                                        :value="plan.value"
+                                <div class="col-span-12 sm:col-span-7">
+                                    <label
+                                        for="create-subdomain"
+                                        class="mb-1.5 block text-xs font-medium"
+                                        >Subdominio</label
                                     >
-                                        {{ plan.label }}
-                                    </option>
-                                </FormSelect>
-                                <FormHelp v-if="createPlanInfo">
-                                    Hasta
-                                    {{
-                                        createPlanInfo.max_properties ??
-                                        'ilimitadas'
-                                    }}
-                                    propiedad(es),
-                                    {{
-                                        createPlanInfo.max_rooms ?? 'ilimitadas'
-                                    }}
-                                    habitaciones y
-                                    {{
-                                        createPlanInfo.max_users ?? 'ilimitados'
-                                    }}
-                                    usuarios.
-                                </FormHelp>
+                                    <div class="flex items-center">
+                                        <FormInput
+                                            id="create-subdomain"
+                                            v-model="createForm.subdomain"
+                                            type="text"
+                                            maxlength="40"
+                                            class="h-9 rounded-r-none text-xs"
+                                            placeholder="laspalmas"
+                                            @input="onSubdomainInput"
+                                        />
+                                        <span
+                                            class="flex h-9 items-center rounded-r-md border border-l-0 border-slate-200 bg-slate-50 px-3 text-xs whitespace-nowrap text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                        >
+                                            .{{ domainSuffix }}
+                                        </span>
+                                    </div>
+                                    <FormHelp
+                                        v-if="createForm.errors.subdomain"
+                                        class="text-danger"
+                                        >{{
+                                            createForm.errors.subdomain
+                                        }}</FormHelp
+                                    >
+                                    <FormHelp
+                                        v-else-if="subdomainTaken"
+                                        class="text-danger"
+                                        >Ese subdominio ya lo usa otro
+                                        hotel.</FormHelp
+                                    >
+                                    <FormHelp v-else
+                                        >Es su dirección y la llave de su base:
+                                        no se puede cambiar después.</FormHelp
+                                    >
+                                </div>
+                                <div class="col-span-12 sm:col-span-5">
+                                    <label
+                                        for="create-plan"
+                                        class="mb-1.5 block text-xs font-medium"
+                                        >Plan</label
+                                    >
+                                    <FormSelect
+                                        id="create-plan"
+                                        v-model="createForm.plan"
+                                        class="h-9 text-xs"
+                                    >
+                                        <option
+                                            v-for="plan in activePlans"
+                                            :key="plan.value"
+                                            :value="plan.value"
+                                        >
+                                            {{ plan.label }}
+                                        </option>
+                                    </FormSelect>
+                                    <FormHelp
+                                        v-if="createForm.errors.plan"
+                                        class="text-danger"
+                                        >{{ createForm.errors.plan }}</FormHelp
+                                    >
+                                    <FormHelp v-else-if="createPlanInfo">
+                                        {{
+                                            money(createPlanInfo.price_monthly)
+                                        }}
+                                        al mes · hasta
+                                        {{
+                                            createPlanInfo.max_rooms ??
+                                            'ilimitadas'
+                                        }}
+                                        habitaciones y
+                                        {{
+                                            createPlanInfo.max_users ??
+                                            'ilimitados'
+                                        }}
+                                        usuarios.
+                                    </FormHelp>
+                                </div>
                             </div>
-                        </div>
+                        </section>
 
-                        <!-- Modo de operación (spec-modo-motel) -->
-                        <div>
-                            <FormLabel>Modo de operación</FormLabel>
+                        <section
+                            class="border-t border-dashed border-slate-200/70 pt-5 dark:border-darkmode-400"
+                        >
+                            <div :class="sectionLabel">Modo de operación</div>
                             <div class="grid gap-3 sm:grid-cols-3">
                                 <button
                                     v-for="option in modeOptions"
                                     :key="option.value"
                                     type="button"
-                                    class="flex h-full w-full items-start gap-3 rounded-lg border p-3.5 text-left transition"
+                                    class="flex h-full w-full items-start gap-2.5 rounded-lg border p-3 text-left transition"
                                     :class="
                                         createForm.mode === option.value
                                             ? 'border-primary bg-primary/5'
@@ -920,45 +960,45 @@ function submitDelete() {
                                     />
                                     <span class="min-w-0">
                                         <span
-                                            class="block text-sm font-medium"
+                                            class="block text-xs font-medium"
                                             >{{ option.label }}</span
                                         >
                                         <span
-                                            class="mt-0.5 block text-xs text-slate-500"
+                                            class="mt-0.5 block text-[11px] leading-snug text-slate-500"
                                             >{{ option.description }}</span
                                         >
                                     </span>
                                 </button>
                             </div>
                             <FormHelp
-                                >Lo administra la plataforma: el hotel no lo ve
-                                en sus ajustes. Se puede cambiar después desde
-                                "Editar".</FormHelp
-                            >
-                            <FormHelp
                                 v-if="createForm.errors.mode"
                                 class="text-danger"
                                 >{{ createForm.errors.mode }}</FormHelp
                             >
-                        </div>
-
-                        <div
-                            class="border-t border-dashed border-slate-300/70 pt-4"
-                        >
-                            <p
-                                class="mb-3 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            <FormHelp v-else
+                                >Lo administra la plataforma: el hotel no lo ve
+                                en sus ajustes. Se puede cambiar
+                                después.</FormHelp
                             >
-                                Dueño (owner)
-                            </p>
-                            <div class="space-y-4">
-                                <div>
-                                    <FormLabel htmlFor="owner-name"
-                                        >Nombre</FormLabel
+                        </section>
+
+                        <section
+                            class="border-t border-dashed border-slate-200/70 pt-5 dark:border-darkmode-400"
+                        >
+                            <div :class="sectionLabel">Dueño</div>
+                            <div class="grid grid-cols-12 gap-4">
+                                <div class="col-span-12">
+                                    <label
+                                        for="owner-name"
+                                        class="mb-1.5 block text-xs font-medium"
+                                        >Nombre</label
                                     >
                                     <FormInput
                                         id="owner-name"
                                         v-model="createForm.owner_name"
                                         type="text"
+                                        maxlength="255"
+                                        class="h-9 text-xs"
                                         placeholder="Juan Pérez"
                                     />
                                     <FormHelp
@@ -969,224 +1009,248 @@ function submitDelete() {
                                         }}</FormHelp
                                     >
                                 </div>
-                                <div
-                                    class="grid grid-cols-1 gap-4 sm:grid-cols-2"
-                                >
-                                    <div>
-                                        <FormLabel htmlFor="owner-email"
-                                            >Email</FormLabel
-                                        >
+                                <div class="col-span-12 sm:col-span-6">
+                                    <label
+                                        for="owner-email"
+                                        class="mb-1.5 block text-xs font-medium"
+                                        >Correo</label
+                                    >
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="Mail"
+                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
+                                        />
                                         <FormInput
                                             id="owner-email"
                                             v-model="createForm.owner_email"
                                             type="email"
+                                            class="h-9 pl-9 text-xs"
                                             placeholder="dueno@hotel.com"
                                         />
-                                        <FormHelp
-                                            v-if="createForm.errors.owner_email"
-                                            class="text-danger"
-                                            >{{
-                                                createForm.errors.owner_email
-                                            }}</FormHelp
-                                        >
                                     </div>
-                                    <div>
-                                        <FormLabel htmlFor="owner-password"
-                                            >Contraseña</FormLabel
-                                        >
+                                    <FormHelp
+                                        v-if="createForm.errors.owner_email"
+                                        class="text-danger"
+                                        >{{
+                                            createForm.errors.owner_email
+                                        }}</FormHelp
+                                    >
+                                </div>
+                                <div class="col-span-12 sm:col-span-6">
+                                    <label
+                                        for="owner-password"
+                                        class="mb-1.5 block text-xs font-medium"
+                                        >Contraseña</label
+                                    >
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="KeyRound"
+                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
+                                        />
                                         <FormInput
                                             id="owner-password"
                                             v-model="createForm.owner_password"
-                                            type="password"
+                                            :type="
+                                                showPassword
+                                                    ? 'text'
+                                                    : 'password'
+                                            "
+                                            autocomplete="new-password"
+                                            class="h-9 pr-16 pl-9 text-xs"
                                             placeholder="Mínimo 8 caracteres"
                                         />
-                                        <FormHelp
-                                            v-if="
-                                                createForm.errors.owner_password
-                                            "
-                                            class="text-danger"
-                                            >{{
-                                                createForm.errors.owner_password
-                                            }}</FormHelp
+                                        <div
+                                            class="absolute inset-y-0 right-1 z-10 my-auto flex items-center"
                                         >
+                                            <button
+                                                type="button"
+                                                class="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:text-primary"
+                                                :title="
+                                                    showPassword
+                                                        ? 'Ocultar'
+                                                        : 'Mostrar'
+                                                "
+                                                @click="
+                                                    showPassword = !showPassword
+                                                "
+                                            >
+                                                <Lucide
+                                                    :icon="
+                                                        showPassword
+                                                            ? 'EyeOff'
+                                                            : 'Eye'
+                                                    "
+                                                    class="h-3.5 w-3.5"
+                                                />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                class="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:text-primary"
+                                                title="Generar una contraseña segura"
+                                                @click="generatePassword"
+                                            >
+                                                <Lucide
+                                                    icon="Shuffle"
+                                                    class="h-3.5 w-3.5"
+                                                />
+                                            </button>
+                                        </div>
                                     </div>
+                                    <FormHelp
+                                        v-if="createForm.errors.owner_password"
+                                        class="text-danger"
+                                        >{{
+                                            createForm.errors.owner_password
+                                        }}</FormHelp
+                                    >
+                                    <FormHelp v-else
+                                        >Pásasela al dueño: la puede cambiar en
+                                        su perfil.</FormHelp
+                                    >
                                 </div>
                             </div>
-                        </div>
+                        </section>
                     </div>
 
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-6 py-4 dark:border-darkmode-400"
+                        class="flex items-center gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
-                        <Button
-                            type="button"
-                            variant="outline-secondary"
-                            @click="showCreate = false"
-                            >Cancelar</Button
+                        <span
+                            v-if="createForm.subdomain"
+                            class="mr-auto hidden truncate text-xs text-slate-500 sm:block"
                         >
-                        <Button
-                            type="submit"
-                            variant="primary"
-                            class="shadow-md shadow-primary/20"
-                            :disabled="createForm.processing"
-                        >
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
-                            {{
-                                createForm.processing
-                                    ? 'Creando…'
-                                    : 'Crear hotel'
-                            }}
-                        </Button>
-                    </div>
-                </form>
-            </Dialog.Panel>
-        </Dialog>
-
-        <!-- Modal: editar -->
-        <Dialog :open="editing !== null" size="lg" @close="editing = null">
-            <Dialog.Panel>
-                <div class="p-5">
-                    <div class="mb-4 flex items-center gap-3">
-                        <div
-                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
-                        >
-                            <Lucide
-                                icon="Pencil"
-                                class="h-5 w-5 text-primary"
-                            />
-                        </div>
-                        <h2 class="text-base font-medium">Editar hotel</h2>
-                    </div>
-                    <form class="space-y-4" @submit.prevent="submitEdit">
-                        <div>
-                            <FormLabel htmlFor="edit-name">Nombre</FormLabel>
-                            <FormInput
-                                id="edit-name"
-                                v-model="editForm.name"
-                                type="text"
-                            />
-                            <FormHelp
-                                v-if="editForm.errors.name"
-                                class="text-danger"
-                                >{{ editForm.errors.name }}</FormHelp
+                            Quedará en
+                            <span
+                                class="font-medium text-slate-700 dark:text-slate-300"
+                                >{{ createForm.subdomain }}.{{
+                                    domainSuffix
+                                }}</span
                             >
-                        </div>
-                        <div>
-                            <FormLabel htmlFor="edit-plan">Plan</FormLabel>
-                            <FormSelect id="edit-plan" v-model="editForm.plan">
-                                <option
-                                    v-for="plan in plans"
-                                    :key="plan.value"
-                                    :value="plan.value"
-                                >
-                                    {{ plan.label }}
-                                </option>
-                            </FormSelect>
-                        </div>
-                        <div>
-                            <FormLabel>Modo de operación</FormLabel>
-                            <div class="grid gap-3 sm:grid-cols-3">
-                                <button
-                                    v-for="option in modeOptions"
-                                    :key="option.value"
-                                    type="button"
-                                    class="flex h-full w-full items-start gap-3 rounded-lg border p-3.5 text-left transition"
-                                    :class="
-                                        editForm.mode === option.value
-                                            ? 'border-primary bg-primary/5'
-                                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
-                                    "
-                                    @click="editForm.mode = option.value"
-                                >
-                                    <Lucide
-                                        :icon="option.icon"
-                                        class="mt-0.5 h-4 w-4 shrink-0"
-                                        :class="
-                                            editForm.mode === option.value
-                                                ? 'text-primary'
-                                                : 'text-slate-400'
-                                        "
-                                    />
-                                    <span class="min-w-0">
-                                        <span
-                                            class="block text-sm font-medium"
-                                            >{{ option.label }}</span
-                                        >
-                                        <span
-                                            class="mt-0.5 block text-xs text-slate-500"
-                                            >{{ option.description }}</span
-                                        >
-                                    </span>
-                                </button>
-                            </div>
-                            <FormHelp
-                                >Motel y Ambos encienden el registro exprés del
-                                plano (placa o identificación y cobro en la
-                                llegada). Cambiar el modo no toca lo demás que
-                                el hotel ya configuró.</FormHelp
-                            >
-                            <FormHelp
-                                v-if="editForm.errors.mode"
-                                class="text-danger"
-                                >{{ editForm.errors.mode }}</FormHelp
-                            >
-                        </div>
-                        <div class="flex justify-end gap-2 pt-2">
+                        </span>
+                        <div class="ml-auto flex gap-2">
                             <Button
                                 type="button"
                                 variant="outline-secondary"
-                                @click="editing = null"
+                                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                                :disabled="createForm.processing"
+                                @click="closeCreate"
                                 >Cancelar</Button
                             >
                             <Button
                                 type="submit"
                                 variant="primary"
-                                :disabled="editForm.processing"
-                                >Guardar</Button
+                                class="h-9 rounded-[0.5rem] px-5 text-xs shadow-md shadow-primary/20"
+                                :disabled="
+                                    createForm.processing || subdomainTaken
+                                "
                             >
+                                <Lucide
+                                    :icon="
+                                        createForm.processing
+                                            ? 'LoaderCircle'
+                                            : 'Check'
+                                    "
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                    :class="{
+                                        'animate-spin': createForm.processing,
+                                    }"
+                                />
+                                {{
+                                    createForm.processing
+                                        ? 'Creando...'
+                                        : 'Crear hotel'
+                                }}
+                            </Button>
                         </div>
-                    </form>
-                </div>
+                    </div>
+                </form>
             </Dialog.Panel>
         </Dialog>
 
-        <!-- Modal: eliminar -->
-        <Dialog :open="deleting !== null" @close="deleting = null">
+        <TenantEditModal
+            :tenant="editing"
+            :plans="plans"
+            @close="editing = null"
+        />
+        <TenantSuspendDialog :tenant="suspending" @close="suspending = null" />
+
+        <!-- Confirmación: eliminar -->
+        <Dialog :open="deleting !== null" @close="closeDelete">
             <Dialog.Panel>
-                <div class="p-5 text-center">
-                    <Lucide
-                        icon="TriangleAlert"
-                        class="mx-auto mb-3 h-12 w-12 text-danger"
-                    />
-                    <h2 class="text-base font-medium">
-                        ¿Eliminar {{ deleting?.name }}?
-                    </h2>
-                    <p class="mt-2 text-sm text-slate-500">
-                        Se eliminará el hotel
-                        <strong>y toda su base de datos</strong> (habitaciones,
-                        reservas, usuarios). Esta acción no se puede deshacer.
-                        Si solo quieres cortar el acceso, usa "Suspender".
-                    </p>
-                    <div class="mt-5 flex justify-center gap-2">
+                <form
+                    v-if="deleting"
+                    class="p-5"
+                    @submit.prevent="submitDelete"
+                >
+                    <div class="flex items-start gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
+                        >
+                            <Lucide icon="Trash2" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                Eliminar {{ deleting.name }}
+                            </h2>
+                            <p class="mt-1 text-xs text-slate-500">
+                                Se borra el hotel y
+                                <span class="font-medium text-danger"
+                                    >toda su base de datos</span
+                                >: habitaciones, reservas, huéspedes, pagos y
+                                usuarios. También sus canales, pasarelas e
+                                integraciones. No se puede deshacer. Si solo
+                                quieres cortarle el acceso, suspéndelo.
+                            </p>
+                            <label
+                                for="delete-confirm"
+                                class="mt-3 mb-1.5 block text-xs"
+                            >
+                                Para confirmar, escribe
+                                <span class="font-mono font-medium">{{
+                                    deleting.id
+                                }}</span>
+                            </label>
+                            <FormInput
+                                id="delete-confirm"
+                                v-model="deleteForm.confirm"
+                                type="text"
+                                autocomplete="off"
+                                class="h-9 font-mono text-xs"
+                            />
+                            <FormHelp
+                                v-if="deleteForm.errors.confirm"
+                                class="text-danger"
+                                >{{ deleteForm.errors.confirm }}</FormHelp
+                            >
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
+                            type="button"
                             variant="outline-secondary"
-                            @click="deleting = null"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="deleteForm.processing"
+                            @click="closeDelete"
                             >Cancelar</Button
                         >
                         <Button
+                            type="submit"
                             variant="danger"
-                            :disabled="deleteForm.processing"
-                            @click="submitDelete"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
+                            :disabled="
+                                deleteForm.processing ||
+                                deleteForm.confirm !== deleting.id
+                            "
                         >
-                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
                             {{
                                 deleteForm.processing
-                                    ? 'Eliminando…'
+                                    ? 'Eliminando...'
                                     : 'Sí, eliminar'
                             }}
                         </Button>
                     </div>
-                </div>
+                </form>
             </Dialog.Panel>
         </Dialog>
     </RazeLayout>

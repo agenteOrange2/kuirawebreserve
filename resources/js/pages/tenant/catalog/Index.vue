@@ -71,6 +71,7 @@ interface RatePlanRow {
     price: string;
     min_advance_unit: string | null;
     min_advance_value: number | null;
+    min_advance_weekdays: number[];
     min_advance_label: string | null;
     deposit_percent: string | null;
     deposit_amount: string | null;
@@ -82,6 +83,7 @@ interface RatePlanRow {
     cancel_penalty_percent: string | null;
     cancellation_policy_label: string | null;
     active: boolean;
+    online: boolean;
     seasons_count: number;
 }
 
@@ -545,6 +547,8 @@ const planForm = reactive({
     has_advance: false,
     min_advance_value: 1 as number | string,
     min_advance_unit: 'hour',
+    // Días de llegada en que aplica (vacío = toda la semana).
+    min_advance_weekdays: [] as number[],
     has_prepayment: false,
     // El anticipo se captura como % del total O como monto fijo en pesos.
     deposit_mode: 'percent' as 'percent' | 'amount',
@@ -557,6 +561,7 @@ const planForm = reactive({
     cancel_free_unit: 'day',
     cancel_penalty_percent: 100 as number | string,
     active: true,
+    online: true,
 });
 
 function openPlan(plan: RatePlanRow | null) {
@@ -570,6 +575,7 @@ function openPlan(plan: RatePlanRow | null) {
     planForm.has_advance = Boolean(plan?.min_advance_value);
     planForm.min_advance_value = plan?.min_advance_value ?? 4;
     planForm.min_advance_unit = plan?.min_advance_unit ?? 'hour';
+    planForm.min_advance_weekdays = [...(plan?.min_advance_weekdays ?? [])];
     planForm.has_prepayment = Boolean(
         plan?.deposit_percent || plan?.deposit_amount,
     );
@@ -589,6 +595,7 @@ function openPlan(plan: RatePlanRow | null) {
         ? Number(plan.cancel_penalty_percent)
         : 100;
     planForm.active = plan?.active ?? true;
+    planForm.online = plan?.online ?? true;
     clearErrors();
     showPlanForm.value = true;
 }
@@ -614,6 +621,9 @@ function submitPlan() {
         min_advance_value: planForm.has_advance
             ? planForm.min_advance_value
             : null,
+        min_advance_weekdays: planForm.has_advance
+            ? planForm.min_advance_weekdays
+            : null,
         deposit_percent:
             planForm.has_prepayment && planForm.deposit_mode === 'percent'
                 ? planForm.deposit_percent
@@ -638,6 +648,7 @@ function submitPlan() {
             ? planForm.cancel_penalty_percent
             : null,
         active: planForm.active,
+        online: planForm.online,
     };
 
     mutate(
@@ -705,6 +716,12 @@ function toggleWeekday(day: number) {
     seasonForm.weekdays = seasonForm.weekdays.includes(day)
         ? seasonForm.weekdays.filter((d) => d !== day)
         : [...seasonForm.weekdays, day].sort((a, b) => a - b);
+}
+
+function toggleAdvanceWeekday(day: number) {
+    planForm.min_advance_weekdays = planForm.min_advance_weekdays.includes(day)
+        ? planForm.min_advance_weekdays.filter((d) => d !== day)
+        : [...planForm.min_advance_weekdays, day].sort((a, b) => a - b);
 }
 
 function weekdaysLabel(weekdays: number[] | null): string | null {
@@ -1537,6 +1554,13 @@ async function deleteSeason(season: SeasonRow) {
                                                                 : 'Inactiva'
                                                         }}
                                                     </span>
+                                                    <span
+                                                        v-if="!plan.online"
+                                                        class="rounded-full bg-warning/10 px-2 py-0.5 text-xs text-warning"
+                                                        title="El asistente y las reservas web no la ofrecen"
+                                                    >
+                                                        Solo recepción
+                                                    </span>
                                                 </div>
                                                 <div
                                                     class="mt-2 flex flex-wrap items-center gap-2"
@@ -1783,20 +1807,34 @@ async function deleteSeason(season: SeasonRow) {
                                                             }}</Table.Td
                                                         >
                                                         <Table.Td>
-                                                            <span
-                                                                class="rounded-full px-2 py-0.5 text-xs"
-                                                                :class="
-                                                                    plan.active
-                                                                        ? 'bg-success/10 text-success'
-                                                                        : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
-                                                                "
+                                                            <div
+                                                                class="flex flex-col items-start gap-1"
                                                             >
-                                                                {{
-                                                                    plan.active
-                                                                        ? 'Activa'
-                                                                        : 'Inactiva'
-                                                                }}
-                                                            </span>
+                                                                <span
+                                                                    class="rounded-full px-2 py-0.5 text-xs"
+                                                                    :class="
+                                                                        plan.active
+                                                                            ? 'bg-success/10 text-success'
+                                                                            : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                                                    "
+                                                                >
+                                                                    {{
+                                                                        plan.active
+                                                                            ? 'Activa'
+                                                                            : 'Inactiva'
+                                                                    }}
+                                                                </span>
+                                                                <span
+                                                                    v-if="
+                                                                        !plan.online
+                                                                    "
+                                                                    class="rounded-full bg-warning/10 px-2 py-0.5 text-xs whitespace-nowrap text-warning"
+                                                                    title="El asistente y las reservas web no la ofrecen"
+                                                                >
+                                                                    Solo
+                                                                    recepción
+                                                                </span>
+                                                            </div>
                                                         </Table.Td>
                                                         <Table.Td
                                                             v-if="canManage"
@@ -2154,6 +2192,38 @@ async function deleteSeason(season: SeasonRow) {
                                     hechas al menos 4 horas antes de la llegada.
                                     No aplica a walk-ins.</FormHelp
                                 >
+                                <FormLabel class="mt-3 text-xs"
+                                    >Solo para llegadas en</FormLabel
+                                >
+                                <div class="flex flex-wrap gap-1.5">
+                                    <button
+                                        v-for="chip in WEEKDAY_CHIPS"
+                                        :key="chip.value"
+                                        type="button"
+                                        :title="chip.title"
+                                        class="flex h-8 w-8 items-center justify-center rounded-full border text-xs font-medium transition"
+                                        :class="
+                                            planForm.min_advance_weekdays.includes(
+                                                chip.value,
+                                            )
+                                                ? 'border-primary bg-primary text-white'
+                                                : 'border-slate-200/80 text-slate-500 hover:border-primary/40 hover:text-primary dark:border-darkmode-400'
+                                        "
+                                        @click="toggleAdvanceWeekday(chip.value)"
+                                    >
+                                        {{ chip.label }}
+                                    </button>
+                                </div>
+                                <FormHelp
+                                    >Sin días marcados aplica toda la semana.
+                                    Ej: marcar V, S y D → entre semana se
+                                    reserva el mismo día.</FormHelp
+                                >
+                                <FormHelp
+                                    v-if="errors.min_advance_weekdays"
+                                    class="text-danger"
+                                    >{{ errors.min_advance_weekdays }}</FormHelp
+                                >
                                 <FormHelp
                                     v-if="
                                         errors.min_advance_value ||
@@ -2431,6 +2501,25 @@ async function deleteSeason(season: SeasonRow) {
                                     >
                                 </div>
                             </div>
+                        </div>
+
+                        <div>
+                            <FormCheck>
+                                <FormCheck.Input
+                                    id="plan-online"
+                                    v-model="planForm.online"
+                                    type="checkbox"
+                                />
+                                <FormCheck.Label htmlFor="plan-online"
+                                    >Se vende en línea (asistente y reservas
+                                    web)</FormCheck.Label
+                                >
+                            </FormCheck>
+                            <FormHelp
+                                >Apágalo si esta tarifa solo se contrata en
+                                recepción: el asistente no la cotiza ni la
+                                aparta y el wizard no la muestra.</FormHelp
+                            >
                         </div>
 
                         <FormCheck v-if="editingPlan">

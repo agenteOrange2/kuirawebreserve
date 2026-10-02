@@ -1,7 +1,7 @@
 <?php
 
 use App\Models\User;
-use Illuminate\Auth\Notifications\ResetPassword;
+use App\Notifications\ResetPasswordNotification as ResetPassword;
 use Illuminate\Support\Facades\Notification;
 
 test('reset password link screen can be rendered', function () {
@@ -69,5 +69,6 @@ test('password cannot be reset with invalid token', function () {
         'password_confirmation' => 'newpassword123',
     ]);
 
-    $response->assertSessionHasErrors('email');
+    // El error va en `token`: la pantalla ofrece pedir otro enlace.
+    $response->assertSessionHasErrors('token');
 });

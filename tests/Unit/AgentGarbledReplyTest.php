@@ -27,6 +27,11 @@ it('detecta la basura que sí salió al huésped', function (string $texto) {
     'Então, para essas datas temos disponibilidade',
     'Mi sarebbe utile saber cuántas personas son',
     'Con gusto podemos accueillir a su grupo',
+    // Conv. 1448 (23-sep, Chago 02): UNA palabra suelta en inglés. El conteo
+    // de palabras inglesas pide tres o más, así que esta se colaba entera.
+    'Con gusto, lo comunico con un asesor para que le atienda personalmente. En breve le attention.',
+    'Claro, le mando la information de las cabañas.',
+    'Su payment quedó pendiente de revisión.',
 ]);
 
 it('no marca como basura una respuesta normal', function (string $texto) {
@@ -37,6 +42,10 @@ it('no marca como basura una respuesta normal', function (string $texto) {
     // Marcas con mayúscula en medio: correctas.
     'Puede mandarnos el comprobante por WhatsApp o pagar con PayPal.',
     'Lamento informarle que para el sábado 26 de septiembre no hay disponibilidad.',
+    // Español de hotel: estas SÍ se dicen en inglés y no son basura.
+    'Su check-in es a partir de las 2:00 PM y el check-out a las 11:00 AM.',
+    'Tenemos servicio de room service y acceso al spa.',
+    'También nos encuentra en Booking, pero reservando directo le sale mejor.',
 ]);
 
 it('respeta el inglés cuando el huésped escribe en inglés', function () {

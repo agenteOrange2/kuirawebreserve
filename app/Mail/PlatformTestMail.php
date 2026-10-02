@@ -28,7 +28,7 @@ class PlatformTestMail extends Mailable
         return new Content(
             markdown: 'emails.platform-test',
             with: [
-                'brandName' => config('app.name'),
+                'brandName' => TenantBranding::platformName(),
             ],
         );
     }

@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { useForm } from '@inertiajs/vue3';
+import { Link, useForm } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
-import { FormHelp, FormInput, FormSwitch } from '@/components/Base/Form';
+import {
+    FormHelp,
+    FormInput,
+    FormLabel,
+    FormSwitch,
+} from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import RazeLayout from '@/layouts/RazeLayout.vue';
@@ -24,6 +29,12 @@ interface PlanRow {
     active: boolean;
     public: boolean;
     tenants: number;
+    last_change: {
+        ago: string | null;
+        at: string | null;
+        by: string | null;
+        by_id: number | null;
+    } | null;
 }
 
 interface ModuleDef {
@@ -47,6 +58,57 @@ const props = defineProps<{
 }>();
 
 const money = (n: number) => `$${n.toLocaleString('es-MX')}`;
+
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const cardHeader =
+    'flex items-start gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400';
+const sectionLabel =
+    'mb-2.5 text-[11px] font-medium tracking-wide text-slate-400 uppercase';
+
+// Cifras del encabezado: lo que el catálogo le deja a la plataforma.
+const stats = computed(() => {
+    const active = props.plans.filter((p) => p.active);
+    return {
+        active: active.length,
+        total: props.plans.length,
+        tenants: props.plans.reduce((sum, p) => sum + p.tenants, 0),
+        monthly: props.plans.reduce(
+            (sum, p) => sum + p.tenants * p.price_monthly,
+            0,
+        ),
+        custom: props.plans.filter((p) => !p.public).length,
+    };
+});
+
+// Los límites de la tarjeta, en el orden en que se venden.
+const limitRows = (plan: PlanRow) =>
+    [
+        {
+            icon: 'Building2',
+            label: 'Propiedades',
+            value: limit(plan.max_properties),
+        },
+        {
+            icon: 'BedDouble',
+            label: 'Habitaciones',
+            value: limit(plan.max_rooms),
+        },
+        { icon: 'Users', label: 'Usuarios', value: limit(plan.max_users) },
+        {
+            icon: 'MessageCircle',
+            label: 'Canales de mensajería',
+            value: limit(plan.max_channels),
+        },
+        {
+            icon: 'CreditCard',
+            label: 'Pasarelas de pago',
+            value:
+                plan.max_gateways === 0
+                    ? 'Solo transferencias'
+                    : limit(plan.max_gateways),
+        },
+    ] as const;
 const limit = (n: number | null) => (n === null ? 'Sin límite' : String(n));
 
 // Catálogo como lista ordenada (config/modules.php define el orden). Los
@@ -67,6 +129,23 @@ const planOwnModules = (plan: PlanRow) =>
     plan.modules.filter((k) => !props.addonModules[k]);
 const planAddonModules = (plan: PlanRow) =>
     plan.modules.filter((k) => props.addonModules[k]);
+
+// Las tarjetas van de 3 a 25 módulos: sin tope, la más llena estiraba a
+// sus vecinas y les dejaba un hueco enorme. Se enseñan los primeros y el
+// resto se abre a pedido, tarjeta por tarjeta.
+const OWN_CAP = 6;
+const ADDON_CAP = 4;
+const expanded = ref<string[]>([]);
+const isExpanded = (plan: PlanRow) => expanded.value.includes(plan.key);
+const toggleExpanded = (plan: PlanRow) =>
+    (expanded.value = isExpanded(plan)
+        ? expanded.value.filter((k) => k !== plan.key)
+        : [...expanded.value, plan.key]);
+const shown = (plan: PlanRow, list: string[], cap: number) =>
+    isExpanded(plan) ? list : list.slice(0, cap);
+const hiddenCount = (plan: PlanRow) =>
+    Math.max(0, planOwnModules(plan).length - OWN_CAP) +
+    Math.max(0, planAddonModules(plan).length - ADDON_CAP);
 
 // Los módulos del plan van por familia (config/module_groups.php): 25
 // interruptores seguidos no se leen. Las familias vacías no se pintan y un
@@ -231,92 +310,228 @@ function submitDelete() {
 
 <template>
     <RazeLayout title="Planes">
-        <div
-            class="mt-2 flex flex-col gap-y-3 md:h-10 md:flex-row md:items-center"
-        >
-            <div>
-                <h1 class="text-lg font-medium group-[.mode--light]:text-white">
-                    Planes de la plataforma
-                </h1>
-                <p class="text-sm text-slate-500">
-                    Límites, módulos y precio por plan — los cambios aplican de
-                    inmediato a los hoteles del plan
-                </p>
-            </div>
-            <div class="md:ml-auto">
-                <Button
-                    variant="primary"
-                    class="rounded-[0.5rem] shadow-md shadow-primary/20"
-                    @click="openCreate"
-                >
-                    <Lucide icon="Plus" class="mr-2 h-4 w-4 stroke-[1.3]" />
-                    Nuevo plan
-                </Button>
-            </div>
-        </div>
-
-        <div
-            v-if="$page.props.errors?.plan"
-            class="mt-5 flex items-center rounded-md border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger"
-        >
-            <Lucide icon="TriangleAlert" class="mr-2 h-4 w-4 shrink-0" />
-            {{ $page.props.errors.plan }}
-        </div>
-
-        <div class="mt-5 grid grid-cols-12 gap-5">
+        <div class="mt-2">
+            <!-- Encabezado -->
             <div
-                v-for="plan in plans"
-                :key="plan.key"
-                class="col-span-12 md:col-span-6 xl:col-span-4"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
+                <div class="flex min-w-0 items-center gap-3">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Layers" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-base font-medium">
+                            Planes de la plataforma
+                        </h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Límites, módulos y precio por plan. Los cambios
+                            aplican de inmediato a los hoteles del plan.
+                        </p>
+                    </div>
+                </div>
                 <div
-                    class="box box--stacked flex h-full flex-col p-5"
-                    :class="{ 'opacity-60': !plan.active }"
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2"
                 >
-                    <div class="flex items-start gap-3">
-                        <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
-                        >
-                            <Lucide
-                                icon="Layers"
-                                class="h-5 w-5 text-primary"
-                            />
+                    <Button
+                        :as="Link"
+                        :href="route('admin.services')"
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
+                    >
+                        <Lucide icon="PackagePlus" class="mr-1.5 h-3.5 w-3.5" />
+                        Servicios adicionales
+                    </Button>
+                    <Button
+                        variant="primary"
+                        class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                        @click="openCreate"
+                    >
+                        <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                        Nuevo plan
+                    </Button>
+                </div>
+            </div>
+
+            <div
+                v-if="$page.props.errors?.plan"
+                class="box box--stacked mt-4 flex items-start gap-2 border-danger/20 bg-danger/5 px-4 py-3 text-xs text-danger"
+            >
+                <Lucide
+                    icon="TriangleAlert"
+                    class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                {{ $page.props.errors.plan }}
+            </div>
+
+            <!-- Cifras -->
+            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="Layers" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.active }} de {{ stats.total }}
                         </div>
-                        <div class="min-w-0 flex-1">
-                            <!-- Nombre en su propio renglón: con la clave y
-                                 las etiquetas al lado se recortaba a dos
-                                 letras en planes de nombre largo. -->
-                            <div class="truncate text-base font-medium">
-                                {{ plan.label }}
-                            </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Planes activos
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-slate-400 sm:block"
+                        >
+                            Los que se ofrecen a hoteles nuevos
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+                    >
+                        <Lucide icon="Building2" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.tenants }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Hoteles con plan
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-slate-400 sm:block"
+                        >
+                            Repartidos en todo el catálogo
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+                    >
+                        <Lucide icon="Wallet" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ money(stats.monthly) }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            Al mes por planes
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-slate-400 sm:block"
+                        >
+                            Precio de lista, sin servicios adicionales
+                        </div>
+                    </div>
+                </div>
+                <div
+                    class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
+                    >
+                        <Lucide icon="EyeOff" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium">
+                            {{ stats.custom }}
+                        </div>
+                        <div class="text-xs leading-tight text-slate-500">
+                            A la medida
+                        </div>
+                        <div
+                            class="hidden truncate text-[11px] text-slate-400 sm:block"
+                        >
+                            No salen en la página de inicio
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Catálogo -->
+            <div class="mt-4 grid grid-cols-12 items-stretch gap-5">
+                <div
+                    v-for="plan in plans"
+                    :key="plan.key"
+                    class="col-span-12 flex flex-col md:col-span-6 xl:col-span-4"
+                >
+                    <div
+                        class="box box--stacked flex flex-1 flex-col overflow-hidden"
+                    >
+                        <!-- Identidad, precio y el interruptor de activo -->
+                        <div :class="cardHeader">
                             <div
-                                class="mt-1 flex flex-wrap items-center gap-1.5"
+                                :class="[
+                                    sectionIcon,
+                                    plan.active
+                                        ? 'border-primary/10 bg-primary/10 text-primary'
+                                        : 'border-slate-200 bg-slate-100 text-slate-400 dark:border-darkmode-400 dark:bg-darkmode-400',
+                                ]"
                             >
-                                <span
-                                    class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[10px] text-slate-500 dark:bg-darkmode-400"
-                                    >{{ plan.key }}</span
-                                >
-                                <span
-                                    v-if="!plan.public"
-                                    class="flex items-center gap-1 rounded-full bg-info/10 px-2 py-0.5 text-[10px] font-medium text-info"
-                                    title="No se anuncia en la página de inicio; solo lo asignas tú"
-                                >
-                                    <Lucide icon="EyeOff" class="h-3 w-3" />
-                                    A la medida
-                                </span>
+                                <Lucide icon="Layers" class="h-4 w-4" />
                             </div>
-                            <div class="mt-0.5 text-sm text-slate-500">
+                            <div class="min-w-0 flex-1">
+                                <div class="truncate text-sm font-medium">
+                                    {{ plan.label }}
+                                </div>
+                                <div
+                                    class="mt-1 flex flex-wrap items-center gap-1.5"
+                                >
+                                    <span
+                                        class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-500 dark:bg-darkmode-400"
+                                        >{{ plan.key }}</span
+                                    >
+                                    <span
+                                        v-if="!plan.active"
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-400"
+                                        >Inactivo</span
+                                    >
+                                    <span
+                                        v-if="!plan.public"
+                                        class="inline-flex items-center gap-1 rounded-full bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info"
+                                        title="No se anuncia en la página de inicio; solo lo asignas tú"
+                                    >
+                                        <Lucide icon="EyeOff" class="h-3 w-3" />
+                                        A la medida
+                                    </span>
+                                </div>
+                            </div>
+                            <FormSwitch
+                                class="mt-1 shrink-0"
+                                :title="
+                                    plan.active
+                                        ? 'Activo: se ofrece a hoteles nuevos'
+                                        : 'Inactivo: no se ofrece a hoteles nuevos (los existentes conservan el plan)'
+                                "
+                            >
+                                <FormSwitch.Input
+                                    :checked="plan.active"
+                                    type="checkbox"
+                                    @change="toggleActive(plan)"
+                                />
+                            </FormSwitch>
+                        </div>
+
+                        <div class="px-4 py-3">
+                            <div class="flex items-baseline gap-1.5 text-xs">
                                 <span
-                                    class="text-lg font-medium text-slate-700 dark:text-slate-200"
+                                    class="text-sm font-medium text-slate-700 dark:text-slate-200"
                                     >{{ money(plan.price_monthly) }}</span
                                 >
-                                <span class="text-xs"> MXN/mes</span>
+                                <span class="text-slate-500">MXN al mes</span>
                                 <template v-if="plan.activation_fee">
-                                    <span class="mx-1.5 text-slate-300">·</span>
-                                    <span class="text-xs"
-                                        >{{
-                                            money(plan.activation_fee)
-                                        }}
+                                    <span class="text-slate-300">·</span>
+                                    <span class="text-slate-500"
+                                        >{{ money(plan.activation_fee) }} de
                                         activación</span
                                     >
                                 </template>
@@ -328,94 +543,48 @@ function submitDelete() {
                                 {{ plan.description }}
                             </p>
                         </div>
-                        <FormSwitch
-                            class="shrink-0"
-                            title="Inactivo: no se ofrece a hoteles nuevos (los existentes conservan el plan)"
-                        >
-                            <FormSwitch.Input
-                                :checked="plan.active"
-                                type="checkbox"
-                                @change="toggleActive(plan)"
-                            />
-                        </FormSwitch>
-                    </div>
 
-                    <div
-                        class="mt-4 flex flex-1 flex-col gap-2.5 border-t border-dashed border-slate-300/70 pt-4 text-sm"
-                    >
-                        <div class="flex items-center gap-2.5">
-                            <Lucide
-                                icon="Building2"
-                                class="h-4 w-4 stroke-[1.5] text-slate-400"
-                            />
-                            <span class="text-slate-500">Propiedades</span>
-                            <span class="ml-auto font-medium">{{
-                                limit(plan.max_properties)
-                            }}</span>
-                        </div>
-                        <div class="flex items-center gap-2.5">
-                            <Lucide
-                                icon="BedDouble"
-                                class="h-4 w-4 stroke-[1.5] text-slate-400"
-                            />
-                            <span class="text-slate-500">Habitaciones</span>
-                            <span class="ml-auto font-medium">{{
-                                limit(plan.max_rooms)
-                            }}</span>
-                        </div>
-                        <div class="flex items-center gap-2.5">
-                            <Lucide
-                                icon="Users"
-                                class="h-4 w-4 stroke-[1.5] text-slate-400"
-                            />
-                            <span class="text-slate-500">Usuarios</span>
-                            <span class="ml-auto font-medium">{{
-                                limit(plan.max_users)
-                            }}</span>
-                        </div>
-                        <div class="flex items-center gap-2.5">
-                            <Lucide
-                                icon="MessageCircle"
-                                class="h-4 w-4 stroke-[1.5] text-slate-400"
-                            />
-                            <span class="text-slate-500"
-                                >Canales de mensajería</span
-                            >
-                            <span class="ml-auto font-medium">{{
-                                limit(plan.max_channels)
-                            }}</span>
-                        </div>
-                        <div class="flex items-center gap-2.5">
-                            <Lucide
-                                icon="CreditCard"
-                                class="h-4 w-4 stroke-[1.5] text-slate-400"
-                            />
-                            <span class="text-slate-500"
-                                >Pasarelas de pago</span
-                            >
-                            <span class="ml-auto font-medium">{{
-                                plan.max_gateways === 0
-                                    ? 'Solo transferencias'
-                                    : limit(plan.max_gateways)
-                            }}</span>
-                        </div>
+                        <!-- Límites -->
                         <div
-                            class="border-t border-dashed border-slate-300/70 pt-2.5"
+                            class="divide-y divide-slate-200/60 border-t border-slate-200/60 dark:divide-darkmode-400 dark:border-darkmode-400"
                         >
-                            <div class="mb-2 flex items-center gap-2.5">
+                            <div
+                                v-for="row in limitRows(plan)"
+                                :key="row.label"
+                                class="flex items-center gap-2.5 px-4 py-2 text-xs"
+                            >
                                 <Lucide
-                                    icon="Blocks"
-                                    class="h-4 w-4 stroke-[1.5] text-slate-400"
+                                    :icon="row.icon"
+                                    class="h-3.5 w-3.5 shrink-0 text-slate-400"
                                 />
-                                <span class="text-slate-500"
-                                    >Módulos incluidos</span
+                                <span class="text-slate-500">{{
+                                    row.label
+                                }}</span>
+                                <span
+                                    class="ml-auto font-medium text-slate-700 dark:text-slate-300"
+                                    >{{ row.value }}</span
                                 >
+                            </div>
+                        </div>
+
+                        <!-- Módulos: crece lo que haga falta y empuja el pie
+                             hacia abajo para que las tarjetas queden parejas -->
+                        <div
+                            class="flex-1 border-t border-slate-200/60 px-4 py-3 dark:border-darkmode-400"
+                        >
+                            <div :class="sectionLabel">
+                                Módulos incluidos ·
+                                {{ planOwnModules(plan).length }}
                             </div>
                             <div class="flex flex-wrap gap-1.5">
                                 <span
-                                    v-for="key in planOwnModules(plan)"
+                                    v-for="key in shown(
+                                        plan,
+                                        planOwnModules(plan),
+                                        OWN_CAP,
+                                    )"
                                     :key="key"
-                                    class="rounded-full px-2 py-0.5 text-xs font-medium"
+                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
                                     :class="
                                         moduleCatalog[key]?.available === false
                                             ? 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
@@ -437,23 +606,22 @@ function submitDelete() {
                             </div>
                             <template v-if="planAddonModules(plan).length">
                                 <div
-                                    class="mt-3 mb-2 flex items-center gap-2.5"
+                                    :class="sectionLabel"
+                                    class="mt-3"
+                                    title="Normalmente se venden como servicio adicional; este plan los trae de fábrica"
                                 >
-                                    <Lucide
-                                        icon="PackagePlus"
-                                        class="h-4 w-4 stroke-[1.5] text-slate-400"
-                                    />
-                                    <span
-                                        class="text-slate-500"
-                                        title="Normalmente se venden como servicio adicional; este plan los trae de fábrica"
-                                        >De servicios adicionales</span
-                                    >
+                                    De servicios adicionales ·
+                                    {{ planAddonModules(plan).length }}
                                 </div>
                                 <div class="flex flex-wrap gap-1.5">
                                     <span
-                                        v-for="key in planAddonModules(plan)"
+                                        v-for="key in shown(
+                                            plan,
+                                            planAddonModules(plan),
+                                            ADDON_CAP,
+                                        )"
                                         :key="key"
-                                        class="rounded-full bg-info/10 px-2 py-0.5 text-xs font-medium text-info"
+                                        class="rounded-full bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info"
                                         :title="soldBy(key)"
                                     >
                                         {{ moduleLabel(key)
@@ -468,23 +636,78 @@ function submitDelete() {
                                     </span>
                                 </div>
                             </template>
+                            <button
+                                v-if="hiddenCount(plan) || isExpanded(plan)"
+                                type="button"
+                                class="mt-2.5 text-xs font-medium text-primary hover:underline"
+                                @click="toggleExpanded(plan)"
+                            >
+                                {{
+                                    isExpanded(plan)
+                                        ? 'Ver menos'
+                                        : hiddenCount(plan) === 1
+                                          ? '+1 módulo más'
+                                          : `+${hiddenCount(plan)} módulos más`
+                                }}
+                            </button>
                         </div>
-                    </div>
 
-                    <div
-                        class="mt-4 flex items-center gap-2 border-t border-dashed border-slate-300/70 pt-3.5"
-                    >
-                        <span
-                            class="flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                        <!-- Pie: hoteles, último cambio y acciones -->
+                        <div
+                            class="flex items-center gap-2 border-t border-slate-200/60 bg-slate-50/70 px-4 py-2.5 dark:border-darkmode-400 dark:bg-darkmode-600/40"
                         >
-                            <Lucide icon="Building2" class="h-3 w-3" />
-                            {{ plan.tenants }} hotel(es)
-                        </span>
-                        <div class="ml-auto flex gap-1">
+                            <div class="min-w-0 flex-1">
+                                <Link
+                                    v-if="plan.tenants"
+                                    :href="`${route('admin.tenants.index')}?plan=${plan.key}`"
+                                    class="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
+                                    title="Ver los hoteles de este plan"
+                                >
+                                    <Lucide
+                                        icon="Building2"
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    {{ plan.tenants }}
+                                    {{
+                                        plan.tenants === 1 ? 'hotel' : 'hoteles'
+                                    }}
+                                </Link>
+                                <span
+                                    v-else
+                                    class="inline-flex items-center gap-1.5 text-xs text-slate-400"
+                                >
+                                    <Lucide
+                                        icon="Building2"
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    Sin hoteles
+                                </span>
+                                <div
+                                    v-if="plan.last_change"
+                                    class="truncate text-[11px] text-slate-400"
+                                    :title="plan.last_change.at ?? undefined"
+                                >
+                                    Editado {{ plan.last_change.ago }}
+                                    <template v-if="plan.last_change.by"
+                                        >por
+                                        <Link
+                                            v-if="plan.last_change.by_id"
+                                            :href="
+                                                route(
+                                                    'admin.users.show',
+                                                    plan.last_change.by_id,
+                                                )
+                                            "
+                                            class="hover:text-primary"
+                                            >{{ plan.last_change.by }}</Link
+                                        ></template
+                                    >
+                                </div>
+                            </div>
                             <button
                                 type="button"
                                 title="Editar plan"
-                                class="flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-primary/10 hover:text-primary"
                                 @click="openEdit(plan)"
                             >
                                 <Lucide icon="Pencil" class="h-4 w-4" />
@@ -496,7 +719,7 @@ function submitDelete() {
                                         ? 'Hay hoteles en este plan: desactívalo en su lugar'
                                         : 'Eliminar plan'
                                 "
-                                class="flex h-8 w-8 items-center justify-center rounded-full transition"
+                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition"
                                 :class="
                                     plan.tenants
                                         ? 'cursor-not-allowed text-slate-300 dark:text-darkmode-400'
@@ -514,18 +737,18 @@ function submitDelete() {
 
         <!-- Modal crear / editar -->
         <Dialog :open="showForm" size="xl" @close="showForm = false">
-            <Dialog.Panel>
-                <form class="flex flex-col" @submit.prevent="submit">
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[820px]">
+                <form
+                    class="flex max-h-[calc(100dvh-6rem)] flex-col"
+                    @submit.prevent="submit"
+                >
                     <div
-                        class="flex items-center gap-3.5 border-b border-slate-200/70 px-8 py-5 dark:border-darkmode-400"
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                     >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                         >
-                            <Lucide
-                                icon="Layers"
-                                class="h-5 w-5 text-primary"
-                            />
+                            <Lucide icon="Layers" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <h2 class="text-base font-medium">
@@ -536,44 +759,37 @@ function submitDelete() {
                                 }}
                             </h2>
                             <p class="mt-0.5 text-xs text-slate-500">
-                                Los cambios aplican de inmediato a los hoteles
-                                del plan; los límites vacíos significan "sin
-                                límite".
+                                Aplica de inmediato a los hoteles del plan.
                             </p>
                         </div>
                         <button
                             type="button"
                             class="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            title="Cerrar"
                             @click="showForm = false"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
 
                     <div
-                        class="max-h-[75vh] space-y-7 overflow-y-auto px-8 py-6"
+                        class="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-4"
                     >
-                        <!-- Identidad -->
+                        <!-- Qué es -->
                         <section>
-                            <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                            >
-                                <Lucide icon="BadgeCheck" class="h-3.5 w-3.5" />
-                                Identidad del plan
-                            </div>
-                            <div class="grid grid-cols-12 gap-5">
+                            <div :class="sectionLabel">Qué es</div>
+                            <div class="grid grid-cols-12 gap-4">
                                 <div
                                     v-if="!editing"
                                     class="col-span-12 sm:col-span-4"
                                 >
-                                    <label
-                                        class="mb-1.5 block text-sm font-medium"
-                                        >Clave (interna)</label
+                                    <FormLabel class="text-xs"
+                                        >Clave interna</FormLabel
                                     >
                                     <FormInput
                                         v-model="form.key"
                                         type="text"
-                                        class="font-mono"
+                                        class="h-9 font-mono text-xs"
                                         placeholder="premium"
                                     />
                                     <FormHelp
@@ -582,25 +798,24 @@ function submitDelete() {
                                         >{{ form.errors.key }}</FormHelp
                                     >
                                     <FormHelp v-else
-                                        >Identificador técnico; no se puede
-                                        cambiar después.</FormHelp
+                                        >No se puede cambiar después.</FormHelp
                                     >
                                 </div>
                                 <div
                                     class="col-span-12"
                                     :class="
                                         editing
-                                            ? 'sm:col-span-8'
-                                            : 'sm:col-span-4'
+                                            ? 'sm:col-span-12'
+                                            : 'sm:col-span-8'
                                     "
                                 >
-                                    <label
-                                        class="mb-1.5 block text-sm font-medium"
-                                        >Nombre del plan</label
+                                    <FormLabel class="text-xs"
+                                        >Nombre del plan</FormLabel
                                     >
                                     <FormInput
                                         v-model="form.label"
                                         type="text"
+                                        class="h-9 text-xs"
                                         placeholder="Premium"
                                     />
                                     <FormHelp
@@ -609,21 +824,48 @@ function submitDelete() {
                                         >{{ form.errors.label }}</FormHelp
                                     >
                                 </div>
-                                <div class="col-span-12 sm:col-span-4">
-                                    <label
-                                        class="mb-1.5 block text-sm font-medium"
-                                        >Precio mensual (MXN)</label
+                                <div class="col-span-12">
+                                    <FormLabel class="text-xs"
+                                        >Descripción</FormLabel
+                                    >
+                                    <FormInput
+                                        v-model="form.description"
+                                        type="text"
+                                        maxlength="160"
+                                        class="h-9 text-xs"
+                                        placeholder="Para hoteles y moteles que empiezan: lo esencial para operar en línea."
+                                    />
+                                    <FormHelp
+                                        v-if="form.errors.description"
+                                        class="text-danger"
+                                        >{{ form.errors.description }}</FormHelp
+                                    >
+                                    <FormHelp v-else
+                                        >Una línea de venta; se ve al asignar
+                                        plan a un hotel.</FormHelp
+                                    >
+                                </div>
+                            </div>
+                        </section>
+
+                        <!-- Precio -->
+                        <section>
+                            <div :class="sectionLabel">Precio</div>
+                            <div class="grid grid-cols-12 gap-4">
+                                <div class="col-span-12 sm:col-span-6">
+                                    <FormLabel class="text-xs"
+                                        >Mensualidad (MXN)</FormLabel
                                     >
                                     <div class="relative">
                                         <Lucide
                                             icon="DollarSign"
-                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
                                         />
                                         <FormInput
                                             v-model="form.price_monthly"
                                             type="number"
                                             min="0"
-                                            class="pl-9"
+                                            class="h-9 pl-9 text-xs"
                                         />
                                     </div>
                                     <FormHelp
@@ -638,21 +880,20 @@ function submitDelete() {
                                         de facturación.</FormHelp
                                     >
                                 </div>
-                                <div class="col-span-12 sm:col-span-4">
-                                    <label
-                                        class="mb-1.5 block text-sm font-medium"
-                                        >Cuota única de activación (MXN)</label
+                                <div class="col-span-12 sm:col-span-6">
+                                    <FormLabel class="text-xs"
+                                        >Activación, pago único (MXN)</FormLabel
                                     >
                                     <div class="relative">
                                         <Lucide
                                             icon="DollarSign"
-                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
                                         />
                                         <FormInput
                                             v-model="form.activation_fee"
                                             type="number"
                                             min="0"
-                                            class="pl-9"
+                                            class="h-9 pl-9 text-xs"
                                         />
                                     </div>
                                     <FormHelp
@@ -662,64 +903,23 @@ function submitDelete() {
                                             form.errors.activation_fee
                                         }}</FormHelp
                                     >
-                                    <FormHelp v-else
-                                        >Se cobra una sola vez al
-                                        contratar.</FormHelp
-                                    >
-                                </div>
-                                <div class="col-span-12">
-                                    <label
-                                        class="mb-1.5 block text-sm font-medium"
-                                        >Descripción
-                                        <span class="font-normal text-slate-400"
-                                            >(opcional)</span
-                                        ></label
-                                    >
-                                    <FormInput
-                                        v-model="form.description"
-                                        type="text"
-                                        maxlength="160"
-                                        placeholder="Para hoteles y moteles que empiezan: lo esencial para operar en línea."
-                                    />
-                                    <FormHelp
-                                        v-if="form.errors.description"
-                                        class="text-danger"
-                                        >{{ form.errors.description }}</FormHelp
-                                    >
-                                    <FormHelp v-else
-                                        >Una línea de venta; se muestra en el
-                                        catálogo al asignar plan a un
-                                        hotel.</FormHelp
-                                    >
                                 </div>
                             </div>
                         </section>
 
                         <!-- Límites -->
-                        <section
-                            class="border-t border-dashed border-slate-300/70 pt-6"
-                        >
-                            <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                            >
-                                <Lucide icon="Gauge" class="h-3.5 w-3.5" />
-                                Límites del plan
-                            </div>
-                            <div class="grid grid-cols-12 gap-5">
-                                <div class="col-span-12 sm:col-span-4">
-                                    <label
-                                        class="mb-1.5 flex items-center gap-1.5 text-sm font-medium"
+                        <section>
+                            <div :class="sectionLabel">Límites</div>
+                            <div class="grid grid-cols-12 gap-4">
+                                <div class="col-span-6 sm:col-span-4">
+                                    <FormLabel class="text-xs"
+                                        >Propiedades</FormLabel
                                     >
-                                        <Lucide
-                                            icon="Building2"
-                                            class="h-4 w-4 stroke-[1.5] text-slate-400"
-                                        />
-                                        Propiedades
-                                    </label>
                                     <FormInput
                                         v-model="form.max_properties"
                                         type="number"
                                         min="1"
+                                        class="h-9 text-xs"
                                         placeholder="Sin límite"
                                     />
                                     <FormHelp
@@ -730,20 +930,15 @@ function submitDelete() {
                                         }}</FormHelp
                                     >
                                 </div>
-                                <div class="col-span-12 sm:col-span-4">
-                                    <label
-                                        class="mb-1.5 flex items-center gap-1.5 text-sm font-medium"
+                                <div class="col-span-6 sm:col-span-4">
+                                    <FormLabel class="text-xs"
+                                        >Habitaciones</FormLabel
                                     >
-                                        <Lucide
-                                            icon="BedDouble"
-                                            class="h-4 w-4 stroke-[1.5] text-slate-400"
-                                        />
-                                        Habitaciones
-                                    </label>
                                     <FormInput
                                         v-model="form.max_rooms"
                                         type="number"
                                         min="1"
+                                        class="h-9 text-xs"
                                         placeholder="Sin límite"
                                     />
                                     <FormHelp
@@ -752,20 +947,15 @@ function submitDelete() {
                                         >{{ form.errors.max_rooms }}</FormHelp
                                     >
                                 </div>
-                                <div class="col-span-12 sm:col-span-4">
-                                    <label
-                                        class="mb-1.5 flex items-center gap-1.5 text-sm font-medium"
+                                <div class="col-span-6 sm:col-span-4">
+                                    <FormLabel class="text-xs"
+                                        >Usuarios</FormLabel
                                     >
-                                        <Lucide
-                                            icon="Users"
-                                            class="h-4 w-4 stroke-[1.5] text-slate-400"
-                                        />
-                                        Usuarios
-                                    </label>
                                     <FormInput
                                         v-model="form.max_users"
                                         type="number"
                                         min="1"
+                                        class="h-9 text-xs"
                                         placeholder="Sin límite"
                                     />
                                     <FormHelp
@@ -774,20 +964,15 @@ function submitDelete() {
                                         >{{ form.errors.max_users }}</FormHelp
                                     >
                                 </div>
-                                <div class="col-span-12 sm:col-span-4">
-                                    <label
-                                        class="mb-1.5 flex items-center gap-1.5 text-sm font-medium"
+                                <div class="col-span-6 sm:col-span-6">
+                                    <FormLabel class="text-xs"
+                                        >Canales de mensajería</FormLabel
                                     >
-                                        <Lucide
-                                            icon="MessageCircle"
-                                            class="h-4 w-4 stroke-[1.5] text-slate-400"
-                                        />
-                                        Canales
-                                    </label>
                                     <FormInput
                                         v-model="form.max_channels"
                                         type="number"
                                         min="0"
+                                        class="h-9 text-xs"
                                         placeholder="Sin límite"
                                     />
                                     <FormHelp
@@ -798,24 +983,19 @@ function submitDelete() {
                                         }}</FormHelp
                                     >
                                     <FormHelp v-else
-                                        >WhatsApp y páginas conectadas; el
-                                        webchat propio no cuenta.</FormHelp
+                                        >WhatsApp y páginas; el webchat no
+                                        cuenta.</FormHelp
                                     >
                                 </div>
-                                <div class="col-span-12 sm:col-span-4">
-                                    <label
-                                        class="mb-1.5 flex items-center gap-1.5 text-sm font-medium"
+                                <div class="col-span-12 sm:col-span-6">
+                                    <FormLabel class="text-xs"
+                                        >Pasarelas de pago</FormLabel
                                     >
-                                        <Lucide
-                                            icon="CreditCard"
-                                            class="h-4 w-4 stroke-[1.5] text-slate-400"
-                                        />
-                                        Pasarelas de pago
-                                    </label>
                                     <FormInput
                                         v-model="form.max_gateways"
                                         type="number"
                                         min="0"
+                                        class="h-9 text-xs"
                                         placeholder="Sin límite"
                                     />
                                     <FormHelp
@@ -827,33 +1007,29 @@ function submitDelete() {
                                     >
                                     <FormHelp v-else
                                         >Stripe o Mercado Pago; 0 = solo
-                                        transferencias con
-                                        verificación.</FormHelp
+                                        transferencias.</FormHelp
                                     >
                                 </div>
                             </div>
+                            <p class="mt-2 text-xs text-slate-400">
+                                Un límite vacío significa "sin límite".
+                            </p>
                         </section>
 
                         <!-- Módulos incluidos -->
-                        <section
-                            class="border-t border-dashed border-slate-300/70 pt-6"
-                        >
-                            <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                            >
-                                <Lucide icon="Blocks" class="h-3.5 w-3.5" />
-                                Módulos incluidos
-                            </div>
-                            <div class="space-y-6">
+                        <section>
+                            <div :class="sectionLabel">Módulos incluidos</div>
+                            <div class="space-y-4">
                                 <div
                                     v-for="group in groupedPlanModules"
                                     :key="group.key"
+                                    class="rounded-lg border border-slate-200/70 dark:border-darkmode-400"
                                 >
                                     <!-- Cabecera de familia: cuántos van
                                          encendidos y el atajo para prender o
                                          apagar la familia completa. -->
                                     <div
-                                        class="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-1"
+                                        class="flex flex-wrap items-center gap-x-2.5 gap-y-1 border-b border-slate-200/60 px-3 py-2.5 dark:border-darkmode-400"
                                     >
                                         <div
                                             class="flex h-8 w-8 flex-none items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
@@ -863,156 +1039,18 @@ function submitDelete() {
                                                 class="h-4 w-4"
                                             />
                                         </div>
-                                        <div class="min-w-0">
+                                        <div class="min-w-0 flex-1">
                                             <div class="text-sm font-medium">
                                                 {{ group.label }}
                                             </div>
-                                            <div class="text-xs text-slate-500">
+                                            <div
+                                                class="truncate text-xs text-slate-500"
+                                            >
                                                 {{ group.description }}
                                             </div>
                                         </div>
-                                        <div
-                                            class="ml-auto flex items-center gap-3"
-                                        >
-                                            <span
-                                                class="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
-                                            >
-                                                {{
-                                                    groupActiveCount(
-                                                        group.modules.map(
-                                                            (m) => m.key,
-                                                        ),
-                                                    )
-                                                }}
-                                                de {{ group.modules.length }}
-                                            </span>
-                                            <button
-                                                type="button"
-                                                class="text-xs font-medium text-primary hover:underline"
-                                                @click="
-                                                    toggleGroup(
-                                                        group.modules.map(
-                                                            (m) => m.key,
-                                                        ),
-                                                    )
-                                                "
-                                            >
-                                                {{
-                                                    groupActiveCount(
-                                                        group.modules.map(
-                                                            (m) => m.key,
-                                                        ),
-                                                    ) === group.modules.length
-                                                        ? 'Quitar todos'
-                                                        : 'Incluir todos'
-                                                }}
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div class="space-y-2">
-                                        <div
-                                            v-for="mod in group.modules"
-                                            :key="mod.key"
-                                            class="rounded-lg border dark:border-darkmode-400"
-                                            :class="
-                                                form.modules.includes(mod.key)
-                                                    ? 'border-primary/30 bg-primary/[0.03]'
-                                                    : 'border-slate-200/70'
-                                            "
-                                        >
-                                            <label
-                                                class="flex cursor-pointer items-start gap-3.5 p-4"
-                                            >
-                                                <FormSwitch class="mt-0.5">
-                                                    <FormSwitch.Input
-                                                        type="checkbox"
-                                                        :checked="
-                                                            form.modules.includes(
-                                                                mod.key,
-                                                            )
-                                                        "
-                                                        @change="
-                                                            toggleModule(
-                                                                mod.key,
-                                                            )
-                                                        "
-                                                    />
-                                                </FormSwitch>
-                                                <span class="min-w-0 flex-1">
-                                                    <span
-                                                        class="flex flex-wrap items-center gap-2 text-sm font-medium"
-                                                    >
-                                                        {{ mod.label }}
-                                                        <span
-                                                            v-if="
-                                                                !mod.available
-                                                            "
-                                                            class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending"
-                                                            title="Se puede incluir desde ya; su área aparecerá sola cuando esté lista"
-                                                        >
-                                                            En desarrollo
-                                                        </span>
-                                                    </span>
-                                                    <span
-                                                        class="mt-0.5 block text-xs text-slate-500"
-                                                        >{{
-                                                            mod.description
-                                                        }}</span
-                                                    >
-                                                </span>
-                                            </label>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                            <FormHelp class="mt-2">
-                                El núcleo hotelero (plano, reservas,
-                                habitaciones, huéspedes) va en todos los planes.
-                            </FormHelp>
-                        </section>
-
-                        <!-- Módulos que se venden como servicios adicionales -->
-                        <section
-                            class="border-t border-dashed border-slate-300/70 pt-6"
-                        >
-                            <div
-                                class="mb-1.5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                            >
-                                <Lucide
-                                    icon="PackagePlus"
-                                    class="h-3.5 w-3.5"
-                                />
-                                Servicios adicionales
-                            </div>
-                            <p class="mb-4 text-xs text-slate-500">
-                                Esto normalmente NO va en el plan: el hotel lo
-                                obtiene contratando un servicio adicional (y se
-                                le cobra aparte). Enciéndelo aquí solo si este
-                                plan lo incluye de fábrica sin costo extra.
-                            </p>
-                            <div class="space-y-6">
-                                <div
-                                    v-for="group in groupedAddonModules"
-                                    :key="group.key"
-                                >
-                                    <div
-                                        class="mb-2.5 flex flex-wrap items-center gap-x-3 gap-y-1"
-                                    >
-                                        <div
-                                            class="flex h-8 w-8 flex-none items-center justify-center rounded-full border border-slate-200/80 bg-slate-100 text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-400/50"
-                                        >
-                                            <Lucide
-                                                :icon="group.icon as never"
-                                                class="h-4 w-4"
-                                            />
-                                        </div>
-                                        <div class="min-w-0">
-                                            <div class="text-sm font-medium">
-                                                {{ group.label }}
-                                            </div>
-                                        </div>
                                         <span
-                                            class="ml-auto rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
+                                            class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
                                         >
                                             {{
                                                 groupActiveCount(
@@ -1023,203 +1061,263 @@ function submitDelete() {
                                             }}
                                             de {{ group.modules.length }}
                                         </span>
-                                    </div>
-                                    <div class="space-y-2">
-                                        <div
-                                            v-for="mod in group.modules"
-                                            :key="mod.key"
-                                            class="rounded-lg border dark:border-darkmode-400"
-                                            :class="
-                                                form.modules.includes(mod.key)
-                                                    ? 'border-primary/30 bg-primary/[0.03]'
-                                                    : 'border-slate-200/70'
+                                        <button
+                                            type="button"
+                                            class="text-xs font-medium text-primary hover:underline"
+                                            @click="
+                                                toggleGroup(
+                                                    group.modules.map(
+                                                        (m) => m.key,
+                                                    ),
+                                                )
                                             "
                                         >
-                                            <label
-                                                class="flex cursor-pointer items-start gap-3.5 p-4"
-                                                :title="soldBy(mod.key)"
-                                            >
-                                                <FormSwitch class="mt-0.5">
-                                                    <FormSwitch.Input
-                                                        type="checkbox"
-                                                        :checked="
-                                                            form.modules.includes(
-                                                                mod.key,
-                                                            )
-                                                        "
-                                                        @change="
-                                                            toggleModule(
-                                                                mod.key,
-                                                            )
-                                                        "
-                                                    />
-                                                </FormSwitch>
-                                                <span class="min-w-0 flex-1">
+                                            {{
+                                                groupActiveCount(
+                                                    group.modules.map(
+                                                        (m) => m.key,
+                                                    ),
+                                                ) === group.modules.length
+                                                    ? 'Quitar todos'
+                                                    : 'Incluir todos'
+                                            }}
+                                        </button>
+                                    </div>
+                                    <div
+                                        class="grid divide-y divide-slate-200/60 sm:grid-cols-2 sm:divide-y-0 dark:divide-darkmode-400"
+                                    >
+                                        <label
+                                            v-for="mod in group.modules"
+                                            :key="mod.key"
+                                            class="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition hover:bg-slate-50/70 dark:hover:bg-darkmode-400/30"
+                                        >
+                                            <FormSwitch class="mt-0.5 shrink-0">
+                                                <FormSwitch.Input
+                                                    type="checkbox"
+                                                    :checked="
+                                                        form.modules.includes(
+                                                            mod.key,
+                                                        )
+                                                    "
+                                                    @change="
+                                                        toggleModule(mod.key)
+                                                    "
+                                                />
+                                            </FormSwitch>
+                                            <span class="min-w-0 flex-1">
+                                                <span
+                                                    class="flex flex-wrap items-center gap-1.5 text-xs font-medium"
+                                                >
+                                                    {{ mod.label }}
                                                     <span
-                                                        class="flex flex-wrap items-center gap-2 text-sm font-medium"
-                                                    >
-                                                        {{ mod.label }}
-                                                        <span
-                                                            v-if="
-                                                                !mod.available
-                                                            "
-                                                            class="rounded-full bg-pending/10 px-2 py-0.5 text-[10px] font-medium text-pending"
-                                                            title="Se puede incluir desde ya; su área aparecerá sola cuando esté lista"
-                                                        >
-                                                            En desarrollo
-                                                        </span>
-                                                    </span>
-                                                    <span
-                                                        class="mt-0.5 block text-xs text-slate-500"
-                                                        >{{
-                                                            mod.description
-                                                        }}</span
-                                                    >
-                                                    <span
-                                                        v-if="soldBy(mod.key)"
-                                                        class="mt-1 block text-[11px] text-slate-400"
-                                                        >{{
-                                                            soldBy(mod.key)
-                                                        }}</span
+                                                        v-if="!mod.available"
+                                                        class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
+                                                        title="Se puede incluir desde ya; su área aparecerá sola cuando esté lista"
+                                                        >En desarrollo</span
                                                     >
                                                 </span>
-                                            </label>
-                                            <div
-                                                v-if="
-                                                    mod.key === 'agente-ia' &&
-                                                    form.modules.includes(
-                                                        'agente-ia',
-                                                    )
-                                                "
-                                                class="flex flex-wrap items-center gap-3 border-t border-dashed border-slate-300/70 px-4 py-3.5 dark:border-darkmode-400"
-                                            >
                                                 <span
-                                                    class="text-sm text-slate-500"
-                                                    >Cuota mensual de respuestas
-                                                    del bot</span
+                                                    class="mt-0.5 block text-[11px] leading-snug text-slate-500"
+                                                    >{{ mod.description }}</span
                                                 >
-                                                <FormInput
-                                                    v-model="
-                                                        form.ai_monthly_replies
-                                                    "
-                                                    type="number"
-                                                    min="1"
-                                                    class="!w-32 !py-1.5 text-sm"
-                                                    placeholder="Sin límite"
-                                                />
-                                                <span
-                                                    class="text-xs text-slate-400"
-                                                    >Se reinicia cada mes; al
-                                                    agotarse, las conversaciones
-                                                    pasan al staff.</span
-                                                >
-                                            </div>
-                                        </div>
+                                            </span>
+                                        </label>
                                     </div>
                                 </div>
+                            </div>
+                            <p class="mt-2 text-xs text-slate-400">
+                                El núcleo hotelero (plano, reservas,
+                                habitaciones, huéspedes) va en todos los planes.
+                            </p>
+                        </section>
+
+                        <!-- Módulos que se venden como servicios adicionales -->
+                        <section>
+                            <div :class="sectionLabel">
+                                De servicios adicionales
+                            </div>
+                            <p class="-mt-1 mb-3 text-xs text-slate-500">
+                                Normalmente el hotel los obtiene contratando un
+                                servicio adicional y se cobran aparte.
+                                Enciéndelos aquí solo si este plan los trae de
+                                fábrica.
+                            </p>
+                            <div
+                                class="divide-y divide-slate-200/60 rounded-lg border border-slate-200/70 dark:divide-darkmode-400 dark:border-darkmode-400"
+                            >
+                                <template
+                                    v-for="group in groupedAddonModules"
+                                    :key="group.key"
+                                >
+                                    <div
+                                        v-for="mod in group.modules"
+                                        :key="mod.key"
+                                    >
+                                        <label
+                                            class="flex cursor-pointer items-start gap-3 px-3 py-2.5 transition hover:bg-slate-50/70 dark:hover:bg-darkmode-400/30"
+                                        >
+                                            <FormSwitch class="mt-0.5 shrink-0">
+                                                <FormSwitch.Input
+                                                    type="checkbox"
+                                                    :checked="
+                                                        form.modules.includes(
+                                                            mod.key,
+                                                        )
+                                                    "
+                                                    @change="
+                                                        toggleModule(mod.key)
+                                                    "
+                                                />
+                                            </FormSwitch>
+                                            <span class="min-w-0 flex-1">
+                                                <span
+                                                    class="flex flex-wrap items-center gap-1.5 text-xs font-medium"
+                                                >
+                                                    {{ mod.label }}
+                                                    <span
+                                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-normal text-slate-500 dark:bg-darkmode-400"
+                                                        >{{ group.label }}</span
+                                                    >
+                                                    <span
+                                                        v-if="!mod.available"
+                                                        class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
+                                                        >En desarrollo</span
+                                                    >
+                                                </span>
+                                                <span
+                                                    class="mt-0.5 block text-[11px] leading-snug text-slate-500"
+                                                    >{{ mod.description }}</span
+                                                >
+                                                <span
+                                                    v-if="soldBy(mod.key)"
+                                                    class="mt-0.5 block text-[11px] text-slate-400"
+                                                    >{{ soldBy(mod.key) }}</span
+                                                >
+                                            </span>
+                                        </label>
+                                        <div
+                                            v-if="
+                                                mod.key === 'agente-ia' &&
+                                                form.modules.includes(
+                                                    'agente-ia',
+                                                )
+                                            "
+                                            class="flex flex-wrap items-center gap-3 border-t border-dashed border-slate-200/70 bg-slate-50/70 px-3 py-2.5 dark:border-darkmode-400 dark:bg-darkmode-600/40"
+                                        >
+                                            <span class="text-xs text-slate-500"
+                                                >Respuestas del bot al mes</span
+                                            >
+                                            <FormInput
+                                                v-model="
+                                                    form.ai_monthly_replies
+                                                "
+                                                type="number"
+                                                min="1"
+                                                class="h-9 !w-32 text-xs"
+                                                placeholder="Sin límite"
+                                            />
+                                            <span
+                                                class="text-[11px] text-slate-400"
+                                                >Se reinicia cada mes; al
+                                                agotarse, las conversaciones
+                                                pasan al personal.</span
+                                            >
+                                        </div>
+                                    </div>
+                                </template>
                             </div>
                             <FormHelp
                                 v-if="form.errors.ai_monthly_replies"
                                 class="text-danger"
                                 >{{ form.errors.ai_monthly_replies }}</FormHelp
                             >
-                            <FormHelp v-else class="mt-2">
-                                BYOK (key propia del hotel) y la API de
-                                integraciones se habilitan por hotel en la
-                                sección Agentes IA.
-                            </FormHelp>
+                            <p v-else class="mt-2 text-xs text-slate-400">
+                                La llave propia del hotel y la API de
+                                integraciones se habilitan por hotel en Agentes
+                                IA.
+                            </p>
                         </section>
 
-                        <!-- Disponibilidad -->
-                        <section
-                            class="border-t border-dashed border-slate-300/70 pt-6"
-                        >
-                            <div
-                                class="mb-4 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        <!-- Página de inicio -->
+                        <section>
+                            <div :class="sectionLabel">Página de inicio</div>
+                            <label
+                                class="flex cursor-pointer items-start gap-3 rounded-lg border border-slate-200/70 px-3 py-2.5 dark:border-darkmode-400"
                             >
-                                <Lucide icon="Store" class="h-3.5 w-3.5" />
-                                Disponibilidad
-                            </div>
-                            <div class="space-y-3">
-                                <label
-                                    class="flex cursor-pointer items-start gap-3.5 rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400"
-                                >
-                                    <FormSwitch class="mt-0.5">
-                                        <FormSwitch.Input
-                                            v-model="form.active"
-                                            type="checkbox"
-                                            :checked="form.active"
-                                        />
-                                    </FormSwitch>
-                                    <span class="min-w-0">
-                                        <span class="block text-sm font-medium"
-                                            >Activo en el catálogo</span
-                                        >
+                                <FormSwitch class="mt-0.5 shrink-0">
+                                    <FormSwitch.Input
+                                        v-model="form.public"
+                                        type="checkbox"
+                                        :checked="form.public"
+                                    />
+                                </FormSwitch>
+                                <span class="min-w-0">
+                                    <span
+                                        class="flex flex-wrap items-center gap-1.5 text-xs font-medium"
+                                    >
+                                        Anunciar en kuirawebreserve.com
                                         <span
-                                            class="mt-0.5 block text-xs text-slate-500"
-                                            >Se ofrece al crear hoteles nuevos;
-                                            al desactivarlo, los hoteles
-                                            existentes conservan su plan.</span
+                                            v-if="!form.public"
+                                            class="rounded-full bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info"
+                                            >Plan a la medida</span
                                         >
                                     </span>
-                                </label>
-
-                                <!-- Plan a la medida: asignable, no anunciado -->
-                                <label
-                                    class="flex cursor-pointer items-start gap-3.5 rounded-lg border border-slate-200/70 p-4 dark:border-darkmode-400"
-                                >
-                                    <FormSwitch class="mt-0.5">
-                                        <FormSwitch.Input
-                                            v-model="form.public"
-                                            type="checkbox"
-                                            :checked="form.public"
-                                        />
-                                    </FormSwitch>
-                                    <span class="min-w-0">
-                                        <span
-                                            class="flex flex-wrap items-center gap-2 text-sm font-medium"
-                                        >
-                                            Anunciar en la página de inicio
-                                            <span
-                                                v-if="!form.public"
-                                                class="rounded-full bg-info/10 px-2 py-0.5 text-[10px] font-medium text-info"
-                                            >
-                                                Plan a la medida
-                                            </span>
-                                        </span>
-                                        <span
-                                            class="mt-0.5 block text-xs text-slate-500"
-                                        >
-                                            Apagado, el plan no sale en
-                                            kuirawebreserve.com ni se puede
-                                            pedir desde ahí: solo tú lo asignas
-                                            desde el panel. Sirve para planes
-                                            hechos para un hotel en particular.
-                                        </span>
+                                    <span
+                                        class="mt-0.5 block text-[11px] leading-snug text-slate-500"
+                                    >
+                                        Apagado, no sale en la página de inicio
+                                        ni se puede pedir desde ahí: solo tú lo
+                                        asignas. Sirve para planes hechos para
+                                        un hotel en particular.
                                     </span>
-                                </label>
-                            </div>
+                                </span>
+                            </label>
                         </section>
                     </div>
 
+                    <!-- Pie fijo: el interruptor de publicación a la
+                         izquierda, frente a los botones -->
                     <div
-                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-8 py-4 dark:border-darkmode-400"
+                        class="flex flex-wrap items-center gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
+                        <label
+                            class="mr-auto flex cursor-pointer items-center gap-2 text-xs"
+                            title="Inactivo: no se ofrece a hoteles nuevos; los existentes conservan su plan"
+                        >
+                            <FormSwitch>
+                                <FormSwitch.Input
+                                    v-model="form.active"
+                                    type="checkbox"
+                                    :checked="form.active"
+                                />
+                            </FormSwitch>
+                            <span>
+                                <span class="font-medium">{{
+                                    form.active ? 'Activo' : 'Inactivo'
+                                }}</span>
+                                <span class="hidden text-slate-500 sm:inline">
+                                    · se ofrece a hoteles nuevos</span
+                                >
+                            </span>
+                        </label>
                         <Button
                             type="button"
                             variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             @click="showForm = false"
                             >Cancelar</Button
                         >
                         <Button
                             type="submit"
                             variant="primary"
-                            class="shadow-md shadow-primary/20"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs shadow-md shadow-primary/20"
                             :disabled="form.processing"
                         >
-                            <Lucide icon="Check" class="mr-2 h-4 w-4" />
+                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
                             {{
-                                form.processing ? 'Guardando…' : 'Guardar plan'
+                                form.processing
+                                    ? 'Guardando...'
+                                    : 'Guardar plan'
                             }}
                         </Button>
                     </div>
@@ -1227,35 +1325,46 @@ function submitDelete() {
             </Dialog.Panel>
         </Dialog>
 
-        <!-- Modal eliminar -->
+        <!-- Confirmación de borrado -->
         <Dialog :open="deleting !== null" @close="deleting = null">
             <Dialog.Panel>
-                <div class="p-5 text-center">
-                    <Lucide
-                        icon="TriangleAlert"
-                        class="mx-auto mb-3 h-12 w-12 text-danger"
-                    />
-                    <h2 class="text-base font-medium">
-                        ¿Eliminar el plan {{ deleting?.label }}?
-                    </h2>
-                    <p class="mt-2 text-sm text-slate-500">
-                        Solo puede eliminarse porque ningún hotel lo usa. Si
-                        algún día quieres retirarlo del catálogo sin borrarlo,
-                        desactívalo.
-                    </p>
-                    <div class="mt-5 flex justify-center gap-2">
+                <div class="p-5">
+                    <div class="flex items-start gap-3">
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
+                        >
+                            <Lucide icon="Trash2" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0">
+                            <h2 class="text-base font-medium">
+                                Eliminar el plan {{ deleting?.label }}
+                            </h2>
+                            <p class="mt-1 text-xs text-slate-500">
+                                Se puede borrar porque ningún hotel lo usa. Si
+                                solo quieres retirarlo del catálogo,
+                                desactívalo.
+                            </p>
+                        </div>
+                    </div>
+                    <div class="mt-5 flex justify-end gap-2">
                         <Button
                             variant="outline-secondary"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             @click="deleting = null"
                             >Cancelar</Button
                         >
                         <Button
                             variant="danger"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             :disabled="deleteForm.processing"
                             @click="submitDelete"
                         >
-                            <Lucide icon="Trash2" class="mr-2 h-4 w-4" /> Sí,
-                            eliminar
+                            <Lucide icon="Trash2" class="mr-1.5 h-3.5 w-3.5" />
+                            {{
+                                deleteForm.processing
+                                    ? 'Eliminando...'
+                                    : 'Sí, eliminar'
+                            }}
                         </Button>
                     </div>
                 </div>

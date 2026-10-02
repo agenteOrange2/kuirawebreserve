@@ -91,7 +91,9 @@ class ApplyReservationCoupon
                 // El anticipo % se recalcula sobre lo que de verdad se va a
                 // cobrar (igual que al crear la reserva); el monto fijo se
                 // topa al total para no pedir más de lo que cuesta.
-                'deposit_amount' => $reservation->ratePlan?->depositAmountFor($total)
+                'deposit_amount' => ($reservation->ratePlan
+                    ? app(\App\Services\ReservationPolicy::class)->depositFor($reservation->ratePlan, $total, $reservation->starts_at, $reservation->created_at)
+                    : null)
                     ?? round(min((float) $reservation->deposit_amount, $total), 2),
             ])->save();
 

@@ -1,10 +1,11 @@
-import { createInertiaApp } from '@inertiajs/vue3';
+import { createInertiaApp, router } from '@inertiajs/vue3';
 import { configureEcho } from '@laravel/echo-vue';
 import { resolvePageComponent } from 'laravel-vite-plugin/inertia-helpers';
 import { createPinia } from 'pinia';
 import type { DefineComponent } from 'vue';
 import { createApp, h } from 'vue';
 import { initializeTheme } from '@/composables/useAppearance';
+import { brandTitle, syncBrandName } from '@/lib/brandTitle';
 import { ZiggyVue } from '../../vendor/tightenco/ziggy';
 import '../css/app.css';
 
@@ -21,16 +22,17 @@ configureEcho({
     enabledTransports: ['ws', 'wss'],
 });
 
-const appName = import.meta.env.VITE_APP_NAME || 'Laravel';
+router.on('navigate', (event) => syncBrandName(event.detail.page.props));
 
 createInertiaApp({
-    title: (title) => (title ? `${title} - ${appName}` : appName),
+    title: brandTitle,
     resolve: (name) =>
         resolvePageComponent(
             `./pages/${name}.vue`,
             import.meta.glob<DefineComponent>('./pages/**/*.vue'),
         ),
     setup({ el, App, props, plugin }) {
+        syncBrandName(props.initialPage.props);
         createApp({ render: () => h(App, props) })
             .use(plugin)
             .use(createPinia())

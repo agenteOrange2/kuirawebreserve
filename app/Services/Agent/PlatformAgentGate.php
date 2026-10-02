@@ -33,7 +33,6 @@ class PlatformAgentGate
         // El módulo agente-ia decide si el plan/hotel tiene IA (incluye
         // overrides del admin en tenant_modules); la cuota mensual sigue
         // saliendo del plan.
-        $planAi = config("plans.{$tenant->plan}.ai", ['enabled' => false, 'monthly_replies' => 0]);
         $moduleEnabled = $tenant->hasModule('agente-ia');
         $settings = TenantAgentSetting::for($tenant->id);
         $planLabel = $tenant->planLimits()['label'] ?? $tenant->plan;
@@ -59,10 +58,7 @@ class PlatformAgentGate
         // aporten los servicios adicionales con IA (Modalidad 2 suma las
         // suyas — así un plan sin IA que contrata el asistente tiene cuota
         // propia). null = sin límite.
-        $planReplies = $planAi['monthly_replies'] ?? null;
-        $limit = $settings->monthly_reply_limit ?? ($planReplies === null
-            ? null
-            : $planReplies + (int) $tenant->addonServices()->sum('ai_monthly_replies'));
+        $limit = $settings->monthly_reply_limit ?? self::defaultLimit($tenant);
         $used = TenantAiUsage::repliesThisMonth($tenant->id);
 
         if ($limit !== null && $limit > 0 && $used >= $limit) {
@@ -86,6 +82,21 @@ class PlatformAgentGate
             'blocked_reason' => $providers->isEmpty() ? 'no_providers' : null,
             'chain' => $providers->map(fn (PlatformAiProvider $p) => $p->asRuntimeProvider())->values(),
         ];
+    }
+
+    /**
+     * Cuota mensual que le toca al hotel si nadie la fija a mano: la del plan
+     * más la que aporten sus servicios adicionales con IA. null = sin límite.
+     * La comparten el guardián y el admin para que lo que se ve sea lo que
+     * el bot cumple.
+     */
+    public static function defaultLimit(\App\Models\Tenant $tenant): ?int
+    {
+        $planReplies = config("plans.{$tenant->plan}.ai.monthly_replies");
+
+        return $planReplies === null
+            ? null
+            : (int) $planReplies + (int) $tenant->addonServices()->sum('ai_monthly_replies');
     }
 
     /** Registra en la central una respuesta servida con keys de plataforma. */

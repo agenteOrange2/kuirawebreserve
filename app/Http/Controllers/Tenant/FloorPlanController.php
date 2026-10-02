@@ -113,6 +113,9 @@ class FloorPlanController extends Controller
             // Walk-in con cobro al llegar (/ajustes/metodos-pago): el modal de
             // "Llegó sin reserva" del plano pide método de pago y cobra ahí
             // mismo; apagado, la estancia nace con saldo para el check-out.
+            // Corte de madrugada: el modal de walk-in lo usa para sugerir la
+            // salida igual que RatePlan::suggestedEnd.
+            'nightCutoffTime' => $property->settings['night_cutoff_time'] ?? null,
             'walkinChargeOnCheckin' => app(\App\Services\ReservationPolicy::class)->walkinChargeOnCheckIn(),
             // Fotos de identificación en la ficha: mismo permiso que las
             // INE del CRM.

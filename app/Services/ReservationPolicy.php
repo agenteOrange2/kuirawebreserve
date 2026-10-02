@@ -281,6 +281,10 @@ class ReservationPolicy
      */
     public function balanceDueNotice(RatePlan $ratePlan, CarbonInterface $start): ?string
     {
+        if ($ratePlan->requiresPrepayment() && $this->isShortNotice($start)) {
+            return $this->shortNoticeBalanceNotice();
+        }
+
         $label = $this->balanceDueLabel();
 
         if ($label === null) {
@@ -301,6 +305,52 @@ class ReservationPolicy
         return 'El pago total debe quedar liquidado a más tardar el '
             .$due->translatedFormat('l j \d\e F')
             ." ({$label}).";
+    }
+
+    /**
+     * Fecha límite para liquidar ESTA reserva, con el día de la semana ya
+     * escrito ("martes 13 de octubre de 2026"). null si no tiene plazo o si
+     * ya está pagada.
+     *
+     * El bot recibía solo la regla general de las políticas ("una semana
+     * antes, a más tardar el lunes o martes previos") y hacía la cuenta él:
+     * a Carlos (cabañas 2026-09-24, RES-2026-1792, llegada sábado 17-oct) le
+     * dijo "miércoles 7", luego aceptó el 13 que traía el huésped y encima
+     * lo llamó lunes.
+     */
+    public function balanceDueDateLabel(\App\Models\Reservation $reservation): ?string
+    {
+        if ($reservation->payment_due_at === null
+            || $reservation->payment_status === \App\Enums\PaymentStatus::Paid) {
+            return null;
+        }
+
+        return $reservation->payment_due_at->locale('es')->isoFormat('dddd D [de] MMMM [de] YYYY');
+    }
+
+    /**
+     * El estado del dinero de una reserva en una frase que no se presta a
+     * malas lecturas. "Pago parcial" (deposit_paid) el bot lo contaba como
+     * "Anticipo: pendiente de confirmar" a quien ya se lo habían confirmado.
+     */
+    public function paymentSummary(\App\Models\Reservation $reservation): string
+    {
+        $paid = $reservation->paidTotal();
+        $pending = $reservation->pendingBalance();
+        $money = fn (float $amount) => '$'.number_format($amount, 2);
+
+        $summary = match ($reservation->payment_status) {
+            \App\Enums\PaymentStatus::Paid => "Liquidada: pagó {$money($paid)}, no debe nada.",
+            \App\Enums\PaymentStatus::DepositPaid => "Anticipo YA pagado y registrado ({$money($paid)}). Falta el saldo de {$money($pending)}.",
+            \App\Enums\PaymentStatus::Partial => "Abonó {$money($paid)}, que todavía no cubre el anticipo de {$money((float) $reservation->deposit_amount)}. Falta {$money($pending)} en total.",
+            default => "Sin pagos registrados todavía. Total: {$money((float) $reservation->total_amount)}.",
+        };
+
+        if ($pending > 0 && ($due = $this->balanceDueDateLabel($reservation)) !== null) {
+            $summary .= " El saldo se liquida a más tardar el {$due}.";
+        }
+
+        return $summary;
     }
 
     /**
@@ -386,9 +436,16 @@ class ReservationPolicy
      * menos 24 h en el futuro — para llegadas más próximas no tiene caso
      * abrir una fecha límite ya vencida que dispararía cancelaciones.
      */
-    public function paymentDueAt(RatePlan $ratePlan, CarbonInterface $start): ?CarbonInterface
+    public function paymentDueAt(RatePlan $ratePlan, CarbonInterface $start, ?CarbonInterface $bookedAt = null): ?CarbonInterface
     {
         if (! $this->balanceDueEnabled()) {
+            return null;
+        }
+
+        // La reserva de último momento liquida al llegar: con fecha límite,
+        // el barrido de saldos la cancelaría antes de que el huésped pise
+        // el hotel.
+        if ($this->isShortNotice($start, $bookedAt)) {
             return null;
         }
 
@@ -555,12 +612,115 @@ class ReservationPolicy
             .' antes de la llegada; '.$after.'.';
     }
 
+    /**
+     * Reservas de último momento (cabañas, 2026-10-01): quien aparta con
+     * menos de N días deja un anticipo mayor y el resto lo paga en el hotel.
+     * Apagado (0 o sin ajuste) todo se comporta como siempre.
+     */
+    public function shortNoticeDays(): int
+    {
+        return max(0, (int) ($this->settings()['short_notice_days'] ?? 0));
+    }
+
+    public function shortNoticeDepositPercent(): float
+    {
+        return min(100.0, max(0.0, (float) ($this->settings()['short_notice_deposit_percent'] ?? 0)));
+    }
+
+    /**
+     * Se cuenta por FECHAS de calendario, igual que la antelación mínima:
+     * "menos de 7 días" es que la llegada cae antes del séptimo día desde
+     * que se reservó, a cualquier hora.
+     */
+    public function isShortNotice(CarbonInterface $start, ?CarbonInterface $bookedAt = null): bool
+    {
+        $days = $this->shortNoticeDays();
+
+        if ($days < 1 || $this->shortNoticeDepositPercent() <= 0) {
+            return false;
+        }
+
+        $booked = ($bookedAt ?? now())->copy()->startOfDay();
+
+        return $start->copy()->startOfDay()->lt($booked->addDays($days));
+    }
+
+    /**
+     * Anticipo que se guarda en la reserva. La tarifa manda, salvo que sea
+     * de último momento: entonces se pide el porcentaje del hotel (nunca
+     * menos de lo que la tarifa ya pedía). Sin anticipo en la tarifa no se
+     * inventa uno: esa tarifa se paga en el hotel.
+     */
+    public function depositFor(RatePlan $ratePlan, float $total, CarbonInterface $start, ?CarbonInterface $bookedAt = null): ?float
+    {
+        $deposit = $ratePlan->depositAmountFor($total);
+
+        if ($deposit === null || ! $this->isShortNotice($start, $bookedAt)) {
+            return $deposit;
+        }
+
+        return max($deposit, round($total * $this->shortNoticeDepositPercent() / 100, 2));
+    }
+
+    public function shortNoticeBalanceNotice(): string
+    {
+        return 'Como tu llegada es en menos de '.$this->shortNoticeDays().' días, el resto se paga al llegar al hotel'
+            .$this->counterMethodsPhrase().'.';
+    }
+
+    /** Condiciones que el hotel escribió para estas reservas (cancelar, reagendar). */
+    public function shortNoticePolicyText(): ?string
+    {
+        if ($this->shortNoticeDays() < 1) {
+            return null;
+        }
+
+        $text = trim((string) ($this->settings()['short_notice_policy_text'] ?? ''));
+
+        return $text === '' ? null : $this->fillTerms($text);
+    }
+
+    protected function counterMethodsPhrase(): string
+    {
+        $labels = ['cash' => 'efectivo', 'transfer' => 'transferencia', 'card' => 'terminal'];
+        $methods = array_values(array_filter(array_map(
+            fn (string $m) => $labels[$m] ?? null,
+            $this->counterMethods(),
+        )));
+
+        if ($methods === []) {
+            return '';
+        }
+
+        $last = array_pop($methods);
+
+        return ' en '.($methods === [] ? $last : implode(', ', $methods).' o '.$last);
+    }
+
     /** Nota libre del hotel que acompaña a la política (condiciones propias). */
     public function cancellationPolicyText(): ?string
     {
         $text = trim((string) ($this->settings()['cancel_policy_text'] ?? ''));
 
-        return $text === '' ? null : $text;
+        return $text === '' ? null : $this->fillTerms($text);
+    }
+
+    /**
+     * Los textos libres del hotel (políticas, FAQs, instrucciones del bot,
+     * nota de cancelación) no cargan el plazo escrito a mano: dicen
+     * {plazo_saldo} y aquí se pone el que está configurado en
+     * /ajustes/metodos-pago/plazos-y-saldo. Con el número tecleado en cuatro
+     * textos, cabañas acabó con "una semana antes, a más tardar el lunes o
+     * martes previos" contra un ajuste de 7 días, y el bot le dio a un
+     * huésped dos fechas distintas (2026-09-24, RES-2026-1792).
+     */
+    public function fillTerms(?string $text): ?string
+    {
+        if ($text === null || ! str_contains($text, '{plazo_saldo}')) {
+            return $text;
+        }
+
+        return str_replace('{plazo_saldo}', $this->balanceDueLabel() ?? 'antes de la llegada', $text);
     }
 
     /**
@@ -690,6 +850,18 @@ class ReservationPolicy
      * al primer grupo es escribirle a alguien que solo preguntó el precio y
      * se fue — y son la mitad de los avisos que salen.
      */
+    /**
+     * ¿El "¿sigues por ahí?" solo va para quien se quedó en el paso de dar
+     * sus datos para apartar? Apagado (default) se reengancha cualquier
+     * cotización real. Hotel México lo pidió así (2026-09-30): a quien solo
+     * preguntó precios no se le vuelve a escribir, porque cada respuesta que
+     * provoca el aviso es una vuelta más del modelo.
+     */
+    public function nudgeOnlyAfterDataRequest(): bool
+    {
+        return (bool) ($this->settings()['nudge_only_after_data_request'] ?? false);
+    }
+
     public function nudgeMinVisitorMessages(): int
     {
         return max(0, (int) ($this->settings()['nudge_min_messages'] ?? 0));

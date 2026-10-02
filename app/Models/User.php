@@ -75,4 +75,13 @@ class User extends Authenticatable implements HasMedia
         // ?v= : al resubir cambia el id y revienta el caché del navegador.
         return $media ? '/avatar/'.$this->id.'?v='.$media->id : null;
     }
+
+    /**
+     * Enlace de recuperación propio: en español, con la marca del hotel y por
+     * su SMTP (ver ResetPasswordNotification), no el de Laravel en inglés.
+     */
+    public function sendPasswordResetNotification(#[\SensitiveParameter] $token): void
+    {
+        $this->notify(new \App\Notifications\ResetPasswordNotification($token));
+    }
 }

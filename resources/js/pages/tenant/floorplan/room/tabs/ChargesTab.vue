@@ -261,7 +261,7 @@ onMounted(() => {
                     <FormSelect
                         v-if="categories.length"
                         v-model="category"
-                        class="w-full shrink-0 sm:w-44"
+                        class="w-full shrink-0 sm:w-52"
                     >
                         <option value="">Todas las categorías</option>
                         <option v-for="c in categories" :key="c" :value="c">

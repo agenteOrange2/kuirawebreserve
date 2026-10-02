@@ -73,6 +73,8 @@ const props = defineProps<{
     guaranteeAmount: number;
     /** walkin_charge=checkin: el hospedaje se cobra al registrar la llegada. */
     chargeOnCheckin: boolean;
+    /** Corte de madrugada "HH:MM" (Ajustes → Horarios); null = sin corte. */
+    nightCutoffTime?: string | null;
 }>();
 
 const emit = defineEmits<{
@@ -257,6 +259,18 @@ function suggestedEndFor(plan: RatePlanOption, start: Date): Date {
         )
             .split(':')
             .map(Number);
+        // Antes del corte de madrugada cuenta como la noche anterior: sale
+        // hoy a la hora de check-out.
+        const sameDayEnd = new Date(start);
+        sameDayEnd.setHours(outHour || 0, outMinute || 0, 0, 0);
+        if (props.nightCutoffTime) {
+            const [cutHour, cutMinute] = props.nightCutoffTime
+                .split(':')
+                .map(Number);
+            const cutoff = new Date(start);
+            cutoff.setHours(cutHour || 0, cutMinute || 0, 0, 0);
+            if (start < cutoff && start < sameDayEnd) return sameDayEnd;
+        }
         end.setDate(end.getDate() + 1);
         end.setHours(outHour || 0, outMinute || 0, 0, 0);
         return end;

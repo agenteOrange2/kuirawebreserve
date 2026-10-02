@@ -212,8 +212,12 @@ watch(tabs, (list) => {
                                 :icon="item.icon"
                                 class="hidden h-3.5 w-3.5 sm:block"
                             />
-                            <span class="sm:hidden">{{ item.short }}</span>
-                            <span class="hidden sm:inline">{{
+                            <!-- El nombre largo hasta lg: en la tablet vertical
+                                 (panel de 720px) "Consumos y cobro" +
+                                 "Mantenimiento" empujaban la barra y los
+                                 extremos quedaban cortados. -->
+                            <span class="lg:hidden">{{ item.short }}</span>
+                            <span class="hidden lg:inline">{{
                                 item.label
                             }}</span>
                         </button>

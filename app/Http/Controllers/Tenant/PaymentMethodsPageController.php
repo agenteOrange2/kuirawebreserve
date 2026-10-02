@@ -170,6 +170,12 @@ class PaymentMethodsPageController extends Controller
                     ? (float) $settings['cancel_penalty_percent']
                     : 100.0,
                 'cancel_policy_text' => $settings['cancel_policy_text'] ?? '',
+                // Último momento: 0 días = apagado (ReservationPolicy::isShortNotice).
+                'short_notice_days' => (int) ($settings['short_notice_days'] ?? 0),
+                'short_notice_deposit_percent' => is_numeric($settings['short_notice_deposit_percent'] ?? null)
+                    ? (float) $settings['short_notice_deposit_percent']
+                    : 70.0,
+                'short_notice_policy_text' => $settings['short_notice_policy_text'] ?? '',
                 // Contrato de hospedaje que se adjunta en PDF al correo de
                 // confirmación. Vacío = no se adjunta nada (ver
                 // App\Services\Guests\ReservationContract).

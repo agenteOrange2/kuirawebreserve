@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { Head, useForm } from '@inertiajs/vue3';
-import { computed } from 'vue';
+import { computed, toRef } from 'vue';
 import Button from '@/components/Base/Button/Button.vue';
 import { FormInput, FormLabel } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import SettingsNav from '@/components/SettingsNav.vue';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import { usePasswordChecks } from '@/composables/usePasswordChecks';
 import { useSettingsRoutes } from '@/composables/useSettingsRoutes';
 
 const props = defineProps<{
@@ -29,35 +30,12 @@ const submit = () => {
     });
 };
 
-// Los requisitos se van marcando mientras escribe. "uncompromised" no se
-// puede comprobar aquí (lo revisa el servidor contra filtraciones), así que
-// se muestra sin palomita.
-const checks = computed(() => {
-    const value = form.password;
-
-    return props.requirements.map((requirement) => {
-        const met = ((): boolean | null => {
-            switch (requirement.key) {
-                case 'length8':
-                    return value.length >= 8;
-                case 'length12':
-                    return value.length >= 12;
-                case 'mixedCase':
-                    return (
-                        /[a-záéíóúñ]/.test(value) && /[A-ZÁÉÍÓÚÑ]/.test(value)
-                    );
-                case 'numbers':
-                    return /\d/.test(value);
-                case 'symbols':
-                    return /[^\p{L}\d\s]/u.test(value);
-                default:
-                    return null; // lo valida el servidor
-            }
-        })();
-
-        return { ...requirement, met };
-    });
-});
+// Los requisitos se van marcando mientras escribe (mismo criterio que la
+// pantalla de restablecer contraseña).
+const { checks } = usePasswordChecks(
+    toRef(form, 'password'),
+    toRef(props, 'requirements'),
+);
 
 const matches = computed(
     () =>

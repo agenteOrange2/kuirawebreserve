@@ -104,3 +104,27 @@ it('no toca los días que sí cuadran', function (string $dicho) {
     // Con el año escrito manda el año, no el calendario de este año.
     'Su estancia del jueves 18 de septiembre de 2025 quedó registrada',
 ]);
+
+// Caso real cabañas 2026-09-29 (Messenger, conv. 1631): "¿Tiene disponible
+// 24 y 25?" no resolvía a ninguna fecha; el modelo puso septiembre, ya
+// pasado, y el huésped recibió una cotización para septiembre de 2027.
+it('dos días sin mes que ya pasaron este mes son los del mes que entra', function (string $dicho, array $espera) {
+    test()->travelTo(CarbonImmutable::parse('2026-09-29 16:56', 'America/Ciudad_Juarez'));
+
+    expect(fechasDe($dicho))->toBe($espera);
+})->with([
+    ['Tiene disponible 24 y 25?', ['2026-10-24', '2026-10-25']],
+    ['del 24 al 26', ['2026-10-24', '2026-10-26']],
+    ['el 30 y 31?', ['2026-09-30']],
+]);
+
+it('dos números que no son un rango de días no son fecha', function (string $dicho) {
+    test()->travelTo(CarbonImmutable::parse('2026-09-29 16:56', 'America/Ciudad_Juarez'));
+
+    expect(fechasDe($dicho))->toBeEmpty();
+})->with([
+    'Somos 4 y 2 niños',
+    'Seríamos 6 y 2 menores',
+    'de 2 a 3 noches',
+    'entre 3 y 5 personas',
+]);

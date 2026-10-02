@@ -41,7 +41,7 @@ class ProspectDocumentsMail extends Mailable
         return new Content(
             markdown: 'emails.prospect-documents',
             with: [
-                'brandName' => config('app.name'),
+                'brandName' => TenantBranding::platformName(),
                 'serviceLabels' => $this->prospect->serviceLabels(),
             ],
         );

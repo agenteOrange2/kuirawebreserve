@@ -9,6 +9,7 @@ use App\Models\Central\TenantAgentSetting;
 use App\Models\Central\TenantAiUsage;
 use App\Models\Tenant;
 use App\Services\Agent\AgentBrain;
+use App\Services\Agent\PlatformAgentGate;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -62,7 +63,6 @@ class AiAgentsController extends Controller
             ])->values(),
             'tenants' => Tenant::query()->with('domains')->get()->map(function (Tenant $tenant) use ($usage, $settings, $metaByTenant, $evoByTenant, $telegramByTenant, $tiktokByTenant) {
                 $setting = $settings->get($tenant->id);
-                $planAi = config("plans.{$tenant->plan}.ai", ['enabled' => false, 'monthly_replies' => 0]);
 
                 return [
                     'id' => $tenant->id,
@@ -70,8 +70,13 @@ class AiAgentsController extends Controller
                     'domain' => $tenant->domains->first()?->domain,
                     'plan' => $tenant->plan,
                     'plan_label' => $tenant->planLimits()['label'] ?? $tenant->plan,
-                    'plan_ai_enabled' => (bool) $planAi['enabled'],
-                    'plan_ai_limit' => $planAi['monthly_replies'] ?? null,
+                    // Lo mismo que decide el guardián: el módulo agente-ia
+                    // (plan, servicio adicional o ajuste del admin), no solo
+                    // el plan. Antes un hotel con el asistente contratado
+                    // aparecía "sin IA" y sin poder configurarse.
+                    'ai_available' => $tenant->hasModule('agente-ia'),
+                    'ai_from_addon' => ! (bool) config("plans.{$tenant->plan}.ai.enabled") && $tenant->hasModule('agente-ia'),
+                    'default_limit' => PlatformAgentGate::defaultLimit($tenant),
                     'enabled' => $setting?->enabled ?? true,
                     'provider_id' => $setting?->platform_ai_provider_id,
                     'monthly_reply_limit' => $setting?->monthly_reply_limit,
@@ -190,6 +195,24 @@ TXT;
         $platformAiProvider->delete();
 
         return response()->json(status: 204);
+    }
+
+    /**
+     * Orden de la cadena automática: los hoteles en "Auto" prueban las keys
+     * activas de arriba abajo hasta que una responde.
+     */
+    public function reorderProviders(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'ids' => ['required', 'array', 'min:1'],
+            'ids.*' => ['integer', Rule::exists('platform_ai_providers', 'id')],
+        ]);
+
+        foreach (array_values($data['ids']) as $position => $id) {
+            PlatformAiProvider::query()->whereKey($id)->update(['sort_order' => $position + 1]);
+        }
+
+        return response()->json(['ok' => true]);
     }
 
     /** Prueba real de la key maestra (latencia + respuesta). */

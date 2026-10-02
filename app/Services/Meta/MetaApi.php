@@ -99,8 +99,19 @@ class MetaApi
      * en la bandeja como enviada y el huésped nunca recibió nada. Se manda
      * en trozos que sí entran, en orden.
      */
+    /**
+     * Ids que Meta le puso al ÚLTIMO envío (uno por trozo). Se guardan en el
+     * mensaje para poder ligar el fallo de entrega —que llega después, por
+     * webhook— con el texto exacto que no le llegó al huésped.
+     *
+     * @var array<int, string>
+     */
+    public array $lastSentIds = [];
+
     public function sendText(MetaChannelLink $link, string $to, string $text): bool
     {
+        $this->lastSentIds = [];
+
         $trozos = \App\Services\Channels\MessageChunker::split(
             $text,
             \App\Services\Channels\MessageChunker::limitFor($link->type),
@@ -168,6 +179,10 @@ class MetaApi
                 ]);
 
                 return false;
+            }
+
+            if ($id = $response->json('messages.0.id')) {
+                $this->lastSentIds[] = (string) $id;
             }
 
             return true;

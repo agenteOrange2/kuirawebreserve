@@ -96,6 +96,63 @@ it('convierte en traspaso real el que el bot solo anunció', function () {
         ->and($salida)->toContain('persona del hotel');
 });
 
+// Revisión del 2026-09-22 sobre el VPS: este camino —el traspaso que el bot
+// anuncia en su texto— no pasaba por ningún freno, y entre el 8 y el 22 de
+// septiembre mandó 36 chats de cabañas con una persona, varios con la
+// respuesta ya contestada encima.
+
+it('no transfiere por anunciarlo si la pregunta la contestó él mismo', function () {
+    // Conv. 1258, 22-sep 11:57: pidieron información para 2 adultos y tres
+    // menores, el bot mandó la lista de tarifas completa y le pegó el
+    // "te comunicamos" al final. La cotización estaba contestada.
+    entrante('Buenas tardes podrías mandar información porfavor');
+
+    $brain = app(AgentBrain::class);
+    $texto = "Les comparto nuestras tarifas por noche:\n- Cabaña Real (hasta 6 personas): \$4,500\n"
+        ."- Cabaña Luxury (hasta 4 personas): \$3,500\nUna persona del hotel te contactará en un momento.";
+
+    $salida = (fn () => $this->enforceHandoffClaims($texto, test()->conversation))->call($brain);
+
+    $this->conversation->refresh();
+
+    expect($this->conversation->bot_enabled)->toBeTrue()
+        ->and($this->conversation->status)->toBe(Conversation::STATUS_OPEN)
+        ->and($salida)->toContain('Cabaña Real')
+        ->and($salida)->not->toContain('te contactará');
+});
+
+it('un dato sobre quién hace los cambios no manda el chat a recepción', function () {
+    // Conv. 1158, 21-sep 17:52: "El cambio de fecha lo hace una persona del
+    // hotel" es un dato, no una promesa, y mandó a recepción a quien
+    // preguntaba por el fin de semana.
+    entrante('Se puede reservar para este fin de semana?');
+
+    $brain = app(AgentBrain::class);
+    $texto = "Sí es posible reservar para este fin de semana.\nPara buscar disponibilidad necesito saber: ¿cuántas personas serían?\n"
+        .'El cambio de fecha lo hace una persona del hotel.';
+
+    $salida = (fn () => $this->enforceHandoffClaims($texto, test()->conversation))->call($brain);
+
+    $this->conversation->refresh();
+
+    expect($this->conversation->bot_enabled)->toBeTrue()
+        ->and($salida)->toContain('cuántas personas serían');
+});
+
+it('sigue transfiriendo lo anunciado cuando el huésped sí necesita a alguien', function () {
+    entrante('Quiero cotizar una boda para 80 personas');
+
+    $brain = app(AgentBrain::class);
+    $texto = "Con gusto lo veo con el hotel.\nTe paso con una persona del hotel.";
+
+    (fn () => $this->enforceHandoffClaims($texto, test()->conversation))->call($brain);
+
+    $this->conversation->refresh();
+
+    expect($this->conversation->bot_enabled)->toBeFalse()
+        ->and($this->conversation->status)->toBe(Conversation::STATUS_PENDING);
+});
+
 it('deja intacto un mensaje de pago que habla de transferencia y del personal', function () {
     entrante('Cómo pago');
 
@@ -292,4 +349,203 @@ it('deja la promesa de mañana si el apartado de verdad aguanta hasta mañana', 
     $salida = (fn () => $this->enforceHoldDeadlineClaims($texto, test()->conversation->refresh()))->call(app(AgentBrain::class));
 
     expect($salida)->toBe($texto);
+});
+
+// ------------------------------------------ efectivo que no aparta nada
+//
+// Caso real cabañas 2026-09-22 (Uziel Granados, conv. 1357): "cómo prefieres
+// pagar el anticipo de $1,500.00: transferencia bancaria, Mercado Pago (link
+// de pago) o efectivo al llegar". El efectivo está APAGADO en cabañas
+// (cash_payment_enabled = false) y no aparta la cabaña: quien lo elige cree
+// que su cabaña quedó guardada. Se lo dijo a 45 huéspedes en 12 días.
+
+function sinEfectivo(string $texto): string
+{
+    return (fn () => $this->enforceCashClaims($texto, test()->conversation))->call(app(AgentBrain::class));
+}
+
+it('quita el efectivo al llegar de la lista y deja las formas reales', function () {
+    $salida = sinEfectivo('Como prefieres pagar el anticipo de $1,500.00: transferencia bancaria, Mercado Pago (link de pago) o efectivo al llegar?');
+
+    expect($salida)->not->toContain('efectivo')
+        ->and($salida)->toContain('transferencia bancaria')
+        ->and($salida)->toContain('Mercado Pago');
+});
+
+it('si la oración era solo el efectivo, se cae y dice cómo sí se aparta', function () {
+    $salida = sinEfectivo('Puedes apartar tu cabaña pagando en efectivo al llegar. Te esperamos.');
+
+    expect($salida)->not->toContain('efectivo al llegar')
+        ->and($salida)->toContain('Te esperamos.');
+});
+
+it('no estorba un mensaje de pago sin efectivo', function () {
+    $texto = 'Para apartar necesitas el anticipo de $1,500.00 por transferencia bancaria o link de pago.';
+
+    expect(sinEfectivo($texto))->toBe($texto);
+});
+
+it('deja explicar que el efectivo NO aparta', function () {
+    // La regla contada es lo que queremos: el huésped tiene que entender por
+    // qué no puede pagar al llegar (el apartado se cae en 1 hora).
+    $texto = 'No aceptamos efectivo al llegar: el apartado se sostiene 1 hora y solo lo sostiene el pago o el comprobante.';
+
+    expect(sinEfectivo($texto))->toBe($texto);
+});
+
+it('no borra la frase del hotel que niega el efectivo', function () {
+    $texto = 'El apartado se sostiene 1 hora, así que no se aparta pagando en efectivo.';
+
+    expect(sinEfectivo($texto))->toBe($texto);
+});
+
+it('no toca el texto cuando el hotel sí acepta efectivo', function () {
+    $property = Property::first();
+    $property->update(['settings' => array_merge($property->settings ?? [], ['cash_payment_enabled' => true])]);
+
+    $texto = 'Puedes pagar por transferencia o en efectivo al llegar.';
+
+    expect(sinEfectivo($texto))->toBe($texto);
+});
+
+// --------------------------- el pico del proveedor no es culpa del huésped
+//
+// Cabañas 2026-09-22, tarde: 4 de los 5 traspasos fueron "Prism provider ...
+// is overloaded" — "Hola", "¿dónde se encuentra ubicado?", "¿a qué hora es la
+// entrada?" y una pregunta de precios acabaron con una persona por una falla
+// nuestra. La cadena de ese hotel tiene UN solo proveedor: sin relevo, cada
+// pico suyo es un chat perdido.
+
+it('con proveedor caído programa otro intento en vez de transferir', function () {
+    \Illuminate\Support\Facades\Queue::fake();
+
+    // Un proveedor configurado que revienta al llamarlo: el pico real.
+    $brain = new class extends AgentBrain
+    {
+        public function __construct() {}
+
+        public function providers(): \Illuminate\Support\Collection
+        {
+            return collect([new \App\Models\AiProvider(['provider' => 'minimax', 'model' => 'MiniMax-M2.7'])]);
+        }
+
+        public function run(\App\Models\AiProvider $provider, callable $build): \Prism\Prism\Text\Response
+        {
+            throw new \RuntimeException('Prism provider openai is overloaded.');
+        }
+    };
+
+    entrante('Hola');
+
+    expect($brain->reply($this->conversation))->toBeNull();
+
+    $this->conversation->refresh();
+
+    // Nadie se entera: el bot sigue encendido y la bandeja no se llena.
+    expect($this->conversation->bot_enabled)->toBeTrue()
+        ->and($this->conversation->status)->toBe(Conversation::STATUS_OPEN)
+        ->and($this->conversation->messages()->where('direction', 'out')->count())->toBe(0);
+
+    \Illuminate\Support\Facades\Queue::assertPushed(\App\Jobs\RetryAgentReply::class);
+});
+
+it('si el segundo intento tampoco saca respuesta, ahí sí transfiere', function () {
+    \Illuminate\Support\Facades\Queue::fake();
+
+    $brain = new class extends AgentBrain
+    {
+        public function __construct() {}
+
+        public function providers(): \Illuminate\Support\Collection
+        {
+            return collect([new \App\Models\AiProvider(['provider' => 'minimax', 'model' => 'MiniMax-M2.7'])]);
+        }
+
+        public function run(\App\Models\AiProvider $provider, callable $build): \Prism\Prism\Text\Response
+        {
+            throw new \RuntimeException('Prism provider openai is overloaded.');
+        }
+    };
+
+    entrante('Hola');
+
+    $reply = $brain->reply($this->conversation, canRetryLater: false);
+
+    $this->conversation->refresh();
+
+    expect($reply?->body)->toContain('persona del hotel')
+        ->and($reply->meta['provider_failure'])->toBeTrue()
+        ->and($this->conversation->status)->toBe(Conversation::STATUS_PENDING);
+
+    \Illuminate\Support\Facades\Queue::assertNotPushed(\App\Jobs\RetryAgentReply::class);
+});
+
+// ------------------------------- "lo comunico con un asesor" es un traspaso
+//
+// Caso real cabañas 2026-09-23 17:51 (Chago 02, conv. 1448): pidió "Hablar con
+// asesor", el bot contestó "Con gusto, lo comunico con un asesor para que le
+// atienda personalmente" y la conversación se quedó con el bot ENCENDIDO: el
+// hotel nunca supo que alguien lo estaba esperando. Al guardián le faltaba el
+// verbo más natural del español ("comunicar") y la palabra "asesor".
+
+it('el traspaso anunciado con "comunico" también se ejecuta', function (string $texto) {
+    entrante('Hablar con asesor');
+
+    (fn () => $this->enforceHandoffClaims($texto, test()->conversation))->call(app(AgentBrain::class));
+
+    $this->conversation->refresh();
+
+    expect($this->conversation->bot_enabled)->toBeFalse()
+        ->and($this->conversation->status)->toBe(Conversation::STATUS_PENDING);
+})->with([
+    'el mensaje real' => ['Con gusto, lo comunico con un asesor para que le atienda personalmente.'],
+    'plural' => ['Te comunicamos con una persona del hotel.'],
+    'futuro' => ['Lo comunicaré con el encargado.'],
+    'enlazar' => ['Te enlazo con un ejecutivo del hotel.'],
+    'canalizar' => ['Canalizo su caso con recepción.'],
+    'derivar' => ['Derivo su solicitud al personal.'],
+]);
+
+it('hablar de comunicarse no es traspasar', function (string $texto) {
+    entrante('Cómo los contacto?');
+
+    $antes = $this->conversation->bot_enabled;
+
+    (fn () => $this->enforceHandoffClaims($texto, test()->conversation))->call(app(AgentBrain::class));
+
+    $this->conversation->refresh();
+
+    expect($this->conversation->bot_enabled)->toBe($antes);
+})->with([
+    'el teléfono del hotel' => ['Puedes comunicarte con nosotros al 656 850 8818.'],
+    'la liga de ubicación' => ['Te comparto el enlace de ubicación: https://maps.app.goo.gl/abc'],
+]);
+
+// ------------------------------------ la palabra suelta se poda, no se rehace
+//
+// Conv. 1448 (23-sep, Chago 02): "En breve le attention." Rehacer el mensaje
+// entero cuesta otra llamada y, con el proveedor saturado, cambia una
+// respuesta buena por "tuve un problema, repítame su mensaje".
+
+function podada(string $texto): string
+{
+    return (fn () => $this->enforceLanguage($texto, null, null))->call(app(AgentBrain::class));
+}
+
+it('poda la oración con la palabra en inglés y conserva el resto', function () {
+    $salida = podada('Con gusto, lo comunico con un asesor para que le atienda personalmente. En breve le attention.');
+
+    expect($salida)->toBe('Con gusto, lo comunico con un asesor para que le atienda personalmente.');
+});
+
+it('no poda un mensaje que está bien', function () {
+    $texto = 'Su check-in es a partir de las 2:00 PM y el check-out a las 11:00 AM.';
+
+    expect(podada($texto))->toBe($texto);
+});
+
+it('si la frase mala era casi todo, no deja al huésped sin mensaje', function () {
+    // Sin 30 caracteres limpios detrás, podar dejaría un cabo suelto: ahí sí
+    // se rehace (y sin proveedor configurado cae a la frase segura).
+    expect(podada('Su payment.'))->toContain('Disculpe');
 });

@@ -1,17 +1,22 @@
 {{-- El encabezado ya rotula al hotel (logo o nombre): aquí no se repite. --}}
-<x-mail::message>
+<x-mail::message :preheader="'Reserva '.$code.' · '.$rows['Llegada']">
 {{ $bodyText }}
 
-<x-mail::panel>
-**Reserva {{ $reservation->displayCode() }}**
+<x-mail::rows :title="'Reserva '.$code" :rows="$rows" />
 
-{{ $reservation->roomType?->name ?? 'Habitación' }}<br>
-Llegada: {{ $reservation->starts_at->locale('es')->isoFormat('dddd D [de] MMMM, HH:mm') }}<br>
-Salida: {{ $reservation->ends_at->locale('es')->isoFormat('dddd D [de] MMMM, HH:mm') }}<br>
-Total: ${{ number_format((float) $reservation->total_amount, 2) }}
-</x-mail::panel>
+@if ($lookupUrl)
+<x-mail::button :url="$lookupUrl">
+Consultar mi reserva
+</x-mail::button>
+@endif
 
-Guarda tu código de reserva: te lo pueden pedir en recepción.
+@if ($mapsUrl)
+<x-mail::button :url="$mapsUrl" color="secondary">
+Cómo llegar
+</x-mail::button>
+@endif
+
+Guarda tu código **{{ $code }}**: te lo pueden pedir en recepción.
 
 Gracias,<br>
 {{ $hotelName }}

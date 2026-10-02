@@ -44,11 +44,23 @@ class AgentBrain
     /** De qué habla la promesa: pagar, transferir o recibir los datos para hacerlo. */
     protected const PAYMENT_WORD = '/(transfer|pag[oaué]|dep[óo]sit|datos|cuenta|link|liga)/iu';
 
-    /** Verbos con los que el modelo anuncia un traspaso que no ejecutó. */
-    protected const HANDOFF_VERB = '/(transfer[íi]\b|transferid[oa]\b|transferir\b|transfiero\b|transfiriendo\b|pas[oé] con\b|pasar[ée] con\b|paso tu|escalo\b)/iu';
+    /**
+     * Verbos con los que el modelo anuncia un traspaso que no ejecutó.
+     *
+     * "Comunicar" faltaba y es el verbo más natural en español: cabañas
+     * 2026-09-23 17:51 (Chago 02, conv. 1448) pidió "Hablar con asesor", el
+     * bot contestó "lo comunico con un asesor para que le atienda
+     * personalmente" y la conversación se quedó con el bot encendido — nadie
+     * del hotel se enteró de que lo estaban esperando.
+     */
+    protected const HANDOFF_VERB = '/(transfer[íi]\b|transferid[oa]\b|transferir\b|transfiero\b|transfiriendo\b|pas[oé] con\b|pasar[ée] con\b|paso tu|escalo\b'
+        .'|comunic(?:o|amos|ar[ée]|aremos|arte|arle|o de inmediato)\b|enlaz(?:o|amos|ar[ée]|aremos)\b|canaliz(?:o|amos|ar[ée]|aremos)\b|deriv(?:o|amos|ar[ée]|aremos)\b)/iu';
 
-    /** A quién dice pasarlo: sin un humano al otro lado no es un traspaso. */
-    protected const HANDOFF_TARGET = '/(persona|personal|recepci[óo]n|equipo|alguien|compañer[oa]|encargad[oa])/iu';
+    /**
+     * A quién dice pasarlo: sin un humano al otro lado no es un traspaso.
+     * "Asesor" y "ejecutivo" se agregaron con el caso de Chago (conv. 1448).
+     */
+    protected const HANDOFF_TARGET = '/(persona|personal|recepci[óo]n|recepcionista|equipo|alguien|compañer[oa]|encargad[oa]|asesor|ejecutiv[oa]|anfitri[óo]n|agente)/iu';
 
     /** Lo que este producto no puede cumplir: aquí nadie devuelve llamadas. */
     /**
@@ -222,8 +234,12 @@ class AgentBrain
      *
      * @param  Message|null  $inbound  El mensaje que se contesta: si mientras
      *                                 se generaba llegó otro, la respuesta se tira.
+     * @param  bool  $canRetryLater  Si el proveedor no contesta, ¿se puede
+     *                               reintentar en unos segundos (RetryAgentReply)
+     *                               en vez de transferir? False dentro del
+     *                               propio reintento: ahí ya no hay red abajo.
      */
-    public function reply(Conversation $conversation, ?Message $inbound = null): ?Message
+    public function reply(Conversation $conversation, ?Message $inbound = null, bool $canRetryLater = true): ?Message
     {
         $handoff = false;
         $handoffReason = '';
@@ -232,46 +248,94 @@ class AgentBrain
         $used = [];
         $answeredBy = null;
 
-        foreach ($this->providers() as $provider) {
-            $started = microtime(true);
-
-            try {
-                $response = $this->run($provider, fn ($request) => $request
-                    ->withSystemPrompt($this->systemPrompt($conversation))
-                    ->withMessages($this->history($conversation))
-                    ->withTools($this->toolset($handoff, $conversation, false, $used, $handoffReason))
-                    ->withMaxSteps(6));
-
-                $text = trim($response->text);
-                $answeredBy = $provider;
-                $meta = [
-                    'provider' => $provider->provider,
-                    'model' => $provider->model,
-                    'platform' => (bool) ($provider->platform ?? false),
-                    'ms' => (int) round((microtime(true) - $started) * 1000),
-                    'prompt_tokens' => $response->usage->promptTokens ?? null,
-                    'completion_tokens' => $response->usage->completionTokens ?? null,
-                    // Tokens que el proveedor cobró como caché (repetidos del
-                    // prefijo). Sin registrarlos no hay forma de saber si el
-                    // caché está funcionando: MiniMax-M2 devolvía 0 siempre y
-                    // nadie se enteró — se pagaron 12,650 tokens fijos en cada
-                    // respuesta durante meses.
-                    'cached_tokens' => $response->usage->cacheReadInputTokens ?? null,
-                ];
-
-                // Consumo con keys de plataforma → rollup central (cuota/costos).
-                if ($meta['platform']) {
-                    $this->gate->recordReply($meta);
+        // Dos vueltas a la cadena de proveedores. Si ninguno contesta, el
+        // huésped acaba con una persona sin haber preguntado nada raro: de los
+        // 52 traspasos de cabañas entre el 8 y el 22 de septiembre, 8 fueron
+        // esto (picos de "openai is overloaded" y tiempos agotados), y en la
+        // bandeja no se distinguían de un traspaso decidido por el bot.
+        foreach ([1, 2] as $vuelta) {
+            if ($vuelta === 2) {
+                if ($answeredBy !== null || $handoff) {
+                    break;
                 }
 
-                break; // el primero que responde gana
-            } catch (Throwable $e) {
-                report($e);
+                usleep(2_000_000); // el pico del proveedor dura segundos
+            }
 
-                if ($handoff) {
-                    break; // el traspaso ya se decidió; no probar otro proveedor
+            foreach ($this->providers() as $provider) {
+                $started = microtime(true);
+
+                try {
+                    $response = $this->run($provider, fn ($request) => $request
+                        ->withSystemPrompt($this->systemPrompt($conversation))
+                        ->withMessages($this->history($conversation))
+                        ->withTools($this->toolset($handoff, $conversation, false, $used, $handoffReason))
+                        ->withMaxSteps(6));
+
+                    $text = trim($response->text);
+                    $answeredBy = $provider;
+                    $meta = [
+                        'provider' => $provider->provider,
+                        'model' => $provider->model,
+                        'platform' => (bool) ($provider->platform ?? false),
+                        'ms' => (int) round((microtime(true) - $started) * 1000),
+                        'prompt_tokens' => $response->usage->promptTokens ?? null,
+                        'completion_tokens' => $response->usage->completionTokens ?? null,
+                        // Tokens que el proveedor cobró como caché (repetidos del
+                        // prefijo). Sin registrarlos no hay forma de saber si el
+                        // caché está funcionando: MiniMax-M2 devolvía 0 siempre y
+                        // nadie se enteró — se pagaron 12,650 tokens fijos en cada
+                        // respuesta durante meses.
+                        'cached_tokens' => $response->usage->cacheReadInputTokens ?? null,
+                    ];
+
+                    // Consumo con keys de plataforma → rollup central (cuota/costos).
+                    if ($meta['platform']) {
+                        $this->gate->recordReply($meta);
+                    }
+
+                    break 2; // el primero que responde gana
+                } catch (Throwable $e) {
+                    report($e);
+
+                    if ($handoff) {
+                        break 2; // el traspaso ya se decidió; no probar otro proveedor
+                    }
                 }
             }
+        }
+
+        // Ni en la segunda vuelta. El pico del proveedor dura segundos, así
+        // que ANTES de molestar al hotel se programa un tercer intento: a un
+        // "Hola" no se le contesta con una persona porque nuestro proveedor
+        // se saturó. Caso real cabañas 2026-09-22 (tarde): 4 de los 5
+        // traspasos fueron esto — "Hola", "¿dónde se encuentra ubicado?",
+        // "¿a qué hora es la entrada?" y una pregunta de precios.
+        if ($answeredBy === null && ! $handoff) {
+            $ultimo = (int) $conversation->messages()->where('direction', 'in')->max('id');
+
+            // Solo si el hotel TIENE proveedores y todos fallaron: sin
+            // ninguno configurado no hay pico que esperar, hay un hotel sin
+            // asistente, y ahí el traspaso es lo correcto.
+            if ($canRetryLater && $ultimo > 0 && $this->providers()->isNotEmpty()) {
+                \Illuminate\Support\Facades\Log::warning('Agente: ningún proveedor respondió, se reintenta en unos segundos', [
+                    'conversation_id' => $conversation->id,
+                ]);
+
+                \App\Jobs\RetryAgentReply::dispatch((string) tenant('id'), $conversation->id, $ultimo)
+                    ->delay(now()->addSeconds(25));
+
+                return null; // el bot sigue encendido; nadie se entera del pico
+            }
+
+            // Sin red abajo: se transfiere, pero se dice por qué. Sin esta
+            // marca, "el bot transfirió" y "el bot no pudo contestar" se ven
+            // igual en la bandeja y se persigue el problema equivocado.
+            \Illuminate\Support\Facades\Log::warning('Agente: ningún proveedor respondió, se transfiere', [
+                'conversation_id' => $conversation->id,
+            ]);
+
+            $meta['provider_failure'] = true;
         }
 
         // Llegó otro mensaje de texto mientras se generaba: esta respuesta no
@@ -332,12 +396,15 @@ class AgentBrain
 
         $body = $this->sanitizeWeekdays($this->sanitizeChatText($this->sanitizeClockClaims($this->sanitizeBankBlocks($this->sanitizeBankNumbers($this->sanitizeGatewayLinks(
             $this->enforceLiveReservationClaims(
-                $this->enforcePaymentClaims(
-                    $this->enforceHoldDeadlineClaims(
-                        $this->enforceHandoffClaims(
-                            $this->enforceRescheduleClaims(
-                                $this->enforceCouponClaims(
-                                    $this->enforceAvailabilityClaims($text, $conversation),
+                $this->enforceCashClaims(
+                    $this->enforcePaymentClaims(
+                        $this->enforceHoldDeadlineClaims(
+                            $this->enforceHandoffClaims(
+                                $this->enforceRescheduleClaims(
+                                    $this->enforceCouponClaims(
+                                        $this->enforceAvailabilityClaims($text, $conversation),
+                                        $conversation,
+                                    ),
                                     $conversation,
                                 ),
                                 $conversation,
@@ -418,17 +485,71 @@ class AgentBrain
             return false;
         }
 
-        // Lo que el huésped pide y no se contesta con herramientas.
-        $humano = '/hablar con|con una persona|un humano|alguien m[áa]s|encargad|gerente|due[ñn]o|queja|reclamo|molest|inconform|factura|evento|boda|xv|graduaci[óo]n|cotizaci[óo]n especial|ya pagu|ya transfer|mand[ée] el comprobante/iu';
+        // Lo que el huésped pide y no se contesta con herramientas: hablar con
+        // alguien, quejas, eventos... y también lo que el hotel agenda o
+        // arregla a mano (una visita a las cabañas, decoración, un trato
+        // comercial). Eso último se agregó el 2026-09-22 junto con el freno de
+        // abajo: al frenar más traspasos había que dejar claro cuáles siguen.
+        $humano = '/hablar con|con una persona|un humano|alguien m[áa]s|asesor|ejecutiv[oa]|recepcionista|encargad|gerente|due[ñn]o|queja|reclamo|molest|inconform|factura|evento|boda|xv|graduaci[óo]n|cotizaci[óo]n especial|ya pagu|ya transfer|mand[ée] el comprobante|cita|ir a ver|visitar|conocer las|decoraci|globos|p[ée]talos|publicidad|intercambio/iu';
 
         if (preg_match($humano, $last) === 1) {
             return false;
         }
 
-        // Y lo que sí: fechas, precios, disponibilidad.
-        $consultable = '/disponib|hay (lugar|cabaña|espacio)|tienes?\b|queda[n]?\b|precio|costo|cu[áa]nto|tarifa|libre/iu';
+        // Y lo que sí: fechas, precios, disponibilidad. Las fechas en modo
+        // SUELTO, porque quien está cotizando contesta "sábado 26" o "el 26",
+        // no "26 de septiembre" (con el modo estricto, "sábado 26" no era
+        // ninguna fecha y el traspaso seguía de largo).
+        $consultable = '/disponib|hay (lugar|cabaña|espacio)|tienes?\b|queda[n]?\b|precio|costo|cu[áa]nto|tarifa|libre|informaci[óo]n|informes/iu';
 
-        return $this->datesMentioned($last) !== [] || preg_match($consultable, $last) === 1;
+        if ($this->datesMentioned($last, loose: true) !== [] || preg_match($consultable, $last) === 1) {
+            return true;
+        }
+
+        return $this->answersQuotingQuestion($conversation, $last);
+    }
+
+    /**
+     * ¿El huésped solo está CONTESTANDO lo que el bot le acaba de preguntar?
+     *
+     * El freno de arriba juzga el mensaje suelto, y en una cotización en curso
+     * el huésped contesta con una palabra: ahí no hay ni fecha escrita ni la
+     * palabra "precio", así que el traspaso pasaba de largo. Casos reales de
+     * cabañas del 2026-09-22: el bot preguntó "¿la llegada sería viernes o
+     * sábado?" y ella contestó "Sábado" (conv. 1231); tras cotizar precios e
+     * inclusiones, "Tengo fechas en mente" (conv. 1244); preguntado por el
+     * grupo, "Para 2 adultos y tres menores" (conv. 1258). Los tres se
+     * transfirieron y el personal acabó cotizando a mano, hasta una hora
+     * después, lo que el bot ya sabía.
+     *
+     * Se exige que el propio bot haya PREGUNTADO algo de cotización en sus
+     * últimos mensajes y que la respuesta traiga un dato de cotización (un
+     * día, un número, un sí). Así "una cena romántica" o "¿podría ir a
+     * verlas?" siguen yendo con una persona.
+     */
+    protected function answersQuotingQuestion(Conversation $conversation, string $last): bool
+    {
+        $pregunto = $conversation->messages()
+            ->where('direction', 'out')
+            ->where('sender_type', 'bot')
+            ->latest('id')
+            ->limit(3)
+            ->pluck('body')
+            ->implode("\n");
+
+        if (! str_contains($pregunto, '?')) {
+            return false;
+        }
+
+        $deCotizacion = '/fecha|llegada|salida|noche|d[ií]a|persona|adulto|ni[nñ]o|hu[ée]sped|caba[nñ]a|habitaci[óo]n|cu[áa]nto|cu[áa]l/iu';
+
+        if (preg_match($deCotizacion, $pregunto) !== 1) {
+            return false;
+        }
+
+        $dato = '/\d|^\s*(s[ií]|no|ok|claro|as[íi] es|correcto|exacto)\b|lunes|martes|mi[ée]rcoles|jueves|viernes|s[áa]bado|domingo|fecha|noche|persona|adulto|ni[nñ]o|caba[nñ]a|habitaci[óo]n|fin de semana|puente|ma[nñ]ana|hoy/iu';
+
+        return preg_match($dato, trim($last)) === 1;
     }
 
     /**
@@ -595,8 +716,6 @@ class AgentBrain
             'texto' => $text,
         ]);
 
-        $this->markHandoff($conversation, 'El asistente anunció el traspaso en su respuesta.');
-
         // La promesa inventada se cae completa: el huésped no puede quedarse
         // con "recibirá una llamada" al lado de la frase verdadera.
         $kept = collect(preg_split('/\R+/u', $text) ?: [])
@@ -604,6 +723,25 @@ class AgentBrain
             ->map(fn (string $line) => trim($line))
             ->filter()
             ->implode("\n");
+
+        // Anunciar el traspaso no lo justifica. Este camino no pasaba por
+        // ningún freno: entre el 8 y el 22 de septiembre, cabañas mandó así
+        // 36 chats con una persona, muchos con la respuesta ya contestada
+        // encima. Casos reales del 2026-09-22: la lista de tarifas completa
+        // con el "te comunicamos" pegado al final (conv. 1258), y un "el
+        // cambio de fecha lo hace una persona del hotel" —que es un dato,
+        // no una promesa— que mandó a recepción a quien preguntaba por el
+        // fin de semana (conv. 1158). Si lo que preguntó el huésped el bot
+        // lo sabe contestar, se cae la promesa y se queda la respuesta.
+        if (trim($kept) !== '' && $this->handoffIsPremature($conversation, 'El asistente anunció el traspaso en su respuesta.')) {
+            \Illuminate\Support\Facades\Log::warning('Agente: anunció un traspaso que no hacía falta, se queda con la respuesta', [
+                'conversation_id' => $conversation->id,
+            ]);
+
+            return trim($kept);
+        }
+
+        $this->markHandoff($conversation, 'El asistente anunció el traspaso en su respuesta.');
 
         return trim($kept."\n\n".$this->handoffLine());
     }
@@ -841,6 +979,31 @@ class AgentBrain
             }
         }
 
+        // Un "Total: $38,000" que sumaba los renglones borrados ya no cuadra
+        // con lo que queda a la vista. Se cae el total del mismo bloque (los
+        // renglones seguidos sin blanco en medio) donde se borró algo.
+        $block = [];
+
+        foreach ([...$lines, ''] as $i => $line) {
+            if (trim($line) !== '') {
+                $block[] = $i;
+
+                continue;
+            }
+
+            $touched = collect($block)->contains(fn (int $j) => isset($dropLine[$j]) || isset($dropSentence[$j]));
+
+            if ($touched) {
+                foreach ($block as $j) {
+                    if (preg_match('/\btotal\b/iu', $lines[$j]) === 1 && preg_match('/\$\s?\d/u', $lines[$j]) === 1) {
+                        $dropLine[$j] = true;
+                    }
+                }
+            }
+
+            $block = [];
+        }
+
         \Illuminate\Support\Facades\Log::warning('Agente: ofreció habitaciones que no están libres', [
             'conversation_id' => $conversation?->id,
             // Contra qué noches se juzgó: sin esto no se puede saber si el
@@ -952,11 +1115,39 @@ class AgentBrain
                 return true;
             }
 
-            // Familia en plural: "las Sencillas" son la 1, 2, 3 y 4.
-            $family = trim((string) preg_replace('/\s*\d+$/', '', $key));
+            // Familia sin número: "las Sencillas" son la 1, 2, 3 y 4. Con
+            // número ("Sencilla 2", "Sencillas 2 y 3") nombra SOLO esas: antes
+            // "Cabaña Sencilla 2" contaba como las cuatro, y con la 1 y la 4
+            // ocupadas el guardián borró la 2 y la 3 que sí estaban libres y
+            // dejó un total de $38,000 que ya no sumaba (cabañas, 30-sep-2026).
+            if (! preg_match('/^(.+?)\s*(\d+)$/u', $key, $parts)) {
+                return false;
+            }
 
-            return $family !== $key && $family !== ''
-                && preg_match('/\b'.preg_quote($family, '/').'s?\b/u', $haystack) === 1;
+            [, $family, $number] = $parts;
+
+            preg_match_all(
+                '/\b'.preg_quote($family, '/').'s?\b(\s*(?:#|no\.?|num\.?)?\s*\d+(?:\s*(?:,|y|e|o)\s*\d+)*)?/u',
+                $haystack,
+                $mentions,
+                PREG_SET_ORDER,
+            );
+
+            foreach ($mentions as $mention) {
+                $listed = $mention[1] ?? '';
+
+                if ($listed === '') {
+                    return true;
+                }
+
+                preg_match_all('/\d+/', $listed, $numbers);
+
+                if (in_array($number, $numbers[0], true)) {
+                    return true;
+                }
+            }
+
+            return false;
         })->values();
     }
 
@@ -1985,6 +2176,13 @@ class AgentBrain
     ];
 
     /**
+     * UNA palabra en inglés a media frase en español. Solo palabras que en un
+     * hotel mexicano NO se dicen en inglés: "check-in", "room service", "spa"
+     * o "Booking" son español de hotel y por eso no están aquí.
+     */
+    protected const ENGLISH_STRAY = '/\b(attention|please|sorry|thanks|thank you|available|availability|welcome|information|regards|kindly|however|shortly|assistance|greetings|apologies|unfortunately|currently|immediately|confirmation|payment|reservation|nights)\b/iu';
+
+    /**
      * Palabras que no existen ni en español ni en inglés: portugués,
      * italiano y francés que se le escapan al modelo.
      */
@@ -2007,6 +2205,36 @@ class AgentBrain
      * quien escribe en español— se mide con palabras funcionales, que es lo
      * que de verdad distingue un idioma del otro.
      */
+    /**
+     * ¿La única falla es una palabra suelta en inglés? Entonces se poda esa
+     * oración en vez de rehacer el mensaje: se comprueba quitándola y
+     * volviendo a juzgar lo que queda.
+     */
+    protected function strayEnglishOnly(string $text, bool $guestInSpanish): bool
+    {
+        if (! $guestInSpanish || preg_match(self::ENGLISH_STRAY, $this->plain($text)) !== 1) {
+            return false;
+        }
+
+        $podado = $this->withoutStrayEnglish($text);
+
+        // Lo que queda tiene que ser un mensaje, no un saludo suelto: si la
+        // frase mala era casi todo, mejor que lo rehaga el modelo.
+        return mb_strlen($podado) >= 30 && ! $this->garbledReply($podado, $guestInSpanish);
+    }
+
+    /** Quita las oraciones que traen la palabra en inglés. */
+    protected function withoutStrayEnglish(string $text): string
+    {
+        return collect(preg_split('/\R/u', $text) ?: [])
+            ->map(fn (string $line) => collect(preg_split('/(?<=[.!?])\s+/u', trim($line)) ?: [])
+                ->reject(fn (string $sentence) => preg_match(self::ENGLISH_STRAY, $this->plain($sentence)) === 1)
+                ->implode(' '))
+            ->map(fn (string $line) => trim($line))
+            ->filter()
+            ->implode("\n");
+    }
+
     public function garbledReply(string $text, bool $guestInSpanish = true): bool
     {
         // Las ligas no se juzgan: el id de un Google Doc ("…DrbrIsuiAZwD…")
@@ -2046,11 +2274,24 @@ class AgentBrain
             return false;
         }
 
-        // 4. Inglés a quien escribe en español. Se cuentan palabras
+        // 4. UNA palabra suelta en inglés a media frase en español. El conteo
+        // de abajo pide tres o más, así que esto se colaba entero: cabañas
+        // 2026-09-23 (Chago 02, conv. 1448) recibió "En breve le attention."
+        // Solo palabras que en un hotel mexicano NO se dicen en inglés —
+        // "check-in", "room service", "spa" o "Booking" son español de hotel
+        // y por eso no están en la lista.
+        // 5. Inglés a quien escribe en español. Se cuentan palabras
         // funcionales (las que no se pueden evitar al hablar), no
         // sustantivos: "check-in" o "spa" son español de hotel.
         $ingles = preg_match_all('/\b(the|you|your|would|like|please|we|our|is|are|for|with|have|how|what|when|thank|hello|help|about|there|and|can)\b/iu', $plain);
         $espanol = preg_match_all('/\b(que|para|con|los|las|una|por|del|est[aá]|son|tiene|gusto|puede|le|su|te|hola|gracias|noche|fecha|cabaña|habitaci[oó]n|disponib\w*)\b/iu', $plain);
+
+        // La palabra suelta solo cuenta DENTRO de un mensaje en español: una
+        // respuesta entera en inglés no es una fuga, y sin esta condición se
+        // marcaba "Sure, the cabin is available on Friday" como basura.
+        if ($espanol >= 1 && preg_match(self::ENGLISH_STRAY, $plain) === 1) {
+            return true;
+        }
 
         return $ingles >= 3 && $espanol <= 1;
     }
@@ -2096,6 +2337,19 @@ class AgentBrain
 
         if (! $otroAlfabeto && ! $basura) {
             return $text;
+        }
+
+        // Si lo ÚNICO malo es una palabra suelta en inglés, se poda esa
+        // oración y listo: rehacer el mensaje entero cuesta una llamada más
+        // y, si el proveedor está saturado, termina cambiando una respuesta
+        // buena por "tuve un problema, repítame su mensaje" — peor el remedio.
+        if (! $otroAlfabeto && $this->strayEnglishOnly($text, $enEspanol)) {
+            \Illuminate\Support\Facades\Log::warning('Agente: palabra suelta en inglés, se poda la oración', [
+                'conversation_id' => $conversation?->id,
+                'text' => mb_substr($text, 0, 300),
+            ]);
+
+            return $this->withoutStrayEnglish($text);
         }
 
         \Illuminate\Support\Facades\Log::warning('Agente: respuesta mal redactada, se rehace', [
@@ -2183,6 +2437,7 @@ class AgentBrain
         $instructionsBlock = $this->instructionsBlock();
         $guidelinesBlock = $this->guidelinesBlock();
         $couponBlock = $this->couponBlock($conversation);
+        $paymentBlock = $this->paymentMethodsBlock();
         $datesBlock = $this->requestedDatesBlock($conversation);
         $reservationsBlock = $this->reservationsBlock($conversation);
         $nowBlock = "\nAHORA MISMO son las ".now()->locale('es')->isoFormat('HH:mm')
@@ -2201,7 +2456,7 @@ DATOS DEL HOTEL (única fuente de verdad — si algo no está aquí ni en tus he
 ```json
 {$policiesJson}
 ```
-{$instructionsBlock}{$guidelinesBlock}
+{$instructionsBlock}{$guidelinesBlock}{$paymentBlock}
 REGLAS ESTRICTAS:
 - Si la duda del huésped coincide con una pregunta de "faqs", responde con esa respuesta tal cual (puedes adaptarla al tono de la conversación, sin cambiar los datos).
 - Si el huésped comparte su teléfono, usa identificar_huesped para reconocerlo; si ya nos visitó, salúdalo por su nombre como cliente frecuente (sin recitar sus datos).
@@ -2212,13 +2467,18 @@ REGLAS ESTRICTAS:
 - GRUPOS: si el grupo no cabe en una sola habitación, llama consultar_disponibilidad_general con las fechas y "personas", y ofrece TAL CUAL lo que devuelva suggested_combination (qué tipos, cuántas de cada uno y el total). Si combination_covers_guests viene en false, dilo con claridad y ofrece otras fechas o usa transferir_a_humano; nunca completes el grupo con habitaciones que no aparecen libres. No le pidas al huésped que él arme la combinación: propónsela tú.
 - No inventes política comercial: nunca afirmes descuentos, mínimos de noches, ni que "el precio es fijo todo el año" si no está en los datos del hotel. Si una tarifa trae seasonal en true, el precio cambia por fechas y solo consultar_disponibilidad te da el correcto.
 - FECHAS: al repetir la llegada y la salida usa exactamente las que devolvió la herramienta (starts_at/ends_at); no cambies día, mes ni año al redactarlas.
-- AÑO — REGLA ABSOLUTA: hoy es {$this->today()}. JAMÁS cotices, ofrezcas, consultes ni menciones fechas que ya pasaron ni años anteriores al actual. Si el huésped da día y mes sin año, es la PRÓXIMA vez que llega esa fecha: este año si todavía no pasa, el siguiente si ya pasó — mándala así a las herramientas sin preguntarle el año. NUNCA le pongas a escoger entre dos años ("para 2025 / para 2026" es el peor error de fechas posible: el huésped no puede viajar al pasado). Si una herramienta devuelve "date_notice", la fecha que mandaste estaba en el pasado y se corrigió: obedécela y usa solo la fecha que trae.
+- CALENDARIO — NUNCA DE MEMORIA: jamás calcules tú qué día de la semana cae una fecha, ni una fecha límite a partir de una regla ("una semana antes", "el lunes o martes previos"). Los días y fechas que digas salen ya escritos de una herramienta o del bloque RESERVAS DE QUIEN TE ESCRIBE (arrival_label, departure_label, balance_due_label). Si ese dato no está, NO lo adivines: di que el personal se lo confirma y usa transferir_a_humano. Una fecha inventada en un chat de dinero es peor que decir "lo confirmo con el personal".
+- SU RESERVA MANDA SOBRE LA REGLA GENERAL: cuando alguien que YA tiene reserva pregunta por su saldo, su fecha límite, su horario o el estado de su pago, contesta con los datos de SU reserva (bloque RESERVAS DE QUIEN TE ESCRIBE o consultar_reserva), no con la política ni la FAQ general — esas son para quien apenas cotiza. Ante la duda, llama consultar_reserva antes de contestar.
+- SI EL HUÉSPED TE CORRIGE UN DATO: no le des la razón para quedar bien ni te inventes una explicación. Verifica con consultar_reserva: si el sistema coincide con él, díselo; si no coincide, dile con amabilidad lo que marca el sistema y que el personal se lo aclara, y usa transferir_a_humano. Nunca confirmes un dato que no viste en una herramienta.
+- VERIFICACIÓN DE TRANSFERENCIAS: un comprobante lo revisa el personal a mano. Nunca digas que "se confirma automáticamente" ni prometas un tiempo ("unos minutos") que ninguna herramienta te dio: di que el personal lo está verificando y que el sistema le avisa por este chat en cuanto quede registrado.
+- CIERRE: si el huésped se despide ("sería todo", "gracias"), despídete en una o dos líneas cordiales. No mandes listas de recordatorios ni resúmenes que no pidió; si pide un resumen, ármalo SOLO con datos de su reserva en el sistema (payment_summary, arrival_label, balance_due_label), sin cambiar ninguno. Escribe con ortografía correcta y sin palabras en mayúsculas.
+- AÑO — REGLA ABSOLUTA: hoy es {$this->today()}. JAMÁS cotices, ofrezcas, consultes ni menciones fechas que ya pasaron ni años anteriores al actual. Si el huésped da día y mes sin año, es la PRÓXIMA vez que llega esa fecha: este año si todavía no pasa, el siguiente si ya pasó — mándala así a las herramientas sin preguntarle el año. Si solo da el NÚMERO del día, sin mes ("el 24", "24 y 25"), NO supongas el mes: pregúntale de qué mes habla antes de consultar disponibilidad o cotizar. NUNCA le pongas a escoger entre dos años ("para 2025 / para 2026" es el peor error de fechas posible: el huésped no puede viajar al pasado). Si una herramienta devuelve "date_notice", la fecha que mandaste estaba en el pasado y se corrigió: obedécela y usa solo la fecha que trae.
 - Cada tarifa pertenece a UN tipo de habitación (room_type en consultar_tarifas). Si el huésped pidió un tipo, cotiza y aparta SOLO con tarifas de ese tipo — jamás uses la tarifa de otro tipo.
 - El precio de una tarifa es POR UNIDAD (por noche o por bloque); el TOTAL del rango lo calcula consultar_disponibilidad. Nunca presentes el total del rango como si fuera el precio por unidad ("$1,750 por 3 horas" está MAL si es el total de varias unidades). Para estancias con fechas usa tarifas por noche; las tarifas por bloque (ratos/horas) solo si el huésped pide horas.
 - AL COTIZAR, NUNCA DES EL PRECIO PELADO: consultar_disponibilidad devuelve "quote_notice" (y el panorama "payment_notice") con los renglones que el hotel exige decir — cuántas personas incluye la tarifa y qué cuesta la persona extra, el anticipo para apartar, hasta cuándo debe quedar liquidada la estancia y el teléfono para dudas o aclaraciones. El anticipo de esos renglones es el que de verdad va a cobrar el sistema: si otra instrucción te dicta una cifra distinta, manda ESTA. Cópialos TAL CUAL debajo del total, TODOS, en cada cotización. No los resumas, no los omitas "por brevedad" y no cambies fechas ni montos: si el plazo de liquidación viene ahí, ese es, y va aunque el huésped no pregunte.
 - Antes de crear un apartado repite al huésped: tipo de habitación, nombre de la tarifa, TOTAL exacto, fecha de llegada y nombre completo — y espera su confirmación.
 - Al entregar el código de un apartado creado, menciona una sola vez que el día de la llegada se pide una identificación oficial en recepción para el registro.
-- PAGOS: si el apartado requiere prepago (requires_prepayment), PRIMERO ofrece al huésped las formas de pago disponibles según payment_options del apartado (pasarelas por su nombre, transferencia, efectivo al llegar) y pregunta cuál prefiere — solo menciona las que existan. Con su elección llama solicitar_pago (metodo y proveedor) y comparte lo que devuelva tal cual: link de pago (paga ahí y el sistema confirma solo), cuentas para transferencia (pide el comprobante por este chat; el hotel lo verifica), o efectivo (dile hasta cuándo queda apartada su habitación y que paga al llegar). Si solo hay UNA opción, no preguntes: úsala directo. NUNCA digas que un pago fue recibido o verificado: eso solo lo confirma el sistema (consultar_reserva) o el personal. Si el huésped insiste en que ya pagó y el sistema no lo refleja, usa transferir_a_humano.
+- PAGOS: si el apartado requiere prepago (requires_prepayment), PRIMERO ofrece al huésped las formas de pago del bloque FORMAS DE PAGO (y payment_options del apartado, que manda si difieren) y pregunta cuál prefiere — SOLO esas, nunca una que no esté ahí. Con su elección llama solicitar_pago (metodo y proveedor) y comparte lo que devuelva tal cual: link de pago (paga ahí y el sistema confirma solo), cuentas para transferencia (pide el comprobante por este chat; el hotel lo verifica), o efectivo (dile hasta cuándo queda apartada su habitación y que paga al llegar). Si solo hay UNA opción, no preguntes: úsala directo. NUNCA digas que un pago fue recibido o verificado: eso solo lo confirma el sistema (consultar_reserva) o el personal. Si el huésped insiste en que ya pagó y el sistema no lo refleja, usa transferir_a_humano.
 - UN APARTADO POR HUÉSPED: si ya creaste un apartado en esta conversación y el huésped solo cambia la forma de pago (link, transferencia, efectivo), llama solicitar_pago con ESE MISMO código. Nunca vuelvas a llamar crear_apartado ni consultar_disponibilidad para cambiar el pago, y nunca le digas que su cabaña ya no está disponible por eso: está apartada para él. Si el huésped cambia de cabaña, crea el apartado nuevo y dale su código nuevo (el anterior se libera solo).
 - DISPONIBILIDAD REAL: solo di que una cabaña está disponible, y solo das su total, si consultar_disponibilidad devolvió available=true para ESA cabaña y ESAS fechas. La primera línea de quote_notice trae el nombre de la cabaña con su precio: cópiala tal cual. Nunca pongas el precio de una cabaña a otra ni cotices una cabaña distinta a la que consultaste. Si payment_options trae transferencia_nota, obedécela.
 - CUPONES: aplica un descuento SOLO si el huésped te da un código de cupón. Valídalo con validar_cupon (con la tarifa y las fechas) y, si es válido, cotiza con la línea de quote_notice que devuelve y pásalo en crear_apartado con el parámetro cupon. Si no es válido, dile el motivo exacto que devuelva. Nunca inventes códigos, nunca ofrezcas descuentos por tu cuenta y nunca reveles qué cupones existen. Si no tienes la herramienta validar_cupon, este hotel no maneja cupones: dilo así.
@@ -2237,6 +2497,7 @@ REGLAS ESTRICTAS:
 - ADJUNTOS: tú no ves imágenes, pero el sistema las lee y te dice qué son. "[adjuntó un comprobante: …]": agradece, puedes repetir el monto que trae y di que el personal lo verificará; tú no confirmas pagos. "[adjuntó una imagen que NO es un comprobante…]": NO la trates como pago ni digas que recibiste su comprobante; contesta sobre lo que se ve y, si tiene un apartado esperando pago, pídele con amabilidad la captura de su transferencia. "[adjuntó una imagen o documento…]" sin lectura: el archivo SÍ llegó y el personal puede verlo — NUNCA digas que no se recibió ni pidas que lo reenvíe; si es un comprobante, agradece y di que el personal lo verificará. Si tiene un apartado vigente, el sistema lo sostiene mientras el hotel verifica el depósito: dile que su apartado queda guardado mientras confirman el pago y NUNCA le digas que venció. Si su apartado YA había vencido, al recibir el comprobante el sistema lo reabre solo con el MISMO código si la habitación sigue libre: consulta la reserva con consultar_reserva y dile cómo quedó. Si quiere retomar un apartado vencido sin haber mandado comprobante, usa reactivar_apartado con su código y dale ese código.
 - SERVICIOS E INSTALACIONES: "amenities" de cada tipo de habitación y "services" del hotel son datos reales del catálogo. Si preguntan por alberca, asador, fogata, estacionamiento, terraza o cualquier cosa que aparezca ahí, la respuesta es SÍ y la das TÚ, en ese mismo turno, diciendo que sí se cuenta con ello. Prohibido transferir, dudar o decir "déjame confirmarlo" sobre algo que ya está en tus datos: es hacerle perder el tiempo al huésped y al hotel (caso real cabañas 2026-09-07: transfirió una pregunta de alberca que el catálogo contestaba).
 - Si una pregunta trae varias cosas y solo una está fuera de tus datos, responde las que sí sabes y transfiere ÚNICAMENTE la que falta, diciendo cuál es.
+- CANCELAR O REAGENDAR: tú no cancelas ni mueves fechas. Si el huésped lo pide, dile la regla que aplica (si su reserva entra en short_notice de las políticas, la de short_notice.cancellation; si no, cancellation_policy) y usa transferir_a_humano en ese mismo turno para que el personal lo resuelva. Nunca le prometas un reembolso.
 - Si el huésped pide hablar con una persona, se queja, o pide algo fuera de tu alcance, usa la herramienta transferir_a_humano. TRANSFERIR ES UNA ACCIÓN, NO UN ANUNCIO: llámala en ESE mismo turno y nunca prometas una llamada — el hotel contesta por este chat.
 - PERSONAL DEL HOTEL: un turno que empieza con "[PERSONAL DEL HOTEL]" lo escribió una persona del hotel y ya se lo dijo al huésped. Es palabra dada: no la contradigas, no vuelvas a cotizar la fecha ni el precio que esa línea ya cerró, y no repitas la pregunta que ahí ya se respondió. Si una herramienta te dice lo contrario que el personal, NO corrijas al personal: usa transferir_a_humano.
 - Hoy es {$this->today()}. Fechas en formato YYYY-MM-DD HH:MM.
@@ -2247,6 +2508,143 @@ REGLAS ESTRICTAS:
 - No saludes de nuevo si la conversación ya empezó: continúa el hilo donde va.
 {$guestBlock}{$hoursBlock}{$summaryBlock}{$couponBlock}{$nowBlock}{$reservationsBlock}{$datesBlock}
 PROMPT;
+    }
+
+    /**
+     * Las formas de pago REALES del hotel, dictadas desde el primer mensaje.
+     *
+     * El prompt enumeraba "pasarelas, transferencia, efectivo al llegar" como
+     * ejemplo genérico, y el modelo las repetía tal cual ANTES de que ninguna
+     * herramienta le dijera cuáles existen. En cabañas el efectivo está
+     * APAGADO (`cash_payment_enabled` = false) y aun así se ofreció a 45
+     * huéspedes entre el 10 y el 22 de septiembre: "pagas al llegar" hace
+     * creer que la cabaña queda apartada sin pagar, y no queda.
+     *
+     * Público para poder verlo en el "ojito" del prompt sin armarlo entero.
+     */
+    public function paymentMethodsBlock(): string
+    {
+        try {
+            $options = $this->tools->paymentOptions();
+        } catch (Throwable) {
+            return ''; // sin datos, mejor callar que dictar algo falso
+        }
+
+        $metodos = collect($options['pasarelas'] ?? [])
+            ->map(fn (array $gateway) => 'link de pago ('.$gateway['label'].')')
+            ->when($options['transferencia'] ?? false, fn ($lista) => $lista->push('transferencia bancaria'))
+            ->when($options['efectivo'] ?? false, fn ($lista) => $lista->push('efectivo al llegar'))
+            ->values();
+
+        if ($metodos->isEmpty()) {
+            return '';
+        }
+
+        $block = "\nFORMAS DE PAGO DEL HOTEL (las ÚNICAS que puedes ofrecer): ".$metodos->implode(', ').".\n";
+
+        if (! ($options['efectivo'] ?? false)) {
+            $block .= "Este hotel NO acepta pagar en efectivo al llegar: el efectivo NO aparta la habitación. JAMÁS ofrezcas pagar al llegar, a la llegada, en el check-in, en recepción ni en las instalaciones como forma de apartar. Si el huésped lo pide, dile que el apartado se hace con las formas de arriba.\n";
+        }
+
+        return $block;
+    }
+
+    /**
+     * Candado de salida del mismo asunto: lo que el prompt prohíbe, aquí se
+     * comprueba. Si el hotel no acepta efectivo al llegar y el texto lo
+     * ofrece, se quita esa opción de la lista; si la oración era SOLO eso, se
+     * cae y se dicen las formas reales. Caso real cabañas 2026-09-22 (Uziel,
+     * conv. 1357): "cómo prefieres pagar el anticipo: transferencia, Mercado
+     * Pago o efectivo al llegar".
+     */
+    protected function enforceCashClaims(string $text, ?Conversation $conversation): string
+    {
+        if ($conversation === null || trim($text) === '') {
+            return $text;
+        }
+
+        try {
+            $options = $this->tools->paymentOptions();
+        } catch (Throwable) {
+            return $text;
+        }
+
+        if ($options['efectivo'] ?? false) {
+            return $text; // el hotel sí lo acepta: no hay nada que corregir
+        }
+
+        // "efectivo" a secas no basta: el hotel tiene escrito que se puede
+        // pagar EN LAS INSTALACIONES con cita, y eso no es pagar al llegar.
+        // Lo que se persigue es la promesa de pagar en el momento de llegar.
+        $ofreceEfectivo = '/(efectivo|en efectivo)[^.!?\n]{0,40}(al llegar|a (?:tu|su) llegada|cuando llegue|cuando llegues|al momento de llegar|en el check|al registrarse)'
+            .'|(al llegar|a (?:tu|su) llegada|cuando llegue|cuando llegues|en recepci[óo]n|en el hotel)[^.!?\n]{0,40}(en efectivo|efectivo)'
+            .'|pagar? (?:el anticipo )?(?:en )?efectivo/iu';
+
+        if (preg_match($ofreceEfectivo, $text) !== 1) {
+            return $text;
+        }
+
+        $reales = collect($options['pasarelas'] ?? [])
+            ->map(fn (array $gateway) => 'link de pago ('.$gateway['label'].')')
+            ->when($options['transferencia'] ?? false, fn ($lista) => $lista->push('transferencia bancaria'))
+            ->values();
+
+        $otroMetodo = '/transferenc|link de pago|mercado ?pago|stripe|paypal|sitio web|en l[íi]nea|tarjeta/iu';
+        $caida = false;
+
+        $kept = collect(preg_split('/\R/u', $text) ?: [])
+            ->map(function (string $line) use ($ofreceEfectivo, $otroMetodo, &$caida) {
+                return collect(preg_split('/(?<=[.!?])\s+/u', trim($line)) ?: [])
+                    ->map(function (string $sentence) use ($ofreceEfectivo, $otroMetodo, &$caida) {
+                        if (preg_match($ofreceEfectivo, $sentence) !== 1) {
+                            return $sentence;
+                        }
+
+                        // Decir que NO se acepta es justo lo que queremos que
+                        // diga: "no se aparta pagando en efectivo" explica la
+                        // regla, no la ofrece. Sin esta salvedad el candado se
+                        // comía la explicación y el huésped se quedaba sin
+                        // saber por qué.
+                        if (preg_match('/\bno\b|jam[áa]s|nunca|tampoco|sin pagar/iu', $sentence) === 1) {
+                            return $sentence;
+                        }
+
+                        // Se intenta salvar la oración quitando SOLO la
+                        // opción del efectivo de la enumeración.
+                        $limpia = (string) preg_replace(
+                            ['/[,;]?\s*(?:o\s+|u\s+|y\s+)?(?:pagar\s+)?(?:en\s+)?efectivo(?:\s+(?:al llegar|a (?:tu|su) llegada|cuando llegues?|al momento de llegar|en recepci[óo]n|en el hotel))?/iu'],
+                            '',
+                            $sentence,
+                        );
+                        $limpia = trim((string) preg_replace('/\s{2,}/u', ' ', $limpia));
+                        $limpia = (string) preg_replace('/\s+([,.:;!?])/u', '$1', $limpia);
+                        $limpia = (string) preg_replace('/[,:]\s*([.!?])/u', '$1', $limpia);
+
+                        if (preg_match($otroMetodo, $limpia) === 1) {
+                            return $limpia;
+                        }
+
+                        $caida = true;
+
+                        return '';
+                    })
+                    ->filter(fn (string $sentence) => trim($sentence) !== '')
+                    ->implode(' ');
+            })
+            ->map(fn (string $line) => trim($line))
+            ->filter()
+            ->implode("\n");
+
+        \Illuminate\Support\Facades\Log::warning('Agente: ofreció efectivo al llegar y el hotel no lo acepta', [
+            'conversation_id' => $conversation->id,
+            'texto' => mb_substr($text, 0, 300),
+        ]);
+
+        if ($caida && $reales->isNotEmpty()) {
+            $kept = trim($kept."\n".'Para apartar se paga por '.$reales->implode(' o ').'.');
+        }
+
+        return trim($kept);
     }
 
     /**
@@ -2265,8 +2663,13 @@ PROMPT;
             return '';
         }
 
+        // Caso real Hotel México 2026-09-30: a las 4 PM el bot desanimó una
+        // reserva para ese mismo día diciendo que "el personal que genera los
+        // links atiende hasta las 5 PM". La liga la genera el sistema.
+        $scope = '- Este horario es SOLO para que conteste una persona. NO limita cotizar, apartar, reservar para hoy ni pagar: la liga de pago la genera el sistema al momento, a cualquier hora. Nunca digas que el personal genera las ligas ni que el horario impide reservar.';
+
         if ($hours->isOpen()) {
-            return "\nHORARIO DE ATENCIÓN: el personal del hotel atiende {$hours->label()}; ahora mismo SÍ hay quien conteste.\n";
+            return "\nHORARIO DE ATENCIÓN: el personal del hotel atiende {$hours->label()}; ahora mismo SÍ hay quien conteste.\n{$scope}\n";
         }
 
         $next = $hours->nextOpeningLabel();
@@ -2274,6 +2677,7 @@ PROMPT;
         return <<<BLOCK
 
 HORARIO DE ATENCIÓN: el personal atiende {$hours->label()} y AHORA MISMO ESTÁ FUERA DE HORARIO.
+{$scope}
 - Sigue atendiendo normal: cotiza, revisa disponibilidad y aparta como siempre.
 - NUNCA digas que alguien lo atiende "en un momento" ni que "ahorita te contactan": el equipo retoma {$next}.
 - Si tienes que transferir, hazlo igual (queda registrado y lo ven al abrir), y dile que le responden {$next}.
@@ -2438,6 +2842,29 @@ BLOCK;
 
                     if ($date !== null) {
                         $found[$date->toDateString()] = $date;
+                    }
+                }
+            }
+
+            // "24 y 25", "del 24 al 26", "24-25": dos días sin mes. Es la
+            // próxima vez que llega el primero, y el segundo cae en ese mismo
+            // mes. Caso real cabañas 2026-09-29 (Messenger, conv. 1631):
+            // "¿tiene disponible 24 y 25?" no resolvía a nada, el modelo puso
+            // septiembre —ya pasado— y el huésped recibió septiembre de 2027.
+            // Solo rangos cortos y crecientes: "somos 4 y 2 niños" no es fecha.
+            if (preg_match_all('/\b(\d{1,2})\s*(?:y|al|a|-)\s*(?:el\s+)?(\d{1,2})\b(?!\s*(?:de\s*)?(?:'.$names.')|\s*(?:personas?|pax|adultos?|ni[nñ]os?|menores|noches?|dias?|anos?|horas?|grados?|pesos?|%|:))/u', $plain, $matches, PREG_SET_ORDER)) {
+                foreach ($matches as $match) {
+                    [$first, $second] = [(int) $match[1], (int) $match[2]];
+
+                    if ($second <= $first || $second - $first > 14) {
+                        continue;
+                    }
+
+                    $date = $this->nextDateWith($first);
+
+                    if ($date !== null && checkdate($date->month, $second, $date->year)) {
+                        $found[$date->toDateString()] = $date;
+                        $found[$date->day($second)->toDateString()] = $date->day($second);
                     }
                 }
             }
@@ -2657,19 +3084,23 @@ BLOCK;
 
         $lines = $reservations
             ->map(function (\App\Models\Reservation $reservation): string {
-                $pending = $reservation->pendingBalance();
+                // Días de la semana ya escritos y el dinero en una frase: con
+                // "llegada 2026-10-17" y "pago deposit_paid" el bot hacía el
+                // calendario de cabeza y le dijo a un huésped con el anticipo
+                // confirmado que seguía "pendiente de confirmar" (RES-2026-1792).
+                $when = fn ($date) => $date?->locale('es')->isoFormat('dddd D [de] MMMM [de] YYYY').' a las '.$date?->format('g:i A');
 
                 return '- '.$reservation->displayCode()
                     .($reservation->group?->code ? ' (parte del grupo '.$reservation->group->code.')' : '')
                     .': '.($reservation->roomType?->name ?? 'habitación')
-                    .', llegada '.$reservation->starts_at?->format('Y-m-d H:i')
-                    .', estado '.$reservation->status->value
-                    .', pago '.$reservation->payment_status->value
-                    .($pending > 0 ? ', saldo pendiente $'.number_format($pending, 2) : '');
+                    .'. Llegada: '.$when($reservation->starts_at)
+                    .'. Salida: '.$when($reservation->ends_at)
+                    .'. Estado: '.$reservation->status->label()
+                    .'. Pago: '.app(\App\Services\ReservationPolicy::class)->paymentSummary($reservation);
             })
             ->implode("\n");
 
-        return "\nRESERVAS DE QUIEN TE ESCRIBE (el sistema las encontró por su número de este chat; son SUYAS):\n{$lines}\nSi pregunta por \"su reserva\" o \"su apartado\", es una de estas: NO le pidas el código, ya lo tienes. Para el detalle o el estado de pago llama consultar_reserva con ese código.\n";
+        return "\nRESERVAS DE QUIEN TE ESCRIBE (el sistema las encontró por su número de este chat; son SUYAS):\n{$lines}\nSi pregunta por \"su reserva\" o \"su apartado\", es una de estas: NO le pidas el código, ya lo tienes. Estas fechas, días de la semana y montos son los del sistema: cítalos tal cual, no los recalcules. Para cualquier otro detalle llama consultar_reserva con ese código.\n";
     }
 
     /**
@@ -2698,6 +3129,64 @@ BLOCK;
     }
 
     /**
+     * Los días que el huésped dio en su ÚLTIMO mensaje sin decir el mes
+     * ("24 y 25", "el 24"). Pedido del dueño (2026-09-29, tras cotizarle a
+     * un huésped septiembre de 2027 por un "24 y 25"): con solo el número,
+     * el bot pregunta el mes antes de consultar o cotizar.
+     *
+     * No cuenta si el bot le acababa de ofrecer ese día con su mes ("el
+     * domingo 27" elegido de una lista con "domingo 27 de septiembre"): ahí
+     * el mes ya está dicho.
+     *
+     * @return array<int, int>
+     */
+    protected function dayWithoutMonth(?Conversation $conversation): array
+    {
+        if ($conversation === null) {
+            return [];
+        }
+
+        $last = $conversation->messages()->where('direction', 'in')->latest('id')->first();
+        $said = trim((string) $last?->body);
+
+        if ($said === '' || str_starts_with($said, '[')) {
+            return [];
+        }
+
+        $plain = $this->plain($said);
+
+        if (preg_match('/\b(?:'.implode('|', array_keys($this->monthNames())).')\b/u', $plain)
+            || $this->datesMentioned($said) !== []) {
+            return [];
+        }
+
+        $days = collect($this->datesMentioned($said, loose: true))
+            ->map(fn (\Carbon\CarbonImmutable $date) => $date->day)
+            ->filter(fn (int $day) => preg_match('/\b'.$day.'\b/', $plain) === 1)
+            ->unique()
+            ->values();
+
+        if ($days->isEmpty()) {
+            return [];
+        }
+
+        $offered = $conversation->messages()
+            ->where('direction', 'out')
+            ->where('id', '<', $last->id)
+            ->latest('id')
+            ->value('body');
+
+        $offeredDays = collect($this->datesMentioned((string) $offered))
+            ->map(fn (\Carbon\CarbonImmutable $date) => $date->day);
+
+        if ($days->every(fn (int $day) => $offeredDays->contains($day))) {
+            return [];
+        }
+
+        return $days->sort()->values()->all();
+    }
+
+    /**
      * La fecha pedida, ya resuelta por el servidor, al final del prompt.
      * Prevención antes que corrección: si el modelo la tiene escrita con
      * todas sus letras, no tiene que deducirla del hilo.
@@ -2706,6 +3195,15 @@ BLOCK;
     {
         if ($conversation === null) {
             return '';
+        }
+
+        // Solo el número del día: el mes lo dice el huésped, no el bot.
+        $days = $this->dayWithoutMonth($conversation);
+
+        if ($days !== []) {
+            $numeros = implode(' y ', $days);
+
+            return "\nFECHA SIN MES: el huésped escribió solo el número del día ({$numeros}), sin el mes. NO supongas el mes, NO consultes disponibilidad, NO cotices y NO apartes: primero pregúntale de qué mes habla (por ejemplo: \"¿El {$numeros} de qué mes?\") y espera su respuesta.\n";
         }
 
         $dates = $this->requestedDates($conversation);
@@ -3113,7 +3611,9 @@ INSTRUCCIONES DE LA PLATAFORMA (prioritarias sobre las del hotel; síguelas siem
 BLOCK;
         }
 
-        $hotel = trim((string) (\App\Models\Property::query()->first()?->settings['agent_instructions'] ?? ''));
+        $hotel = trim((string) app(\App\Services\ReservationPolicy::class)->fillTerms(
+            \App\Models\Property::query()->first()?->settings['agent_instructions'] ?? '',
+        ));
         if ($hotel !== '') {
             $blocks .= <<<BLOCK
 
@@ -3425,11 +3925,22 @@ BLOCK;
      */
     protected function toolset(bool &$handoff, ?Conversation $conversation = null, bool $readOnly = false, array &$used = [], string &$handoffReason = ''): array
     {
-        $call = function (string $method, array $params = []) use (&$used): string {
+        $call = function (string $method, array $params = []) use (&$used, $conversation): string {
             // Qué herramientas tocó esta respuesta: con eso se sabe si el
             // huésped venía cotizando (para avisarle al hotel fuera de
             // horario) sin tener que adivinarlo leyendo el texto.
             $used[] = $method;
+
+            // Dio el día sin mes: nada de consultar ni apartar hasta que lo
+            // diga. El prompt ya se lo pide; esto es por si no obedece.
+            if (in_array($method, ['availability', 'availability_overview', 'hold', 'group_hold'], true)
+                && $this->dayWithoutMonth($conversation) !== []) {
+                return json_encode([
+                    'ok' => false,
+                    'error' => 'El huésped dio el día sin el mes.',
+                    'que_hacer' => 'No consultes ni apartes todavía: pregúntale de qué mes habla y espera su respuesta.',
+                ], JSON_UNESCAPED_UNICODE);
+            }
 
             $request = Request::create('/brain', 'POST', $params);
 

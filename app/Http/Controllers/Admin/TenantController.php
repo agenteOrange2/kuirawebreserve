@@ -23,6 +23,20 @@ use Stancl\Tenancy\Database\Models\Domain;
  */
 class TenantController extends Controller
 {
+    /** Tablas centrales con tenant_id sin borrado en cascada. */
+    private const CENTRAL_TENANT_TABLES = [
+        'tenant_modules',
+        'module_activation_requests',
+        'meta_channel_links',
+        'evolution_channel_links',
+        'telegram_channel_links',
+        'tiktok_channel_links',
+        'payment_gateway_links',
+        'payment_method_settings',
+        'site_integrations',
+        'tenant_meta_apps',
+    ];
+
     public function index(): Response
     {
         $monthStart = now()->startOfMonth();
@@ -38,19 +52,7 @@ class TenantController extends Controller
         $rows = $tenants->map(function (Tenant $tenant) use ($aiUsage, $monthStart) {
             // Métricas de operación de la BD del tenant, con caché corto
             // para no abrir N conexiones en cada carga del listado.
-            $ops = \Illuminate\Support\Facades\Cache::remember(
-                // v2: se agregó 'mode' al rollup (spec-modo-motel).
-                "admin:tenant-ops:v2:{$tenant->id}",
-                600,
-                fn () => $tenant->run(fn () => [
-                    'users' => User::count(),
-                    'rooms' => \App\Models\Room::count(),
-                    'reservations_month' => \App\Models\Reservation::where('created_at', '>=', $monthStart)->count(),
-                    // Modo de operación: se administra SOLO desde este panel
-                    // (crear/editar), el tenant no lo puede tocar.
-                    'mode' => (\App\Models\Property::query()->first()?->settings ?? [])['property_mode'] ?? PropertyMode::HOTEL,
-                ]),
-            );
+            $ops = self::listingOps($tenant, $monthStart);
 
             $plan = config("plans.{$tenant->plan}", []);
 
@@ -66,10 +68,13 @@ class TenantController extends Controller
                 'suspended' => $tenant->isSuspended(),
                 'domain' => $tenant->domains->first()?->domain,
                 'created_at' => $tenant->created_at?->format('d/m/Y'),
-                'users' => $ops['users'],
-                'rooms' => $ops['rooms'],
-                'reservations_month' => $ops['reservations_month'],
+                'users' => $ops['users'] ?? null,
+                'rooms' => $ops['rooms'] ?? null,
+                'reservations_month' => $ops['reservations_month'] ?? null,
                 'mode' => $ops['mode'] ?? PropertyMode::HOTEL,
+                // false = su base no respondió: el renglón lo avisa en vez
+                // de tumbar el listado entero.
+                'reachable' => $ops !== null,
                 'ai_replies' => (int) ($aiUsage[$tenant->id] ?? 0),
             ];
         });
@@ -94,9 +99,57 @@ class TenantController extends Controller
                 'max_properties' => $plan['max_properties'],
                 'max_rooms' => $plan['max_rooms'],
                 'max_users' => $plan['max_users'],
+                'price_monthly' => (int) ($plan['price_monthly'] ?? 0),
                 'active' => (bool) ($plan['active'] ?? true),
             ])->values(),
         ]);
+    }
+
+    /**
+     * Métricas de operación de la BD del tenant para el listado, con caché
+     * corto para no abrir N conexiones en cada carga. Si la base de un hotel
+     * no responde devuelve null (y no se cachea): un hotel roto no debe
+     * tumbar el listado de todos.
+     *
+     * @return array{users: int, rooms: int, reservations_month: int, mode: string}|null
+     */
+    private static function listingOps(Tenant $tenant, \Carbon\CarbonInterface $monthStart): ?array
+    {
+        // v3: los usuarios ya no cuentan al bot (rol agent), igual que la ficha.
+        $key = "admin:tenant-ops:v3:{$tenant->id}";
+
+        if (($cached = \Illuminate\Support\Facades\Cache::get($key)) !== null) {
+            return $cached;
+        }
+
+        try {
+            $ops = $tenant->run(fn () => [
+                'users' => User::whereDoesntHave('roles', fn ($q) => $q->where('name', 'agent'))->count(),
+                'rooms' => \App\Models\Room::count(),
+                'reservations_month' => \App\Models\Reservation::where('created_at', '>=', $monthStart)->count(),
+                // Modo de operación: se administra SOLO desde este panel
+                // (crear/editar), el tenant no lo puede tocar.
+                'mode' => (Property::query()->first()?->settings ?? [])['property_mode'] ?? PropertyMode::HOTEL,
+            ]);
+        } catch (\Throwable $e) {
+            // run() no regresa a la base central si el callback truena: sin
+            // esto el resto de la petición seguiría apuntando a la base rota.
+            if (tenancy()->initialized) {
+                tenancy()->end();
+            }
+            report($e);
+
+            return null;
+        }
+
+        \Illuminate\Support\Facades\Cache::put($key, $ops, 600);
+
+        return $ops;
+    }
+
+    private static function forgetListingOps(Tenant $tenant): void
+    {
+        \Illuminate\Support\Facades\Cache::forget("admin:tenant-ops:v3:{$tenant->id}");
     }
 
     /**
@@ -118,11 +171,14 @@ class TenantController extends Controller
             'guests' => \App\Models\Guest::count(),
             'active_stays' => \App\Models\Stay::where('status', \App\Models\Stay::STATUS_ACTIVE)->count(),
             'reservations_month' => \App\Models\Reservation::where('created_at', '>=', $monthStart)->count(),
-            'revenue_month' => (float) \Illuminate\Support\Facades\DB::table('payments')
-                ->where('paid_at', '>=', $monthStart)->sum('amount'),
+            // La misma contabilidad que los cortes y reportes del hotel: sin
+            // la fianza (es un pasivo que se devuelve) ni el doble conteo
+            // de consumos cargados a la habitación.
+            'revenue_month' => (float) app(\App\Services\CashLedger::class)
+                ->summary($monthStart, now())['collected'],
             'conversations' => \App\Models\Conversation::count(),
             'conversations_pending' => \App\Models\Conversation::where('status', \App\Models\Conversation::STATUS_PENDING)->count(),
-            'recent_reservations' => \App\Models\Reservation::query()->latest()->take(6)->get()
+            'recent_reservations' => \App\Models\Reservation::query()->latest()->take(5)->get()
                 ->map(fn (\App\Models\Reservation $r) => [
                     'code' => $r->displayCode(),
                     'guest' => $r->guest_name,
@@ -133,8 +189,21 @@ class TenantController extends Controller
                 ])->values(),
         ]);
 
+        // Lo último que la plataforma le hizo a este hotel (bitácora del
+        // admin): quién le cambió el plan, lo suspendió o entró como dueño.
+        $activity = \App\Models\Central\AdminActivity::query()
+            ->with('user:id,name')
+            ->where('tenant_id', $tenant->id)
+            ->latest('id')
+            ->take(5)
+            ->get()
+            ->map(fn (\App\Models\Central\AdminActivity $a) => \App\Services\Admin\AdminActivityPresenter::present($a, [$tenant->id => $tenant->name]) + [
+                'user' => $a->user ? ['id' => $a->user->id, 'name' => $a->user->name] : null,
+            ]);
+
         return Inertia::render('admin/tenants/Overview', TenantAreaController::shell($tenant) + [
             'ops' => $ops,
+            'activity' => $activity,
             'contract' => [
                 'price_monthly' => $tenant->monthlyPrice(),
                 'addons' => $tenant->addonServices()->count(),
@@ -187,6 +256,25 @@ class TenantController extends Controller
         $tenant->domains()->create(['domain' => $domain]);
 
         // El hotel nace usable: dueño con rol owner + su primera propiedad.
+        // Si algo de esto falla se deshace el alta completa: un hotel a medio
+        // nacer (sin dueño) no se puede ni entrar a revisar.
+        try {
+            $this->seedNewTenant($tenant, $data);
+        } catch (\Throwable $e) {
+            report($e);
+            $tenant->delete();
+
+            return back()->withErrors(['name' => 'No se pudo terminar de crear el hotel; se deshizo el alta. Intenta de nuevo.']);
+        }
+
+        return redirect()->route('admin.tenants.show', $tenant);
+    }
+
+    /**
+     * @param  array<string, string>  $data
+     */
+    private function seedNewTenant(Tenant $tenant, array $data): void
+    {
         $tenant->run(function () use ($data) {
             $owner = User::create([
                 'name' => $data['owner_name'],
@@ -204,8 +292,6 @@ class TenantController extends Controller
                 'settings' => PropertyMode::seedSettings($data['mode']),
             ]);
         });
-
-        return redirect()->route('admin.tenants.index');
     }
 
     public function update(Request $request, Tenant $tenant): RedirectResponse
@@ -221,19 +307,22 @@ class TenantController extends Controller
         // Modo de operación: vive en el settings de la Property del tenant y
         // se administra SOLO desde aquí. Cambiarlo no re-siembra guest_policy
         // ni menú (eso es solo al crear): no se pisa lo que el hotel ya afinó.
-        $tenant->run(function () use ($data) {
+        $tenant->run(function () use ($data, $request) {
             $property = Property::query()->first();
+            $before = $property?->settings['property_mode'] ?? PropertyMode::HOTEL;
 
-            if ($property && (($property->settings['property_mode'] ?? PropertyMode::HOTEL) !== $data['mode'])) {
+            if ($property && $before !== $data['mode']) {
+                $request->attributes->set('admin_activity.changes', ['mode' => [$before, $data['mode']]]);
                 $property->update([
                     'settings' => array_merge($property->settings ?? [], ['property_mode' => $data['mode']]),
                 ]);
             }
         });
 
-        \Illuminate\Support\Facades\Cache::forget("admin:tenant-ops:v2:{$tenant->id}");
+        self::forgetListingOps($tenant);
 
-        return redirect()->route('admin.tenants.index');
+        // Se edita desde el listado y desde la ficha: volver a donde estaba.
+        return back();
     }
 
     /**
@@ -290,7 +379,8 @@ class TenantController extends Controller
             'suspended_at' => $tenant->isSuspended() ? null : now(),
         ]);
 
-        return redirect()->route('admin.tenants.index');
+        // Se suspende desde el listado y desde la ficha: volver a donde estaba.
+        return back();
     }
 
     /**
@@ -319,8 +409,29 @@ class TenantController extends Controller
     /**
      * Elimina el tenant Y SU BASE DE DATOS (pipeline DeleteDatabase).
      */
-    public function destroy(Tenant $tenant): RedirectResponse
+    public function destroy(Request $request, Tenant $tenant): RedirectResponse
     {
+        // Confirmación escrita: hay que teclear el subdominio del hotel.
+        $request->validate([
+            'confirm' => ['required', 'string', Rule::in([$tenant->id])],
+        ], [
+            'confirm.required' => 'Escribe el subdominio del hotel para confirmar.',
+            'confirm.in' => 'El subdominio no coincide.',
+        ]);
+
+        // Lo central que cuelga del hotel sin llave foránea: canales,
+        // pasarelas, tokens de integración, módulos forzados. Si se quedara,
+        // un hotel nuevo con el mismo subdominio lo heredaría (incluidas
+        // credenciales). La bitácora del admin sí se conserva.
+        \Illuminate\Support\Facades\DB::transaction(function () use ($tenant) {
+            foreach (self::CENTRAL_TENANT_TABLES as $table) {
+                if (\Illuminate\Support\Facades\Schema::hasTable($table)) {
+                    \Illuminate\Support\Facades\DB::table($table)->where('tenant_id', $tenant->id)->delete();
+                }
+            }
+        });
+
+        self::forgetListingOps($tenant);
         $tenant->delete();
 
         return redirect()->route('admin.tenants.index');

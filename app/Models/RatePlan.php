@@ -5,6 +5,7 @@ namespace App\Models;
 use App\Enums\RateDurationUnit;
 use App\Enums\RatePlanType;
 use Carbon\CarbonInterface;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -28,12 +29,14 @@ class RatePlan extends Model
         'deposit_amount',
         'min_advance_unit',
         'min_advance_value',
+        'min_advance_weekdays',
         'payment_due_unit',
         'payment_due_value',
         'cancel_free_unit',
         'cancel_free_value',
         'cancel_penalty_percent',
         'active',
+        'online',
     ];
 
     protected function casts(): array
@@ -45,6 +48,7 @@ class RatePlan extends Model
             'duration_value' => 'integer',
             'min_advance_unit' => RateDurationUnit::class,
             'min_advance_value' => 'integer',
+            'min_advance_weekdays' => 'array',
             'payment_due_unit' => RateDurationUnit::class,
             'payment_due_value' => 'integer',
             'cancel_free_unit' => RateDurationUnit::class,
@@ -54,7 +58,17 @@ class RatePlan extends Model
             'deposit_percent' => 'decimal:2',
             'deposit_amount' => 'decimal:2',
             'active' => 'boolean',
+            'online' => 'boolean',
         ];
+    }
+
+    /**
+     * Tarifas que el huésped puede contratar por su cuenta (asistente,
+     * wizard, sitio). Las de `online=false` solo se venden en recepción.
+     */
+    public function scopeSellableOnline(Builder $query): Builder
+    {
+        return $query->where('active', true)->where('online', true);
     }
 
     public function property(): BelongsTo
@@ -254,6 +268,18 @@ class RatePlan extends Model
             // una hora que el hotel no opera.
             [, [$outHour, $outMinute]] = $this->roomType?->effectiveScheduleTimes() ?? [[15, 0], [12, 0]];
 
+            // Corte de madrugada (Ajustes → Horarios, opcional): quien llega
+            // antes del corte cuenta como la noche anterior y sale HOY a la
+            // hora de salida (Hotel México: llega a las 5 AM, sale a las 12).
+            $sameDayEnd = $start->copy()->setTime($outHour, $outMinute);
+            $cutoff = $this->roomType?->nightCutoffTime();
+
+            if ($cutoff !== null
+                && $start < $start->copy()->setTime($cutoff[0], $cutoff[1])
+                && $start < $sameDayEnd) {
+                return $sameDayEnd;
+            }
+
             return $start->copy()->addDay()->setTime($outHour, $outMinute);
         }
 
@@ -301,18 +327,78 @@ class RatePlan extends Model
 
     public function violatesMinAdvance(CarbonInterface $start): bool
     {
+        if (! $this->minAdvanceAppliesOn($start)) {
+            return false;
+        }
+
         $earliest = $this->earliestStartAt();
 
         return $earliest !== null && $start < $earliest;
     }
 
+    /**
+     * La antelación puede valer solo para ciertos días de LLEGADA (Hotel
+     * México: viernes, sábado y domingo; entre semana se reserva el mismo
+     * día). Sin días marcados vale toda la semana.
+     */
+    public function minAdvanceAppliesOn(CarbonInterface $start): bool
+    {
+        $weekdays = $this->minAdvanceWeekdays();
+
+        return $weekdays === [] || in_array($start->dayOfWeek, $weekdays, true);
+    }
+
+    /** @return list<int> 0=domingo..6=sábado; vacío = toda la semana. */
+    public function minAdvanceWeekdays(): array
+    {
+        $weekdays = array_values(array_unique(array_map('intval', $this->min_advance_weekdays ?? [])));
+        sort($weekdays);
+
+        return count($weekdays) === 7 ? [] : $weekdays;
+    }
+
+    /** Para mostrar: "1 día" o "1 día (llegadas en viernes, sábado y domingo)". */
     public function minAdvanceLabel(): ?string
     {
         if (! $this->min_advance_unit || ! $this->min_advance_value) {
             return null;
         }
 
-        return $this->min_advance_unit->label($this->min_advance_value);
+        $label = $this->min_advance_unit->label($this->min_advance_value);
+        $days = $this->minAdvanceWeekdaysLabel('y');
+
+        return $days === null ? $label : "{$label} (llegadas en {$days})";
+    }
+
+    /** Frase para rechazar una reserva que no cumple la antelación. */
+    public function minAdvanceMessage(): string
+    {
+        $label = $this->min_advance_unit?->label((int) $this->min_advance_value) ?? '';
+        $days = $this->minAdvanceWeekdaysLabel('o');
+
+        return $days === null
+            ? "Esta tarifa requiere reservar con al menos {$label} de antelación."
+            : "Para llegar en {$days} hay que reservar con al menos {$label} de antelación.";
+    }
+
+    protected function minAdvanceWeekdaysLabel(string $conjunction): ?string
+    {
+        $weekdays = $this->minAdvanceWeekdays();
+
+        if ($weekdays === []) {
+            return null;
+        }
+
+        // Lunes primero: "viernes, sábado y domingo", no "domingo, viernes y sábado".
+        usort($weekdays, fn (int $a, int $b) => (($a + 6) % 7) <=> (($b + 6) % 7));
+
+        $names = array_map(
+            fn (int $day) => ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'][$day],
+            $weekdays,
+        );
+        $last = array_pop($names);
+
+        return $names === [] ? $last : implode(', ', $names)." {$conjunction} {$last}";
     }
 
     /**

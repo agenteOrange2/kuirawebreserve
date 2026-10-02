@@ -18,6 +18,7 @@ use App\Models\Property;
 use App\Models\Tenant;
 use App\Models\User;
 use App\Services\Payments\PaymentMethodGate;
+use App\Services\PropertyMode;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -50,12 +51,24 @@ class TenantAreaController extends Controller
                 'plan' => $tenant->plan,
                 'plan_label' => $plan['label'] ?? $tenant->plan,
                 'suspended' => $tenant->isSuspended(),
+                'suspended_since' => $tenant->suspended_at?->locale('es')->isoFormat('D [de] MMMM [de] YYYY'),
                 'domain' => $tenant->domains->first()?->domain,
                 'created_at' => $tenant->created_at?->format('d/m/Y'),
+                // Solicitudes de módulo del hotel que esperan respuesta: la
+                // cabecera las avisa en todas las áreas.
+                'module_requests' => $tenant->exists
+                    ? \App\Models\Central\ModuleActivationRequest::query()->where('tenant_id', $tenant->id)->count()
+                    : 0,
+                // El modal "Editar" de la cabecera lo manda de vuelta: sin él
+                // update() rechazaba el guardado entero (mode es requerido).
+                'mode' => $tenant->exists
+                    ? $tenant->run(fn () => (Property::query()->first()?->settings ?? [])['property_mode'] ?? PropertyMode::HOTEL)
+                    : PropertyMode::HOTEL,
             ],
             'plans' => collect(config('plans'))->map(fn (array $p, string $key) => [
                 'value' => $key,
                 'label' => $p['label'],
+                'active' => (bool) ($p['active'] ?? true),
             ])->values(),
         ];
     }
@@ -75,7 +88,13 @@ class TenantAreaController extends Controller
             'users' => User::whereDoesntHave('roles', fn ($q) => $q->where('name', 'agent'))->count(),
         ]);
 
-        $contractedKeys = $tenant->addonServices()->pluck('key');
+        // Contratado = la fila existe, aunque el servicio ya no esté en el
+        // catálogo (addonServices() solo trae los activos: con eso un
+        // contratado-pero-pausado salía como "no contratado" y el switch
+        // ofrecía contratarlo de nuevo).
+        $contractedKeys = \App\Models\Central\TenantAddonService::query()
+            ->where('tenant_id', $tenant->id)
+            ->pluck('addon_service_key');
 
         return Inertia::render('admin/tenants/Plan', self::shell($tenant) + [
             'limits' => [
@@ -101,6 +120,9 @@ class TenantAreaController extends Controller
                     'modules' => $service->modules ?? [],
                     'requires' => $service->requires,
                     'active' => $service->active,
+                    'ai_monthly_replies' => $service->ai_monthly_replies,
+                    'module_labels' => collect($service->modules ?? [])
+                        ->map(fn (string $key) => config("modules.{$key}.label", $key))->values(),
                     'contracted' => $contractedKeys->contains($service->key),
                 ])->values(),
         ]);
@@ -180,7 +202,10 @@ class TenantAreaController extends Controller
                         'phone' => $user->phone,
                         'role' => $role,
                         'role_label' => \App\Http\Controllers\Tenant\UsersPageController::ROLE_META[$role]['label'] ?? $role,
-                        'rank' => $role ? (array_search($role, $orden, true) ?: 0) : count($orden),
+                        // Un rol fuera del catálogo va al final, no arriba
+                        // del dueño (array_search da false y `?: 0` lo
+                        // convertía en el primer lugar).
+                        'rank' => ($i = $role ? array_search($role, $orden, true) : false) === false ? count($orden) : $i,
                         'on_shift' => $enTurno->contains($user->id),
                         'two_factor' => $user->two_factor_confirmed_at !== null,
                         'created_at' => $user->created_at?->format('d/m/Y'),
@@ -244,9 +269,7 @@ class TenantAreaController extends Controller
                 // Mismo cálculo que PlatformAgentGate: ajuste del hotel ??
                 // plan + cuota que aporten los servicios adicionales con IA.
                 'limit' => $setting->monthly_reply_limit
-                    ?? (($plan['ai']['monthly_replies'] ?? null) === null
-                        ? null
-                        : (int) $plan['ai']['monthly_replies'] + (int) $tenant->addonServices()->sum('ai_monthly_replies')),
+                    ?? \App\Services\Agent\PlatformAgentGate::defaultLimit($tenant),
                 'used' => TenantAiUsage::repliesThisMonth($tenant->id),
                 'tokens' => $tokens,
                 'byok_allowed' => $setting->byok_allowed,
@@ -313,6 +336,12 @@ class TenantAreaController extends Controller
                 ->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])
                 ->values(),
             'channelsAllowed' => \App\Models\Central\TenantAgentSetting::for($tenant->id)->allowedChannels(),
+            // El cupo del plan: el admin puede pasarse (no se le bloquea),
+            // pero tiene que verlo.
+            'channelLimit' => [
+                'max' => $tenant->planLimit('max_channels'),
+                'used' => \App\Services\Channels\ChannelPlanCounter::connected($tenant->id),
+            ],
         ]);
     }
 

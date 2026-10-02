@@ -228,8 +228,13 @@ class BookingLookupController extends Controller
             'can_cancel' => $this->selfCancelState($reservation)[0],
             'cancellation_policy' => app(\App\Services\ReservationPolicy::class)
                 ->cancellationPolicyLabel($reservation->ratePlan),
-            'cancellation_policy_text' => app(\App\Services\ReservationPolicy::class)
-                ->cancellationPolicyText(),
+            // Una reserva de último momento tiene sus propias condiciones
+            // (cabañas: sin reembolso, reagendar o fecha pendiente).
+            'cancellation_policy_text' => ((float) $reservation->deposit_amount > 0
+                && app(\App\Services\ReservationPolicy::class)->isShortNotice($reservation->starts_at, $reservation->created_at)
+                    ? app(\App\Services\ReservationPolicy::class)->shortNoticePolicyText()
+                    : null)
+                ?? app(\App\Services\ReservationPolicy::class)->cancellationPolicyText(),
             // Estimación honesta para el huésped: "si cancelas ahora, según
             // la política te corresponden $X". El reembolso en sí siempre lo
             // ejecuta el hotel, nunca este botón.

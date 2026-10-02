@@ -19,6 +19,7 @@ const props = defineProps<{
     settings: {
         check_in_time: string;
         check_out_time: string;
+        night_cutoff_time: string | null;
         currency: string;
         currency_secondary: string | null;
         exchange_rate: number | null;
@@ -39,6 +40,8 @@ const form = reactive({
     timezone: props.property.timezone,
     check_in_time: props.settings.check_in_time,
     check_out_time: props.settings.check_out_time,
+    night_cutoff_enabled: Boolean(props.settings.night_cutoff_time),
+    night_cutoff_time: props.settings.night_cutoff_time ?? '07:00',
     currency: props.settings.currency,
     currency_mode: props.settings.currency_secondary ? 'both' : 'single',
     currency_secondary: props.settings.currency_secondary ?? 'USD',
@@ -94,6 +97,9 @@ async function submit() {
             settings: {
                 check_in_time: form.check_in_time || null,
                 check_out_time: form.check_out_time || null,
+                night_cutoff_time: form.night_cutoff_enabled
+                    ? form.night_cutoff_time || null
+                    : null,
                 currency: form.currency || null,
                 currency_secondary:
                     form.currency_mode === 'both'
@@ -216,6 +222,49 @@ async function submit() {
                                     class="text-danger"
                                     >{{ errors.check_out_time }}</FormHelp
                                 >
+                            </div>
+                            <div
+                                class="rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                            >
+                                <div
+                                    class="flex items-start justify-between gap-4"
+                                >
+                                    <div class="text-xs">
+                                        <div class="text-sm font-medium">
+                                            Corte de madrugada
+                                        </div>
+                                        <p class="mt-1 text-xs text-slate-500">
+                                            Quien llega sin reserva antes de
+                                            esta hora cuenta como la noche
+                                            anterior y sale ese mismo día a la
+                                            hora de check-out.
+                                        </p>
+                                    </div>
+                                    <FormSwitch class="mt-1">
+                                        <FormSwitch.Input
+                                            :checked="form.night_cutoff_enabled"
+                                            type="checkbox"
+                                            @change="
+                                                form.night_cutoff_enabled =
+                                                    !form.night_cutoff_enabled
+                                            "
+                                        />
+                                    </FormSwitch>
+                                </div>
+                                <div
+                                    v-if="form.night_cutoff_enabled"
+                                    class="mt-3"
+                                >
+                                    <FormTime
+                                        v-model="form.night_cutoff_time"
+                                        input-class="h-9 text-xs"
+                                    />
+                                    <FormHelp
+                                        v-if="errors.night_cutoff_time"
+                                        class="text-danger"
+                                        >{{ errors.night_cutoff_time }}</FormHelp
+                                    >
+                                </div>
                             </div>
                         </div>
                     </div>

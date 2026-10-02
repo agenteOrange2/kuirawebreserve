@@ -40,10 +40,12 @@ class Property extends Model implements HasMedia
         'theme' => 'light',
     ];
 
-    /** Logo del wizard: un solo archivo; subir otro reemplaza al anterior. */
+    /** Logo del wizard y fondo del login: un archivo cada uno; subir otro reemplaza al anterior. */
     public function registerMediaCollections(): void
     {
         $this->addMediaCollection('wizard_logo')->singleFile()->useDisk('public');
+        // Foto del lado derecho del login del hotel (/ajustes/general/apariencia).
+        $this->addMediaCollection('login_background')->singleFile()->useDisk('public');
     }
 
     /**

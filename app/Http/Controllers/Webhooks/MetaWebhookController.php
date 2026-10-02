@@ -149,6 +149,17 @@ class MetaWebhookController extends Controller
                                 'message_id' => $status['id'] ?? null,
                                 'errors' => $status['errors'] ?? [],
                             ]);
+
+                            // Y además se marca: escribirlo en la bitácora y
+                            // ya era dejar al hotel creyendo que contestó.
+                            // 350 fallos en 12 días de cabañas, cero marcados
+                            // en la bandeja (auditoría 2026-09-24).
+                            app(\App\Services\Channels\MetaDeliveryFailures::class)->handle(
+                                (string) $link->tenant_id,
+                                $status['id'] ?? null,
+                                $status['recipient_id'] ?? null,
+                                $status['errors'] ?? [],
+                            );
                         }
                     }
                 }
@@ -545,8 +556,19 @@ class MetaWebhookController extends Controller
 
                 // Si el canal la rechaza, el huésped no la recibe aunque la
                 // bandeja la muestre: que alguien del hotel lo sepa.
-                if ($reply?->body && ! $this->api->sendText($link, $from, $reply->body)) {
-                    app(\App\Services\Channels\OutboundMessenger::class)->flagUndelivered($conversation, $reply);
+                if ($reply?->body) {
+                    if ($this->api->sendText($link, $from, $reply->body)) {
+                        // Meta acepta con 200 y reporta el fracaso después:
+                        // guardar sus ids es lo que permite ligar ese aviso
+                        // tardío con ESTE texto y marcarlo en la bandeja.
+                        if ($this->api->lastSentIds !== []) {
+                            $reply->forceFill([
+                                'meta' => array_merge($reply->meta ?? [], ['wamids' => $this->api->lastSentIds]),
+                            ])->saveQuietly();
+                        }
+                    } else {
+                        app(\App\Services\Channels\OutboundMessenger::class)->flagUndelivered($conversation, $reply);
+                    }
                 }
             } else {
                 if ($conversation->status !== Conversation::STATUS_PENDING) {

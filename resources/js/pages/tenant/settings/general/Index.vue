@@ -77,7 +77,8 @@ const cards = computed(() => [
         route: 'tenant.panel-appearance',
         icon: 'Palette' as const,
         title: 'Apariencia del panel',
-        description: 'Color de acento y del menú lateral para tu equipo.',
+        description:
+            'Colores del panel y la pantalla de inicio de sesión de tu equipo.',
         detail: 'Solo afecta lo que ve tu personal, no al huésped.',
         warn: false,
     },

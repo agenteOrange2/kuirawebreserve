@@ -347,6 +347,95 @@ it('el mensaje privado solo se puede mandar una vez y dentro de los 7 días', fu
         ->and($yaEnviado->canPrivateReply())->toBeFalse();
 });
 
+// ---------------------------------------------- precios que nadie tiene
+//
+// Caso real cabañas 2026-09-22 (Octavio, Messenger, comentario de Facebook):
+// "Las cabañas van desde $1,800 la noche para 4 personas" cuando la más
+// barata son $3,000. El prompt le ordenaba dar el precio "de room_types y
+// rate_plans", pero `policies()` NO trae precios —el chat los cotiza en vivo
+// con herramientas y este servicio no tiene ninguna—, así que el modelo hacía
+// lo único que podía con esa orden: inventarlos.
+
+function clasificadorDePrecios(): SocialCommentClassifier
+{
+    return app(SocialCommentClassifier::class);
+}
+
+function tarifaDeCabana(string $nombre, float $precio): void
+{
+    $type = \App\Models\RoomType::factory()->create([
+        'property_id' => test()->property->id,
+        'name' => $nombre,
+        'capacity' => 4,
+    ]);
+
+    \App\Models\Room::factory()->create([
+        'property_id' => test()->property->id,
+        'room_type_id' => $type->id,
+        'included_occupancy' => 4,
+        'max_occupancy' => 5,
+        'extra_guest_fee' => 250,
+    ]);
+
+    \App\Models\RatePlan::factory()->create([
+        'property_id' => test()->property->id,
+        'room_type_id' => $type->id,
+        'price' => $precio,
+    ]);
+}
+
+it('le pasa al modelo las tarifas reales del hotel', function () {
+    tarifaDeCabana('Cabaña Sencilla 1', 3000);
+    tarifaDeCabana('Cabaña Real', 4500);
+
+    $tarifas = (fn () => $this->rateReference())->call(clasificadorDePrecios());
+
+    expect($tarifas['habitaciones'])->toHaveCount(2)
+        // La más barata primero: es la que se usa para el "desde".
+        ->and($tarifas['habitaciones'][0]['habitacion'])->toBe('Cabaña Sencilla 1')
+        ->and($tarifas['habitaciones'][0]['desde'])->toBe(3000.0)
+        ->and($tarifas['habitaciones'][0]['unidad'])->toBe('noche')
+        ->and($tarifas['habitaciones'][1]['desde'])->toBe(4500.0);
+});
+
+it('borra el precio inventado y pide las fechas', function () {
+    tarifaDeCabana('Cabaña Sencilla 1', 3000);
+
+    $dicho = '{"clasificacion":"compra","respuesta_publica":"Con gusto te ayudamos.",'
+        .'"mensaje_privado":"Hola Octavio. Las cabañas van desde $1,800 la noche para 4 personas. Que fechas tenias en mente?"}';
+
+    $salida = clasificadorDePrecios()->parse($dicho);
+
+    expect($salida['mensaje_privado'])->not->toContain('1,800')
+        ->and($salida['mensaje_privado'])->toContain('Hola Octavio.')
+        // Él ya preguntó por las fechas: no se le pide dos veces lo mismo.
+        ->and($salida['mensaje_privado'])->toContain('Que fechas tenias en mente?')
+        ->and($salida['mensaje_privado'])->not->toContain('Dime tus fechas');
+});
+
+it('respeta los precios que sí son del hotel', function () {
+    tarifaDeCabana('Cabaña Sencilla 1', 3000);
+
+    $dicho = '{"clasificacion":"compra","respuesta_publica":"Con gusto.",'
+        .'"mensaje_privado":"Las cabañas van desde $3,000 la noche para 4 personas y cada persona extra cuesta $250."}';
+
+    $salida = clasificadorDePrecios()->parse($dicho);
+
+    expect($salida['mensaje_privado'])->toContain('$3,000')
+        ->and($salida['mensaje_privado'])->toContain('$250');
+});
+
+it('sin tarifas cargadas no manda ningún precio', function () {
+    // Sin una sola tarifa en el sistema, TODA cifra es inventada.
+    $dicho = '{"clasificacion":"compra","respuesta_publica":"Con gusto.",'
+        .'"mensaje_privado":"La cabaña más económica cuesta $2,500 la noche."}';
+
+    $salida = clasificadorDePrecios()->parse($dicho);
+
+    expect($salida['mensaje_privado'])->not->toContain('2,500')
+        ->and($salida['mensaje_privado'])->toContain('Dime tus fechas');
+});
+
 // ---------------------------------------------- lo evidente, sin IA
 //
 // Revisión de cabañas 2026-09-28: el mismo "Inf" salió como compra, elogio y
@@ -375,7 +464,7 @@ it('lo dudoso o las quejas siguen yendo a la IA', function (string $body) {
     'Hermoso lugar', 'No contestan les marco y marco y no contestan para reservar',
     'Qué tan cierto es que están carísimas ?', 'Hola saludos', 'LA RIFA PARA CUANDO ES ?????👀',
     'Me encantaria pero ya se metio la pache pache ala alberca nesecirarian desinfectar',
-    'Es donde empieza lo bonito de un viaje, en carretera.', 'Yo', 'Margie Garcia Cisneros que bonito, quiero ir !!!',
+    'Es donde empieza lo bonito de un viaje, en carretera.', 'Yo',
 ]);
 
 it('una etiqueta a un amigo no se contesta, no va al personal y no gasta IA', function () {
@@ -502,4 +591,81 @@ it('no reintenta cuando el usuario no admite respuesta', function () {
 
     expect(app(\App\Services\Meta\MetaApi::class)->privateReply(socialLink(), 'PAGE123_c1', 'Hola'))->toBeNull();
     Http::assertSentCount(1);
+});
+
+// ------------------------------------- quiere venir / prefiere otro lugar
+//
+// Cabañas 2026-10-01: a "qué bonito, quiero ir" se le contestaba "gracias por
+// recomendarnos, te esperamos de vuelta" como si ya hubiera venido, y a quien
+// decía que prefería otro lado también se le respondía.
+
+it('las reglas reconocen a quien quiere venir', function (string $body) {
+    expect((new \App\Services\Social\SocialIntentRules)->classify($body))->toBe(SocialComment::CLASS_INTEREST);
+})->with([
+    'Margie Garcia Cisneros que bonito, quiero ir !!!', 'Se ve hermoso, algún día', 'Quisiera conocer el lugar se ve hermoso',
+    'Me encantaría ir con mi familia', 'Qué ganas de ir', 'Uff se ven bien bonitas',
+]);
+
+it('las reglas reconocen a quien prefiere otro lugar', function (string $body) {
+    expect((new \App\Services\Social\SocialIntentRules)->classify($body))->toBe(SocialComment::CLASS_ELSEWHERE);
+})->with([
+    'Prefiero ir a otro lado', 'Mejor vamos a Creel', 'Está carísimo, mejor vamos a otro lado', 'Hay mejores y más baratas',
+]);
+
+it('un "quiero ir" con burla o queja no es evidente y lo lee la IA', function (string $body) {
+    expect((new \App\Services\Social\SocialIntentRules)->classify($body))->toBeNull();
+})->with([
+    'Me encantaria ir pero ya se metio la pache pache ala alberca', 'Se ve bonito jajaja',
+]);
+
+it('a quien quiere venir se le invita en público y por privado con la liga', function () {
+    Http::fake([
+        'graph.test/*/me/messages' => Http::response(['message_id' => 'mid.1', 'recipient_id' => 'PSID77']),
+        'graph.test/*/comments' => Http::response(['id' => 'reply-3']),
+    ]);
+    $comment = socialComment(['body' => 'Se ve hermoso, algún día']);
+
+    // El modelo se equivoca y lo llama elogio: la regla manda.
+    socialResponder([
+        'clasificacion' => SocialComment::CLASS_PRAISE,
+        'respuesta_publica' => 'Gracias por visitarnos',
+        'mensaje_privado' => '',
+    ])->handle($comment->fresh(), socialLink());
+
+    $comment->refresh();
+    expect($comment->classification)->toBe(SocialComment::CLASS_INTEREST)
+        ->and($comment->status)->toBe(SocialComment::STATUS_ANSWERED)
+        ->and($comment->public_reply_text)->toContain('Nos encantaría recibirte')
+        ->and($comment->public_reply_text)->not->toContain('visitarnos')
+        ->and($comment->private_reply_sent_at)->not->toBeNull();
+
+    $privado = Conversation::find($comment->conversation_id)->messages()->first()->body;
+    expect($privado)->toContain('fechas');
+});
+
+it('a quien prefiere otro lugar no se le contesta ni gasta IA', function () {
+    Http::fake();
+    $comment = socialComment(['body' => 'Mejor vamos a otro lado']);
+
+    socialResponder(null)->handle($comment->fresh(), socialLink());
+
+    $comment->refresh();
+    expect($comment->classification)->toBe(SocialComment::CLASS_ELSEWHERE)
+        ->and($comment->status)->toBe(SocialComment::STATUS_IGNORED)
+        ->and($comment->public_replied_at)->toBeNull();
+    Http::assertNothingSent();
+});
+
+it('el elogio por defecto solo agradece, sin suponer que ya vino', function () {
+    Http::fake(['graph.test/*/comments' => Http::response(['id' => 'reply-4'])]);
+    $comment = socialComment(['body' => 'Hermoso lugar']);
+
+    socialResponder([
+        'clasificacion' => SocialComment::CLASS_PRAISE,
+        'respuesta_publica' => '',
+        'mensaje_privado' => '',
+    ])->handle($comment->fresh(), socialLink());
+
+    expect($comment->fresh()->public_reply_text)->toStartWith('¡Muchas gracias por tus palabras')
+        ->and($comment->fresh()->public_reply_text)->not->toContain('esperamos');
 });

@@ -127,6 +127,9 @@ Route::middleware([
         ->name('avatar.show');
     Route::get('/fotos/logo', [\App\Http\Controllers\Tenant\PropertyLogoController::class, 'show'])
         ->name('property-logo');
+    // Fondo del login del hotel: público como el logo (el login no tiene sesión).
+    Route::get('/fotos/fondo-login', [\App\Http\Controllers\Tenant\LoginBackgroundController::class, 'show'])
+        ->name('login-background');
 
     // Foto de producto del POS. Pública como las de habitaciones: el wizard
     // ofrece productos al huésped sin login.
@@ -561,6 +564,10 @@ Route::middleware([
         Route::get('/ajustes/mails', \App\Http\Controllers\Tenant\MailSettingsPageController::class)
             ->middleware('can:properties.manage')
             ->name('mail-settings');
+        // Vista previa de los correos del hotel (datos de ejemplo).
+        Route::get('/ajustes/mails/vista-previa/{type}', [\App\Http\Controllers\Tenant\MailPreviewController::class, 'show'])
+            ->middleware('can:properties.manage')
+            ->name('mail-preview');
 
         // Área aislada de limpieza y cierre de día: flujo sucia → limpieza
         // → disponible (manual/automático/ambos) y qué pasa con reservadas
@@ -717,6 +724,14 @@ Route::middleware([
             ->middleware('can:properties.manage')
             ->name('property-logo.destroy');
 
+        // Fondo del login del hotel (/ajustes/general/apariencia).
+        Route::post('login-background', [\App\Http\Controllers\Tenant\LoginBackgroundController::class, 'store'])
+            ->middleware('can:properties.manage')
+            ->name('login-background.store');
+        Route::delete('login-background', [\App\Http\Controllers\Tenant\LoginBackgroundController::class, 'destroy'])
+            ->middleware('can:properties.manage')
+            ->name('login-background.destroy');
+
         // FAQs del hotel (se administran en /ajustes; alimentan al bot).
         Route::apiResource('faqs', \App\Http\Controllers\Tenant\FaqController::class)
             ->only(['store', 'update', 'destroy'])
@@ -731,6 +746,11 @@ Route::middleware([
         Route::post('smtp-test', \App\Http\Controllers\Tenant\SmtpTestController::class)
             ->middleware('can:properties.manage')
             ->name('smtp-test');
+
+        // Mandarse a sí mismo un correo de ejemplo (/ajustes/mails → Vista previa).
+        Route::post('mail-preview/{type}', [\App\Http\Controllers\Tenant\MailPreviewController::class, 'send'])
+            ->middleware(['can:properties.manage', 'throttle:6,1'])
+            ->name('mail-preview.send');
 
         // Integración con sitios: tokens + agente importador (validación
         // humana). Mismo gate que la página.
@@ -960,6 +980,8 @@ Route::middleware([
             Route::patch('reservations/{reservation}', [ReservationController::class, 'update'])->name('reservations.update');
             Route::patch('reservations/{reservation}/confirm', [ReservationController::class, 'confirm'])->name('reservations.confirm');
             Route::patch('reservations/{reservation}/cancel', [ReservationController::class, 'cancel'])->name('reservations.cancel');
+            // Cancelar sin reembolso dejando lo pagado para otra fecha.
+            Route::patch('reservations/{reservation}/date-pending', [ReservationController::class, 'datePending'])->name('reservations.date-pending');
             // Reabrir / reagendar una cancelada o un "no llegó" (mismo código).
             Route::patch('reservations/{reservation}/reopen', [ReservationController::class, 'reopen'])->name('reservations.reopen');
             Route::patch('reservations/{reservation}/check-in', [ReservationController::class, 'checkIn'])->name('reservations.check-in');

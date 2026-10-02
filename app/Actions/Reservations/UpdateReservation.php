@@ -46,7 +46,7 @@ class UpdateReservation
             // La antelación mínima aplica solo si se MUEVE la llegada (editar
             // notas de una reserva ya dentro de la ventana no debe fallar).
             if (! $start->equalTo($reservation->starts_at) && $ratePlan->violatesMinAdvance($start)) {
-                throw NoAvailabilityException::minAdvance($ratePlan->minAdvanceLabel());
+                throw NoAvailabilityException::minAdvance($ratePlan);
             }
 
             $oldRoom = Room::query()->whereKey($reservation->room_id)->lockForUpdate()->first();
@@ -130,7 +130,10 @@ class UpdateReservation
                 'discount_amount' => $discount,
                 'extra_charges' => $extraCharges ?: null,
                 // Cambiar tarifa/fechas recalcula anticipo y fecha límite.
-                'deposit_amount' => $ratePlan->depositAmountFor($total)
+                // El "último momento" se mide desde que se reservó, no desde
+                // la edición: mover cerca de la llegada una reserva hecha con
+                // tiempo no le sube el anticipo.
+                'deposit_amount' => app(\App\Services\ReservationPolicy::class)->depositFor($ratePlan, $total, $start, $reservation->created_at)
                     ?? $data['deposit_amount']
                     ?? $reservation->deposit_amount,
                 // Solo si se movió la llegada o la tarifa, y por la misma
@@ -140,7 +143,7 @@ class UpdateReservation
                 // el barrido de saldos la cancelaba a la hora siguiente.
                 'payment_due_at' => $start->equalTo($reservation->starts_at) && $ratePlan->id === $reservation->rate_plan_id
                     ? $reservation->payment_due_at
-                    : app(\App\Services\ReservationPolicy::class)->paymentDueAt($ratePlan, $start),
+                    : app(\App\Services\ReservationPolicy::class)->paymentDueAt($ratePlan, $start, $reservation->created_at),
                 'notes' => array_key_exists('notes', $data) ? $data['notes'] : $reservation->notes,
                 'guest_notes' => array_key_exists('guest_notes', $data) ? $data['guest_notes'] : $reservation->guest_notes,
             ]);

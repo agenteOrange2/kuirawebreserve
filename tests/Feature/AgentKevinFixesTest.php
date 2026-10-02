@@ -423,6 +423,55 @@ it('respeta los renglones: no amontona la lista en un párrafo', function () {
         ->and($salida)->not->toContain('$3,000 - Cabaña Sencilla 2');
 });
 
+/*
+ * Cabañas, 30-sep-2026: 10 personas del 16 al 18 de octubre. El modelo armó
+ * Prisma + Sencilla 2 + Sencilla 3 (todas libres), pero "Sencilla 2" contaba
+ * como las cuatro Sencillas; con la 1 y la 4 ocupadas el guardián borró los
+ * renglones de la 2 y la 3 y dejó "Total: $38,000" debajo de la Prisma sola.
+ */
+it('"Sencilla 2" nombra solo a la 2, no a toda la familia', function () {
+    [$date, $dicho] = diaDicho();
+    ocupar('Cabaña Sencilla 1', $date);
+
+    $texto = "Para el {$dicho} hay disponibles las siguientes cabañas:\n"
+        ."- Cabaña Sencilla 2: \$3,000 (4 personas)\n"
+        ."- Cabaña Luxury: \$3,500 (4 personas)\n"
+        .'- Total: $6,500';
+
+    expect(sanear($texto))->toBe($texto);
+});
+
+it('"las Sencillas" sin número siguen siendo toda la familia', function () {
+    [$date, $dicho] = diaDicho();
+    ocupar('Cabaña Sencilla 1', $date);
+
+    expect(sanear("Para el {$dicho} tenemos las Sencillas disponibles."))
+        ->toContain('Cabaña Sencilla 1 ya no está disponible');
+});
+
+it('"Sencillas 1 y 2" nombra a las dos que dice', function () {
+    [$date, $dicho] = diaDicho();
+    ocupar('Cabaña Sencilla 1', $date);
+
+    expect(sanear("Para el {$dicho} tenemos las Sencillas 1 y 2 disponibles."))
+        ->toContain('Cabaña Sencilla 1 ya no está disponible');
+});
+
+it('si borra un renglón con precio, se cae el total que ya no cuadra', function () {
+    [$date, $dicho] = diaDicho();
+    ocupar('Cabaña Sencilla 1', $date);
+
+    $salida = sanear("Para el {$dicho} hay disponibles las siguientes cabañas:\n"
+        ."- Cabaña Sencilla 1: \$3,000\n"
+        ."- Cabaña Luxury: \$3,500\n"
+        ."- Total: \$6,500\n\n"
+        .'¿Te interesa apartar?');
+
+    expect($salida)->not->toContain('Total')
+        ->and($salida)->toContain('- Cabaña Luxury: $3,500')
+        ->and($salida)->toContain('¿Te interesa apartar?');
+});
+
 it('en prosa borra solo la frase de la cabaña ocupada, no el párrafo entero', function () {
     [$date, $dicho] = diaDicho();
     ocupar('Cabaña Luxury', $date);
@@ -483,6 +532,75 @@ it('lo que sí necesita una persona se sigue transfiriendo', function (string $d
     'el motivo habla de un pago' => ['para el 26 de septiembre?', 'insiste en que ya hizo el depósito'],
     'sin mensajes del huésped' => ['', ''],
 ]);
+
+// ------------- Contestar la pregunta del bot no es pedir una persona
+//
+// Revisión del 2026-09-22 sobre el VPS: 52 traspasos en 14 días y el freno de
+// arriba solo habría atrapado 6. El huésped que ya está cotizando contesta con
+// una palabra —"Sábado", "Solo 1", "Para 2 adultos y tres menores"— y en ese
+// mensaje no hay ni fecha escrita ni la palabra "precio", así que el traspaso
+// pasaba de largo y el personal acababa cotizando a mano, hasta una hora
+// después, lo que el bot ya sabía.
+
+function esPrematuroTrasPregunta(string $preguntoElBot, string $dijoElHuesped): bool
+{
+    $channel = Channel::firstOrCreate(
+        ['property_id' => test()->property->id, 'type' => Channel::TYPE_WHATSAPP_EVOLUTION, 'external_id' => '1'],
+        ['name' => 'WhatsApp', 'mode' => 'auto', 'active' => true],
+    );
+    $conversation = Conversation::create([
+        'channel_id' => $channel->id,
+        'contact_phone' => '52165'.random_int(10000000, 99999999),
+        'status' => Conversation::STATUS_OPEN,
+        'last_message_at' => now(),
+    ]);
+    $conversation->messages()->create([
+        'direction' => 'out',
+        'sender_type' => 'bot',
+        'body' => $preguntoElBot,
+        'created_at' => now(),
+    ]);
+    $conversation->messages()->create([
+        'direction' => 'in',
+        'sender_type' => 'guest',
+        'body' => $dijoElHuesped,
+        'created_at' => now(),
+    ]);
+
+    return (new ReflectionMethod(AgentBrain::class, 'handoffIsPremature'))
+        ->invoke(app(AgentBrain::class), $conversation, '');
+}
+
+it('contestar lo que el bot preguntó no justifica transferir', function (string $pregunto, string $dijo) {
+    expect(esPrematuroTrasPregunta($pregunto, $dijo))->toBeTrue();
+})->with([
+    'conv. 1231' => ['¿Es una noche o dos? ¿Y la llegada sería viernes o sábado?', 'Sábado'],
+    'conv. 1244' => ['¿Para qué fechas la quiere y son exactamente 4 personas?', 'Tengo fechas en mente'],
+    'conv. 1258' => ['¿Para cuántas personas sería la cabaña?', 'Para 2 adultos y tres menores'],
+    'conv. 989' => ['¿Cuántas noches se quedarían?', 'Solo 1'],
+    'el horario de una cabaña' => ['¿Qué cabaña le interesa?', 'Desde a qui horas a qui horas es la De cabaña real'],
+    'un sí a secas' => ['¿Le interesa que revise esa fecha?', 'Si'],
+]);
+
+it('lo que el hotel atiende a mano se sigue transfiriendo aunque el bot haya preguntado', function (string $pregunto, string $dijo) {
+    expect(esPrematuroTrasPregunta($pregunto, $dijo))->toBeFalse();
+})->with([
+    'una cena romántica' => ['¿Para qué fechas y cuántas personas?', 'Un cena romántica'],
+    'quiere ir a verlas' => ['¿Para qué fechas busca la cabaña?', 'Podría ir a verlas?'],
+    'una cita' => ['¿Qué fechas tiene en mente?', 'quisiera hacer una cita para dejar el apartado y ver la cabaña'],
+    'decoración' => ['¿Qué cabaña le interesa?', 'Cabaña luxury con la decoracion de los globos y petalos'],
+    'un trato comercial' => ['¿Para cuántas personas?', 'Á ver si le interesa la publicidad por intercambio'],
+    'un festejo sin hospedaje' => ['¿Sería una noche o dos?', 'se pueden hacer festejos, y que no se queden a dormir ?'],
+    'el bot no había preguntado nada' => ['Con gusto le ayudo.', 'Sábado'],
+]);
+
+it('un día de la semana con número ya frena el traspaso', function () {
+    // El modo estricto no veía ninguna fecha en "sábado 26" y el traspaso
+    // seguía de largo; el suelto sí la resuelve.
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-22 10:25'));
+
+    expect(esPrematuro('Sábado 26'))->toBeTrue();
+});
 
 // ------------- "para el sabado" (cabañas, conv. 917, RES-2026-1758)
 //

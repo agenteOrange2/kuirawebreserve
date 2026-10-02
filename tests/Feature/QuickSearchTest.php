@@ -69,8 +69,9 @@ it('encuentra una reserva por su código y por el nombre de quien reservó', fun
     $porCodigo = groupNamed(quickSearch($user, $reservation->displayCode()), 'Reservas');
     expect($porCodigo['items'][0]['title'])->toBe($reservation->displayCode())
         ->and($porCodigo['items'][0]['subtitle'])->toContain('Yaz Ramírez')
-        // Cae en el historial, que es la única lista con buscador de servidor.
-        ->and($porCodigo['items'][0]['url'])->toContain('/reservas/historial?q=');
+        // Abre su ficha: el historial solo lista las terminadas y una
+        // confirmada no aparecía ahí.
+        ->and($porCodigo['items'][0]['url'])->toBe('/reservas/'.$reservation->id);
 
     // Y por nombre, que es como la busca quien contesta el teléfono.
     expect(groupNamed(quickSearch($user, 'Ramírez'), 'Reservas')['items'])->toHaveCount(1);

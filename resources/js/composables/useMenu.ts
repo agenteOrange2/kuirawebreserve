@@ -29,23 +29,32 @@ export interface MenuItem {
 }
 
 // Menú del panel de plataforma (dominio central, rol platform-admin).
+// Agrupado por lo que se viene a hacer: el día a día arriba (cómo va y qué
+// pide atención), luego los clientes, lo que se les vende, las
+// integraciones que la plataforma presta y al final los ajustes propios.
 const centralMenu: Array<MenuItem | string> = [
     {
         icon: 'LayoutDashboard',
         pageName: 'admin.dashboard',
         title: 'Dashboard',
     },
-    'PLATAFORMA',
+    {
+        icon: 'Bell',
+        pageName: 'admin.alerts',
+        title: 'Notificaciones',
+    },
+    'CLIENTES',
     {
         icon: 'Building2',
         pageName: 'admin.tenants.index',
         title: 'Hoteles',
     },
     {
-        icon: 'UserCog',
-        pageName: 'admin.users',
-        title: 'Usuarios',
+        icon: 'ContactRound',
+        pageName: 'admin.prospects',
+        title: 'Prospectos',
     },
+    'CATÁLOGO',
     {
         icon: 'Layers',
         pageName: 'admin.plans',
@@ -56,11 +65,7 @@ const centralMenu: Array<MenuItem | string> = [
         pageName: 'admin.services',
         title: 'Servicios adicionales',
     },
-    {
-        icon: 'ContactRound',
-        pageName: 'admin.prospects',
-        title: 'Prospectos',
-    },
+    'INTEGRACIONES',
     {
         icon: 'Bot',
         pageName: 'admin.ai',
@@ -69,12 +74,18 @@ const centralMenu: Array<MenuItem | string> = [
     {
         icon: 'CreditCard',
         pageName: 'admin.payments',
-        title: 'Pagos',
+        title: 'Cobros y pasarelas',
+    },
+    'AJUSTES',
+    {
+        icon: 'UserCog',
+        pageName: 'admin.users',
+        title: 'Usuarios del admin',
     },
     {
         icon: 'Palette',
         pageName: 'admin.branding',
-        title: 'Apariencia',
+        title: 'Marca',
     },
     {
         icon: 'Settings',
@@ -383,7 +394,17 @@ export function useMenu() {
 
     const menu = computed(() => {
         if (!isTenantPanel.value) {
-            return centralMenu;
+            // El número de avisos sin leer viaja en el share (adminAlerts).
+            const unread =
+                (page.props.adminAlerts as { unread?: number } | null)
+                    ?.unread ?? 0;
+            return centralMenu.map((item) =>
+                typeof item !== 'string' &&
+                item.pageName === 'admin.alerts' &&
+                unread > 0
+                    ? { ...item, badge: unread > 99 ? '99+' : String(unread) }
+                    : item,
+            );
         }
 
         // Items de módulos apagados desaparecen del menú (spec-plan-maestro E1)

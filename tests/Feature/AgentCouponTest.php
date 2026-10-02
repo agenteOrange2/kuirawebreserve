@@ -242,7 +242,9 @@ it('no aplica el cupón de lunes a jueves en una noche de domingo', function () 
     Coupon::query()->delete();
     Coupon::create(['code' => 'PACHEPACHE', 'kind' => 'percent', 'value' => 30, 'weekdays' => [1, 2, 3, 4], 'active' => true]);
 
-    // Domingo 27 de septiembre de 2026, el caso que reportó el hotel.
+    // Domingo 27 de septiembre de 2026, el caso que reportó el hotel. El
+    // reloj se fija antes de esa fecha: ya pasada, el candado la movería.
+    $this->travelTo(\Illuminate\Support\Carbon::parse('2026-09-20 10:00'));
     $domingo = \Illuminate\Support\Carbon::parse('2026-09-27 14:00');
     $conversation = couponConversation('vengo del video del pache pache');
 
@@ -450,4 +452,90 @@ it('la promesa del descuento se borra y la verdad va primero', function () {
         ->and($salida)->toContain('Cabaña Luxury');
 
     expect($cupon->fresh()->code)->toBe('PACHEPACHE');
+});
+
+// ------------------------------- la fecha que SÍ aplica, para no perder al lead
+//
+// Auditoría del VPS (2026-09-24): 62 chats de cabañas llegaron por el video de
+// PACHEPACHE en 30 días y el cupón solo se usó 6 veces. De los 48 rechazos,
+// **40 fueron por el día de la semana**: el video trae gente de fin de semana
+// y el cupón es de lunes a jueves. Decirles "no aplica" a secas es perder la
+// venta; decirles cuándo sí aplica es moverles la fecha.
+
+it('al rechazar por el día de la semana ofrece la fecha más cercana que sí aplica', function () {
+    Coupon::query()->delete();
+    $cupon = Coupon::create([
+        'code' => 'PACHEPACHE',
+        'kind' => 'percent',
+        'value' => 30,
+        'weekdays' => [1, 2, 3, 4], // lunes a jueves
+        'ends_at' => \Illuminate\Support\Carbon::parse('2026-10-15'),
+        'active' => true,
+    ]);
+
+    // Jueves 24 de septiembre de 2026: el huésped pide el sábado 26.
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-24 12:00'));
+
+    $motivo = $cupon->stayRejectionReason(
+        \Carbon\CarbonImmutable::parse('2026-09-26 14:00'),
+        1,
+        null,
+        \Carbon\CarbonImmutable::parse('2026-09-27 11:00'),
+    );
+
+    expect($motivo)->toContain('lunes, martes, miércoles y jueves')
+        ->and($motivo)->toContain('La fecha más cercana en la que sí aplica')
+        // El siguiente día que cumple es el lunes 28.
+        ->and($motivo)->toContain('lunes 28 de septiembre');
+});
+
+it('respeta las noches que pidió al sugerir la fecha', function () {
+    Coupon::query()->delete();
+    $cupon = Coupon::create([
+        'code' => 'PACHEPACHE',
+        'kind' => 'percent',
+        'value' => 30,
+        'weekdays' => [1, 2, 3, 4],
+        'ends_at' => \Illuminate\Support\Carbon::parse('2026-10-15'),
+        'active' => true,
+    ]);
+
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-09-24 12:00'));
+
+    // Dos noches desde el viernes: la sugerencia tiene que caber entera
+    // entre lunes y jueves.
+    $motivo = $cupon->stayRejectionReason(
+        \Carbon\CarbonImmutable::parse('2026-10-02 14:00'),
+        2,
+        null,
+        \Carbon\CarbonImmutable::parse('2026-10-04 11:00'),
+    );
+
+    expect($motivo)->toContain('2 noches')
+        ->and($motivo)->toMatch('/lunes|martes|mi[ée]rcoles/');
+});
+
+it('si el cupón ya no alcanza ninguna fecha, no promete nada', function () {
+    Coupon::query()->delete();
+    $cupon = Coupon::create([
+        'code' => 'PACHEPACHE',
+        'kind' => 'percent',
+        'value' => 30,
+        'weekdays' => [1, 2, 3, 4],
+        'ends_at' => \Illuminate\Support\Carbon::parse('2026-10-15'),
+        'active' => true,
+    ]);
+
+    // Ya pasó la vigencia: nada que ofrecer.
+    $this->travelTo(\Carbon\CarbonImmutable::parse('2026-10-20 12:00'));
+
+    $motivo = $cupon->stayRejectionReason(
+        \Carbon\CarbonImmutable::parse('2026-10-26 14:00'),
+        1,
+        null,
+        \Carbon\CarbonImmutable::parse('2026-10-27 11:00'),
+    );
+
+    expect($motivo)->toContain('hasta el 15/10/2026')
+        ->and($motivo)->not->toContain('La fecha más cercana');
 });

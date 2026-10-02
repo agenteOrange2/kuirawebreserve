@@ -44,6 +44,16 @@ class ProspectDocumentController extends Controller
             'services' => collect($services)
                 ->map(fn (string $label, string $key) => ['key' => $key, 'label' => $label])
                 ->values(),
+            // Cuántos prospectos vivos pidió cada servicio: así se ve qué
+            // servicio se queda sin nada que mandarles.
+            'demand' => collect(array_keys(PlanProspect::SERVICES))
+                ->mapWithKeys(fn (string $key) => [$key => PlanProspect::query()
+                    ->whereNotIn('status', ['won', 'lost'])
+                    ->whereJsonContains('services', $key)
+                    ->count()])
+                ->put(ProspectDocument::GENERAL_SERVICE, PlanProspect::query()
+                    ->whereNotIn('status', ['won', 'lost'])
+                    ->count()),
         ]);
     }
 

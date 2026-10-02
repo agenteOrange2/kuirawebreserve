@@ -49,7 +49,7 @@ class BookingWizardController extends Controller
         // acotado a una habitación, de las tarifas de ESA (si la cabaña solo
         // se vende por noche, su embed no ofrece "por unas horas").
         $activeRatePlans = RatePlan::query()
-            ->where('active', true)
+            ->sellableOnline()
             ->when($lockedType, fn ($q) => $q->where('room_type_id', $lockedType->id))
             ->whereHas('roomType', fn ($q) => $q->where('active', true));
 

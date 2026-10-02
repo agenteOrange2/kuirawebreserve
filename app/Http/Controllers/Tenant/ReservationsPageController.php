@@ -380,6 +380,8 @@ class ReservationsPageController extends Controller
             'notes' => $r->notes,
             'guest_notes' => $r->guest_notes,
             'cancellation_reason' => $r->cancellation_reason,
+            'date_pending_at' => $r->date_pending_at?->toIso8601String(),
+            'date_pending_note' => $r->date_pending_note,
             'guest_phone' => $r->guest?->phone,
             'guest_email' => $r->guest?->email,
             'deposit_amount' => $r->deposit_amount,

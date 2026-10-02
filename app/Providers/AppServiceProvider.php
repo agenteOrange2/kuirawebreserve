@@ -37,6 +37,53 @@ class AppServiceProvider extends ServiceProvider
             \Spatie\MediaLibrary\MediaCollections\Events\MediaHasBeenAddedEvent::class,
             [\App\Services\Payments\PaymentProofHoldExtender::class, 'handle'],
         );
+
+        $this->recordCentralAccess();
+    }
+
+    /**
+     * Accesos al panel de plataforma en la bitácora del admin. Solo en el
+     * dominio central: los hoteles tienen su propia tabla users (los ids
+     * chocarían) y el "Entrar como" ya queda registrado como acción.
+     */
+    protected function recordCentralAccess(): void
+    {
+        $central = fn () => ! tenancy()->initialized;
+        $recorder = \App\Services\Admin\AdminActivityRecorder::class;
+
+        \Illuminate\Support\Facades\Event::listen(
+            \Illuminate\Auth\Events\Login::class,
+            function ($event) use ($central, $recorder) {
+                if ($central() && $event->user instanceof \App\Models\User) {
+                    $recorder::record($event->user, 'auth.login', properties: array_filter(['remember' => $event->remember ?: null]));
+                }
+            },
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \Illuminate\Auth\Events\Logout::class,
+            function ($event) use ($central, $recorder) {
+                if ($central() && $event->user instanceof \App\Models\User) {
+                    $recorder::record($event->user, 'auth.logout');
+                }
+            },
+        );
+        \Illuminate\Support\Facades\Event::listen(
+            \Illuminate\Auth\Events\Failed::class,
+            function ($event) use ($central, $recorder) {
+                if (! $central()) {
+                    return;
+                }
+                $email = (string) ($event->credentials['email'] ?? '');
+                $user = $event->user instanceof \App\Models\User
+                    ? $event->user
+                    : \App\Models\User::where('email', $email)->first();
+                // Correos que no existen no se guardan: sería llenar la
+                // bitácora de ruido de bots sin nadie a quien atribuirlo.
+                if ($user) {
+                    $recorder::record($user, 'auth.failed');
+                }
+            },
+        );
     }
 
     /**

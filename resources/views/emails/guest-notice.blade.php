@@ -1,20 +1,14 @@
 {{-- El encabezado ya rotula al hotel (logo o nombre): aquí no se repite. --}}
-<x-mail::message>
+<x-mail::message :preheader="$code ? 'Folio '.$code : null">
 {{ $bodyText }}
 
 @if (count($details))
-<x-mail::panel>
+<x-mail::rows :title="$code ? 'Folio '.$code : null" :rows="collect($details)->mapWithKeys(fn ($detail) => [$detail['label'] => $detail['value']])->all()" />
+@endif
+
 @if ($code)
-**{{ $code }}**
-
+Guarda tu folio **{{ $code }}**: te lo pueden pedir en el hotel.
 @endif
-@foreach ($details as $detail)
-{{ $detail['label'] }}: {{ $detail['value'] }}<br>
-@endforeach
-</x-mail::panel>
-@endif
-
-Guarda tu folio: te lo pueden pedir en el hotel.
 
 Gracias,<br>
 {{ $hotelName }}

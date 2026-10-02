@@ -93,7 +93,10 @@ class HandleInertiaRequests extends Middleware
             'branding' => [
                 'app_name' => \App\Models\Central\PlatformSetting::get('app_name', 'KuiraReserve'),
                 'logo_url' => ($p = \App\Models\Central\PlatformSetting::get('logo_path')) ? '/storage/'.$p : null,
+                'login_heading' => \App\Models\Central\PlatformSetting::get('login_heading'),
+                'login_hint' => \App\Models\Central\PlatformSetting::get('login_hint'),
                 'login_title' => \App\Models\Central\PlatformSetting::get('login_title'),
+                'login_overlay' => \App\Models\Central\PlatformSetting::get('login_overlay', 'strong'),
                 'login_subtitle' => \App\Models\Central\PlatformSetting::get('login_subtitle'),
                 'login_background_url' => ($b = \App\Models\Central\PlatformSetting::get('login_background_path')) ? '/storage/'.$b : null,
             ],
@@ -114,6 +117,15 @@ class HandleInertiaRequests extends Middleware
                 ...(new \Tighten\Ziggy\Ziggy)->toArray(),
                 'location' => $request->url(),
             ],
+            // Avisos abiertos del panel de plataforma: alimentan la campana y
+            // el número del menú. Solo en la central y para administradores.
+            'adminAlerts' => fn () => ! tenancy()->initialized && $request->user()?->hasRole('platform-admin')
+                ? [
+                    'open' => \App\Models\Central\PlatformAlert::query()->open()->count(),
+                    'unread' => \App\Models\Central\PlatformAlert::query()->open()->whereNull('read_at')->count(),
+                    'danger' => \App\Models\Central\PlatformAlert::query()->open()->where('severity', 'danger')->count(),
+                ]
+                : null,
             'sidebarOpen' => ! $request->hasCookie('sidebar_state') || $request->cookie('sidebar_state') === 'true',
         ];
     }

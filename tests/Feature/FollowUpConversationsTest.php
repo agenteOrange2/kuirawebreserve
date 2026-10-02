@@ -204,6 +204,41 @@ it('un hotel sin ajustes se comporta igual que siempre', function () {
 });
 
 /**
+ * Pedido de Hotel México (2026-09-30): el "¿sigues por ahí?" solo para quien
+ * se quedó en el paso de dar sus datos. En su conversación de prueba el bot
+ * contestó el precio por noche y el aviso salió igual.
+ */
+it('en modo "solo tras pedir datos" no persigue a quien solo preguntó el precio', function () {
+    $this->property->update(['settings' => ['nudge_only_after_data_request' => true]]);
+
+    $conversation = coldConversation([
+        ['in', 'y si la quiero por 1 mes'],
+        ['out', 'La Sencilla por un mes tiene un total de $14,160.00. Para apartarla necesito su nombre completo y correo electrónico. ¿Me los proporciona?'],
+        ['in', '¿Qué precio tiene por noche?'],
+        ['out', 'La Sencilla cuesta $590.00 por noche. ¿Para cuántas personas sería?'],
+    ]);
+
+    test()->artisan('conversations:follow-up')->assertSuccessful();
+
+    expect($conversation->messages()->count())->toBe(4)
+        ->and($conversation->refresh()->followupSent('quote_nudge'))->toBeFalse();
+});
+
+it('en modo "solo tras pedir datos" sí le escribe a quien dejamos en el paso de sus datos', function () {
+    $this->property->update(['settings' => ['nudge_only_after_data_request' => true]]);
+
+    $conversation = coldConversation([
+        ['in', 'Pero quiero la semana completa'],
+        ['out', 'La Sencilla por una semana tiene un total de $3,510.50. Para apartarla necesito su nombre completo y correo electrónico. ¿Me los proporciona?'],
+    ]);
+
+    test()->artisan('conversations:follow-up')->assertSuccessful();
+
+    expect(lastBody($conversation))->toContain('Quedé pendiente de tus datos para apartar tu habitación')
+        ->and($conversation->refresh()->followupSent('quote_nudge'))->toBeTrue();
+});
+
+/**
  * Recordatorio y vencimiento de apartados. Caso real cabañas 2026-09-13
  * (RES-2026-1727): el recordatorio prometía "aviso a recepción para que lo
  * confirmen" —no existía ningún aviso— y la conv. 605 recibió "venció" dos

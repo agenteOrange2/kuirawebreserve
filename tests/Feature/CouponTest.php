@@ -211,7 +211,10 @@ it('el cupón por días de la semana exige que toda la estancia caiga en esos d�
     expect($coupon->rejectionReason(null, $friday, 3, null, $friday->addDays(3)))->toBeNull()
         // Jueves a sábado: la noche del jueves queda fuera.
         ->and($coupon->rejectionReason(null, $thursday, 2, null, $thursday->addDays(2)))
-        ->toBe('Este cupón aplica solo para estancias en viernes, sábado y domingo.')
+        // Desde el 2026-09-24 el motivo trae además la fecha cercana que sí
+        // aplica: decir "no" a secas perdía al huésped (40 de 48 rechazos de
+        // PACHEPACHE eran por el día de la semana).
+        ->toStartWith('Este cupón aplica solo para estancias en viernes, sábado y domingo.')
         // Sin salida: solo cuenta el día de llegada.
         ->and($coupon->rejectionReason(null, $friday, 1, null))->toBeNull()
         // Una semana completa pasa por el lunes: no aplica.
