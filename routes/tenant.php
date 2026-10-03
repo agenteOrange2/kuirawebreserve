@@ -998,6 +998,9 @@ Route::middleware([
             Route::delete('reservations/{reservation}/payment-request/{paymentRequest}', [ReservationController::class, 'cancelPayment'])->name('reservations.payment-request.cancel');
             // Reembolsos (spec-pagos F4): siempre decisión humana.
             Route::post('reservations/{reservation}/payments/{payment}/refund', [ReservationController::class, 'refundPayment'])->name('reservations.payments.refund');
+            // Pago registrado por error (el mismo dinero dos veces): se quita
+            // sin avisar al huésped y sin contarlo como devolución.
+            Route::delete('reservations/{reservation}/payments/{payment}', [ReservationController::class, 'removePayment'])->name('reservations.payments.destroy');
             // Cupón sobre una reserva ya creada (módulo cupones): el descuento
             // prometido que no se escribió al reservar se aplica desde su ficha.
             Route::post('reservations/{reservation}/coupon', [ReservationController::class, 'applyCoupon'])

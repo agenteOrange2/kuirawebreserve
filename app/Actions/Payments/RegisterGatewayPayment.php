@@ -86,6 +86,20 @@ class RegisterGatewayPayment
                             number_format((float) $request->amount, 2),
                         ));
                     }
+                } elseif (empty($data['confirm_overpay'])
+                    && ($handTwin = $this->capturedByHand($reservation, $request))) {
+                    // Caso real cabañas 2026-10-03 (reserva 1789): el anticipo
+                    // se capturó a mano y su comprobante se aprobó como cobro
+                    // de SALDO por el mismo monto (con 50 % de anticipo valen
+                    // igual). Nada de lo de arriba lo detenía y la reserva
+                    // quedó "Pagada" con el dinero doble. Aquí no se liga
+                    // solo: puede ser el saldo de verdad, así que se pregunta.
+                    throw new PaymentNeedsConfirmation(sprintf(
+                        'El %s ya se capturó a mano un pago de $%s (%s) en esta reserva. Si este comprobante es ese mismo dinero, no lo apruebes: recházalo. Si es otro pago, confírmalo.',
+                        $handTwin->created_at->format('d/m/Y \\a \\l\\a\\s H:i'),
+                        number_format((float) $handTwin->amount, 2),
+                        mb_strtolower(Payment::methodLabel($handTwin->method)),
+                    ), confirmLabel: 'Sí, es otro pago');
                 }
             }
 
@@ -342,6 +356,23 @@ class RegisterGatewayPayment
             ->where('created_at', '>=', $request->created_at->copy()->subDay())
             ->get()
             ->sortBy(fn (Payment $payment) => [$payment->id === $supersededBy ? 0 : 1, $payment->id])
+            ->first();
+    }
+
+    /**
+     * Un pago capturado a mano (cualquier método) por el mismo monto y en la
+     * misma ventana que capturedTransfer: el candidato a ser este mismo
+     * dinero. Solo los abonos de la reserva, no los cobros del folio.
+     */
+    protected function capturedByHand(Reservation $reservation, PaymentRequest $request): ?Payment
+    {
+        return $reservation->payments()
+            ->whereNull('payment_request_id')
+            ->whereNull('kind')
+            ->whereIn('method', Payment::METHODS)
+            ->where('amount', $request->amount)
+            ->where('created_at', '>=', $request->created_at->copy()->subDay())
+            ->oldest('id')
             ->first();
     }
 

@@ -14,6 +14,8 @@ export interface PaymentRow {
     refunded: number;
     refundable: number;
     via_gateway: boolean;
+    /** Se puede quitar por registrado por error (no es pasarela, folio ni reembolsado). */
+    removable?: boolean;
 }
 
 export interface ExtraChargeLine {

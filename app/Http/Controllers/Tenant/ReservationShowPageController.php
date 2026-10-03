@@ -205,6 +205,7 @@ class ReservationShowPageController extends ReservationsPageController
                     'refunded' => $p->refundedTotal(),
                     'refundable' => $p->refundableAmount(),
                     'via_gateway' => $p->gateway !== null,
+                    'removable' => \App\Actions\Payments\RemoveMistakenPayment::blockedReason($p) === null,
                 ])
                 ->values()
                 ->all(),

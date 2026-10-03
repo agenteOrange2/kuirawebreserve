@@ -175,6 +175,8 @@ function rejectFromDetail() {
 // 2026-09-15: cinco comprobantes aprobados sobre transferencias ya
 // capturadas a mano duplicaron $7,500.
 const overpayWarning = ref<string | null>(null);
+// El servidor dice qué se confirma: dinero de más, u otro pago distinto al ya capturado.
+const overpayLabel = ref('Sí, entró dinero de más');
 
 watch(verifying, () => {
     overpayWarning.value = null;
@@ -216,6 +218,8 @@ async function approvePayment() {
             e.response?.data?.needs_confirmation
         ) {
             overpayWarning.value = e.response.data.message;
+            overpayLabel.value =
+                e.response.data.confirm_label ?? 'Sí, entró dinero de más';
             return;
         }
         toast.error(
@@ -655,7 +659,7 @@ async function reissueRequest(item: ClosedRequest) {
                                 paymentBusy
                                     ? 'Registrando…'
                                     : overpayWarning
-                                      ? 'Sí, entró dinero de más'
+                                      ? overpayLabel
                                       : 'Aprobar pago'
                             }}
                         </Button>

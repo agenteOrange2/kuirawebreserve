@@ -353,6 +353,7 @@ const refundForm = reactive({
 const refundBusy = ref(false);
 
 function openRefund(p: PaymentRow) {
+    removingPayment.value = null;
     refundingPayment.value = p;
     // Default: la sugerencia de la política si cabe en este pago; si no, lo reembolsable.
     const suggested = payingReservation.value?.refund_suggestion?.amount;
@@ -391,6 +392,52 @@ async function submitRefund() {
         );
     } finally {
         refundBusy.value = false;
+    }
+}
+
+// ── Pago registrado por error (el mismo dinero dos veces) ──
+// No es un reembolso: no se avisa al huésped ni cuenta como devolución.
+const removingPayment = ref<PaymentRow | null>(null);
+const removeReason = ref('');
+const removeBusy = ref(false);
+
+function openRemove(p: PaymentRow) {
+    refundingPayment.value = null;
+    removingPayment.value = p;
+    removeReason.value = '';
+}
+
+async function submitRemove() {
+    if (
+        !payingReservation.value ||
+        !removingPayment.value ||
+        removeBusy.value ||
+        !removeReason.value.trim()
+    )
+        return;
+    removeBusy.value = true;
+    try {
+        const { data } = await axios.delete<
+            ReservationRow & { closed_cut_notice?: string | null }
+        >(
+            `/api/reservations/${payingReservation.value.id}/payments/${removingPayment.value.id}`,
+            { data: { reason: removeReason.value.trim() } },
+        );
+        payingReservation.value = data;
+        removingPayment.value = null;
+        emit('saved');
+        toast.success(
+            'Pago quitado',
+            data.closed_cut_notice ??
+                'La reserva ya refleja solo el dinero que sí entró. No se avisó al huésped.',
+        );
+    } catch (error: any) {
+        toast.error(
+            'No se pudo quitar',
+            error.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    } finally {
+        removeBusy.value = false;
     }
 }
 
@@ -1089,6 +1136,84 @@ defineExpose({ open: openPayment });
                                     >
                                         Reembolsar
                                     </button>
+                                    <button
+                                        v-if="
+                                            p.removable &&
+                                            removingPayment?.id !== p.id
+                                        "
+                                        type="button"
+                                        class="text-xs font-medium text-slate-500 hover:text-danger hover:underline"
+                                        :class="{
+                                            'ml-auto': !(
+                                                p.refundable > 0 &&
+                                                refundingPayment?.id !== p.id
+                                            ),
+                                        }"
+                                        @click="openRemove(p)"
+                                    >
+                                        Quitar, se registró por error
+                                    </button>
+                                </div>
+
+                                <!-- Quitar un pago registrado por error -->
+                                <div
+                                    v-if="removingPayment?.id === p.id"
+                                    class="mt-3 space-y-3 rounded-lg bg-slate-50 p-3 dark:bg-darkmode-700"
+                                >
+                                    <p class="text-xs text-slate-500">
+                                        Úsalo cuando el mismo dinero quedó
+                                        registrado dos veces. El pago de ${{
+                                            p.amount
+                                        }}
+                                        desaparece de la reserva, no se avisa
+                                        al huésped y no cuenta como devolución.
+                                        Queda anotado en la bitácora.
+                                    </p>
+                                    <div>
+                                        <label
+                                            class="mb-1 block text-xs text-slate-500"
+                                            >Motivo</label
+                                        >
+                                        <FormInput
+                                            v-model="removeReason"
+                                            type="text"
+                                            maxlength="255"
+                                            placeholder="Anticipo capturado a mano y aprobado otra vez en Pagos"
+                                        />
+                                    </div>
+                                    <div
+                                        class="flex items-center justify-end gap-2"
+                                    >
+                                        <Button
+                                            type="button"
+                                            variant="outline-secondary"
+                                            size="sm"
+                                            class="rounded-[0.5rem] bg-white"
+                                            @click="removingPayment = null"
+                                            >Cancelar</Button
+                                        >
+                                        <Button
+                                            type="button"
+                                            variant="danger"
+                                            size="sm"
+                                            class="rounded-[0.5rem]"
+                                            :disabled="
+                                                removeBusy ||
+                                                !removeReason.trim()
+                                            "
+                                            @click="submitRemove"
+                                        >
+                                            <Lucide
+                                                icon="Trash2"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            {{
+                                                removeBusy
+                                                    ? 'Quitando…'
+                                                    : 'Quitar pago'
+                                            }}
+                                        </Button>
+                                    </div>
                                 </div>
 
                                 <!-- Formulario inline de reembolso -->

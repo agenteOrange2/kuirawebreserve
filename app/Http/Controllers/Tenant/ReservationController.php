@@ -523,6 +523,7 @@ class ReservationController extends Controller
                 'refunded' => $p->refundedTotal(),
                 'refundable' => $p->refundableAmount(),
                 'via_gateway' => $p->gateway !== null,
+                'removable' => \App\Actions\Payments\RemoveMistakenPayment::blockedReason($p) === null,
             ]),
             'refunded_total' => $r->refundedTotal(),
             // Sugerencia por política de cancelación (la de la tarifa, o la
@@ -654,6 +655,40 @@ class ReservationController extends Controller
         return response()->json($this->serialize(
             $reservation->refresh()->load(['room:id,number', 'roomType:id,name', 'ratePlan:id,name,type']),
         ));
+    }
+
+    /**
+     * Quita un pago registrado por error (el mismo dinero dos veces). No es
+     * un reembolso: no se avisa al huésped ni cuenta como devolución.
+     */
+    public function removePayment(Request $request, Reservation $reservation, Payment $payment, \App\Actions\Payments\RemoveMistakenPayment $action): JsonResponse
+    {
+        abort_unless($payment->reservation_id === $reservation->id, 404);
+
+        $data = $request->validate([
+            'reason' => ['required', 'string', 'max:255'],
+        ], [
+            'reason.required' => 'Escribe por qué se quita este pago: queda en la bitácora de la reserva.',
+        ]);
+
+        try {
+            $result = $action->handle($reservation, $payment, $data['reason'], $request->user());
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        $cut = $result['closed_cut'];
+
+        return response()->json([
+            ...$this->serialize(
+                $reservation->refresh()->load(['room:id,number', 'roomType:id,name', 'ratePlan:id,name,type']),
+            ),
+            // El corte cerrado guarda su foto: quitar el pago no lo cambia.
+            'closed_cut_notice' => $cut ? sprintf(
+                'El corte de caja cerrado el %s ya contaba este pago y no cambia.',
+                $cut->closed_at->format('d/m/Y H:i'),
+            ) : null,
+        ]);
     }
 
     /** Cancela el cobro pendiente de la reserva (spec-pagos §7.5). */

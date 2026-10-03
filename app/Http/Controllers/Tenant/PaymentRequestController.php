@@ -157,7 +157,7 @@ class PaymentRequestController extends Controller
         try {
             $action->handle($paymentRequest, $data, $request->user());
         } catch (\App\Exceptions\PaymentNeedsConfirmation $e) {
-            return response()->json(['message' => $e->getMessage(), 'needs_confirmation' => true], 422);
+            return response()->json(['message' => $e->getMessage(), 'needs_confirmation' => true, 'confirm_label' => $e->confirmLabel], 422);
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }

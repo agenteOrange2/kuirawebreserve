@@ -154,3 +154,71 @@ it('el pago que avisa la pasarela nunca se detiene: ese dinero ya entró', funct
 
     expect($reservation->refresh()->paidTotal())->toBe(3500.0);
 });
+
+// ------------------------------------- comprobante de saldo (reserva 1789)
+// Caso real cabañas 2026-10-03: el anticipo se capturó a mano y su comprobante
+// se aprobó como cobro de SALDO por el mismo monto. Ni "anticipo cubierto" ni
+// "excede lo pendiente" lo detenían y la reserva quedó "Pagada" con el doble.
+
+function cobroDeSaldo(\App\Models\Reservation $reservation): PaymentRequest
+{
+    return PaymentRequest::create([
+        'reservation_id' => $reservation->id,
+        'method' => PaymentRequest::METHOD_TRANSFER,
+        'concept' => PaymentRequest::CONCEPT_BALANCE,
+        'amount' => 1750,
+        'currency' => 'MXN',
+        'status' => PaymentRequest::STATUS_PENDING,
+        'expires_at' => now()->addDay(),
+    ]);
+}
+
+it('un comprobante de saldo por el mismo monto que se capturó a mano pide confirmación', function () {
+    $reservation = apartadoConAnticipo();
+    capturarAMano($reservation, 1750, 'cash');
+    $request = cobroDeSaldo($reservation);
+
+    try {
+        app(RegisterGatewayPayment::class)->handle($request, [], $this->sofia);
+        $this->fail('Debió pedir confirmación');
+    } catch (PaymentNeedsConfirmation $e) {
+        expect($e->getMessage())->toContain('ya se capturó a mano un pago de $1,750.00 (efectivo)')
+            ->and($e->confirmLabel)->toBe('Sí, es otro pago');
+    }
+
+    expect($reservation->refresh()->payments()->count())->toBe(1)
+        ->and($reservation->payment_status)->toBe(PaymentStatus::DepositPaid);
+});
+
+it('aunque lo capturado sea transferencia, el de saldo no se liga solo: se pregunta', function () {
+    $reservation = apartadoConAnticipo();
+    capturarAMano($reservation, 1750);
+    $request = cobroDeSaldo($reservation);
+
+    expect(fn () => app(RegisterGatewayPayment::class)->handle($request, [], $this->sofia))
+        ->toThrow(PaymentNeedsConfirmation::class);
+
+    expect($reservation->refresh()->payments()->count())->toBe(1);
+});
+
+it('confirmando que es otro pago, el saldo sí se registra', function () {
+    $reservation = apartadoConAnticipo();
+    capturarAMano($reservation, 1750, 'cash');
+    $request = cobroDeSaldo($reservation);
+
+    app(RegisterGatewayPayment::class)->handle($request, ['confirm_overpay' => true], $this->sofia);
+
+    expect($reservation->refresh()->paidTotal())->toBe(3500.0)
+        ->and($reservation->payment_status)->toBe(PaymentStatus::Paid);
+});
+
+it('el saldo pedido días después del anticipo pasa sin preguntar', function () {
+    $reservation = apartadoConAnticipo();
+    capturarAMano($reservation, 1750, 'cash');
+    $reservation->payments()->update(['created_at' => now()->subDays(5)]);
+    $request = cobroDeSaldo($reservation);
+
+    app(RegisterGatewayPayment::class)->handle($request, [], $this->sofia);
+
+    expect($reservation->refresh()->payment_status)->toBe(PaymentStatus::Paid);
+});
