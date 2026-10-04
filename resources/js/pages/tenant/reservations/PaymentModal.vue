@@ -1167,6 +1167,11 @@ defineExpose({ open: openPayment });
                                         }}
                                         desaparece de la reserva, no se avisa
                                         al huésped y no cuenta como devolución.
+                                        <template v-if="p.refunded > 0"
+                                            >También se quita el reembolso de
+                                            ${{ p.refunded.toFixed(2) }}
+                                            registrado sobre él.
+                                        </template>
                                         Queda anotado en la bitácora.
                                     </p>
                                     <div>

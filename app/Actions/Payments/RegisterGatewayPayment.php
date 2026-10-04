@@ -67,6 +67,24 @@ class RegisterGatewayPayment
             // aprobación creó OTRO pago por el mismo dinero. Iris quedó
             // "pagada" debiendo $1,750 y el corte subió $7,500 de aire.
             if ($verifier !== null && $request->method === PaymentRequest::METHOD_TRANSFER) {
+                // El folio o la clave de rastreo de este comprobante ya está
+                // en un pago registrado. Caso real cabañas 2026-09-27
+                // (reserva 1789): la huésped pagó por Mercado Pago, mandó
+                // la captura de ESE pago y se aprobó como saldo; quedó
+                // "Pagada" con $1,750 que nunca entraron.
+                if (empty($data['confirm_overpay']) && ($twin = $this->paymentWithSameFolio($request, $data))) {
+                    throw new PaymentNeedsConfirmation(sprintf(
+                        'El folio %s ya está registrado en un pago de $%s (%s, %s)%s. Es el mismo dinero: no apruebes este comprobante, recházalo. Solo si de verdad es otra operación, confírmalo.',
+                        $twin['folio'],
+                        number_format((float) $twin['payment']->amount, 2),
+                        mb_strtolower(Payment::methodLabel($twin['payment']->method)),
+                        $twin['payment']->created_at->format('d/m/Y H:i'),
+                        $twin['payment']->reservation_id && $twin['payment']->reservation_id !== $request->reservation_id
+                            ? ' de '.$twin['payment']->reservation?->displayCode()
+                            : ' de esta misma reserva',
+                    ), confirmLabel: 'Sí, es otra operación');
+                }
+
                 $depositAlreadyCovered = $request->concept === PaymentRequest::CONCEPT_DEPOSIT
                     && $reservation->payment_status->coversDeposit();
                 $exceedsPending = (float) $request->amount > $reservation->pendingBalance() + 0.01;
@@ -357,6 +375,43 @@ class RegisterGatewayPayment
             ->get()
             ->sortBy(fn (Payment $payment) => [$payment->id === $supersededBy ? 0 : 1, $payment->id])
             ->first();
+    }
+
+    /**
+     * El pago que ya trae el folio de este comprobante: la clave de rastreo
+     * que leyó el lector o el folio que tecleó quien verifica. Se busca en
+     * `reference` y en `gateway_ref` (pasarela). Folios cortos no cuentan:
+     * "13:11" o "1" no identifican una operación.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array{folio: string, payment: Payment}|null
+     */
+    protected function paymentWithSameFolio(PaymentRequest $request, array $data): ?array
+    {
+        $folios = collect([
+            $request->meta['tracking_key'] ?? null,
+            $request->meta['receipt_reading']['tracking_key'] ?? null,
+            $data['reference'] ?? null,
+        ])
+            ->map(fn ($folio) => trim((string) $folio))
+            ->filter(fn (string $folio) => strlen($folio) >= 8 && preg_match('/\d{6,}/', $folio))
+            ->unique()
+            ->values();
+
+        foreach ($folios as $folio) {
+            $payment = Payment::query()
+                ->where(fn ($query) => $query->where('reference', $folio)->orWhere('gateway_ref', $folio))
+                ->where(fn ($query) => $query->whereNull('payment_request_id')->orWhere('payment_request_id', '!=', $request->id))
+                ->with('reservation')
+                ->oldest('id')
+                ->first();
+
+            if ($payment) {
+                return ['folio' => $folio, 'payment' => $payment];
+            }
+        }
+
+        return null;
     }
 
     /**

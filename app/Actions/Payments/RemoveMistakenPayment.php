@@ -65,6 +65,16 @@ class RemoveMistakenPayment
                 'payment_request_id' => $payment->payment_request_id,
                 'receipt_file' => $payment->getFirstMedia('receipt')?->file_name,
                 'closed_cut_id' => $closedCut?->id,
+                // Reembolsos manuales que se registraron sobre este pago
+                // (el intento de corregir el error): se van con él.
+                'refunds' => $payment->refunds()->get()
+                    ->map(fn (\App\Models\Refund $refund) => [
+                        'id' => $refund->id,
+                        'amount' => (float) $refund->amount,
+                        'reason' => $refund->reason,
+                        'created_by' => $refund->created_by,
+                        'refunded_at' => $refund->refunded_at?->toDateTimeString(),
+                    ])->all(),
             ];
 
             // El comprobante que originó este pago ya no puede volver a la
@@ -85,6 +95,7 @@ class RemoveMistakenPayment
                 ]);
             }
 
+            $payment->refunds()->delete();
             $payment->delete();
 
             $reservation->syncPaymentStatus();
@@ -94,10 +105,11 @@ class RemoveMistakenPayment
                 ->causedBy($user)
                 ->withProperties(['removed_payment' => $snapshot, 'reason' => $reason])
                 ->log(sprintf(
-                    'Se quitó un pago de $%s (%s, %s) registrado por error: %s',
+                    'Se quitó un pago de $%s (%s, %s) registrado por error%s: %s',
                     number_format($snapshot['amount'], 2),
                     $snapshot['method_label'],
                     $payment->paid_at?->format('d/m/Y H:i'),
+                    $snapshot['refunds'] !== [] ? ', junto con su reembolso registrado a mano' : '',
                     $reason,
                 ));
 
@@ -116,7 +128,10 @@ class RemoveMistakenPayment
             $payment->reservation_id === null => 'Ese pago no está ligado a una reserva.',
             $payment->method === Payment::METHOD_ONLINE || $payment->gateway_ref !== null => 'Este pago entró por la pasarela: ese dinero sí se cobró. Si hay que devolverlo, usa Reembolsar.',
             $payment->kind !== null => 'Este cobro es del folio de la estancia; corrígelo desde la estancia.',
-            $payment->refunds()->exists() => 'Este pago ya tiene reembolsos registrados; no se puede quitar.',
+            // Un reembolso de pasarela sí movió dinero. Uno manual puede ser
+            // el intento de deshacer el error (reserva 1789: "le confirmé
+            // doble vez el primer pago") y se quita junto con el pago.
+            $payment->refunds()->whereNotNull('gateway')->exists() => 'Este pago tiene un reembolso enviado por la pasarela: ese dinero sí se devolvió.',
             $payment->paymentRequest?->isForGroup() === true => 'Este pago es parte de un cobro de grupo repartido entre varias habitaciones; pide ayuda a soporte para corregirlo.',
             default => null,
         };

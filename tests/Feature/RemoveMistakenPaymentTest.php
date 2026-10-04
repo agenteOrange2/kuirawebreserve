@@ -146,12 +146,41 @@ it('no quita un pago de pasarela: ese dinero sí entró', function () {
         ->toThrow(InvalidArgumentException::class, 'Reembolsar');
 });
 
-it('no quita un pago que ya tiene reembolsos', function () {
+it('quita también el reembolso registrado a mano para "deshacer" el error (reserva 1789)', function () {
+    [$reservation, $manual, $approved] = anticipoDoble();
+    // Lo que hizo Sofía el 27-sep: "le confirmé doble vez el primer pago".
+    app(RefundPayment::class)->handle($approved, 1750, 'le confirme doble vez el primer pago', test()->sofia, manual: true);
+
+    // El reembolso no baja lo pagado: seguía "Pagada" y sin poder cobrar.
+    expect($reservation->refresh()->payment_status)->toBe(PaymentStatus::Paid)
+        ->and(RemoveMistakenPayment::blockedReason($approved->refresh()))->toBeNull();
+
+    sinAvisos();
+
+    app(RemoveMistakenPayment::class)->handle($reservation, $approved, 'Mismo pago aprobado dos veces', test()->sofia);
+
+    $reservation->refresh();
+
+    expect(\App\Models\Refund::query()->count())->toBe(0)
+        ->and($reservation->payment_status)->toBe(PaymentStatus::DepositPaid)
+        ->and($reservation->pendingBalance())->toBe(1750.0)
+        ->and(Activity::query()->where('subject_id', $reservation->id)->where('log_name', 'payment')->latest('id')->value('description'))
+        ->toContain('junto con su reembolso');
+});
+
+it('no quita un pago con reembolso enviado por la pasarela: ese dinero sí salió', function () {
     [$reservation, $manual] = anticipoDoble();
-    app(RefundPayment::class)->handle($manual, 100, 'parcial', test()->sofia);
+    \App\Models\Refund::create([
+        'payment_id' => $manual->id,
+        'reservation_id' => $reservation->id,
+        'amount' => 100,
+        'status' => \App\Models\Refund::STATUS_COMPLETED,
+        'gateway' => 'stripe',
+        'refunded_at' => now(),
+    ]);
 
     expect(fn () => app(RemoveMistakenPayment::class)->handle($reservation, $manual, 'error', test()->sofia))
-        ->toThrow(InvalidArgumentException::class, 'reembolsos');
+        ->toThrow(InvalidArgumentException::class, 'pasarela');
 });
 
 it('no quita cobros del folio de la estancia', function () {

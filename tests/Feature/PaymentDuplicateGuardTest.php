@@ -222,3 +222,60 @@ it('el saldo pedido días después del anticipo pasa sin preguntar', function ()
 
     expect($reservation->refresh()->payment_status)->toBe(PaymentStatus::Paid);
 });
+
+// ------------------------------- folio repetido (reserva 1789, 27-sep)
+// La huésped pagó $1,750 por Mercado Pago (el folio quedó en gateway_ref),
+// mandó la captura de ESE pago al chat y se aprobó como cobro de saldo.
+
+function pagoMercadoPago(\App\Models\Reservation $reservation): \App\Models\Payment
+{
+    $deposit = app(IssuePaymentRequest::class)->handle($reservation);
+
+    return app(RegisterGatewayPayment::class)->handle($deposit, [
+        'gateway' => 'mercadopago',
+        'gateway_ref' => '180527155686',
+    ]);
+}
+
+it('el comprobante con el folio de un pago de pasarela ya registrado no se aprueba sin confirmar', function () {
+    $reservation = apartadoConAnticipo();
+    pagoMercadoPago($reservation);
+
+    $balance = cobroDeSaldo($reservation->refresh());
+    $balance->update(['meta' => ['tracking_key' => '180527155686']]);
+
+    try {
+        app(RegisterGatewayPayment::class)->handle($balance->refresh(), ['reference' => '180527155686'], $this->sofia);
+        $this->fail('Debió detenerse');
+    } catch (PaymentNeedsConfirmation $e) {
+        expect($e->getMessage())->toContain('El folio 180527155686 ya está registrado')
+            ->and($e->getMessage())->toContain('de esta misma reserva')
+            ->and($e->confirmLabel)->toBe('Sí, es otra operación');
+    }
+
+    expect($reservation->refresh()->payments()->count())->toBe(1)
+        ->and($reservation->payment_status)->toBe(PaymentStatus::DepositPaid);
+});
+
+it('el lector de comprobantes marca duplicado el folio que vive en gateway_ref', function () {
+    $reservation = apartadoConAnticipo();
+    pagoMercadoPago($reservation);
+
+    $check = app(\App\Services\Payments\ReceiptCheck::class)->evaluate([
+        'kind' => 'transfer_receipt',
+        'amount' => 1750,
+        'tracking_key' => '180527155686',
+    ], cobroDeSaldo($reservation->refresh()));
+
+    expect($check['verdict'])->toBe(\App\Services\Payments\ReceiptCheck::DUPLICATE);
+});
+
+it('un folio corto como una hora no se toma por folio repetido', function () {
+    $reservation = apartadoConAnticipo();
+    capturarAMano($reservation, 1750, 'cash'); // reference '13:11'
+    $reservation->payments()->update(['created_at' => now()->subDays(5)]);
+
+    app(RegisterGatewayPayment::class)->handle(cobroDeSaldo($reservation), ['reference' => '13:11'], $this->sofia);
+
+    expect($reservation->refresh()->payment_status)->toBe(PaymentStatus::Paid);
+});

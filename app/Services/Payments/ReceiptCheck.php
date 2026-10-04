@@ -182,7 +182,15 @@ class ReceiptCheck
             return 'el cobro de '.$other->subjectCode();
         }
 
-        $payment = Payment::query()->where('reference', $tracking)->with('reservation')->latest('id')->first();
+        // El folio vive en `reference` (capturado o verificado) o en
+        // `gateway_ref` (pago de pasarela). Caso real cabañas 2026-09-27,
+        // reserva 1789: el comprobante del pago de Mercado Pago se aprobó
+        // otra vez como saldo porque solo se miraba `reference`.
+        $payment = Payment::query()
+            ->where(fn ($query) => $query->where('reference', $tracking)->orWhere('gateway_ref', $tracking))
+            ->with('reservation')
+            ->latest('id')
+            ->first();
 
         return $payment !== null
             ? 'un pago ya registrado'.($payment->reservation ? ' de '.$payment->reservation->displayCode() : '')
