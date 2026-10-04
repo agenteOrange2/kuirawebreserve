@@ -65,7 +65,7 @@ const { countersVisible } = usePlanPanels();
                 class="rounded-xl border border-slate-200/70 bg-white shadow-lg dark:border-darkmode-400 dark:bg-darkmode-600"
             >
                 <div
-                    class="flex items-center gap-2 border-b border-slate-200/70 px-4 py-2.5 text-xs font-medium tracking-wide text-slate-500 uppercase dark:border-darkmode-400"
+                    class="flex items-center gap-2 border-b border-slate-200/70 px-4 py-2.5 text-[11px] font-medium tracking-wide text-slate-400 uppercase dark:border-darkmode-400"
                 >
                     <Lucide icon="LayoutDashboard" class="h-3.5 w-3.5" />
                     Estado de la casa

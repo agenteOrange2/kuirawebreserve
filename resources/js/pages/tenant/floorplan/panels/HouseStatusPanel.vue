@@ -42,15 +42,29 @@ const occupancy = computed(() => {
 
 <template>
     <div class="p-4">
-        <div class="flex items-baseline justify-between gap-3">
-            <div>
-                <div class="text-2xl font-semibold">{{ occupancy }}%</div>
-                <div class="text-xs text-slate-500">
-                    de ocupación · {{ total }}
-                    {{ total === 1 ? 'habitación' : 'habitaciones' }}
+        <!-- Cifra en renglón compacto (canon §4), nunca la caja alta con el
+             número en text-2xl. -->
+        <div class="flex items-center gap-2.5">
+            <div
+                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+            >
+                <Lucide icon="Gauge" class="h-4 w-4" />
+            </div>
+            <div class="min-w-0">
+                <div class="text-sm font-medium">{{ occupancy }}% ocupado</div>
+                <div class="truncate text-xs text-slate-500">
+                    {{ total }}
+                    {{ total === 1 ? 'habitación' : 'habitaciones' }} en total
                 </div>
             </div>
-            <Lucide icon="LayoutDashboard" class="h-5 w-5 text-slate-300" />
+        </div>
+        <div
+            class="mt-2.5 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-darkmode-400"
+        >
+            <div
+                class="h-full rounded-full bg-primary"
+                :style="{ width: `${occupancy}%` }"
+            />
         </div>
 
         <!-- En el teléfono los seis estados en columna se comían la pantalla:
@@ -60,7 +74,7 @@ const occupancy = computed(() => {
                 v-for="item in counts"
                 :key="item.status"
                 type="button"
-                class="flex w-full items-center gap-2 rounded-lg px-1.5 py-1.5 text-left text-[13px] transition lg:gap-2.5 lg:px-2 lg:text-sm"
+                class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition"
                 :class="
                     activeStatus === item.status
                         ? 'bg-primary/10 text-primary'
@@ -74,7 +88,7 @@ const occupancy = computed(() => {
                     :class="item.dot"
                 />
                 <span class="min-w-0 flex-1 truncate">{{ item.label }}</span>
-                <span class="font-semibold">{{ item.count }}</span>
+                <span class="font-medium">{{ item.count }}</span>
             </button>
         </div>
     </div>

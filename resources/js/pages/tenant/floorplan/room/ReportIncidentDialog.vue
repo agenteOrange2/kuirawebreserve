@@ -1,8 +1,13 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { onBeforeUnmount, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import { Dialog } from '@/components/Base/Headless';
-import { FormInput, FormSelect } from '@/components/Base/Form';
+import {
+    FormCheck,
+    FormInput,
+    FormSelect,
+    FormTextarea,
+} from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 
 /**
@@ -74,9 +79,34 @@ watch(
     },
 );
 
+// Miniatura de la foto elegida: sin verla, no se sabe si se tomó la correcta.
+const photoPreview = ref<string | null>(null);
+
+watch(photo, (file) => {
+    if (photoPreview.value) {
+        URL.revokeObjectURL(photoPreview.value);
+    }
+
+    photoPreview.value = file ? URL.createObjectURL(file) : null;
+});
+
+onBeforeUnmount(() => {
+    if (photoPreview.value) {
+        URL.revokeObjectURL(photoPreview.value);
+    }
+});
+
 function onPhoto(event: Event) {
     const input = event.target as HTMLInputElement;
     photo.value = input.files?.[0] ?? null;
+}
+
+function removePhoto() {
+    photo.value = null;
+
+    if (photoInput.value) {
+        photoInput.value.value = '';
+    }
 }
 
 function submit() {
@@ -97,7 +127,7 @@ function submit() {
 </script>
 
 <template>
-    <Dialog :open="open" size="lg" @close="emit('close')">
+    <Dialog :open="open" size="lg" @close="busy || emit('close')">
         <Dialog.Panel class="sm:w-[94vw] lg:w-[680px]">
             <form
                 class="flex max-h-[calc(100dvh-6rem)] flex-col"
@@ -135,10 +165,10 @@ function submit() {
                         >
                             Qué pasó
                         </div>
-                        <div class="mt-2 grid gap-3 sm:grid-cols-2">
+                        <div class="mt-2 grid gap-4 sm:grid-cols-2">
                             <div class="sm:col-span-2">
                                 <label
-                                    class="text-xs text-slate-500"
+                                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                                     for="incident-title"
                                     >Falla</label
                                 >
@@ -147,23 +177,23 @@ function submit() {
                                     v-model="form.title"
                                     type="text"
                                     maxlength="120"
-                                    class="mt-1 h-9 text-xs"
+                                    class="h-9 text-xs"
                                     placeholder="El aire no enfría"
                                     required
                                 />
                             </div>
                             <div class="sm:col-span-2">
                                 <label
-                                    class="text-xs text-slate-500"
+                                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                                     for="incident-description"
                                     >Detalle</label
                                 >
-                                <FormInput
+                                <FormTextarea
                                     id="incident-description"
                                     v-model="form.description"
-                                    type="text"
+                                    rows="3"
                                     maxlength="2000"
-                                    class="mt-1 h-9 text-xs"
+                                    class="text-xs"
                                     placeholder="Suena raro desde ayer y no baja de 26°"
                                 />
                             </div>
@@ -176,17 +206,17 @@ function submit() {
                         >
                             Cómo se clasifica
                         </div>
-                        <div class="mt-2 grid gap-3 sm:grid-cols-2">
+                        <div class="mt-2 grid gap-4 sm:grid-cols-2">
                             <div>
                                 <label
-                                    class="text-xs text-slate-500"
+                                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                                     for="incident-category"
                                     >Tipo de falla</label
                                 >
                                 <FormSelect
                                     id="incident-category"
                                     v-model="form.category"
-                                    class="mt-1 h-9 text-xs"
+                                    class="h-9 text-xs"
                                 >
                                     <option value="">Sin clasificar</option>
                                     <option
@@ -200,14 +230,14 @@ function submit() {
                             </div>
                             <div>
                                 <label
-                                    class="text-xs text-slate-500"
+                                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                                     for="incident-priority"
                                     >Urgencia</label
                                 >
                                 <FormSelect
                                     id="incident-priority"
                                     v-model="form.priority"
-                                    class="mt-1 h-9 text-xs"
+                                    class="h-9 text-xs"
                                 >
                                     <option value="low">Puede esperar</option>
                                     <option value="medium">Normal</option>
@@ -216,33 +246,82 @@ function submit() {
                             </div>
                             <div>
                                 <label
-                                    class="text-xs text-slate-500"
+                                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                                     for="incident-source"
                                     >Quién lo reporta</label
                                 >
                                 <FormSelect
                                     id="incident-source"
                                     v-model="form.source"
-                                    class="mt-1 h-9 text-xs"
+                                    class="h-9 text-xs"
                                 >
                                     <option value="staff">El personal</option>
                                     <option value="guest">El huésped</option>
                                 </FormSelect>
                             </div>
-                            <div>
-                                <label
-                                    class="text-xs text-slate-500"
-                                    for="incident-photo"
-                                    >Foto</label
+                            <!-- Foto en renglón: miniatura de 56 px y los
+                                 botones a la derecha (canon §7). -->
+                            <div class="sm:col-span-2">
+                                <span
+                                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
+                                    >Foto</span
                                 >
                                 <input
                                     id="incident-photo"
                                     ref="photoInput"
                                     type="file"
                                     accept="image/*"
-                                    class="mt-1 block w-full text-xs text-slate-500 file:mr-3 file:rounded-md file:border-0 file:bg-slate-200 file:px-3 file:py-2 file:text-xs dark:file:bg-darkmode-400"
+                                    class="hidden"
                                     @change="onPhoto"
                                 />
+                                <div
+                                    class="flex items-center gap-3 rounded-lg border border-dashed border-slate-300/70 p-2 dark:border-darkmode-400"
+                                >
+                                    <div
+                                        class="flex h-14 w-14 shrink-0 items-center justify-center overflow-hidden rounded-md bg-slate-100 text-slate-400 dark:bg-darkmode-700"
+                                    >
+                                        <img
+                                            v-if="photoPreview"
+                                            :src="photoPreview"
+                                            alt="Foto de la falla"
+                                            class="h-full w-full object-cover"
+                                        />
+                                        <Lucide
+                                            v-else
+                                            icon="Camera"
+                                            class="h-5 w-5"
+                                        />
+                                    </div>
+                                    <span
+                                        class="min-w-0 flex-1 truncate text-xs text-slate-500"
+                                        >{{
+                                            photo
+                                                ? photo.name
+                                                : 'Sin foto todavía'
+                                        }}</span
+                                    >
+                                    <Button
+                                        v-if="photo"
+                                        variant="outline-secondary"
+                                        type="button"
+                                        class="h-8 rounded-[0.5rem] text-xs"
+                                        @click="removePhoto"
+                                    >
+                                        Quitar
+                                    </Button>
+                                    <Button
+                                        variant="outline-secondary"
+                                        type="button"
+                                        class="h-8 rounded-[0.5rem] text-xs"
+                                        @click="photoInput?.click()"
+                                    >
+                                        <Lucide
+                                            icon="Camera"
+                                            class="mr-1.5 h-3.5 w-3.5"
+                                        />
+                                        {{ photo ? 'Cambiar' : 'Elegir' }}
+                                    </Button>
+                                </div>
                             </div>
                         </div>
                         <p class="mt-2 text-[11px] text-slate-400">
@@ -251,12 +330,12 @@ function submit() {
                     </section>
 
                     <label
-                        class="flex items-start gap-2.5 rounded-xl border border-slate-200/70 px-3.5 py-3 text-xs dark:border-darkmode-400"
+                        class="flex cursor-pointer items-start gap-2.5 rounded-lg border border-slate-200/70 px-3.5 py-3 text-xs dark:border-darkmode-400"
                     >
-                        <input
+                        <FormCheck.Input
                             v-model="form.set_maintenance"
                             type="checkbox"
-                            class="mt-0.5 rounded border-slate-300"
+                            class="mt-0.5 shrink-0"
                         />
                         <span>
                             Sacar la habitación de venta (pasa a mantenimiento).
@@ -275,6 +354,7 @@ function submit() {
                         variant="outline-secondary"
                         type="button"
                         class="h-9 rounded-[0.5rem] px-5 text-xs"
+                        :disabled="busy"
                         @click="emit('close')"
                     >
                         Cancelar

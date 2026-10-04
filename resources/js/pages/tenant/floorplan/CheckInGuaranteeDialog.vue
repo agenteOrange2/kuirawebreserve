@@ -2,13 +2,13 @@
 import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import { FormInput } from '@/components/Base/Form';
-import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import {
     type CounterMethod,
     useCounterMethods,
 } from '@/composables/useCounterMethods';
 import { formatMoney } from './format';
+import PlanModal from './PlanModal.vue';
 import type { RoomData } from './types';
 
 /**
@@ -54,6 +54,18 @@ const editing = ref(false);
 const amountInput = ref<number | string>(0);
 const reason = ref('');
 const reference = ref('');
+
+// El cuarto que se ve: se queda el último mientras el modal se cierra, para
+// que no desaparezca de golpe cuando el plano suelta la selección.
+const shown = ref<RoomData | null>(props.room);
+watch(
+    () => props.room,
+    (room) => {
+        if (room) {
+            shown.value = room;
+        }
+    },
+);
 
 // Cada apertura empieza limpia: arrastrar el ajuste de la llegada anterior
 // es cómo se le cobra a alguien el monto que negoció el de antes.
@@ -103,157 +115,145 @@ function confirm() {
 </script>
 
 <template>
-    <Dialog :open="open" @close="emit('close')">
-        <Dialog.Panel v-if="room">
-            <div
-                class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
-            >
-                <div
-                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+    <PlanModal
+        :open="open"
+        icon="ShieldCheck"
+        :title="`Registrar la llegada de la ${shown?.number ?? ''}`"
+        :subtitle="shown?.upcoming_reservation?.guest_name ?? 'Anónimo'"
+        panel-class="sm:w-[480px]"
+        @close="emit('close')"
+    >
+        <div
+            class="rounded-lg border border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
+        >
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="text-sm font-medium">
+                    Fianza {{ formatMoney(amount) }}
+                </span>
+                <button
+                    v-if="!editing"
+                    type="button"
+                    class="ml-auto text-xs font-medium text-primary hover:underline"
+                    @click="editing = true"
                 >
-                    <Lucide icon="ShieldCheck" class="h-5 w-5 text-primary" />
-                </div>
-                <div class="min-w-0 flex-1">
-                    <h2 class="text-base font-medium">
-                        Registrar la llegada de la {{ room.number }}
-                    </h2>
-                    <p class="mt-0.5 truncate text-xs text-slate-500">
-                        {{ room.upcoming_reservation?.guest_name ?? 'Anónimo' }}
-                    </p>
-                </div>
+                    Cobrar otro monto
+                </button>
             </div>
+            <p class="mt-1 text-xs text-slate-500">
+                Depósito en garantía: se cobra ahora y se devuelve al registrar
+                la salida. No cuenta como pago del hospedaje.
+            </p>
 
-            <div class="space-y-4 px-5 py-4">
-                <div
-                    class="rounded-xl border border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
-                >
-                    <div
-                        class="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-700 dark:text-slate-200"
+            <!-- Ajuste a mano, con motivo obligatorio: quien devuelva ese
+                 dinero días después solo va a tener esta nota. -->
+            <div
+                v-if="editing"
+                class="mt-3 space-y-2 rounded-lg bg-slate-50 p-3 dark:bg-darkmode-700"
+            >
+                <div class="flex flex-wrap items-center gap-2">
+                    <label for="guarantee-amount" class="text-xs text-slate-500"
+                        >Cobrar</label
                     >
-                        Fianza: {{ formatMoney(amount) }}
-                        <button
-                            v-if="!editing"
-                            type="button"
-                            class="ml-auto text-xs font-medium text-primary hover:underline"
-                            @click="editing = true"
-                        >
-                            Cobrar otro monto
-                        </button>
-                    </div>
-                    <p class="mt-1 text-xs text-slate-500">
-                        Depósito en garantía: se cobra ahora y se devuelve al
-                        registrar la salida. No cuenta como pago del hospedaje.
-                    </p>
-
-                    <!-- Ajuste a mano, con motivo obligatorio: quien devuelva
-                         ese dinero días después solo va a tener esta nota. -->
-                    <div
-                        v-if="editing"
-                        class="mt-3 rounded-lg bg-slate-50 p-3 dark:bg-darkmode-700"
-                    >
-                        <div class="flex flex-wrap items-center gap-2">
-                            <span class="text-xs text-slate-500">Cobrar</span>
-                            <span class="text-xs text-slate-500">$</span>
-                            <FormInput
-                                v-model="amountInput"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                class="!w-28 text-center"
-                            />
-                            <button
-                                type="button"
-                                class="ml-auto text-xs font-medium text-slate-400 hover:text-slate-600"
-                                @click="
-                                    editing = false;
-                                    amountInput = amount;
-                                    reason = '';
-                                "
-                            >
-                                Usar {{ formatMoney(amount) }}
-                            </button>
-                        </div>
-                        <FormInput
-                            v-if="adjusted"
-                            v-model="reason"
-                            type="text"
-                            maxlength="255"
-                            class="mt-2"
-                            placeholder="Motivo del ajuste (queda en el registro del pago)"
+                    <div class="relative w-32">
+                        <Lucide
+                            icon="DollarSign"
+                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
                         />
-                        <p v-if="blocked" class="mt-1 text-xs text-danger">
-                            Sin motivo no se puede cobrar un monto distinto al
-                            de la política.
-                        </p>
+                        <FormInput
+                            id="guarantee-amount"
+                            v-model="amountInput"
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            class="h-9 pl-9 text-xs"
+                        />
                     </div>
-                </div>
-
-                <div v-if="methods.length">
-                    <div class="text-xs font-medium text-slate-500">
-                        ¿Cómo la recibiste?
-                    </div>
-                    <div
-                        class="mt-2 grid gap-2"
-                        :class="
-                            methods.length > 2 ? 'grid-cols-3' : 'grid-cols-2'
+                    <button
+                        type="button"
+                        class="ml-auto text-xs font-medium text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                        @click="
+                            editing = false;
+                            amountInput = amount;
+                            reason = '';
                         "
                     >
-                        <button
-                            v-for="m in methods"
-                            :key="m.key"
-                            type="button"
-                            class="flex min-h-11 items-center justify-center gap-2 rounded-lg border py-2 text-sm font-medium transition"
-                            :class="
-                                method === m.key
-                                    ? 'border-primary bg-primary/10 text-primary'
-                                    : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
-                            "
-                            @click="method = m.key"
-                        >
-                            {{ m.short }}
-                        </button>
-                    </div>
-
-                    <!-- El efectivo sale del cajón; una transferencia hay que
-                         regresarla a una cuenta días después, y el folio es
-                         lo único con lo que se puede hacer. -->
-                    <div v-if="needsReference" class="mt-3">
-                        <FormInput
-                            v-model="reference"
-                            type="text"
-                            class="h-9 text-xs"
-                            placeholder="Folio o referencia del comprobante"
-                        />
-                        <p
-                            v-if="!reference.trim()"
-                            class="mt-1 text-xs text-slate-500"
-                        >
-                            Sin el folio, esta fianza no se va a poder devolver.
-                        </p>
-                    </div>
+                        Usar {{ formatMoney(amount) }}
+                    </button>
                 </div>
+                <FormInput
+                    v-if="adjusted"
+                    v-model="reason"
+                    type="text"
+                    maxlength="255"
+                    class="h-9 text-xs"
+                    placeholder="Motivo del ajuste (queda en el registro del pago)"
+                />
+                <p
+                    v-if="adjusted && !reason.trim()"
+                    class="text-xs text-danger"
+                >
+                    Sin motivo no se puede cobrar un monto distinto al de la
+                    política.
+                </p>
+            </div>
+        </div>
+
+        <div v-if="methods.length">
+            <div
+                class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                Cómo la recibiste
+            </div>
+            <div class="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3">
+                <button
+                    v-for="m in methods"
+                    :key="m.key"
+                    type="button"
+                    class="flex h-9 items-center justify-center gap-2 rounded-[0.5rem] border text-xs font-medium transition"
+                    :class="
+                        method === m.key
+                            ? 'border-primary bg-primary/10 text-primary'
+                            : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400 dark:hover:bg-darkmode-400'
+                    "
+                    @click="method = m.key"
+                >
+                    {{ m.short }}
+                </button>
             </div>
 
-            <div
-                class="flex justify-end gap-3 border-t border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
-            >
-                <Button
-                    variant="outline-secondary"
-                    class="min-h-11 px-5"
-                    @click="emit('close')"
-                >
-                    Volver
-                </Button>
-                <Button
-                    variant="primary"
-                    class="min-h-11 px-5"
-                    :disabled="blocked"
-                    @click="confirm"
-                >
-                    <Lucide icon="LogIn" class="mr-1.5 h-3.5 w-3.5" />
-                    Registrar llegada
-                </Button>
+            <!-- El efectivo sale del cajón; una transferencia hay que
+                 regresarla a una cuenta días después, y el folio es lo único
+                 con lo que se puede hacer. -->
+            <div v-if="needsReference" class="mt-3">
+                <FormInput
+                    v-model="reference"
+                    type="text"
+                    class="h-9 text-xs"
+                    placeholder="Folio o referencia del comprobante"
+                />
+                <p v-if="!reference.trim()" class="mt-1 text-xs text-slate-500">
+                    Sin el folio, esta fianza no se va a poder devolver.
+                </p>
             </div>
-        </Dialog.Panel>
-    </Dialog>
+        </div>
+
+        <template #footer>
+            <Button
+                variant="outline-secondary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                @click="emit('close')"
+            >
+                Cancelar
+            </Button>
+            <Button
+                variant="primary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="blocked"
+                @click="confirm"
+            >
+                <Lucide icon="LogIn" class="mr-1.5 h-3.5 w-3.5" />
+                Registrar llegada
+            </Button>
+        </template>
+    </PlanModal>
 </template>

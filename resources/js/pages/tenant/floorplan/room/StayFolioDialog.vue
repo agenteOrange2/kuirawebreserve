@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import FolioActions from './FolioActions.vue';
@@ -37,25 +37,38 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: 'close'): void }>();
 
 const pending = computed(() => props.folio?.grand_pending ?? 0);
+
+// La estancia que se ve se queda mientras el modal se cierra: con
+// `v-if="stay"` en el panel, al soltarla desaparecía de golpe con el fondo.
+const shown = ref(props.stay);
+watch(
+    () => props.stay,
+    (stay) => {
+        if (stay) {
+            shown.value = stay;
+        }
+    },
+    { flush: 'sync' },
+);
 </script>
 
 <template>
     <Dialog :open="open" size="lg" @close="emit('close')">
-        <Dialog.Panel v-if="stay" class="sm:w-[94vw] lg:w-[760px]">
-            <div class="flex max-h-[calc(100dvh-6rem)] flex-col">
+        <Dialog.Panel class="sm:w-[94vw] lg:w-[760px]">
+            <div v-if="shown" class="flex max-h-[calc(100dvh-6rem)] flex-col">
                 <div
                     class="flex items-start gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                 >
                     <div
                         class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
                         :class="
-                            stay.active
+                            shown.active
                                 ? 'border border-primary/10 bg-primary/10 text-primary'
                                 : 'border border-slate-200/70 bg-slate-100 text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-400'
                         "
                     >
                         <Lucide
-                            :icon="stay.active ? 'DoorOpen' : 'User'"
+                            :icon="shown.active ? 'DoorOpen' : 'User'"
                             class="h-4 w-4"
                         />
                     </div>
@@ -64,25 +77,25 @@ const pending = computed(() => props.folio?.grand_pending ?? 0);
                             class="flex flex-wrap items-center gap-x-2 gap-y-1"
                         >
                             <h2 class="text-base font-medium">
-                                {{ stay.guest_name }}
+                                {{ shown.guest_name }}
                             </h2>
                             <span
-                                v-if="stay.active"
+                                v-if="shown.active"
                                 class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
                                 >Adentro</span
                             >
                             <span
-                                v-if="stay.vehicle_plate"
+                                v-if="shown.vehicle_plate"
                                 class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] tracking-wider dark:bg-darkmode-400"
-                                >{{ stay.vehicle_plate }}</span
+                                >{{ shown.vehicle_plate }}</span
                             >
                         </div>
                         <p class="mt-0.5 text-xs text-slate-500">
                             Habitación {{ roomNumber }} ·
-                            {{ stay.check_in_at ?? '—' }} →
-                            {{ stay.check_out_at ?? 'sigue adentro' }}
-                            <template v-if="stay.rate_plan">
-                                · {{ stay.rate_plan }}</template
+                            {{ shown.check_in_at ?? '—' }} →
+                            {{ shown.check_out_at ?? 'sigue adentro' }}
+                            <template v-if="shown.rate_plan">
+                                · {{ shown.rate_plan }}</template
                             >
                         </p>
                     </div>
@@ -130,7 +143,7 @@ const pending = computed(() => props.folio?.grand_pending ?? 0);
                                     Consumos
                                 </dt>
                                 <dd class="mt-0.5 text-sm font-medium">
-                                    {{ formatMoney(stay.consumos_total) }}
+                                    {{ formatMoney(shown.consumos_total) }}
                                 </dd>
                             </div>
                             <div
@@ -250,8 +263,8 @@ const pending = computed(() => props.folio?.grand_pending ?? 0);
                 >
                     <FolioActions :folio="folio" />
                     <a
-                        v-if="stay.vehicle_id"
-                        :href="`/vehiculos/${stay.vehicle_id}`"
+                        v-if="shown.vehicle_id"
+                        :href="`/vehiculos/${shown.vehicle_id}`"
                         class="inline-flex h-9 items-center gap-1.5 rounded-[0.5rem] border border-slate-200 px-3 text-xs text-slate-600 transition hover:border-primary/40 hover:text-primary dark:border-darkmode-400 dark:text-slate-300"
                     >
                         <Lucide icon="Car" class="h-3.5 w-3.5" />

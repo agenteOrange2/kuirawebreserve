@@ -565,7 +565,7 @@ onMounted(() => {
                                 difference === 0
                                     ? 'text-success'
                                     : difference < 0
-                                      ? 'text-primary'
+                                      ? 'text-danger'
                                       : 'text-pending'
                             "
                         >

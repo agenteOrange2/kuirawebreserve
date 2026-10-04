@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue';
-import { Dialog } from '@/components/Base/Headless';
+import Button from '@/components/Base/Button';
 import Lucide from '@/components/Base/Lucide';
+import PlanModal from '../PlanModal.vue';
 import RoomForm from './RoomForm.vue';
 import type { RoomFormValue } from './RoomForm.vue';
 
@@ -34,42 +35,66 @@ const initial = computed<RoomFormValue>(() => ({
 </script>
 
 <template>
-    <Dialog :open="open" size="lg" @close="emit('close')">
-        <Dialog.Panel>
-            <div
-                class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
-            >
-                <div
-                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10"
+    <PlanModal
+        :open="open"
+        icon="BedDouble"
+        title="Nueva habitación"
+        subtitle="Lo mínimo para que exista y se pueda vender; el resto de la ficha se completa en Habitaciones."
+        panel-class="sm:w-[600px]"
+        :busy="busy"
+        @close="emit('close')"
+    >
+        <div
+            v-if="!roomTypes.length"
+            class="flex items-start gap-2.5 rounded-lg border border-warning/20 bg-warning/5 px-3 py-2.5 text-xs text-slate-600 dark:text-slate-300"
+        >
+            <Lucide
+                icon="TriangleAlert"
+                class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning"
+            />
+            <span>
+                Primero crea un tipo de habitación: una habitación sin tipo no
+                tiene tarifa que cobrar.
+                <a
+                    :href="route('tenant.catalog')"
+                    class="font-medium text-primary hover:underline"
+                    >Ir a Zonas y tipos</a
                 >
-                    <Lucide icon="BedDouble" class="h-5 w-5 text-primary" />
-                </div>
-                <div class="min-w-0 flex-1">
-                    <h2 class="text-base font-medium">Nueva habitación</h2>
-                    <p class="mt-0.5 text-xs text-slate-500">
-                        Lo mínimo para que exista y se pueda vender; el resto de
-                        la ficha se completa en Habitaciones.
-                    </p>
-                </div>
-            </div>
+            </span>
+        </div>
+        <RoomForm
+            v-else
+            mode="create"
+            :initial="initial"
+            :room-types="roomTypes"
+            :zones="zones"
+            :busy="busy"
+            id-prefix="new-room"
+            hide-actions
+            @submit="(value) => emit('create', value)"
+            @cancel="emit('close')"
+        />
 
-            <div class="px-5 py-4">
-                <p v-if="!roomTypes.length" class="text-xs text-slate-500">
-                    Primero crea un tipo de habitación en el catálogo: una
-                    habitación sin tipo no tiene tarifa que cobrar.
-                </p>
-                <RoomForm
-                    v-else
-                    mode="create"
-                    :initial="initial"
-                    :room-types="roomTypes"
-                    :zones="zones"
-                    :busy="busy"
-                    id-prefix="new-room"
-                    @submit="(value) => emit('create', value)"
-                    @cancel="emit('close')"
-                />
-            </div>
-        </Dialog.Panel>
-    </Dialog>
+        <template #footer>
+            <Button
+                variant="outline-secondary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="busy"
+                @click="emit('close')"
+            >
+                {{ roomTypes.length ? 'Cancelar' : 'Cerrar' }}
+            </Button>
+            <Button
+                v-if="roomTypes.length"
+                variant="primary"
+                type="submit"
+                form="new-room-form"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="busy"
+            >
+                <Lucide icon="Plus" class="mr-1.5 h-3.5 w-3.5" />
+                {{ busy ? 'Creando…' : 'Crear habitación' }}
+            </Button>
+        </template>
+    </PlanModal>
 </template>

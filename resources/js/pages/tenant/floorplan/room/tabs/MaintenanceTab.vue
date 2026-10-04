@@ -2,6 +2,8 @@
 import { computed, inject, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import Lucide from '@/components/Base/Lucide';
+import ConfirmDialog from '../../ConfirmDialog.vue';
+import { useConfirm } from '../../confirm';
 import { FloorPlanKey } from '../../context';
 import { transitionMeta } from '../../status';
 import ReportIncidentDialog from '../ReportIncidentDialog.vue';
@@ -63,8 +65,10 @@ async function submitIncident(payload: {
     set_maintenance: boolean;
     photo: File | null;
 }) {
-    await reportIncident(payload);
-    incidentOpen.value = false;
+    // Solo se cierra si el servidor la aceptó: si no, lo tecleado se queda.
+    if (await reportIncident(payload)) {
+        incidentOpen.value = false;
+    }
 }
 
 async function submitBlock(payload: {
@@ -72,19 +76,35 @@ async function submitBlock(payload: {
     ends_at: string;
     reason: string | null;
 }) {
-    await createBlock(payload);
-    blockOpen.value = false;
+    if (await createBlock(payload)) {
+        blockOpen.value = false;
+    }
 }
+
+// Vive dentro del panel del modal de habitación, así que HeadlessUI lo trata
+// como anidado: el de afuera no se cierra con el clic de este.
+const confirmBox = useConfirm();
 
 async function removeBlock(blockId: number) {
-    if (
-        !window.confirm('¿Retirar este bloqueo y volver a vender esas fechas?')
-    ) {
-        return;
-    }
+    const confirmed = await confirmBox.ask({
+        title: 'Retirar el bloqueo',
+        message:
+            'Esas fechas vuelven a venderse en cuanto lo retires. Si el cuarto sigue sin estar listo, déjalo.',
+        confirmLabel: 'Sí, retirar',
+        icon: 'CalendarCheck',
+        tone: 'warning',
+    });
 
-    await deleteBlock(blockId);
+    if (confirmed) {
+        await deleteBlock(blockId);
+    }
 }
+
+/** Las fallas a la vista; el resto, en Incidencias. */
+const INCIDENT_CAP = 6;
+const visibleIncidents = computed(() =>
+    (room.value.incidents ?? []).slice(0, INCIDENT_CAP),
+);
 
 /** Las dos tarjetas de arriba solo se ponen en paralelo si las dos existen:
  *  una sola a media anchura deja el hueco que se venía a quitar. */
@@ -216,7 +236,7 @@ const sectionIcon =
                     <Button
                         v-if="canManage"
                         variant="outline-secondary"
-                        class="ml-auto h-8 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                        class="h-8 w-full rounded-[0.5rem] bg-white text-xs sm:ml-auto sm:w-auto dark:bg-darkmode-600"
                         title="Aparta fechas para que no se vendan; el semáforo de hoy no cambia"
                         @click="blockOpen = true"
                     >
@@ -265,7 +285,7 @@ const sectionIcon =
                             <button
                                 v-if="canManage"
                                 type="button"
-                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger"
+                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-danger/10 hover:text-danger disabled:opacity-40"
                                 title="Retirar el bloqueo y volver a vender esas fechas"
                                 :disabled="busyAction === `block:${item.id}`"
                                 @click="removeBlock(item.id)"
@@ -315,7 +335,7 @@ const sectionIcon =
                 <Button
                     v-if="canManage && incidentCategories.length"
                     variant="outline-secondary"
-                    class="ml-auto h-8 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                    class="h-8 w-full rounded-[0.5rem] bg-white text-xs sm:ml-auto sm:w-auto dark:bg-darkmode-600"
                     @click="incidentOpen = true"
                 >
                     <Lucide icon="TriangleAlert" class="mr-1.5 h-3.5 w-3.5" />
@@ -323,20 +343,17 @@ const sectionIcon =
                 </Button>
             </div>
 
+            <!-- Renglones a ras con divisor (canon §5), con tope: el resto
+                 se ve en Incidencias. -->
             <div
                 v-if="room.incidents?.length"
-                class="grid gap-2 px-4 py-3 sm:grid-cols-2"
+                class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
             >
                 <a
-                    v-for="item in room.incidents"
+                    v-for="item in visibleIncidents"
                     :key="item.id"
                     :href="route('tenant.incidents.show', item.id)"
-                    class="flex items-start gap-2.5 rounded-lg border px-3 py-2.5 transition hover:bg-slate-50 dark:hover:bg-darkmode-700/50"
-                    :class="
-                        item.overdue
-                            ? 'border-danger/30 bg-danger/5'
-                            : 'border-slate-200/70 dark:border-darkmode-400'
-                    "
+                    class="flex items-start gap-3 px-4 py-2.5 transition hover:bg-slate-50 dark:hover:bg-darkmode-700/50"
                 >
                     <Lucide
                         icon="Wrench"
@@ -352,14 +369,24 @@ const sectionIcon =
                             <template v-if="item.category_label">
                                 · {{ item.category_label }}
                             </template>
-                            <span
-                                v-if="item.overdue"
-                                class="font-medium text-danger"
-                            >
-                                · sin atender
-                            </span>
                         </div>
                     </div>
+                    <span
+                        v-if="item.overdue"
+                        class="shrink-0 rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
+                        >Sin atender</span
+                    >
+                    <Lucide
+                        icon="ChevronRight"
+                        class="mt-0.5 h-3.5 w-3.5 shrink-0 text-slate-300"
+                    />
+                </a>
+                <a
+                    v-if="room.incidents.length > INCIDENT_CAP"
+                    :href="route('tenant.incidents')"
+                    class="block px-4 py-2.5 text-xs font-medium text-primary hover:underline"
+                >
+                    Ver las {{ room.incidents.length }} en Incidencias
                 </a>
             </div>
             <p v-else class="px-4 py-3 text-xs text-slate-500">
@@ -372,7 +399,7 @@ const sectionIcon =
             :open="incidentOpen"
             :room-number="room.number"
             :categories="incidentCategories"
-            :busy="saving"
+            :busy="busyAction === 'incident'"
             @close="incidentOpen = false"
             @submit="submitIncident"
         />
@@ -380,9 +407,20 @@ const sectionIcon =
         <ScheduleBlockDialog
             :open="blockOpen"
             :room-number="room.number"
-            :busy="saving"
+            :busy="busyAction === 'block'"
             @close="blockOpen = false"
             @submit="submitBlock"
+        />
+
+        <ConfirmDialog
+            :open="confirmBox.open.value"
+            :title="confirmBox.options.value.title"
+            :message="confirmBox.options.value.message"
+            :confirm-label="confirmBox.options.value.confirmLabel"
+            :icon="confirmBox.options.value.icon"
+            :tone="confirmBox.options.value.tone"
+            @confirm="confirmBox.answer(true)"
+            @cancel="confirmBox.answer(false)"
         />
     </div>
 </template>

@@ -94,14 +94,14 @@ const busyReservation = () =>
     >
         <div
             v-if="room"
-            class="absolute inset-x-0 bottom-0 z-40 rounded-t-2xl border-t border-slate-200/70 bg-white p-4 shadow-[0_-8px_30px_rgba(0,0,0,0.12)] sm:p-4 dark:border-darkmode-400 dark:bg-darkmode-600"
+            class="absolute inset-x-0 bottom-0 z-40 max-h-[85dvh] overflow-y-auto overscroll-contain rounded-t-2xl border-t border-slate-200/70 bg-white px-4 pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-[0_-8px_30px_rgba(0,0,0,0.12)] dark:border-darkmode-400 dark:bg-darkmode-600"
         >
             <div class="mx-auto w-full max-w-3xl">
                 <div class="flex items-start gap-3">
                     <div
-                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-primary/10 bg-primary/10 text-primary"
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
                     >
-                        <Lucide icon="DoorClosed" class="h-6 w-6" />
+                        <Lucide icon="DoorClosed" class="h-4 w-4" />
                     </div>
                     <div class="min-w-0 flex-1">
                         <div
@@ -111,7 +111,7 @@ const busyReservation = () =>
                                 >Habitación {{ room.number }}</span
                             >
                             <span
-                                class="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-200"
+                                class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-200"
                                 >{{ room.label }}</span
                             >
                         </div>

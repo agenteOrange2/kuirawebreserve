@@ -16,6 +16,12 @@ import type { CheckoutFolio, RoomData, RoomSaleOptions } from './types';
 export interface FloorPlanContext {
     /** El cuarto abierto en el modal. */
     room: ComputedRef<RoomData | null>;
+    /**
+     * El cuarto seleccionado en el plano, aunque su modal esté apagado un
+     * momento (mientras se confirma algo o corre otro flujo). Sirve para saber
+     * si el modal se CERRÓ o solo se ocultó.
+     */
+    selectedRoomId: ComputedRef<number | null>;
     /** Reloj único de la página, para las cuentas regresivas. */
     nowMs: Ref<number>;
     /**
@@ -51,6 +57,11 @@ export interface FloorPlanContext {
     editMode: Ref<boolean>;
     /** ¿Este usuario puede abrir el candado? */
     canToggleEdit: ComputedRef<boolean>;
+    /**
+     * Clave de la acción en curso (`incident`, `block`, `panel:create`…) o
+     * null. Es el candado real de las acciones del cuarto; `saving` solo cubre
+     * el cambio de semáforo.
+     */
     busyAction: Ref<string | null>;
     saving: Ref<boolean>;
 
@@ -85,14 +96,15 @@ export interface FloorPlanContext {
     openMove: (room: RoomData) => void;
     openPos: (stayId: number) => void;
     openReservationDetail: (reservationId: number) => void;
-    createRoom: (payload: RoomFormPayload) => void;
-    updateRoom: (payload: RoomFormPayload) => void;
+    /** Devuelven si el servidor aceptó: el formulario solo se cierra con `true`. */
+    createRoom: (payload: RoomFormPayload) => Promise<boolean>;
+    updateRoom: (payload: RoomFormPayload) => Promise<boolean>;
     duplicateRoom: () => void;
     deleteRoom: () => void;
     /** Consumo cargado o cobrado desde el tab: toast y refresco. */
     onSold: (message: string) => void;
     /** Cancelar una venta de la estancia (devuelve la mercancía al inventario). */
-    voidOrder: (orderId: number) => Promise<void>;
+    voidOrder: (orderId: number) => Promise<boolean>;
     /** Caseta de motel: terminar de capturar la llegada y marcar el cobro. */
     completeArrival: (room: RoomData) => void;
     /** Levantar una incidencia de mantenimiento sobre este cuarto. */
@@ -104,16 +116,16 @@ export interface FloorPlanContext {
         source: string;
         set_maintenance: boolean;
         photo: File | null;
-    }) => Promise<void>;
+    }) => Promise<boolean>;
     /** Programar mantenimiento: bloquea fechas sin tocar el semáforo de hoy. */
     createBlock: (payload: {
         starts_at: string;
         ends_at: string;
         reason: string | null;
-    }) => Promise<void>;
-    deleteBlock: (blockId: number) => Promise<void>;
+    }) => Promise<boolean>;
+    deleteBlock: (blockId: number) => Promise<boolean>;
     /** Contador de usos a cero y candado de rotación fuera (motel). */
-    resetUsage: () => Promise<void>;
+    resetUsage: () => Promise<boolean>;
     onError: (message: string) => void;
     close: () => void;
 }

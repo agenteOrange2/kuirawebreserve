@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, inject, ref, watch } from 'vue';
+import { computed, inject, provide, ref, watch } from 'vue';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
 import { FloorPlanKey } from '../context';
+import type { RoomData } from '../types';
 import { statusStyles } from '../status';
 import ChargesTab from './tabs/ChargesTab.vue';
 import CleaningTab from './tabs/CleaningTab.vue';
@@ -36,8 +37,30 @@ type TabKey =
 
 const ctx = inject(FloorPlanKey)!;
 
-const room = computed(() => ctx.room.value);
-const open = computed(() => room.value !== null);
+const open = computed(() => ctx.room.value !== null);
+
+/**
+ * El cuarto que se pinta. El plano suelta la selección en el mismo instante en
+ * que cierra el modal; si el panel dependiera de eso (`v-if="room"`), se
+ * desmontaba de golpe junto con el fondo y no había animación de salida. Esta
+ * copia se queda con el último cuarto mientras el modal se va, y los tabs la
+ * reciben por un `provide` propio que tapa el del plano.
+ */
+const shown = ref<RoomData | null>(ctx.room.value);
+
+watch(
+    () => ctx.room.value,
+    (current) => {
+        if (current) {
+            shown.value = current;
+        }
+    },
+    { flush: 'sync' },
+);
+
+const room = computed(() => shown.value);
+
+provide(FloorPlanKey, { ...ctx, room });
 
 const tab = ref<TabKey>('resumen');
 
@@ -101,14 +124,13 @@ const tabs = computed<TabDefinition[]>(() => [
 
 // Cada apertura empieza en Resumen: es lo que se necesita el 90% de las veces,
 // y quedarse en "Cuarto" del cuarto anterior invita a editar el equivocado.
-watch(
-    () => room.value?.id,
-    (id) => {
-        if (id !== undefined) {
-            tab.value = 'resumen';
-        }
-    },
-);
+// Se mira la SELECCIÓN y no el modal: cuando se apaga un momento para
+// confirmar algo o extender, al volver debe seguir en el tab donde estaba.
+watch(ctx.selectedRoomId, (id) => {
+    if (id !== null) {
+        tab.value = 'resumen';
+    }
+});
 
 // Si al hotel le quitan el POS con el tab abierto, no se queda en un tab que ya
 // no existe.
@@ -125,45 +147,54 @@ watch(tabs, (list) => {
          alrededor, que es la mitad del punto de operar desde aquí. -->
     <Dialog size="xl" :open="open" @close="ctx.close()">
         <Dialog.Panel
-            v-if="room"
             class="sm:w-[720px] lg:w-[1000px] xl:w-[1240px] 2xl:w-[1400px]"
         >
             <!-- Alto acotado con encabezado y tabs fijos: el cuerpo scrollea
                  solo. El tope es `100dvh - 6rem` y no un 92vh a secas porque
                  el panel del theme entra con `mt-16`: con vh pelado el pie se
-                 salía de la pantalla. El mínimo evita que un tab corto deje el
-                 modal como una tira. -->
-            <div class="flex max-h-[calc(100dvh-6rem)] min-h-[55vh] flex-col">
+                 salía de la pantalla. El mínimo (desde sm) evita que un tab
+                 corto deje el modal como una tira; en el teléfono acostado
+                 solo robaba alto al cuerpo. -->
+            <div
+                v-if="room"
+                class="flex max-h-[calc(100dvh-6rem)] flex-col sm:min-h-[55vh]"
+            >
                 <div
-                    class="shrink-0 border-b border-slate-200/70 px-4 py-4 sm:px-5 dark:border-darkmode-400"
+                    class="shrink-0 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
                 >
                     <div class="flex items-start gap-3">
                         <div
-                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-primary/10 bg-primary/10 text-primary"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
+                            :class="statusStyles[room.color]?.soft"
                         >
-                            <Lucide icon="DoorClosed" class="h-5 w-5" />
+                            <Lucide icon="DoorClosed" class="h-4 w-4" />
                         </div>
                         <div class="min-w-0 flex-1">
                             <div
-                                class="flex flex-wrap items-center gap-x-2.5 gap-y-1"
+                                class="flex flex-wrap items-center gap-x-2 gap-y-1"
                             >
-                                <h2
-                                    class="text-base font-medium text-slate-900 dark:text-slate-100"
+                                <Dialog.Title
+                                    as="h2"
+                                    class="block border-0 p-0 text-base font-medium"
                                 >
                                     Habitación {{ room.number }}
-                                </h2>
+                                </Dialog.Title>
                                 <span
-                                    class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium"
+                                    class="inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
                                     :class="statusStyles[room.color]?.soft"
                                 >
                                     <span
-                                        class="h-2 w-2 rounded-full"
+                                        class="h-1.5 w-1.5 rounded-full"
                                         :class="statusStyles[room.color]?.dot"
                                     />
                                     {{ room.label }}
                                 </span>
                             </div>
-                            <p class="mt-0.5 truncate text-xs text-slate-500">
+                            <!-- En el teléfono en dos renglones: truncado a
+                                 una línea se perdían zona y capacidad. -->
+                            <p
+                                class="mt-0.5 line-clamp-2 text-xs text-slate-500 sm:line-clamp-1"
+                            >
                                 <!-- El nombre suele venir igual que el tipo:
                                      repetirlo dejaba el encabezado diciendo dos
                                      veces lo mismo. -->
@@ -183,24 +214,29 @@ watch(tabs, (list) => {
                         </div>
                         <button
                             type="button"
-                            class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-darkmode-400 dark:hover:text-slate-100"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
                             aria-label="Cerrar"
                             @click="ctx.close()"
                         >
-                            <Lucide icon="X" class="h-5 w-5" />
+                            <Lucide icon="X" class="h-4 w-4" />
                         </button>
                     </div>
 
-                    <!-- Misma fila de pastillas que usan Inventario y Turnos:
-                         una sola manera de cambiar de tab en todo el panel. -->
+                    <!-- Misma fila de pastillas que usan Inventario y Turnos.
+                         En el teléfono, rejilla de tres: en una fila con
+                         scroll lateral, Historial y Cuarto quedaban fuera de
+                         la vista y nadie los encontraba. -->
                     <div
-                        class="mt-3.5 flex gap-1 overflow-x-auto rounded-[0.6rem] bg-slate-100/80 p-1 dark:bg-darkmode-800/60"
+                        role="tablist"
+                        class="mt-3.5 grid grid-cols-3 gap-1 rounded-[0.6rem] bg-slate-100/80 p-1 sm:flex sm:overflow-x-auto dark:bg-darkmode-800/60"
                     >
                         <button
                             v-for="item in tabs"
                             :key="item.key"
                             type="button"
-                            class="flex min-h-9 shrink-0 items-center gap-1.5 rounded-[0.5rem] px-3 text-xs font-medium transition sm:px-3.5"
+                            role="tab"
+                            :aria-selected="tab === item.key"
+                            class="flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-[0.5rem] px-2 text-xs font-medium transition sm:shrink-0 sm:px-3.5"
                             :class="
                                 tab === item.key
                                     ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
@@ -208,15 +244,19 @@ watch(tabs, (list) => {
                             "
                             @click="tab = item.key"
                         >
+                            <!-- Sin icono en el teléfono: en un tercio de ancho
+                                 el icono cortaba "Consumos". -->
                             <Lucide
                                 :icon="item.icon"
-                                class="hidden h-3.5 w-3.5 sm:block"
+                                class="hidden h-3.5 w-3.5 shrink-0 sm:block"
                             />
                             <!-- El nombre largo hasta lg: en la tablet vertical
                                  (panel de 720px) "Consumos y cobro" +
                                  "Mantenimiento" empujaban la barra y los
                                  extremos quedaban cortados. -->
-                            <span class="lg:hidden">{{ item.short }}</span>
+                            <span class="truncate lg:hidden">{{
+                                item.short
+                            }}</span>
                             <span class="hidden lg:inline">{{
                                 item.label
                             }}</span>
@@ -224,7 +264,7 @@ watch(tabs, (list) => {
                     </div>
                 </div>
 
-                <div class="flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
+                <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
                     <SummaryTab v-show="tab === 'resumen'" />
                     <ChargesTab
                         v-if="ctx.canChargeHere.value"

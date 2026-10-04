@@ -2,15 +2,10 @@
 import axios from 'axios';
 import { reactive, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
-import {
-    FormHelp,
-    FormInput,
-    FormSelect,
-    FormTextarea,
-} from '@/components/Base/Form';
-import { Dialog } from '@/components/Base/Headless';
+import { FormInput, FormSelect, FormTextarea } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
 import { useToasts } from '@/composables/useToasts';
+import PlanModal from './PlanModal.vue';
 import type { RoomData } from './types';
 
 /**
@@ -34,6 +29,27 @@ const emit = defineEmits<{
 
 const toast = useToasts();
 const busy = ref(false);
+
+// Lo último que se mostró de cada diálogo: el plano suelta el cuarto al cerrar
+// y sin esto el título se vaciaba durante la animación de salida.
+const shownStart = ref<RoomData | null>(null);
+const shownClose = ref<RoomData | null>(null);
+watch(
+    () => props.startRoom,
+    (room) => {
+        if (room) {
+            shownStart.value = room;
+        }
+    },
+);
+watch(
+    () => props.closeRoom,
+    (room) => {
+        if (room) {
+            shownClose.value = room;
+        }
+    },
+);
 
 const startForm = reactive({ housekeeper_id: '', kind: 'salida' });
 const closeForm = reactive({
@@ -125,193 +141,220 @@ async function finish() {
 
 <template>
     <!-- Iniciar -->
-    <Dialog :open="startRoom !== null" @close="emit('close')">
-        <Dialog.Panel>
-            <Dialog.Title>
-                <div
-                    class="flex h-10 w-10 items-center justify-center rounded-full border border-info/10 bg-info/10 text-info"
+    <PlanModal
+        :open="startRoom !== null"
+        icon="Sparkles"
+        tone="info"
+        :title="`Iniciar limpieza · ${shownStart?.number ?? ''}`"
+        subtitle="Queda con nombre y hora; el tiempo corre desde ahora."
+        panel-class="sm:w-[480px]"
+        :busy="busy"
+        @close="emit('close')"
+    >
+        <div>
+            <label
+                for="cleaning-housekeeper"
+                class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
+                >Camarista</label
+            >
+            <FormSelect
+                id="cleaning-housekeeper"
+                v-model="startForm.housekeeper_id"
+                class="h-9 text-xs"
+            >
+                <option value="">Elige quién limpia</option>
+                <option v-for="h in housekeepers" :key="h.id" :value="h.id">
+                    {{ h.name }}
+                </option>
+            </FormSelect>
+            <p
+                v-if="housekeepers.length === 0"
+                class="mt-1.5 text-xs text-slate-500"
+            >
+                No hay camaristas dadas de alta.
+                <a
+                    :href="route('tenant.housekeeping.staff')"
+                    class="font-medium text-primary hover:underline"
+                    >Agrégalas en Limpieza</a
                 >
-                    <Lucide icon="Sparkles" class="h-5 w-5" />
-                </div>
-                <h2 class="ml-3 text-base font-medium">
-                    Iniciar limpieza · {{ startRoom?.number }}
-                </h2>
-            </Dialog.Title>
-            <Dialog.Description>
-                <div class="space-y-3">
-                    <div>
-                        <label class="mb-1 block text-xs">Camarista</label>
-                        <FormSelect v-model="startForm.housekeeper_id">
-                            <option value="">Elige quién limpia</option>
-                            <option
-                                v-for="h in housekeepers"
-                                :key="h.id"
-                                :value="h.id"
-                            >
-                                {{ h.name }}
-                            </option>
-                        </FormSelect>
-                        <FormHelp v-if="housekeepers.length === 0">
-                            No hay camaristas dadas de alta: agrégalas en
-                            Limpieza para poder registrar el trabajo.
-                        </FormHelp>
-                    </div>
-                    <div>
-                        <label class="mb-1 block text-xs">
-                            Tipo de limpieza
-                        </label>
-                        <FormSelect v-model="startForm.kind">
-                            <option
-                                v-for="(label, key) in kinds"
-                                :key="key"
-                                :value="key"
-                            >
-                                {{ label }}
-                            </option>
-                        </FormSelect>
-                    </div>
-                </div>
-            </Dialog.Description>
-            <Dialog.Footer>
-                <Button
-                    variant="outline-secondary"
-                    class="mr-2 w-24"
-                    @click="emit('close')"
-                >
-                    Cancelar
-                </Button>
-                <Button
-                    variant="primary"
-                    class="w-28"
-                    :disabled="busy"
-                    @click="start"
-                >
-                    Iniciar
-                </Button>
-            </Dialog.Footer>
-        </Dialog.Panel>
-    </Dialog>
+                para poder registrar el trabajo.
+            </p>
+        </div>
+        <div>
+            <label
+                for="cleaning-kind"
+                class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
+                >Tipo de limpieza</label
+            >
+            <FormSelect
+                id="cleaning-kind"
+                v-model="startForm.kind"
+                class="h-9 text-xs"
+            >
+                <option v-for="(label, key) in kinds" :key="key" :value="key">
+                    {{ label }}
+                </option>
+            </FormSelect>
+        </div>
+
+        <template #footer>
+            <Button
+                variant="outline-secondary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="busy"
+                @click="emit('close')"
+            >
+                Cancelar
+            </Button>
+            <Button
+                variant="primary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="busy || !startForm.housekeeper_id"
+                @click="start"
+            >
+                <Lucide icon="Sparkles" class="mr-1.5 h-3.5 w-3.5" />
+                {{ busy ? 'Iniciando…' : 'Iniciar limpieza' }}
+            </Button>
+        </template>
+    </PlanModal>
 
     <!-- Terminar -->
-    <Dialog :open="closeRoom !== null" size="lg" @close="emit('close')">
-        <Dialog.Panel>
-            <Dialog.Title>
-                <div
-                    class="flex h-10 w-10 items-center justify-center rounded-full border border-success/10 bg-success/10 text-success"
+    <PlanModal
+        :open="closeRoom !== null"
+        icon="CircleCheck"
+        tone="success"
+        :title="`Terminar limpieza · ${shownClose?.number ?? ''}`"
+        :subtitle="
+            shownClose?.cleaning
+                ? `${shownClose.cleaning.housekeeper} · ${shownClose.cleaning.minutes} min`
+                : null
+        "
+        panel-class="sm:w-[94vw] lg:w-[620px]"
+        :busy="busy"
+        @close="emit('close')"
+    >
+        <div>
+            <div
+                class="mb-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                Qué se hizo
+            </div>
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                    v-for="task in checklist"
+                    :key="task.key"
+                    type="button"
+                    class="flex h-9 items-center gap-2 rounded-[0.5rem] border px-3 text-left text-xs transition"
+                    :class="
+                        closeForm.checklist.includes(task.key)
+                            ? 'border-success/30 bg-success/5 text-slate-700 dark:text-slate-200'
+                            : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400 dark:hover:bg-darkmode-400'
+                    "
+                    @click="toggleTask(task.key)"
                 >
-                    <Lucide icon="CircleCheck" class="h-5 w-5" />
+                    <Lucide
+                        :icon="
+                            closeForm.checklist.includes(task.key)
+                                ? 'CircleCheck'
+                                : 'Circle'
+                        "
+                        class="h-3.5 w-3.5 shrink-0"
+                        :class="
+                            closeForm.checklist.includes(task.key)
+                                ? 'text-success'
+                                : 'text-slate-300'
+                        "
+                    />
+                    <span class="min-w-0 truncate">{{ task.label }}</span>
+                </button>
+            </div>
+        </div>
+
+        <div v-if="linens.length">
+            <div
+                class="mb-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                Ropa usada
+            </div>
+            <div class="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div v-for="item in linens" :key="item.key">
+                    <label
+                        :for="`cleaning-linen-${item.key}`"
+                        class="mb-1 block truncate text-xs text-slate-500"
+                    >
+                        {{ item.label }}
+                    </label>
+                    <FormInput
+                        :id="`cleaning-linen-${item.key}`"
+                        v-model.number="closeForm.linens[item.key]"
+                        type="number"
+                        min="0"
+                        max="99"
+                        placeholder="0"
+                        class="h-9 text-center text-xs"
+                    />
                 </div>
-                <h2 class="ml-3 text-base font-medium">
-                    Terminar limpieza · {{ closeRoom?.number }}
-                </h2>
-                <span
-                    v-if="closeRoom?.cleaning"
-                    class="ml-2 text-xs text-slate-500"
-                >
-                    {{ closeRoom.cleaning.housekeeper }} ·
-                    {{ closeRoom.cleaning.minutes }} min
-                </span>
-            </Dialog.Title>
-            <Dialog.Description>
-                <div class="space-y-4">
-                    <div>
-                        <div class="mb-2 text-xs font-medium">
-                            ¿Qué se hizo?
-                        </div>
-                        <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                            <button
-                                v-for="task in checklist"
-                                :key="task.key"
-                                type="button"
-                                class="flex items-center gap-2 rounded-lg border p-2.5 text-left text-sm transition"
-                                :class="
-                                    closeForm.checklist.includes(task.key)
-                                        ? 'border-success/30 bg-success/5'
-                                        : 'border-slate-200/70 dark:border-darkmode-400'
-                                "
-                                @click="toggleTask(task.key)"
-                            >
-                                <Lucide
-                                    :icon="
-                                        closeForm.checklist.includes(task.key)
-                                            ? 'CircleCheck'
-                                            : 'Circle'
-                                    "
-                                    class="h-4 w-4 shrink-0"
-                                    :class="
-                                        closeForm.checklist.includes(task.key)
-                                            ? 'text-success'
-                                            : 'text-slate-300'
-                                    "
-                                />
-                                {{ task.label }}
-                            </button>
-                        </div>
-                    </div>
+            </div>
+        </div>
 
-                    <div v-if="linens.length">
-                        <div class="mb-2 text-xs font-medium">Ropa usada</div>
-                        <div class="grid grid-cols-2 gap-3">
-                            <div v-for="item in linens" :key="item.key">
-                                <label
-                                    class="mb-1 block text-xs text-slate-500"
-                                >
-                                    {{ item.label }}
-                                </label>
-                                <FormInput
-                                    v-model.number="closeForm.linens[item.key]"
-                                    type="number"
-                                    min="0"
-                                    max="99"
-                                    placeholder="0"
-                                    class="text-center"
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    <div>
-                        <label class="mb-1 block text-xs">
-                            ¿Encontró algo roto o faltante?
-                        </label>
-                        <FormInput
-                            v-model="closeForm.incident_title"
-                            type="text"
-                            placeholder="Opcional: regadera goteando, control sin pilas..."
-                        />
-                        <FormHelp>
-                            Si escribes algo, se levanta una incidencia de
-                            mantenimiento para esta habitación.
-                        </FormHelp>
-                    </div>
-
-                    <div>
-                        <label class="mb-1 block text-xs">Notas</label>
-                        <FormTextarea
-                            v-model="closeForm.notes"
-                            rows="2"
-                            placeholder="Opcional"
-                        />
-                    </div>
-                </div>
-            </Dialog.Description>
-            <Dialog.Footer>
-                <Button
-                    variant="outline-secondary"
-                    class="mr-2 w-24"
-                    @click="emit('close')"
+        <div
+            class="space-y-4 border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
+        >
+            <div>
+                <label
+                    for="cleaning-incident"
+                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
+                    >¿Encontró algo roto o faltante?</label
                 >
-                    Cancelar
-                </Button>
-                <Button
-                    variant="primary"
-                    class="w-36"
-                    :disabled="busy"
-                    @click="finish"
+                <FormInput
+                    id="cleaning-incident"
+                    v-model="closeForm.incident_title"
+                    type="text"
+                    class="h-9 text-xs"
+                    placeholder="Regadera goteando, control sin pilas…"
+                />
+                <p class="mt-1.5 text-xs text-slate-500">
+                    Si escribes algo, se levanta una incidencia de mantenimiento
+                    para esta habitación.
+                </p>
+            </div>
+
+            <div>
+                <label
+                    for="cleaning-notes"
+                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
+                    >Notas</label
                 >
-                    Terminar y liberar
-                </Button>
-            </Dialog.Footer>
-        </Dialog.Panel>
-    </Dialog>
+                <FormTextarea
+                    id="cleaning-notes"
+                    v-model="closeForm.notes"
+                    rows="2"
+                    class="text-xs"
+                />
+            </div>
+            <p class="text-[11px] text-slate-400">
+                La falla y las notas son opcionales.
+            </p>
+        </div>
+
+        <template #footer>
+            <Button
+                variant="outline-secondary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="busy"
+                @click="emit('close')"
+            >
+                Cancelar
+            </Button>
+            <Button
+                variant="primary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="busy"
+                @click="finish"
+            >
+                <Lucide icon="CircleCheck" class="mr-1.5 h-3.5 w-3.5" />
+                {{ busy ? 'Guardando…' : 'Terminar y liberar' }}
+            </Button>
+        </template>
+    </PlanModal>
 </template>

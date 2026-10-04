@@ -32,6 +32,11 @@ const props = defineProps<{
     busy: boolean;
     /** Prefijo de los id, para no repetirlos si hay dos formularios abiertos. */
     idPrefix?: string;
+    /**
+     * Sin botones propios: el modal de alta los pone en su pie fijo y envía
+     * este formulario por su id (`${idPrefix}-form`).
+     */
+    hideActions?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -39,12 +44,19 @@ const emit = defineEmits<{
     (e: 'cancel'): void;
 }>();
 
-const form = ref<RoomFormValue>({ ...props.initial });
+// El select usa 0 para "Sin zona"; con null no coincide ninguna opción y el
+// campo salía en blanco, como si faltara elegir algo.
+const fromInitial = (initial: RoomFormValue): RoomFormValue => ({
+    ...initial,
+    zone_id: initial.zone_id ?? 0,
+});
+
+const form = ref<RoomFormValue>(fromInitial(props.initial));
 
 watch(
     () => props.initial,
     (initial) => {
-        form.value = { ...initial };
+        form.value = fromInitial(initial);
     },
     { deep: true },
 );
@@ -66,30 +78,34 @@ function submit() {
 </script>
 
 <template>
-    <form class="space-y-3" @submit.prevent="submit">
-        <div class="grid gap-3 sm:grid-cols-3">
+    <form :id="fieldId('form')" class="space-y-3" @submit.prevent="submit">
+        <div class="grid gap-4 sm:grid-cols-3">
             <div>
-                <label class="text-xs text-slate-500" :for="fieldId('number')"
+                <label
+                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
+                    :for="fieldId('number')"
                     >Número</label
                 >
                 <FormInput
                     :id="fieldId('number')"
                     v-model="form.number"
                     type="text"
-                    class="mt-1"
+                    class="h-9 text-xs"
                     maxlength="20"
                     placeholder="Ej. 110"
                     required
                 />
             </div>
             <div>
-                <label class="text-xs text-slate-500" :for="fieldId('type')"
+                <label
+                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
+                    :for="fieldId('type')"
                     >Tipo</label
                 >
                 <FormSelect
                     :id="fieldId('type')"
                     v-model.number="form.room_type_id"
-                    class="mt-1"
+                    class="h-9 text-xs"
                 >
                     <option
                         v-for="type in roomTypes"
@@ -101,13 +117,15 @@ function submit() {
                 </FormSelect>
             </div>
             <div>
-                <label class="text-xs text-slate-500" :for="fieldId('zone')"
+                <label
+                    class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
+                    :for="fieldId('zone')"
                     >Zona</label
                 >
                 <FormSelect
                     :id="fieldId('zone')"
                     v-model.number="form.zone_id"
-                    class="mt-1"
+                    class="h-9 text-xs"
                 >
                     <option :value="0">Sin zona</option>
                     <option
@@ -126,22 +144,29 @@ function submit() {
             el plano desbloqueado.
         </p>
 
-        <div class="flex gap-2">
-            <Button
-                variant="primary"
-                type="submit"
-                class="min-h-11 rounded-[0.5rem] text-xs"
-                :disabled="busy"
-            >
-                {{ mode === 'create' ? 'Crear' : 'Guardar' }}
-            </Button>
+        <div v-if="!hideActions" class="flex justify-end gap-2">
             <Button
                 variant="outline-secondary"
                 type="button"
-                class="min-h-11 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                class="h-9 rounded-[0.5rem] bg-white px-5 text-xs dark:bg-darkmode-600"
+                :disabled="busy"
                 @click="emit('cancel')"
             >
                 Cancelar
+            </Button>
+            <Button
+                variant="primary"
+                type="submit"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="busy"
+            >
+                {{
+                    busy
+                        ? 'Guardando…'
+                        : mode === 'create'
+                          ? 'Crear'
+                          : 'Guardar'
+                }}
             </Button>
         </div>
     </form>

@@ -23,8 +23,16 @@ it('mantiene acciones principales grandes y con lenguaje cotidiano', function ()
     expect($source)
         ->toContain('¿Qué necesitas hacer?')
         ->toContain('Registrar salida')
-        // Alturas de dedo: el mostrador opera con tablet.
-        ->toContain('min-h-11');
+        // Dentro del modal manda el canon chico (botones h-9), como en el
+        // resto del panel: decisión del dueño, 2026-10-04.
+        ->toContain('h-9')
+        ->not->toContain('min-h-11');
+
+    // Las alturas de dedo viven donde se opera con el dedo: la hoja de
+    // acciones del modo pantalla completa, en la tablet del mostrador.
+    expect(file_get_contents(
+        dirname(__DIR__, 2).'/resources/js/pages/tenant/floorplan/RoomActionSheet.vue',
+    ))->toContain('min-h-12');
 
     // Los caminos de venta los arma el plano en un solo lugar (saleOptionsFor),
     // porque de ahí sale la decisión hotel/motel/ambos.

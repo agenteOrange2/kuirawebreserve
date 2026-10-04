@@ -151,8 +151,15 @@ const sectionIcon =
                     />
                     <span>
                         El semáforo quedó apartado sin ninguna reserva que lo
-                        respalde. Puedes liberarlo al lado; el barrido
-                        automático lo hace solo en la siguiente corrida.
+                        respalde.
+                        <template v-if="canManage"
+                            >Puedes liberarlo en «Mover el semáforo»;</template
+                        >
+                        <template v-else
+                            >Quien administra puede liberarlo;</template
+                        >
+                        el barrido automático lo hace solo en la siguiente
+                        corrida.
                     </span>
                 </p>
             </div>
@@ -212,9 +219,12 @@ const sectionIcon =
                     class="rounded-lg border border-dashed border-slate-300/70 px-3.5 py-3 text-xs text-slate-500 dark:border-darkmode-400"
                 >
                     Ahora mismo no hay nada que mover a mano en este cuarto. En
-                    modo de limpieza automático los pasos los da el reloj
-                    (/ajustes/limpieza), y una habitación apartada u ocupada se
-                    libera con su reserva.
+                    modo de limpieza automático los pasos los da el reloj (<a
+                        href="/ajustes/limpieza"
+                        class="font-medium text-primary hover:underline"
+                        >Ajustes de limpieza</a
+                    >), y una habitación apartada u ocupada se libera con su
+                    reserva.
                 </p>
             </div>
         </section>

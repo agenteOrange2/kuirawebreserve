@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue';
+import { computed, ref, watch } from 'vue';
 import Button from '@/components/Base/Button';
 import { Dialog } from '@/components/Base/Headless';
 import { FormDate, FormInput } from '@/components/Base/Form';
@@ -37,8 +37,17 @@ watch(
     },
 );
 
+// Fechas al revés: el servidor lo rechazaría y el modal se quedaba esperando.
+// Las dos vienen en 'YYYY-MM-DD', así que se comparan como texto.
+const invalidRange = computed(
+    () =>
+        form.value.starts_at !== '' &&
+        form.value.ends_at !== '' &&
+        form.value.ends_at < form.value.starts_at,
+);
+
 function submit() {
-    if (!form.value.starts_at || !form.value.ends_at) {
+    if (!form.value.starts_at || !form.value.ends_at || invalidRange.value) {
         return;
     }
 
@@ -51,7 +60,7 @@ function submit() {
 </script>
 
 <template>
-    <Dialog :open="open" size="lg" @close="emit('close')">
+    <Dialog :open="open" size="lg" @close="busy || emit('close')">
         <Dialog.Panel class="sm:w-[94vw] lg:w-[620px]">
             <form
                 class="flex max-h-[calc(100dvh-6rem)] flex-col"
@@ -83,36 +92,43 @@ function submit() {
                 </div>
 
                 <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-                    <div class="grid gap-3 sm:grid-cols-2">
+                    <div class="grid gap-4 sm:grid-cols-2">
                         <div>
                             <label
-                                class="text-xs text-slate-500"
+                                class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                                 for="block-from"
                                 >Desde</label
                             >
                             <FormDate
                                 id="block-from"
                                 v-model="form.starts_at"
-                                class="mt-1"
                                 input-class="h-9 text-xs"
                                 required
                             />
                         </div>
                         <div>
-                            <label class="text-xs text-slate-500" for="block-to"
+                            <label
+                                class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
+                                for="block-to"
                                 >Hasta</label
                             >
                             <FormDate
                                 id="block-to"
                                 v-model="form.ends_at"
-                                class="mt-1"
+                                :min="form.starts_at || null"
                                 input-class="h-9 text-xs"
                                 required
                             />
                         </div>
+                        <p
+                            v-if="invalidRange"
+                            class="rounded-lg bg-danger/10 px-3 py-2 text-xs text-danger sm:col-span-2"
+                        >
+                            La fecha final no puede ser antes de la inicial.
+                        </p>
                         <div class="sm:col-span-2">
                             <label
-                                class="text-xs text-slate-500"
+                                class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                                 for="block-reason"
                                 >Motivo</label
                             >
@@ -121,7 +137,7 @@ function submit() {
                                 v-model="form.reason"
                                 type="text"
                                 maxlength="255"
-                                class="mt-1 h-9 text-xs"
+                                class="h-9 text-xs"
                                 placeholder="Pintura, plomería…"
                             />
                             <p class="mt-1.5 text-[11px] text-slate-400">
@@ -139,6 +155,7 @@ function submit() {
                         variant="outline-secondary"
                         type="button"
                         class="h-9 rounded-[0.5rem] px-5 text-xs"
+                        :disabled="busy"
                         @click="emit('close')"
                     >
                         Cancelar
@@ -147,7 +164,12 @@ function submit() {
                         variant="primary"
                         type="submit"
                         class="h-9 rounded-[0.5rem] px-5 text-xs"
-                        :disabled="busy || !form.starts_at || !form.ends_at"
+                        :disabled="
+                            busy ||
+                            !form.starts_at ||
+                            !form.ends_at ||
+                            invalidRange
+                        "
                     >
                         {{ busy ? 'Programando…' : 'Apartar fechas' }}
                     </Button>

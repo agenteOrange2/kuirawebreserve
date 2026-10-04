@@ -216,14 +216,17 @@ function startEdit() {
     };
 }
 
-function submit(payload: RoomFormValue) {
-    if (mode.value === 'create') {
-        createRoom(payload);
-    } else {
-        updateRoom(payload);
-    }
+async function submit(payload: RoomFormValue) {
+    const saved =
+        mode.value === 'create'
+            ? await createRoom(payload)
+            : await updateRoom(payload);
 
-    mode.value = 'idle';
+    // Si el servidor lo rechaza (número repetido, por ejemplo) el formulario se
+    // queda abierto con lo tecleado; el toast ya dijo por qué.
+    if (saved) {
+        mode.value = 'idle';
+    }
 }
 
 // Cambiar de cuarto o cerrar el candado cierra el formulario: seguir editando
@@ -461,12 +464,12 @@ const sectionIcon =
 
         <div
             v-if="showCharges || showUsage"
-            class="grid items-start gap-4"
+            class="grid items-stretch gap-4"
             :class="showCharges && showUsage ? 'lg:grid-cols-2' : 'grid-cols-1'"
         >
             <section
                 v-if="showCharges"
-                class="overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
+                class="flex flex-col overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
             >
                 <div :class="cardHeader">
                     <div
@@ -504,7 +507,7 @@ const sectionIcon =
 
             <section
                 v-if="showUsage"
-                class="overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
+                class="flex flex-col overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
             >
                 <div :class="cardHeader">
                     <div
@@ -538,7 +541,7 @@ const sectionIcon =
                             (room.usage_locked || room.usage_count > 0)
                         "
                         variant="outline-secondary"
-                        class="ml-auto h-8 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                        class="h-8 w-full rounded-[0.5rem] bg-white text-xs sm:ml-auto sm:w-auto dark:bg-darkmode-600"
                         :disabled="busy"
                         title="Pone el contador en cero y quita el candado de rotación"
                         @click="resetUsage"
@@ -546,6 +549,35 @@ const sectionIcon =
                         <Lucide icon="RotateCcw" class="mr-1.5 h-3.5 w-3.5" />
                         Reiniciar
                     </Button>
+                </div>
+                <!-- Cuerpo con la cifra y la barra: con solo la cabecera, al
+                     lado de la lista de servicios quedaba media tarjeta vacía. -->
+                <div class="flex flex-1 flex-col justify-center px-4 py-3">
+                    <div class="flex items-baseline justify-between text-xs">
+                        <span class="text-slate-500"
+                            >Usos desde el reinicio</span
+                        >
+                        <span class="text-sm font-medium"
+                            >{{ room.usage_count
+                            }}<template v-if="room.usage_limit">
+                                de {{ room.usage_limit }}</template
+                            ></span
+                        >
+                    </div>
+                    <div
+                        v-if="room.usage_limit"
+                        class="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-100 dark:bg-darkmode-400"
+                    >
+                        <div
+                            class="h-full rounded-full"
+                            :class="
+                                room.usage_locked ? 'bg-danger' : 'bg-primary'
+                            "
+                            :style="{
+                                width: `${Math.min(100, Math.round((room.usage_count / room.usage_limit) * 100))}%`,
+                            }"
+                        />
+                    </div>
                 </div>
             </section>
         </div>

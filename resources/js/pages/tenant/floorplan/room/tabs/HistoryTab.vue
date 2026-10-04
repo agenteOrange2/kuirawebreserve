@@ -57,6 +57,8 @@ const staysTotal = ref(0);
 const upcomingTotal = ref(0);
 const loading = ref(false);
 const loaded = ref(false);
+// Sin esto, una caída de red se leía como "todavía no hay estancias".
+const loadFailed = ref(false);
 
 /** Estancia abierta en el modal de cuenta y su folio. */
 const openStay = ref<StayRow | null>(null);
@@ -69,6 +71,7 @@ async function loadStays() {
     }
 
     loading.value = true;
+    loadFailed.value = false;
 
     try {
         const { data } = await axios.get(`/api/rooms/${room.value.id}/stays`);
@@ -78,6 +81,7 @@ async function loadStays() {
         upcomingTotal.value = data.upcoming_total ?? upcoming.value.length;
         loaded.value = true;
     } catch {
+        loadFailed.value = true;
         ctx.onError('No se pudo leer el historial de la habitación.');
     } finally {
         loading.value = false;
@@ -165,9 +169,9 @@ const cardFooter =
          movió hoy se apilan al lado. En tres columnas iguales la lista de
          estancias quedaba apretada (fechas cortadas) junto a dos tarjetas
          casi vacías. -->
-    <div class="grid items-start gap-4 lg:grid-cols-5">
+    <div class="grid items-stretch gap-4 lg:grid-cols-5">
         <section
-            class="overflow-hidden rounded-xl border border-slate-200/70 lg:col-span-3 dark:border-darkmode-400"
+            class="flex flex-col overflow-hidden rounded-xl border border-slate-200/70 lg:col-span-3 dark:border-darkmode-400"
         >
             <div :class="cardHeader">
                 <div
@@ -194,16 +198,29 @@ const cardFooter =
                 Leyendo el historial…
             </p>
 
+            <div
+                v-else-if="loadFailed"
+                class="flex flex-wrap items-center gap-2 px-4 py-3 text-xs text-slate-500"
+            >
+                No se pudo leer el historial.
+                <button
+                    type="button"
+                    class="font-medium text-primary hover:underline"
+                    @click="loadStays"
+                >
+                    Reintentar
+                </button>
+            </div>
             <p
                 v-else-if="!stays.length"
-                class="px-4 py-3 text-xs text-slate-500"
+                class="flex-1 px-4 py-3 text-xs text-slate-500"
             >
                 Todavía no hay estancias registradas en esta habitación.
             </p>
 
             <div
                 v-else
-                class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                class="flex-1 divide-y divide-slate-200/60 dark:divide-darkmode-400"
             >
                 <button
                     v-for="stay in stays"
@@ -247,7 +264,9 @@ const cardFooter =
                                 >Adentro</span
                             >
                         </div>
-                        <p class="mt-0.5 truncate text-[11px] text-slate-500">
+                        <p
+                            class="mt-0.5 text-[11px] text-slate-500 sm:truncate"
+                        >
                             {{ stay.check_in_at ?? '—' }} →
                             {{ stay.check_out_at ?? 'sigue adentro' }}
                         </p>
@@ -271,17 +290,21 @@ const cardFooter =
                 </button>
             </div>
 
-            <a :href="historyUrl('estancias')" :class="cardFooter">
+            <a
+                v-if="staysTotal"
+                :href="historyUrl('estancias')"
+                :class="cardFooter"
+            >
                 Ver todo en el historial
                 <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
             </a>
         </section>
 
-        <div class="grid gap-4 lg:col-span-2">
+        <div class="flex flex-col gap-4 lg:col-span-2">
             <!-- Lo que viene: sirve para saber hasta cuándo se puede extender a
              quien está adentro sin pisar a nadie. -->
             <section
-                class="overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
+                class="flex flex-1 flex-col overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
             >
                 <div :class="cardHeader">
                     <div
@@ -309,15 +332,22 @@ const cardFooter =
                 </p>
 
                 <p
+                    v-else-if="loadFailed"
+                    class="flex-1 px-4 py-3 text-xs text-slate-500"
+                >
+                    No se pudieron leer las reservas.
+                </p>
+
+                <p
                     v-else-if="!upcoming.length"
-                    class="px-4 py-3 text-xs text-slate-500"
+                    class="flex-1 px-4 py-3 text-xs text-slate-500"
                 >
                     No hay reservas por venir en esta habitación.
                 </p>
 
                 <div
                     v-else
-                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                    class="flex-1 divide-y divide-slate-200/60 dark:divide-darkmode-400"
                 >
                     <div
                         v-for="reservation in upcoming"
@@ -336,7 +366,7 @@ const cardFooter =
                                 >
                             </div>
                             <p
-                                class="mt-0.5 truncate text-[11px] text-slate-500"
+                                class="mt-0.5 text-[11px] text-slate-500 sm:truncate"
                             >
                                 {{ reservation.code }} ·
                                 {{ reservation.starts_at }} →
@@ -349,14 +379,18 @@ const cardFooter =
                     </div>
                 </div>
 
-                <a :href="historyUrl('proximas')" :class="cardFooter">
+                <a
+                    v-if="upcomingTotal"
+                    :href="historyUrl('proximas')"
+                    :class="cardFooter"
+                >
                     Ver todo en el historial
                     <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
                 </a>
             </section>
 
             <section
-                class="overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
+                class="flex flex-1 flex-col overflow-hidden rounded-xl border border-slate-200/70 dark:border-darkmode-400"
             >
                 <div :class="cardHeader">
                     <div
@@ -385,7 +419,7 @@ const cardFooter =
 
                 <div
                     v-if="todayChanges.length"
-                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                    class="flex-1 divide-y divide-slate-200/60 dark:divide-darkmode-400"
                 >
                     <div
                         v-for="entry in todayChanges"
@@ -413,7 +447,7 @@ const cardFooter =
                         </div>
                     </div>
                 </div>
-                <p v-else class="px-4 py-3 text-xs text-slate-500">
+                <p v-else class="flex-1 px-4 py-3 text-xs text-slate-500">
                     Sin cambios registrados hoy.
                 </p>
 

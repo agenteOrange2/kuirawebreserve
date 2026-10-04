@@ -8,8 +8,8 @@ import {
     FormLabel,
     FormSelect,
 } from '@/components/Base/Form';
-import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
+import PlanModal from './PlanModal.vue';
 import type { CounterMethod } from '@/composables/useCounterMethods';
 import { useCounterMethods } from '@/composables/useCounterMethods';
 import { useToasts } from '@/composables/useToasts';
@@ -419,7 +419,7 @@ async function submit() {
 // sí debe cerrar: la tecla es una decisión, no un resbalón del ratón. El
 // Dialog del theme se la traga junto con el clic, así que se escucha aquí.
 function onEscape(event: KeyboardEvent) {
-    if (event.key === 'Escape' && props.open) {
+    if (event.key === 'Escape' && props.open && !saving.value) {
         emit('close');
     }
 }
@@ -431,634 +431,565 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
 <template>
     <!-- staticBackdrop: es un formulario largo y con dinero de por medio;
          un clic afuera no debe tirarlo (el theme hace un "zoom" de aviso). -->
-    <Dialog :open="open" size="lg" static-backdrop @close="emit('close')">
-        <Dialog.Panel>
-            <div class="flex max-h-[85vh] flex-col">
-                <!-- Header -->
-                <div
-                    class="flex items-center gap-3.5 border-b border-slate-200/70 px-4 py-3 dark:border-darkmode-400"
+    <PlanModal
+        :open="open"
+        icon="Zap"
+        :title="`Registrar llegada · ${modalRoom?.number ?? ''}`"
+        :subtitle="`${modalRoom?.room_type ?? 'Habitación'} · registro exprés con cobro en la llegada`"
+        panel-class="sm:w-[600px]"
+        static-backdrop
+        :busy="saving"
+        @close="emit('close')"
+    >
+        <!-- Tarifa -->
+        <div>
+            <div
+                class="mb-2.5 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                <Lucide icon="Clock" class="h-3.5 w-3.5" />
+                Tarifa
+            </div>
+            <div
+                v-if="modalRoom?.rate_plans.length"
+                class="grid grid-cols-2 gap-2.5 sm:grid-cols-3"
+            >
+                <button
+                    v-for="plan in modalRoom.rate_plans"
+                    :key="plan.id"
+                    type="button"
+                    class="rounded-lg border p-3 text-left transition"
+                    :class="
+                        ratePlanId === plan.id
+                            ? 'border-primary bg-primary/5'
+                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
+                    "
+                    @click="ratePlanId = plan.id"
                 >
-                    <div
-                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
+                    <span
+                        class="block truncate text-sm font-medium"
+                        :class="ratePlanId === plan.id ? 'text-primary' : ''"
+                        >{{ plan.name }}</span
                     >
-                        <Lucide icon="Zap" class="h-5 w-5" />
-                    </div>
-                    <div class="min-w-0 flex-1">
-                        <h2 class="text-base font-medium">
-                            Registrar llegada — {{ modalRoom?.number }}
-                        </h2>
-                        <p class="mt-0.5 text-xs text-slate-500">
-                            {{ modalRoom?.room_type ?? 'Habitación' }} ·
-                            registro exprés con cobro en la llegada
-                        </p>
-                    </div>
-                    <button
-                        type="button"
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                        aria-label="Cerrar"
-                        @click="emit('close')"
+                    <span class="mt-0.5 block text-xs text-slate-500">{{
+                        plan.duration_label
+                    }}</span>
+                    <span
+                        class="mt-1.5 block text-sm leading-none font-semibold"
+                        >{{ money(plan.price) }}</span
                     >
-                        <Lucide icon="X" class="h-5 w-5" />
-                    </button>
-                </div>
+                </button>
+            </div>
+            <div
+                v-else
+                class="flex items-start gap-2 rounded-lg bg-danger/10 px-3.5 py-2.5 text-xs text-danger"
+            >
+                <Lucide icon="TriangleAlert" class="mt-0.5 h-4 w-4 shrink-0" />
+                Este tipo de habitación no tiene tarifas activas; agrégalas en
+                Zonas y tipos.
+            </div>
+        </div>
 
-                <!-- Body -->
-                <div class="flex-1 space-y-5 overflow-y-auto px-4 py-4">
-                    <!-- Tarifa -->
-                    <div>
-                        <div
-                            class="mb-2.5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                        >
-                            <Lucide icon="Clock" class="h-3.5 w-3.5" />
-                            Tarifa
-                        </div>
-                        <div
-                            v-if="modalRoom?.rate_plans.length"
-                            class="grid grid-cols-2 gap-2.5 sm:grid-cols-3"
-                        >
-                            <button
-                                v-for="plan in modalRoom.rate_plans"
-                                :key="plan.id"
-                                type="button"
-                                class="rounded-lg border p-3 text-left transition"
-                                :class="
-                                    ratePlanId === plan.id
-                                        ? 'border-primary bg-primary/5'
-                                        : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
-                                "
-                                @click="ratePlanId = plan.id"
-                            >
-                                <span
-                                    class="block truncate text-sm font-medium"
-                                    :class="
-                                        ratePlanId === plan.id
-                                            ? 'text-primary'
-                                            : ''
-                                    "
-                                    >{{ plan.name }}</span
-                                >
-                                <span
-                                    class="mt-0.5 block text-xs text-slate-500"
-                                    >{{ plan.duration_label }}</span
-                                >
-                                <span
-                                    class="mt-1.5 block text-base leading-none font-semibold"
-                                    >{{ money(plan.price) }}</span
-                                >
-                            </button>
-                        </div>
-                        <div
-                            v-else
-                            class="flex items-start gap-2 rounded-lg bg-danger/10 px-3.5 py-3 text-sm text-danger"
-                        >
-                            <Lucide
-                                icon="TriangleAlert"
-                                class="mt-0.5 h-4 w-4 shrink-0"
-                            />
-                            Este tipo de habitación no tiene tarifas activas;
-                            agrégalas en Zonas y tipos.
-                        </div>
-                    </div>
-
-                    <!-- Quién cobra. En la caseta de un motel el dinero lo
+        <!-- Quién cobra. En la caseta de un motel el dinero lo
                          recibe el encargado en la habitación, no aquí: con eso
                          puesto el acceso se abre ya y la captura queda
                          pendiente. -->
-                    <div>
-                        <div
-                            class="mb-2.5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                        >
-                            <Lucide icon="HandCoins" class="h-3.5 w-3.5" />
-                            Quién cobra
-                        </div>
-                        <div class="grid grid-cols-2 gap-2.5">
-                            <button
-                                type="button"
-                                class="rounded-lg border px-3 py-2.5 text-left transition"
-                                :class="
-                                    collector === 'caseta'
-                                        ? 'border-primary bg-primary/5'
-                                        : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
-                                "
-                                @click="collector = 'caseta'"
-                            >
-                                <span class="block text-sm font-medium"
-                                    >Aquí mismo</span
-                                >
-                                <span
-                                    class="mt-0.5 block text-xs text-slate-500"
-                                    >Se cobra y se captura todo ahora</span
-                                >
-                            </button>
-                            <button
-                                type="button"
-                                class="rounded-lg border px-3 py-2.5 text-left transition"
-                                :class="
-                                    collector === 'encargado'
-                                        ? 'border-primary bg-primary/5'
-                                        : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
-                                "
-                                @click="collector = 'encargado'"
-                            >
-                                <span class="block text-sm font-medium"
-                                    >El encargado, en la habitación</span
-                                >
-                                <span
-                                    class="mt-0.5 block text-xs text-slate-500"
-                                    >Abre el acceso; los datos y el cobro se
-                                    capturan después</span
-                                >
-                            </button>
-                        </div>
-                        <p
-                            v-if="laterCapture"
-                            class="mt-2.5 flex items-start gap-2 rounded-lg bg-pending/10 px-3.5 py-2.5 text-xs text-pending"
-                        >
-                            <Lucide
-                                icon="ClipboardPen"
-                                class="mt-0.5 h-3.5 w-3.5 shrink-0"
-                            />
-                            La habitación quedará marcada como "falta capturar"
-                            hasta que regrese el papel con la placa y el cobro.
-                            Lo de abajo es opcional.
-                        </p>
-                    </div>
+        <div>
+            <div
+                class="mb-2.5 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                <Lucide icon="HandCoins" class="h-3.5 w-3.5" />
+                Quién cobra
+            </div>
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <button
+                    type="button"
+                    class="rounded-lg border px-3 py-2.5 text-left transition"
+                    :class="
+                        collector === 'caseta'
+                            ? 'border-primary bg-primary/5'
+                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
+                    "
+                    @click="collector = 'caseta'"
+                >
+                    <span class="block text-sm font-medium">Aquí mismo</span>
+                    <span class="mt-0.5 block text-xs text-slate-500"
+                        >Se cobra y se captura todo ahora</span
+                    >
+                </button>
+                <button
+                    type="button"
+                    class="rounded-lg border px-3 py-2.5 text-left transition"
+                    :class="
+                        collector === 'encargado'
+                            ? 'border-primary bg-primary/5'
+                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400'
+                    "
+                    @click="collector = 'encargado'"
+                >
+                    <span class="block text-sm font-medium"
+                        >El encargado, en la habitación</span
+                    >
+                    <span class="mt-0.5 block text-xs text-slate-500"
+                        >Abre el acceso; los datos y el cobro se capturan
+                        después</span
+                    >
+                </button>
+            </div>
+            <p
+                v-if="laterCapture"
+                class="mt-2.5 flex items-start gap-2 rounded-lg bg-pending/10 px-3.5 py-2.5 text-xs text-pending"
+            >
+                <Lucide
+                    icon="ClipboardPen"
+                    class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                />
+                La habitación quedará marcada como "falta capturar" hasta que
+                regrese el papel con la placa y el cobro. Lo de abajo es
+                opcional.
+            </p>
+        </div>
 
-                    <!-- Llegada: carro o a pie -->
-                    <div>
-                        <div
-                            class="mb-2.5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                        >
-                            <Lucide icon="CarFront" class="h-3.5 w-3.5" />
-                            Llegada
-                        </div>
-                        <div
-                            class="mb-3 inline-flex gap-1 rounded-[0.6rem] bg-slate-100/80 p-1 dark:bg-darkmode-700"
-                        >
-                            <button
-                                type="button"
-                                class="flex items-center gap-2 rounded-[0.5rem] px-3.5 py-1.5 text-sm font-medium transition"
-                                :class="
-                                    arrival === 'vehicle'
-                                        ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
-                                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                                "
-                                @click="arrival = 'vehicle'"
-                            >
-                                <Lucide
-                                    icon="CarFront"
-                                    class="h-4 w-4 stroke-[1.3]"
-                                />
-                                En carro
-                            </button>
-                            <button
-                                type="button"
-                                class="flex items-center gap-2 rounded-[0.5rem] px-3.5 py-1.5 text-sm font-medium transition"
-                                :class="
-                                    arrival === 'foot'
-                                        ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
-                                        : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
-                                "
-                                @click="arrival = 'foot'"
-                            >
-                                <Lucide
-                                    icon="Footprints"
-                                    class="h-4 w-4 stroke-[1.3]"
-                                />
-                                A pie
-                            </button>
-                        </div>
+        <!-- Llegada: carro o a pie -->
+        <div>
+            <div
+                class="mb-2.5 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                <Lucide icon="CarFront" class="h-3.5 w-3.5" />
+                Llegada
+            </div>
+            <div
+                class="mb-3 inline-flex gap-1 rounded-[0.6rem] bg-slate-100/80 p-1 dark:bg-darkmode-700"
+            >
+                <button
+                    type="button"
+                    class="flex h-8 items-center gap-2 rounded-[0.5rem] px-3.5 text-xs font-medium transition"
+                    :class="
+                        arrival === 'vehicle'
+                            ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
+                            : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                    "
+                    @click="arrival = 'vehicle'"
+                >
+                    <Lucide icon="CarFront" class="h-3.5 w-3.5" />
+                    En carro
+                </button>
+                <button
+                    type="button"
+                    class="flex h-8 items-center gap-2 rounded-[0.5rem] px-3.5 text-xs font-medium transition"
+                    :class="
+                        arrival === 'foot'
+                            ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
+                            : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                    "
+                    @click="arrival = 'foot'"
+                >
+                    <Lucide icon="Footprints" class="h-3.5 w-3.5" />
+                    A pie
+                </button>
+            </div>
 
-                        <!-- En carro: la placa manda y por eso ocupa el
+            <!-- En carro: la placa manda y por eso ocupa el
                              renglón completo y se lee grande; marca, modelo y
                              color van juntos abajo como lo secundario que son.
                              Antes compartían retícula y la placa quedaba del
                              mismo tamaño que un campo opcional. -->
-                        <div v-if="arrival === 'vehicle'" class="space-y-4">
-                            <div>
-                                <FormLabel htmlFor="express-plate"
-                                    >Placas</FormLabel
-                                >
-                                <FormInput
-                                    id="express-plate"
-                                    v-model="plate"
-                                    class="h-12 text-center text-base font-semibold tracking-[0.25em] uppercase"
-                                    placeholder="ABC-123-D"
-                                    maxlength="20"
-                                />
-                                <FormHelp
-                                    >Con la placa basta; nombre y teléfono no se
-                                    piden.</FormHelp
-                                >
-                            </div>
+            <div v-if="arrival === 'vehicle'" class="space-y-4">
+                <div>
+                    <FormLabel htmlFor="express-plate">Placas</FormLabel>
+                    <FormInput
+                        id="express-plate"
+                        v-model="plate"
+                        class="h-9 text-center text-sm font-semibold tracking-[0.25em] uppercase"
+                        placeholder="ABC-123-D"
+                        maxlength="20"
+                    />
+                    <FormHelp
+                        >Con la placa basta; nombre y teléfono no se
+                        piden.</FormHelp
+                    >
+                </div>
 
-                            <div>
-                                <div
-                                    class="mb-2 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                                >
-                                    <Lucide icon="Car" class="h-3.5 w-3.5" />
-                                    Vehículo (opcional)
-                                </div>
-                                <div class="grid gap-3 sm:grid-cols-3">
-                                    <FormInput
-                                        v-model="vehicleBrand"
-                                        aria-label="Marca"
-                                        placeholder="Marca"
-                                        maxlength="40"
-                                    />
-                                    <FormInput
-                                        v-model="vehicleModel"
-                                        aria-label="Modelo"
-                                        placeholder="Modelo"
-                                        maxlength="40"
-                                    />
-                                    <FormInput
-                                        v-model="vehicleColor"
-                                        aria-label="Color"
-                                        placeholder="Color"
-                                        maxlength="30"
-                                    />
-                                </div>
-                            </div>
-                        </div>
+                <div>
+                    <div
+                        class="mb-2 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                    >
+                        <Lucide icon="Car" class="h-3.5 w-3.5" />
+                        Vehículo (opcional)
+                    </div>
+                    <div class="grid gap-3 sm:grid-cols-3">
+                        <FormInput
+                            class="h-9 text-xs"
+                            v-model="vehicleBrand"
+                            aria-label="Marca"
+                            placeholder="Marca"
+                            maxlength="40"
+                        />
+                        <FormInput
+                            class="h-9 text-xs"
+                            v-model="vehicleModel"
+                            aria-label="Modelo"
+                            placeholder="Modelo"
+                            maxlength="40"
+                        />
+                        <FormInput
+                            class="h-9 text-xs"
+                            v-model="vehicleColor"
+                            aria-label="Color"
+                            placeholder="Color"
+                            maxlength="30"
+                        />
+                    </div>
+                </div>
+            </div>
 
-                        <!-- Lo que ya se sabía de esa placa: la segunda visita
+            <!-- Lo que ya se sabía de esa placa: la segunda visita
                              no vuelve a preguntar, y si está vetada se avisa
                              ANTES de registrar. -->
-                        <div
-                            v-if="arrival === 'vehicle' && knownVehicle"
-                            class="flex items-start gap-2.5 rounded-lg border p-3 text-sm"
-                            :class="
-                                knownVehicle.is_blacklisted
-                                    ? 'border-danger/30 bg-danger/5'
-                                    : 'border-info/30 bg-info/5'
-                            "
+            <div
+                v-if="arrival === 'vehicle' && knownVehicle"
+                class="flex items-start gap-2.5 rounded-lg border p-3 text-xs"
+                :class="
+                    knownVehicle.is_blacklisted
+                        ? 'border-danger/30 bg-danger/5'
+                        : 'border-info/30 bg-info/5'
+                "
+            >
+                <Lucide
+                    :icon="
+                        knownVehicle.is_blacklisted ? 'ShieldAlert' : 'History'
+                    "
+                    class="mt-0.5 h-4 w-4 shrink-0"
+                    :class="
+                        knownVehicle.is_blacklisted
+                            ? 'text-danger'
+                            : 'text-info'
+                    "
+                />
+                <div class="min-w-0">
+                    <div class="font-medium">
+                        <template v-if="knownVehicle.is_blacklisted"
+                            >Esta placa está vetada</template
                         >
-                            <Lucide
-                                :icon="
-                                    knownVehicle.is_blacklisted
-                                        ? 'ShieldAlert'
-                                        : 'History'
-                                "
-                                class="mt-0.5 h-4 w-4 shrink-0"
-                                :class="
-                                    knownVehicle.is_blacklisted
-                                        ? 'text-danger'
-                                        : 'text-info'
-                                "
-                            />
-                            <div class="min-w-0">
-                                <div class="font-medium">
-                                    <template v-if="knownVehicle.is_blacklisted"
-                                        >Esta placa está vetada</template
-                                    >
-                                    <template v-else
-                                        >Ya estuvo aquí
-                                        {{ knownVehicle.visits }}
-                                        {{
-                                            knownVehicle.visits === 1
-                                                ? 'vez'
-                                                : 'veces'
-                                        }}</template
-                                    >
-                                </div>
-                                <p
-                                    class="mt-0.5 text-slate-600 dark:text-slate-300"
-                                >
-                                    {{
-                                        knownVehicle.is_blacklisted
-                                            ? (knownVehicle.blacklist_reason ??
-                                              'Revisa con el encargado antes de registrar.')
-                                            : (knownVehicle.label ??
-                                              'Sin datos del vehículo capturados.')
-                                    }}
-                                </p>
-                            </div>
-                        </div>
+                        <template v-else
+                            >Ya estuvo aquí
+                            {{ knownVehicle.visits }}
+                            {{
+                                knownVehicle.visits === 1 ? 'vez' : 'veces'
+                            }}</template
+                        >
+                    </div>
+                    <p class="mt-0.5 text-slate-600 dark:text-slate-300">
+                        {{
+                            knownVehicle.is_blacklisted
+                                ? (knownVehicle.blacklist_reason ??
+                                  'Revisa con el encargado antes de registrar.')
+                                : (knownVehicle.label ??
+                                  'Sin datos del vehículo capturados.')
+                        }}
+                    </p>
+                </div>
+            </div>
 
-                        <!-- A pie: nombre + identificación con foto. Condición
+            <!-- A pie: nombre + identificación con foto. Condición
                              EXPLÍCITA y no `v-else`: el aviso de placa conocida
                              quedó entre las dos ramas y el v-else se emparejó
                              con él, así que en carro también se pintaban estos
                              campos. En carro solo se pide el vehículo. -->
-                        <div v-if="arrival === 'foot'" class="space-y-3">
-                            <div>
-                                <FormLabel htmlFor="express-guest-name"
-                                    >Nombre completo</FormLabel
-                                >
-                                <FormInput
-                                    id="express-guest-name"
-                                    v-model="guestName"
-                                    placeholder="Nombre y apellidos del huésped"
-                                    maxlength="255"
-                                />
-                                <FormHelp
-                                    v-if="footNameMissing"
-                                    class="text-danger"
-                                    >El huésped a pie se registra con su
-                                    nombre.</FormHelp
-                                >
-                            </div>
-                            <div class="grid items-start gap-3 sm:grid-cols-2">
-                                <div>
-                                    <FormLabel htmlFor="express-doc-type"
-                                        >Identificación</FormLabel
-                                    >
-                                    <FormSelect
-                                        id="express-doc-type"
-                                        v-model="docType"
-                                    >
-                                        <option
-                                            v-for="(
-                                                label, key
-                                            ) in documentTypes"
-                                            :key="key"
-                                            :value="key"
-                                        >
-                                            {{ label }}
-                                        </option>
-                                    </FormSelect>
-                                </div>
-                                <div>
-                                    <FormLabel htmlFor="express-doc-number"
-                                        >Número (opcional)</FormLabel
-                                    >
-                                    <FormInput
-                                        id="express-doc-number"
-                                        v-model="docNumber"
-                                        placeholder="Número del documento"
-                                        maxlength="60"
-                                    />
-                                </div>
-                            </div>
-                            <div>
-                                <div
-                                    class="flex flex-wrap items-center gap-2.5"
-                                >
-                                    <div
-                                        v-for="(photo, index) in stagedPhotos"
-                                        :key="photo.url"
-                                        class="relative h-16 w-24 overflow-hidden rounded-lg border border-slate-200/70 dark:border-darkmode-400"
-                                    >
-                                        <img
-                                            :src="photo.url"
-                                            alt="Documento"
-                                            class="h-full w-full object-cover"
-                                        />
-                                        <button
-                                            type="button"
-                                            class="absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-slate-950/70 text-white"
-                                            title="Quitar foto"
-                                            @click="removePhoto(index)"
-                                        >
-                                            <Lucide icon="X" class="h-3 w-3" />
-                                        </button>
-                                    </div>
-                                    <label
-                                        v-if="stagedPhotos.length < 2"
-                                        class="flex h-16 w-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300/80 text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
-                                    >
-                                        <Lucide icon="Camera" class="h-5 w-5" />
-                                        <span class="text-[10px] font-medium">{{
-                                            stagedPhotos.length
-                                                ? 'Reverso'
-                                                : 'Foto INE'
-                                        }}</span>
-                                        <input
-                                            type="file"
-                                            accept="image/*"
-                                            capture="environment"
-                                            class="hidden"
-                                            @change="stagePhoto"
-                                        />
-                                    </label>
-                                </div>
-                                <FormHelp
-                                    >Toma la foto del documento; queda guardada
-                                    de forma privada y solo la ve el personal
-                                    con permiso.</FormHelp
-                                >
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Personas y cargos opcionales -->
-                    <div class="grid items-start gap-4 sm:grid-cols-2">
-                        <div>
-                            <div
-                                class="mb-2.5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                            >
-                                <Lucide icon="Users" class="h-3.5 w-3.5" />
-                                Personas
-                            </div>
-                            <div class="flex items-center gap-2.5">
-                                <Button
-                                    type="button"
-                                    variant="outline-secondary"
-                                    class="h-10 w-10 rounded-lg p-0"
-                                    :disabled="people <= 1"
-                                    @click="people = Math.max(1, people - 1)"
-                                >
-                                    <Lucide icon="Minus" class="h-4 w-4" />
-                                </Button>
-                                <span
-                                    class="w-9 text-center text-base font-semibold"
-                                    >{{ people }}</span
-                                >
-                                <Button
-                                    type="button"
-                                    variant="outline-secondary"
-                                    class="h-10 w-10 rounded-lg p-0"
-                                    :disabled="people >= maxPeople"
-                                    @click="
-                                        people = Math.min(maxPeople, people + 1)
-                                    "
-                                >
-                                    <Lucide icon="Plus" class="h-4 w-4" />
-                                </Button>
-                            </div>
-                            <FormHelp v-if="peopleHint">{{
-                                peopleHint
-                            }}</FormHelp>
-                            <FormHelp v-if="extraGuestsFee > 0"
-                                >Se suman {{ money(extraGuestsFee) }} por
-                                personas extra.</FormHelp
-                            >
-                        </div>
-                        <div v-if="modalRoom?.optional_charges.length">
-                            <div
-                                class="mb-2.5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                            >
-                                <Lucide icon="CirclePlus" class="h-3.5 w-3.5" />
-                                Cargos opcionales
-                            </div>
-                            <div class="flex flex-wrap gap-2">
-                                <button
-                                    v-for="charge in modalRoom.optional_charges"
-                                    :key="charge.concept"
-                                    type="button"
-                                    class="rounded-full border px-3 py-1.5 text-xs font-medium transition"
-                                    :class="
-                                        extraConcepts.includes(charge.concept)
-                                            ? 'border-primary bg-primary/10 text-primary'
-                                            : 'border-slate-200/70 text-slate-500 hover:border-slate-300 dark:border-darkmode-400'
-                                    "
-                                    @click="toggleConcept(charge.concept)"
-                                >
-                                    {{ charge.concept }} ·
-                                    {{ money(charge.amount) }}
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Cobro -->
-                    <div v-if="!laterCapture">
-                        <div
-                            class="mb-2.5 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+            <div v-if="arrival === 'foot'" class="space-y-3">
+                <div>
+                    <FormLabel htmlFor="express-guest-name"
+                        >Nombre completo</FormLabel
+                    >
+                    <FormInput
+                        class="h-9 text-xs"
+                        id="express-guest-name"
+                        v-model="guestName"
+                        placeholder="Nombre y apellidos del huésped"
+                        maxlength="255"
+                    />
+                    <FormHelp v-if="footNameMissing" class="text-danger"
+                        >El huésped a pie se registra con su nombre.</FormHelp
+                    >
+                </div>
+                <div class="grid items-start gap-3 sm:grid-cols-2">
+                    <div>
+                        <FormLabel htmlFor="express-doc-type"
+                            >Identificación</FormLabel
                         >
-                            <Lucide icon="Banknote" class="h-3.5 w-3.5" />
-                            Cobro
-                        </div>
-                        <div
-                            class="grid gap-2.5"
-                            :class="
-                                paymentMethods.length > 2
-                                    ? 'grid-cols-3'
-                                    : 'grid-cols-2'
-                            "
+                        <FormSelect
+                            class="h-9 text-xs"
+                            id="express-doc-type"
+                            v-model="docType"
                         >
+                            <option
+                                v-for="(label, key) in documentTypes"
+                                :key="key"
+                                :value="key"
+                            >
+                                {{ label }}
+                            </option>
+                        </FormSelect>
+                    </div>
+                    <div>
+                        <FormLabel htmlFor="express-doc-number"
+                            >Número (opcional)</FormLabel
+                        >
+                        <FormInput
+                            class="h-9 text-xs"
+                            id="express-doc-number"
+                            v-model="docNumber"
+                            placeholder="Número del documento"
+                            maxlength="60"
+                        />
+                    </div>
+                </div>
+                <div>
+                    <div class="flex flex-wrap items-center gap-2.5">
+                        <div
+                            v-for="(photo, index) in stagedPhotos"
+                            :key="photo.url"
+                            class="relative h-16 w-24 overflow-hidden rounded-lg border border-slate-200/70 dark:border-darkmode-400"
+                        >
+                            <img
+                                :src="photo.url"
+                                alt="Documento"
+                                class="h-full w-full object-cover"
+                            />
                             <button
-                                v-for="method in paymentMethods"
-                                :key="method.key"
                                 type="button"
-                                class="flex flex-col items-center gap-1.5 rounded-lg border py-2.5 text-sm font-medium transition"
-                                :class="
-                                    paymentMethod === method.key
-                                        ? 'border-primary bg-primary/5 text-primary'
-                                        : 'border-slate-200/70 text-slate-500 hover:border-slate-300 dark:border-darkmode-400'
-                                "
-                                @click="paymentMethod = method.key"
+                                class="absolute top-1 right-1 flex h-5 w-5 items-center justify-center rounded-full bg-dark/70 text-white"
+                                title="Quitar foto"
+                                @click="removePhoto(index)"
                             >
-                                <Lucide :icon="method.icon" class="h-4 w-4" />
-                                {{ method.label }}
+                                <Lucide icon="X" class="h-3 w-3" />
                             </button>
                         </div>
-                        <FormInput
-                            v-if="paymentMethod !== 'cash'"
-                            v-model="paymentReference"
-                            class="mt-2.5"
-                            placeholder="Referencia o folio del voucher (opcional)"
-                            maxlength="100"
-                        />
-                        <div
-                            v-if="
-                                guaranteeAmount > 0 && guaranteeMethods.length
-                            "
-                            class="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-slate-300/70 px-3.5 py-2.5 text-sm dark:border-darkmode-400"
+                        <label
+                            v-if="stagedPhotos.length < 2"
+                            class="flex h-16 w-24 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-slate-300/80 text-slate-500 transition hover:border-primary hover:text-primary dark:border-darkmode-400"
                         >
-                            <span
-                                class="flex items-center gap-2 text-slate-600 dark:text-slate-300"
-                            >
-                                <Lucide
-                                    icon="ShieldCheck"
-                                    class="h-4 w-4 text-slate-400"
-                                />
-                                Fianza {{ money(guaranteeAmount) }}
-                            </span>
-                            <div
-                                class="ml-auto inline-flex gap-1 rounded-[0.5rem] bg-slate-100/80 p-1 dark:bg-darkmode-700"
-                            >
-                                <button
-                                    v-for="method in guaranteeMethods"
-                                    :key="method.key"
-                                    type="button"
-                                    class="rounded-[0.4rem] px-2.5 py-1 text-xs font-medium transition"
-                                    :class="
-                                        guaranteeMethod === method.key
-                                            ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
-                                            : 'text-slate-500'
-                                    "
-                                    @click="guaranteeMethod = method.key"
-                                >
-                                    {{ method.short }}
-                                </button>
-                            </div>
-                            <!-- Renglón propio (w-full en un contenedor flex):
+                            <Lucide icon="Camera" class="h-5 w-5" />
+                            <span class="text-[11px] font-medium">{{
+                                stagedPhotos.length ? 'Reverso' : 'Foto INE'
+                            }}</span>
+                            <input
+                                type="file"
+                                accept="image/*"
+                                capture="environment"
+                                class="hidden"
+                                @change="stagePhoto"
+                            />
+                        </label>
+                    </div>
+                    <FormHelp
+                        >Toma la foto del documento; queda guardada de forma
+                        privada y solo la ve el personal con permiso.</FormHelp
+                    >
+                </div>
+            </div>
+        </div>
+
+        <!-- Personas y cargos opcionales -->
+        <div class="grid items-start gap-4 sm:grid-cols-2">
+            <div>
+                <div
+                    class="mb-2.5 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                >
+                    <Lucide icon="Users" class="h-3.5 w-3.5" />
+                    Personas
+                </div>
+                <div class="flex items-center gap-2.5">
+                    <Button
+                        type="button"
+                        variant="outline-secondary"
+                        class="h-9 w-9 rounded-lg p-0"
+                        :disabled="people <= 1"
+                        @click="people = Math.max(1, people - 1)"
+                    >
+                        <Lucide icon="Minus" class="h-4 w-4" />
+                    </Button>
+                    <span class="w-9 text-center text-sm font-semibold">{{
+                        people
+                    }}</span>
+                    <Button
+                        type="button"
+                        variant="outline-secondary"
+                        class="h-9 w-9 rounded-lg p-0"
+                        :disabled="people >= maxPeople"
+                        @click="people = Math.min(maxPeople, people + 1)"
+                    >
+                        <Lucide icon="Plus" class="h-4 w-4" />
+                    </Button>
+                </div>
+                <FormHelp v-if="peopleHint">{{ peopleHint }}</FormHelp>
+                <FormHelp v-if="extraGuestsFee > 0"
+                    >Se suman {{ money(extraGuestsFee) }} por personas
+                    extra.</FormHelp
+                >
+            </div>
+            <div v-if="modalRoom?.optional_charges.length">
+                <div
+                    class="mb-2.5 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                >
+                    <Lucide icon="CirclePlus" class="h-3.5 w-3.5" />
+                    Cargos opcionales
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button
+                        v-for="charge in modalRoom.optional_charges"
+                        :key="charge.concept"
+                        type="button"
+                        class="rounded-full border px-3 py-1.5 text-xs font-medium transition"
+                        :class="
+                            extraConcepts.includes(charge.concept)
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-slate-200/70 text-slate-500 hover:border-slate-300 dark:border-darkmode-400'
+                        "
+                        @click="toggleConcept(charge.concept)"
+                    >
+                        {{ charge.concept }} ·
+                        {{ money(charge.amount) }}
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cobro -->
+        <div v-if="!laterCapture">
+            <div
+                class="mb-2.5 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                <Lucide icon="Banknote" class="h-3.5 w-3.5" />
+                Cobro
+            </div>
+            <div
+                class="grid gap-2.5"
+                :class="
+                    paymentMethods.length > 2
+                        ? 'grid-cols-2 sm:grid-cols-3'
+                        : 'grid-cols-2'
+                "
+            >
+                <button
+                    v-for="method in paymentMethods"
+                    :key="method.key"
+                    type="button"
+                    class="flex h-9 items-center justify-center gap-2 rounded-[0.5rem] border text-xs font-medium transition"
+                    :class="
+                        paymentMethod === method.key
+                            ? 'border-primary bg-primary/5 text-primary'
+                            : 'border-slate-200/70 text-slate-500 hover:border-slate-300 dark:border-darkmode-400'
+                    "
+                    @click="paymentMethod = method.key"
+                >
+                    <Lucide :icon="method.icon" class="h-3.5 w-3.5" />
+                    {{ method.label }}
+                </button>
+            </div>
+            <FormInput
+                v-if="paymentMethod !== 'cash'"
+                v-model="paymentReference"
+                class="mt-2.5 h-9 text-xs"
+                placeholder="Referencia o folio del voucher (opcional)"
+                maxlength="100"
+            />
+            <div
+                v-if="guaranteeAmount > 0 && guaranteeMethods.length"
+                class="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-slate-300/70 px-3.5 py-2.5 text-xs dark:border-darkmode-400"
+            >
+                <span
+                    class="flex items-center gap-2 text-slate-600 dark:text-slate-300"
+                >
+                    <Lucide icon="ShieldCheck" class="h-4 w-4 text-slate-400" />
+                    Fianza {{ money(guaranteeAmount) }}
+                </span>
+                <div
+                    class="ml-auto inline-flex gap-1 rounded-[0.5rem] bg-slate-100/80 p-1 dark:bg-darkmode-700"
+                >
+                    <button
+                        v-for="method in guaranteeMethods"
+                        :key="method.key"
+                        type="button"
+                        class="rounded-[0.4rem] px-2.5 py-1 text-xs font-medium transition"
+                        :class="
+                            guaranteeMethod === method.key
+                                ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
+                                : 'text-slate-500'
+                        "
+                        @click="guaranteeMethod = method.key"
+                    >
+                        {{ method.short }}
+                    </button>
+                </div>
+                <!-- Renglón propio (w-full en un contenedor flex):
                                  metido entre las pastillas quedaba de tres
                                  centímetros. Sin folio no hay cómo devolver
                                  una fianza recibida por transferencia. -->
-                            <div
-                                v-if="guaranteeMethod === 'transfer'"
-                                class="w-full"
-                            >
-                                <FormInput
-                                    v-model="guaranteeReference"
-                                    placeholder="Folio o referencia del comprobante"
-                                    maxlength="100"
-                                />
-                                <p
-                                    v-if="!guaranteeReference.trim()"
-                                    class="mt-1 text-xs text-warning"
-                                >
-                                    Sin el folio no vas a poder devolverla.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Footer. En móvil se apila: desde que el plano se abre en
-                     pantalla completa en el teléfono, este modal se usa de
-                     verdad ahí y en una sola fila la leyenda quedaba en una
-                     columna de tres palabras al lado del botón. -->
-                <div
-                    class="flex flex-col gap-3 border-t border-slate-200/70 px-4 py-3 sm:flex-row sm:items-center sm:justify-between dark:border-darkmode-400"
-                >
-                    <div class="text-xs text-slate-500">
-                        <span class="block">{{
-                            laterCapture
-                                ? `Quedan ${money(total)} por cobrar en la habitación.`
-                                : 'El total exacto lo confirma el sistema.'
-                        }}</span>
-                        <span v-if="guaranteeAmount > 0" class="block"
-                            >+ {{ money(guaranteeAmount) }} de fianza (se
-                            devuelve al salir).</span
-                        >
-                    </div>
-                    <Button
-                        v-if="ratePlanId"
-                        variant="primary"
-                        class="min-h-10 shrink-0 rounded-[0.5rem] shadow-md shadow-primary/20"
-                        :disabled="!canSubmit"
-                        @click="submit"
+                <div v-if="guaranteeMethod === 'transfer'" class="w-full">
+                    <FormInput
+                        class="h-9 text-xs"
+                        v-model="guaranteeReference"
+                        placeholder="Folio o referencia del comprobante"
+                        maxlength="100"
+                    />
+                    <p
+                        v-if="!guaranteeReference.trim()"
+                        class="mt-1 text-xs text-warning"
                     >
-                        <Lucide
-                            :icon="laterCapture ? 'DoorOpen' : 'Zap'"
-                            class="mr-1.5 h-3.5 w-3.5"
-                        />
-                        {{
-                            saving
-                                ? 'Registrando…'
-                                : laterCapture
-                                  ? 'Abrir acceso'
-                                  : `Registrar y cobrar ${money(total)}`
-                        }}
-                    </Button>
-                    <Button
-                        v-else
-                        variant="outline-secondary"
-                        class="min-h-10 shrink-0 rounded-[0.5rem] text-xs"
-                        disabled
-                    >
-                        <Lucide
-                            icon="TriangleAlert"
-                            class="mr-1.5 h-3.5 w-3.5"
-                        />
-                        Sin tarifa activa
-                    </Button>
+                        Sin el folio no vas a poder devolverla.
+                    </p>
                 </div>
             </div>
-        </Dialog.Panel>
-    </Dialog>
+        </div>
+
+        <template #footer-start>
+            <span class="block">{{
+                laterCapture
+                    ? `Quedan ${money(total)} por cobrar en la habitación.`
+                    : 'El total exacto lo confirma el sistema.'
+            }}</span>
+            <span v-if="guaranteeAmount > 0" class="block"
+                >+ {{ money(guaranteeAmount) }} de fianza (se devuelve al
+                salir).</span
+            >
+        </template>
+        <template #footer>
+            <Button
+                variant="outline-secondary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="saving"
+                @click="emit('close')"
+            >
+                Cancelar
+            </Button>
+            <Button
+                v-if="ratePlanId"
+                variant="primary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="!canSubmit"
+                @click="submit"
+            >
+                <Lucide
+                    :icon="laterCapture ? 'DoorOpen' : 'Zap'"
+                    class="mr-1.5 h-3.5 w-3.5"
+                />
+                {{
+                    saving
+                        ? 'Registrando…'
+                        : laterCapture
+                          ? 'Abrir acceso'
+                          : `Registrar y cobrar ${money(total)}`
+                }}
+            </Button>
+            <Button
+                v-else
+                variant="outline-secondary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                disabled
+            >
+                <Lucide icon="TriangleAlert" class="mr-1.5 h-3.5 w-3.5" />
+                Sin tarifa activa
+            </Button>
+        </template>
+    </PlanModal>
 </template>

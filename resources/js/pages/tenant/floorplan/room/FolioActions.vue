@@ -62,10 +62,10 @@ const whatsappUrl = computed(() =>
             :href="`/estancias/${folio.stay.id}/cuenta.pdf`"
             target="_blank"
             rel="noopener"
-            class="inline-flex min-h-10 items-center gap-2 rounded-[0.5rem] border border-slate-200 px-3 text-sm text-slate-600 transition hover:border-primary/40 hover:text-primary dark:border-darkmode-400 dark:text-slate-300"
+            class="inline-flex h-9 items-center gap-1.5 rounded-[0.5rem] border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 shadow-sm transition hover:border-primary/40 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-300"
             title="Descarga la cuenta en PDF para imprimirla"
         >
-            <Lucide icon="Printer" class="h-4 w-4" />
+            <Lucide icon="Printer" class="h-3.5 w-3.5" />
             Imprimir cuenta
         </a>
         <a
@@ -73,15 +73,13 @@ const whatsappUrl = computed(() =>
             :href="whatsappUrl"
             target="_blank"
             rel="noopener"
-            class="inline-flex min-h-10 items-center gap-2 rounded-[0.5rem] border border-slate-200 px-3 text-sm text-slate-600 transition hover:border-primary/40 hover:text-primary dark:border-darkmode-400 dark:text-slate-300"
+            class="inline-flex h-9 items-center gap-1.5 rounded-[0.5rem] border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 shadow-sm transition hover:border-primary/40 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-300"
             title="Abre WhatsApp con el resumen de la cuenta"
         >
-            <Lucide icon="MessageCircle" class="h-4 w-4" />
+            <Lucide icon="MessageCircle" class="h-3.5 w-3.5" />
             Mandar por WhatsApp
         </a>
-        <span
-            v-else
-            class="inline-flex min-h-10 items-center text-xs text-slate-500"
+        <span v-else class="inline-flex h-9 items-center text-xs text-slate-500"
             >El huésped no tiene teléfono registrado.</span
         >
     </div>

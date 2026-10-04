@@ -10,10 +10,10 @@ import {
     FormSelect,
     FormSwitch,
 } from '@/components/Base/Form';
-import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import { useCounterMethods } from '@/composables/useCounterMethods';
 import { useToasts } from '@/composables/useToasts';
+import PlanModal from './PlanModal.vue';
 
 /**
  * Reserva para otra fecha SIN salir del plano (modo motel, spec-modo-motel):
@@ -480,7 +480,7 @@ async function submit() {
 // sí debe cerrar: la tecla es una decisión, no un resbalón del ratón. El
 // Dialog del theme se la traga junto con el clic, así que se escucha aquí.
 function onEscape(event: KeyboardEvent) {
-    if (event.key === 'Escape' && props.open) {
+    if (event.key === 'Escape' && props.open && !saving.value) {
         emit('close');
     }
 }
@@ -492,538 +492,451 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
 <template>
     <!-- staticBackdrop: formulario largo; un clic afuera no lo tira. Ancho de
          verdad: en 600px la tarifa, las fechas y el huésped se amontonaban. -->
-    <Dialog :open="open" size="xl" static-backdrop @close="emit('close')">
-        <Dialog.Panel class="sm:w-[92%] lg:w-[940px] xl:w-[1080px]">
-            <div class="flex max-h-[86vh] flex-col">
-                <!-- Header -->
-                <div
-                    class="flex items-center gap-3.5 border-b border-slate-200/70 px-5 py-4 sm:px-7 sm:py-5 dark:border-darkmode-400"
+    <PlanModal
+        :open="open"
+        icon="CalendarPlus"
+        :title="`Reservar · ${roomLabel}`"
+        subtitle="Nace confirmada; se cobra ahora o al llegar."
+        panel-class="sm:w-[94vw] lg:w-[940px] xl:w-[1080px]"
+        static-backdrop
+        :busy="saving"
+        @close="emit('close')"
+    >
+        <!-- Tarifa -->
+        <section>
+            <div
+                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                <Lucide icon="Clock" class="h-3.5 w-3.5" />
+                Tarifa
+            </div>
+            <div
+                v-if="modalRoom?.rate_plans.length"
+                class="grid gap-3"
+                :class="
+                    soloUnaTarifa
+                        ? 'grid-cols-1'
+                        : 'sm:grid-cols-2 lg:grid-cols-3'
+                "
+            >
+                <button
+                    v-for="plan in modalRoom.rate_plans"
+                    :key="plan.id"
+                    type="button"
+                    class="rounded-lg border p-3.5 text-left transition"
+                    :class="[
+                        ratePlanId === plan.id
+                            ? 'border-primary bg-primary/5'
+                            : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400',
+                        soloUnaTarifa &&
+                            'flex items-center justify-between gap-4',
+                    ]"
+                    @click="ratePlanId = plan.id"
                 >
-                    <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
-                    >
-                        <Lucide icon="CalendarPlus" class="h-5 w-5" />
-                    </div>
-                    <div class="min-w-0 flex-1">
-                        <h2 class="text-base font-medium sm:text-lg">
-                            Reservar — {{ roomLabel }}
-                        </h2>
-                        <p class="mt-0.5 text-xs text-slate-500 sm:text-sm">
-                            Nace confirmada; se cobra ahora o al llegar
-                        </p>
-                    </div>
-                    <button
-                        type="button"
-                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                        aria-label="Cerrar"
-                        @click="emit('close')"
-                    >
-                        <Lucide icon="X" class="h-5 w-5" />
-                    </button>
-                </div>
-
-                <!-- Body -->
-                <div
-                    class="flex-1 space-y-6 overflow-y-auto px-5 py-6 sm:px-7 [&_input:not([type=checkbox]):not([type=radio])]:min-h-11 [&_select]:min-h-11"
-                >
-                    <!-- Tarifa -->
-                    <section>
-                        <div
-                            class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                        >
-                            <Lucide icon="Clock" class="h-3.5 w-3.5" />
-                            Tarifa
-                        </div>
-                        <div
-                            v-if="modalRoom?.rate_plans.length"
-                            class="grid gap-3"
+                    <span class="min-w-0">
+                        <span
+                            class="block truncate text-sm font-medium"
                             :class="
-                                soloUnaTarifa
-                                    ? 'grid-cols-1'
-                                    : 'sm:grid-cols-2 lg:grid-cols-3'
+                                ratePlanId === plan.id ? 'text-primary' : ''
                             "
+                            >{{ plan.name }}</span
                         >
-                            <button
-                                v-for="plan in modalRoom.rate_plans"
-                                :key="plan.id"
-                                type="button"
-                                class="rounded-lg border p-3.5 text-left transition"
-                                :class="[
-                                    ratePlanId === plan.id
-                                        ? 'border-primary bg-primary/5'
-                                        : 'border-slate-200/70 hover:border-slate-300 dark:border-darkmode-400',
-                                    soloUnaTarifa &&
-                                        'flex items-center justify-between gap-4',
-                                ]"
-                                @click="ratePlanId = plan.id"
-                            >
-                                <span class="min-w-0">
-                                    <span
-                                        class="block truncate text-sm font-medium"
-                                        :class="
-                                            ratePlanId === plan.id
-                                                ? 'text-primary'
-                                                : ''
-                                        "
-                                        >{{ plan.name }}</span
-                                    >
-                                    <span
-                                        class="mt-0.5 block text-xs text-slate-500"
-                                        >{{ plan.duration_label }}</span
-                                    >
-                                </span>
-                                <span
-                                    class="block text-lg leading-none font-semibold"
-                                    :class="soloUnaTarifa ? '' : 'mt-2'"
-                                    >{{ money(plan.price) }}</span
-                                >
-                            </button>
-                        </div>
-                        <div
-                            v-else
-                            class="flex items-start gap-2 rounded-lg bg-danger/10 px-3.5 py-3 text-sm text-danger"
-                        >
-                            <Lucide
-                                icon="TriangleAlert"
-                                class="mt-0.5 h-4 w-4 shrink-0"
-                            />
-                            Este tipo de habitación no tiene tarifas activas;
-                            agrégalas en Zonas y tipos.
-                        </div>
-                    </section>
-
-                    <!-- Fechas y habitación -->
-                    <section
-                        class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
+                        <span class="mt-0.5 block text-xs text-slate-500">{{
+                            plan.duration_label
+                        }}</span>
+                    </span>
+                    <span
+                        class="block text-sm leading-none font-semibold"
+                        :class="soloUnaTarifa ? '' : 'mt-2'"
+                        >{{ money(plan.price) }}</span
                     >
-                        <div
-                            class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                        >
-                            <Lucide icon="CalendarDays" class="h-3.5 w-3.5" />
-                            ¿Cuándo?
-                        </div>
-                        <div class="grid gap-x-6 gap-y-5 lg:grid-cols-2">
-                            <div>
-                                <FormLabel htmlFor="reserve-starts"
-                                    >Llegada</FormLabel
-                                >
-                                <FormDateTime
-                                    id="reserve-starts"
-                                    v-model="startsAt"
-                                />
-                            </div>
-                            <div>
-                                <FormLabel
-                                    htmlFor="reserve-ends"
-                                    class="flex items-center gap-2"
-                                >
-                                    Salida
-                                    <span
-                                        v-if="endsAuto && endsAt"
-                                        title="Calculada según la duración de la tarifa. Puedes ajustarla a mano."
-                                        class="inline-flex cursor-help items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
-                                    >
-                                        <Lucide
-                                            icon="Sparkles"
-                                            class="h-3 w-3"
-                                        />
-                                        auto
-                                    </span>
-                                </FormLabel>
-                                <FormDateTime
-                                    id="reserve-ends"
-                                    v-model="endsAt"
-                                    @change="endsAuto = false"
-                                />
-                            </div>
-                        </div>
-                        <div
-                            v-if="tappedRoomBusy"
-                            class="mt-4 flex items-start gap-2 rounded-lg bg-warning/10 px-3.5 py-3 text-sm text-warning"
-                        >
-                            <Lucide
-                                icon="TriangleAlert"
-                                class="mt-0.5 h-4 w-4 shrink-0"
-                            />
-                            La {{ modalRoom?.number }} no está libre en ese
-                            rango; elige otra habitación de la lista.
-                        </div>
-                    </section>
+                </button>
+            </div>
+            <div
+                v-else
+                class="flex items-start gap-2 rounded-lg bg-danger/10 px-3.5 py-2.5 text-xs text-danger"
+            >
+                <Lucide icon="TriangleAlert" class="mt-0.5 h-4 w-4 shrink-0" />
+                Este tipo de habitación no tiene tarifas activas; agrégalas en
+                Zonas y tipos.
+            </div>
+        </section>
 
-                    <!-- Habitación y personas en el mismo renglón: solas se
+        <!-- Fechas y habitación -->
+        <section
+            class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
+        >
+            <div
+                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                <Lucide icon="CalendarDays" class="h-3.5 w-3.5" />
+                ¿Cuándo?
+            </div>
+            <div class="grid gap-4 lg:grid-cols-2">
+                <div>
+                    <FormLabel htmlFor="reserve-starts">Llegada</FormLabel>
+                    <FormDateTime
+                        input-class="h-9 text-xs"
+                        id="reserve-starts"
+                        v-model="startsAt"
+                    />
+                </div>
+                <div>
+                    <FormLabel
+                        htmlFor="reserve-ends"
+                        class="flex items-center gap-2"
+                    >
+                        Salida
+                        <span
+                            v-if="endsAuto && endsAt"
+                            title="Calculada según la duración de la tarifa. Puedes ajustarla a mano."
+                            class="inline-flex cursor-help items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                        >
+                            <Lucide icon="Sparkles" class="h-3 w-3" />
+                            auto
+                        </span>
+                    </FormLabel>
+                    <FormDateTime
+                        input-class="h-9 text-xs"
+                        id="reserve-ends"
+                        v-model="endsAt"
+                        @change="endsAuto = false"
+                    />
+                </div>
+            </div>
+            <div
+                v-if="tappedRoomBusy"
+                class="mt-4 flex items-start gap-2 rounded-lg bg-warning/10 px-3.5 py-2.5 text-xs text-warning"
+            >
+                <Lucide icon="TriangleAlert" class="mt-0.5 h-4 w-4 shrink-0" />
+                La {{ modalRoom?.number }} no está libre en ese rango; elige
+                otra habitación de la lista.
+            </div>
+        </section>
+
+        <!-- Habitación y personas en el mismo renglón: solas se
                          quedaban con medio modal en blanco al lado. -->
-                    <section
-                        class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
+        <section
+            class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
+        >
+            <div class="grid gap-4 lg:grid-cols-2">
+                <div>
+                    <div
+                        class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                     >
-                        <div class="grid gap-x-6 gap-y-5 lg:grid-cols-2">
-                            <div>
-                                <div
-                                    class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                                >
-                                    <Lucide
-                                        icon="BedDouble"
-                                        class="h-3.5 w-3.5"
-                                    />
-                                    Habitación
-                                </div>
-                                <FormSelect
-                                    id="reserve-room"
-                                    v-model="roomId"
-                                    aria-label="Habitación"
-                                    :disabled="
-                                        !availability ||
-                                        !availability.rooms.length
-                                    "
-                                >
-                                    <option
-                                        v-if="!availability"
-                                        :value="modalRoom?.id ?? null"
-                                    >
-                                        {{ roomLabel }} (consultando…)
-                                    </option>
-                                    <!-- La disponibilidad viene filtrada por
+                        <Lucide icon="BedDouble" class="h-3.5 w-3.5" />
+                        Habitación
+                    </div>
+                    <FormSelect
+                        class="h-9 text-xs"
+                        id="reserve-room"
+                        v-model="roomId"
+                        aria-label="Habitación"
+                        :disabled="!availability || !availability.rooms.length"
+                    >
+                        <option
+                            v-if="!availability"
+                            :value="modalRoom?.id ?? null"
+                        >
+                            {{ roomLabel }} (consultando…)
+                        </option>
+                        <!-- La disponibilidad viene filtrada por
                                          la tarifa, así que todas son del
                                          mismo tipo: el nombre sale de la
                                          habitación tocada. -->
-                                    <option
-                                        v-for="room in availability?.rooms ??
-                                        []"
-                                        :key="room.id"
-                                        :value="room.id"
-                                    >
-                                        {{ room.number
-                                        }}<template v-if="modalRoom?.room_type">
-                                            ({{
-                                                modalRoom.room_type
-                                            }})</template
-                                        >
-                                    </option>
-                                </FormSelect>
-                                <FormHelp>
-                                    <span v-if="availLoading"
-                                        >Consultando disponibilidad…</span
-                                    >
-                                    <span v-else-if="availability"
-                                        >{{
-                                            availability.rooms.length
-                                        }}
-                                        habitación(es) libre(s) del tipo en ese
-                                        rango.</span
-                                    >
-                                    <span v-else
-                                        >La disponibilidad se consulta sola al
-                                        elegir tarifa y fechas.</span
-                                    >
-                                </FormHelp>
-                            </div>
-                            <div>
-                                <div
-                                    class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                                >
-                                    <Lucide icon="Users" class="h-3.5 w-3.5" />
-                                    Personas
-                                </div>
-                                <div class="flex items-center gap-3">
-                                    <Button
-                                        type="button"
-                                        variant="outline-secondary"
-                                        class="h-9 w-9 rounded-lg p-0"
-                                        :disabled="people <= 1"
-                                        @click="
-                                            people = Math.max(1, people - 1)
-                                        "
-                                    >
-                                        <Lucide icon="Minus" class="h-4 w-4" />
-                                    </Button>
-                                    <span
-                                        class="w-10 text-center text-base font-semibold"
-                                        >{{ people }}</span
-                                    >
-                                    <Button
-                                        type="button"
-                                        variant="outline-secondary"
-                                        class="h-9 w-9 rounded-lg p-0"
-                                        :disabled="people >= maxPeople"
-                                        @click="
-                                            people = Math.min(
-                                                maxPeople,
-                                                people + 1,
-                                            )
-                                        "
-                                    >
-                                        <Lucide icon="Plus" class="h-4 w-4" />
-                                    </Button>
-                                </div>
-                                <FormHelp v-if="peopleHint">{{
-                                    peopleHint
-                                }}</FormHelp>
-                            </div>
-                        </div>
-
-                        <div
-                            v-if="modalRoom?.optional_charges.length"
-                            class="mt-5"
+                        <option
+                            v-for="room in availability?.rooms ?? []"
+                            :key="room.id"
+                            :value="room.id"
                         >
-                            <div
-                                class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            {{ room.number
+                            }}<template v-if="modalRoom?.room_type">
+                                ({{ modalRoom.room_type }})</template
                             >
-                                <Lucide icon="CirclePlus" class="h-3.5 w-3.5" />
-                                Cargos opcionales
-                            </div>
-                            <div class="flex flex-wrap gap-2">
-                                <button
-                                    v-for="charge in modalRoom.optional_charges"
-                                    :key="charge.concept"
-                                    type="button"
-                                    class="rounded-full border px-3.5 py-2 text-xs font-medium transition"
-                                    :class="
-                                        extraConcepts.includes(charge.concept)
-                                            ? 'border-primary bg-primary/10 text-primary'
-                                            : 'border-slate-200/70 text-slate-500 hover:border-slate-300 dark:border-darkmode-400'
-                                    "
-                                    @click="toggleConcept(charge.concept)"
-                                >
-                                    {{ charge.concept }} ·
-                                    {{ money(charge.amount) }}
-                                </button>
-                            </div>
-                        </div>
-                    </section>
-
-                    <!-- Huésped -->
-                    <section
-                        class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
-                    >
-                        <div
-                            class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                        </option>
+                    </FormSelect>
+                    <FormHelp>
+                        <span v-if="availLoading"
+                            >Consultando disponibilidad…</span
                         >
-                            <Lucide icon="User" class="h-3.5 w-3.5" />
-                            Huésped
-                        </div>
-                        <div
-                            class="grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-3"
+                        <span v-else-if="availability"
+                            >{{ availability.rooms.length }} habitación(es)
+                            libre(s) del tipo en ese rango.</span
                         >
-                            <div>
-                                <FormLabel htmlFor="reserve-name"
-                                    >Nombre completo</FormLabel
-                                >
-                                <FormInput
-                                    id="reserve-name"
-                                    v-model="guestName"
-                                    placeholder="Nombre y apellidos"
-                                    maxlength="255"
-                                />
-                            </div>
-                            <div>
-                                <FormLabel htmlFor="reserve-phone"
-                                    >Teléfono</FormLabel
-                                >
-                                <FormInput
-                                    id="reserve-phone"
-                                    v-model="guestPhone"
-                                    type="tel"
-                                    placeholder="6561234567"
-                                    maxlength="30"
-                                />
-                            </div>
-                            <div>
-                                <FormLabel htmlFor="reserve-email"
-                                    >Correo (opcional)</FormLabel
-                                >
-                                <FormInput
-                                    id="reserve-email"
-                                    v-model="guestEmail"
-                                    type="email"
-                                    placeholder="correo@ejemplo.com"
-                                    maxlength="255"
-                                />
-                            </div>
-                        </div>
-                        <FormHelp
-                            >Con nombre y teléfono basta para avisarle y
-                            encontrar su reserva al llegar.</FormHelp
+                        <span v-else
+                            >La disponibilidad se consulta sola al elegir tarifa
+                            y fechas.</span
                         >
-                    </section>
-
-                    <!-- Vehículo: la ficha completa, no solo la placa -->
-                    <section
-                        class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
-                    >
-                        <div
-                            class="mb-3 flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                        >
-                            <Lucide icon="Car" class="h-3.5 w-3.5" />
-                            Vehículo (opcional)
-                        </div>
-                        <div
-                            class="grid gap-x-6 gap-y-5 sm:grid-cols-2 lg:grid-cols-4"
-                        >
-                            <div>
-                                <FormLabel htmlFor="reserve-plate"
-                                    >Placas</FormLabel
-                                >
-                                <FormInput
-                                    id="reserve-plate"
-                                    v-model="plate"
-                                    class="uppercase"
-                                    placeholder="ABC-123-D"
-                                    maxlength="20"
-                                />
-                            </div>
-                            <div>
-                                <FormLabel htmlFor="reserve-brand"
-                                    >Marca</FormLabel
-                                >
-                                <FormInput
-                                    id="reserve-brand"
-                                    v-model="vehicleBrand"
-                                    placeholder="Nissan"
-                                    maxlength="40"
-                                />
-                            </div>
-                            <div>
-                                <FormLabel htmlFor="reserve-model"
-                                    >Modelo</FormLabel
-                                >
-                                <FormInput
-                                    id="reserve-model"
-                                    v-model="vehicleModel"
-                                    placeholder="Versa"
-                                    maxlength="40"
-                                />
-                            </div>
-                            <div>
-                                <FormLabel htmlFor="reserve-color"
-                                    >Color</FormLabel
-                                >
-                                <FormInput
-                                    id="reserve-color"
-                                    v-model="vehicleColor"
-                                    placeholder="Blanco"
-                                    maxlength="30"
-                                />
-                            </div>
-                        </div>
-                        <FormHelp
-                            >Sirve para reconocer el carro al llegar; la placa
-                            arma su ficha y guarda marca, modelo y
-                            color.</FormHelp
-                        >
-                    </section>
-
-                    <!-- Cobrar ahora -->
-                    <section
-                        v-if="chargeMethods.length"
-                        class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
-                    >
-                        <div
-                            class="flex items-center justify-between gap-3 rounded-lg border border-slate-200/70 px-4 py-3.5 dark:border-darkmode-400"
-                        >
-                            <div
-                                class="flex items-center gap-2 text-sm font-medium"
-                            >
-                                <Lucide
-                                    icon="Banknote"
-                                    class="h-4 w-4 text-slate-400"
-                                />
-                                Cobrar ahora
-                            </div>
-                            <FormSwitch>
-                                <FormSwitch.Input
-                                    v-model="chargeNow"
-                                    type="checkbox"
-                                />
-                            </FormSwitch>
-                        </div>
-                        <div
-                            v-if="chargeNow"
-                            class="mt-5 grid gap-x-6 gap-y-5 sm:grid-cols-2"
-                        >
-                            <div>
-                                <FormLabel htmlFor="reserve-amount"
-                                    >Monto</FormLabel
-                                >
-                                <FormInput
-                                    id="reserve-amount"
-                                    v-model="chargeAmount"
-                                    type="number"
-                                    step="0.01"
-                                    min="1"
-                                />
-                                <FormHelp
-                                    >Precargado al total; bájalo si solo dejan
-                                    un anticipo.</FormHelp
-                                >
-                            </div>
-                            <div>
-                                <FormLabel>Método</FormLabel>
-                                <div class="grid gap-2.5 sm:grid-cols-2">
-                                    <button
-                                        v-for="method in chargeMethods"
-                                        :key="method.key"
-                                        type="button"
-                                        class="flex min-h-12 items-center justify-center gap-2 rounded-lg border text-sm font-medium transition"
-                                        :class="
-                                            chargeMethod === method.key
-                                                ? 'border-primary bg-primary/5 text-primary'
-                                                : 'border-slate-200/70 text-slate-500 dark:border-darkmode-400'
-                                        "
-                                        @click="
-                                            chargeMethod = method.key as
-                                                | 'cash'
-                                                | 'card'
-                                        "
-                                    >
-                                        <Lucide
-                                            :icon="method.icon"
-                                            class="h-4 w-4"
-                                        />
-                                        {{ method.label }}
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-
-                    <p
-                        v-if="modalError"
-                        class="rounded-lg bg-danger/10 px-3.5 py-3 text-sm text-danger"
-                    >
-                        {{ modalError }}
-                    </p>
+                    </FormHelp>
                 </div>
-
-                <!-- Footer. Se apila en móvil: con el plano en pantalla
-                     completa este modal también se usa desde el teléfono. -->
-                <div
-                    class="flex flex-col gap-3 border-t border-slate-200/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7 dark:border-darkmode-400"
-                >
-                    <div class="text-xs text-slate-500">
-                        <span
-                            class="block text-sm font-medium text-slate-600 dark:text-slate-300"
-                            >Total estimado: {{ money(total) }}</span
-                        >
-                        <span class="block"
-                            >El sistema confirma el total exacto.</span
-                        >
-                    </div>
-                    <Button
-                        variant="primary"
-                        class="min-h-12 shrink-0 rounded-[0.5rem] shadow-md shadow-primary/20"
-                        :disabled="!canSubmit"
-                        @click="submit"
+                <div>
+                    <div
+                        class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
                     >
-                        <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
-                        {{
-                            saving
-                                ? 'Guardando…'
-                                : chargeNow
-                                  ? `Reservar y cobrar ${money(Number(chargeAmount) || 0)}`
-                                  : 'Confirmar reserva'
-                        }}
-                    </Button>
+                        <Lucide icon="Users" class="h-3.5 w-3.5" />
+                        Personas
+                    </div>
+                    <div class="flex items-center gap-3">
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            class="h-9 w-9 rounded-lg p-0"
+                            :disabled="people <= 1"
+                            @click="people = Math.max(1, people - 1)"
+                        >
+                            <Lucide icon="Minus" class="h-4 w-4" />
+                        </Button>
+                        <span class="w-10 text-center text-sm font-semibold">{{
+                            people
+                        }}</span>
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            class="h-9 w-9 rounded-lg p-0"
+                            :disabled="people >= maxPeople"
+                            @click="people = Math.min(maxPeople, people + 1)"
+                        >
+                            <Lucide icon="Plus" class="h-4 w-4" />
+                        </Button>
+                    </div>
+                    <FormHelp v-if="peopleHint">{{ peopleHint }}</FormHelp>
                 </div>
             </div>
-        </Dialog.Panel>
-    </Dialog>
+
+            <div v-if="modalRoom?.optional_charges.length" class="mt-5">
+                <div
+                    class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                >
+                    <Lucide icon="CirclePlus" class="h-3.5 w-3.5" />
+                    Cargos opcionales
+                </div>
+                <div class="flex flex-wrap gap-2">
+                    <button
+                        v-for="charge in modalRoom.optional_charges"
+                        :key="charge.concept"
+                        type="button"
+                        class="rounded-full border px-3 py-1.5 text-xs font-medium transition"
+                        :class="
+                            extraConcepts.includes(charge.concept)
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-slate-200/70 text-slate-500 hover:border-slate-300 dark:border-darkmode-400'
+                        "
+                        @click="toggleConcept(charge.concept)"
+                    >
+                        {{ charge.concept }} ·
+                        {{ money(charge.amount) }}
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- Huésped -->
+        <section
+            class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
+        >
+            <div
+                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                <Lucide icon="User" class="h-3.5 w-3.5" />
+                Huésped
+            </div>
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                <div>
+                    <FormLabel htmlFor="reserve-name"
+                        >Nombre completo</FormLabel
+                    >
+                    <FormInput
+                        class="h-9 text-xs"
+                        id="reserve-name"
+                        v-model="guestName"
+                        placeholder="Nombre y apellidos"
+                        maxlength="255"
+                    />
+                </div>
+                <div>
+                    <FormLabel htmlFor="reserve-phone">Teléfono</FormLabel>
+                    <FormInput
+                        class="h-9 text-xs"
+                        id="reserve-phone"
+                        v-model="guestPhone"
+                        type="tel"
+                        placeholder="6561234567"
+                        maxlength="30"
+                    />
+                </div>
+                <div>
+                    <FormLabel htmlFor="reserve-email"
+                        >Correo (opcional)</FormLabel
+                    >
+                    <FormInput
+                        class="h-9 text-xs"
+                        id="reserve-email"
+                        v-model="guestEmail"
+                        type="email"
+                        placeholder="correo@ejemplo.com"
+                        maxlength="255"
+                    />
+                </div>
+            </div>
+            <FormHelp
+                >Con nombre y teléfono basta para avisarle y encontrar su
+                reserva al llegar.</FormHelp
+            >
+        </section>
+
+        <!-- Vehículo: la ficha completa, no solo la placa -->
+        <section
+            class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
+        >
+            <div
+                class="mb-3 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+            >
+                <Lucide icon="Car" class="h-3.5 w-3.5" />
+                Vehículo (opcional)
+            </div>
+            <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div>
+                    <FormLabel htmlFor="reserve-plate">Placas</FormLabel>
+                    <FormInput
+                        id="reserve-plate"
+                        v-model="plate"
+                        class="h-9 text-xs uppercase"
+                        placeholder="ABC-123-D"
+                        maxlength="20"
+                    />
+                </div>
+                <div>
+                    <FormLabel htmlFor="reserve-brand">Marca</FormLabel>
+                    <FormInput
+                        class="h-9 text-xs"
+                        id="reserve-brand"
+                        v-model="vehicleBrand"
+                        placeholder="Nissan"
+                        maxlength="40"
+                    />
+                </div>
+                <div>
+                    <FormLabel htmlFor="reserve-model">Modelo</FormLabel>
+                    <FormInput
+                        class="h-9 text-xs"
+                        id="reserve-model"
+                        v-model="vehicleModel"
+                        placeholder="Versa"
+                        maxlength="40"
+                    />
+                </div>
+                <div>
+                    <FormLabel htmlFor="reserve-color">Color</FormLabel>
+                    <FormInput
+                        class="h-9 text-xs"
+                        id="reserve-color"
+                        v-model="vehicleColor"
+                        placeholder="Blanco"
+                        maxlength="30"
+                    />
+                </div>
+            </div>
+            <FormHelp
+                >Sirve para reconocer el carro al llegar; la placa arma su ficha
+                y guarda marca, modelo y color.</FormHelp
+            >
+        </section>
+
+        <!-- Cobrar ahora -->
+        <section
+            v-if="chargeMethods.length"
+            class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
+        >
+            <div
+                class="flex items-center justify-between gap-3 rounded-lg border border-slate-200/70 px-4 py-3.5 dark:border-darkmode-400"
+            >
+                <div class="flex items-center gap-2 text-sm font-medium">
+                    <Lucide icon="Banknote" class="h-4 w-4 text-slate-400" />
+                    Cobrar ahora
+                </div>
+                <FormSwitch>
+                    <FormSwitch.Input v-model="chargeNow" type="checkbox" />
+                </FormSwitch>
+            </div>
+            <div v-if="chargeNow" class="mt-5 grid gap-4 sm:grid-cols-2">
+                <div>
+                    <FormLabel htmlFor="reserve-amount">Monto</FormLabel>
+                    <FormInput
+                        class="h-9 text-xs"
+                        id="reserve-amount"
+                        v-model="chargeAmount"
+                        type="number"
+                        step="0.01"
+                        min="1"
+                    />
+                    <FormHelp
+                        >Precargado al total; bájalo si solo dejan un
+                        anticipo.</FormHelp
+                    >
+                </div>
+                <div>
+                    <FormLabel>Método</FormLabel>
+                    <div class="grid grid-cols-2 gap-2">
+                        <button
+                            v-for="method in chargeMethods"
+                            :key="method.key"
+                            type="button"
+                            class="flex h-9 items-center justify-center gap-2 rounded-[0.5rem] border text-xs font-medium transition"
+                            :class="
+                                chargeMethod === method.key
+                                    ? 'border-primary bg-primary/5 text-primary'
+                                    : 'border-slate-200/70 text-slate-500 dark:border-darkmode-400'
+                            "
+                            @click="
+                                chargeMethod = method.key as 'cash' | 'card'
+                            "
+                        >
+                            <Lucide :icon="method.icon" class="h-3.5 w-3.5" />
+                            {{ method.label }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <p
+            v-if="modalError"
+            class="rounded-lg bg-danger/10 px-3.5 py-2.5 text-xs text-danger"
+        >
+            {{ modalError }}
+        </p>
+
+        <template #footer-start>
+            <span
+                class="block text-sm font-medium text-slate-700 dark:text-slate-200"
+                >Total estimado {{ money(total) }}</span
+            >
+            <span class="block">El sistema confirma el total exacto.</span>
+        </template>
+        <template #footer>
+            <Button
+                variant="outline-secondary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="saving"
+                @click="emit('close')"
+            >
+                Cancelar
+            </Button>
+            <Button
+                variant="primary"
+                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                :disabled="!canSubmit"
+                @click="submit"
+            >
+                <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
+                {{
+                    saving
+                        ? 'Guardando…'
+                        : chargeNow
+                          ? `Reservar y cobrar ${money(Number(chargeAmount) || 0)}`
+                          : 'Confirmar reserva'
+                }}
+            </Button>
+        </template>
+    </PlanModal>
 </template>
