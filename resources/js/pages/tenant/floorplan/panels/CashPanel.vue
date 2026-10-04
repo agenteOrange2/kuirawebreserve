@@ -52,6 +52,13 @@ const sectionRubric =
 const fieldLabel =
     'mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300';
 
+/**
+ * Renglones a la vista de movimientos y pendientes. Antes era una lista con
+ * scroll propio dentro del scroll del modal: en el teléfono el dedo quedaba
+ * atrapado entre los dos. El rastro completo vive en Cortes.
+ */
+const ROWS_CAP = 10;
+
 /** Hay una caja abierta (movimientos o cierre): las tarjetas se apilan. */
 const scopeOpen = computed(
     () =>
@@ -327,7 +334,11 @@ onMounted(() => {
             <div
                 v-else
                 class="grid items-start gap-4"
-                :class="scopeOpen ? '' : 'lg:grid-cols-2'"
+                :class="
+                    !scopeOpen && state.scopes.length > 1
+                        ? 'lg:grid-cols-2'
+                        : ''
+                "
             >
                 <section
                     v-for="scope in state.scopes"
@@ -352,7 +363,9 @@ onMounted(() => {
                             <div class="text-sm font-medium">
                                 {{ scope.label }}
                             </div>
-                            <p class="mt-0.5 truncate text-xs text-slate-500">
+                            <p
+                                class="mt-0.5 text-xs text-slate-500 sm:truncate"
+                            >
                                 {{ scope.from }} → {{ scope.to }}
                             </p>
                         </div>
@@ -370,19 +383,19 @@ onMounted(() => {
                     <dl
                         class="grid grid-cols-3 divide-x divide-slate-200/60 border-b border-slate-200/60 dark:divide-darkmode-400 dark:border-darkmode-400"
                     >
-                        <div class="px-4 py-2.5">
+                        <div class="px-3 py-2.5 sm:px-4">
                             <dt :class="statLabel">Efectivo</dt>
                             <dd class="mt-0.5 text-sm font-medium">
                                 {{ formatMoney(scope.cash_total) }}
                             </dd>
                         </div>
-                        <div class="px-4 py-2.5">
+                        <div class="px-3 py-2.5 sm:px-4">
                             <dt :class="statLabel">Tarjeta</dt>
                             <dd class="mt-0.5 text-sm font-medium">
                                 {{ formatMoney(scope.card_total) }}
                             </dd>
                         </div>
-                        <div class="px-4 py-2.5">
+                        <div class="px-3 py-2.5 sm:px-4">
                             <dt :class="statLabel">En cajón</dt>
                             <dd class="mt-0.5 text-sm font-medium">
                                 {{ formatMoney(scope.expected_cash) }}
@@ -390,10 +403,14 @@ onMounted(() => {
                         </div>
                     </dl>
 
-                    <div class="flex flex-wrap gap-2 px-4 py-3">
+                    <!-- En el teléfono, a lo ancho y parejos: con flex-wrap
+                         quedaban de dos anchos distintos, uno por renglón. -->
+                    <div
+                        class="grid grid-cols-2 gap-2 px-4 py-3 sm:flex sm:flex-wrap"
+                    >
                         <Button
                             variant="outline-secondary"
-                            class="h-8 rounded-[0.5rem] text-xs"
+                            class="h-9 justify-center rounded-[0.5rem] text-xs sm:h-8"
                             title="Ver transacción por transacción y lo que queda por cobrar"
                             @click="expand(scope.key)"
                         >
@@ -405,15 +422,20 @@ onMounted(() => {
                                 "
                                 class="mr-1.5 h-3.5 w-3.5"
                             />
-                            {{
+                            <span class="sm:hidden">{{
+                                detailScope === scope.key
+                                    ? 'Ocultar'
+                                    : 'Movimientos'
+                            }}</span>
+                            <span class="hidden sm:inline">{{
                                 detailScope === scope.key
                                     ? 'Ocultar movimientos'
                                     : 'Ver movimientos'
-                            }}
+                            }}</span>
                         </Button>
                         <Button
                             variant="outline-primary"
-                            class="h-8 rounded-[0.5rem] text-xs"
+                            class="h-9 justify-center rounded-[0.5rem] text-xs sm:h-8"
                             title="Corta esta caja ahora, con motivo; el turno sigue abierto"
                             @click="startClose(scope)"
                         >
@@ -421,7 +443,10 @@ onMounted(() => {
                                 icon="Scissors"
                                 class="mr-1.5 h-3.5 w-3.5"
                             />
-                            Cerrar solo esta caja
+                            <span class="sm:hidden">Cerrar caja</span>
+                            <span class="hidden sm:inline"
+                                >Cerrar solo esta caja</span
+                            >
                         </Button>
                     </div>
 
@@ -436,44 +461,49 @@ onMounted(() => {
                         >
                             Movimientos ({{ scope.movements.length }})
                         </div>
+                        <!-- Dos renglones por movimiento: qué y cuánto arriba,
+                             cuándo y cómo abajo. En tres columnas el concepto
+                             quedaba cortado a la mitad en el teléfono. -->
                         <div
-                            class="max-h-72 divide-y divide-slate-200/60 overflow-y-auto dark:divide-darkmode-400"
+                            class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
                         >
                             <div
-                                v-for="(movement, index) in scope.movements"
+                                v-for="(
+                                    movement, index
+                                ) in scope.movements.slice(0, ROWS_CAP)"
                                 :key="index"
-                                class="flex items-center gap-3 px-4 py-2"
+                                class="px-4 py-2"
                             >
-                                <span
-                                    class="w-24 shrink-0 text-[11px] text-slate-400"
-                                    >{{ movement.at }}</span
-                                >
-                                <span class="min-w-0 flex-1">
-                                    <span class="block truncate text-xs">{{
-                                        movement.concept
-                                    }}</span>
+                                <div class="flex items-baseline gap-3">
                                     <span
-                                        class="block truncate text-[11px] text-slate-500"
-                                        >{{ movement.method
-                                        }}<template v-if="movement.detail">
-                                            · {{ movement.detail }}</template
-                                        ></span
+                                        class="min-w-0 flex-1 truncate text-xs font-medium"
+                                        >{{ movement.concept }}</span
                                     >
-                                </span>
-                                <span
-                                    class="shrink-0 text-xs font-medium"
-                                    :class="
-                                        movement.collected
-                                            ? ''
-                                            : 'text-slate-400'
-                                    "
-                                    :title="
-                                        movement.collected
-                                            ? undefined
-                                            : 'No entró a esta caja: se cobra en el check-out'
-                                    "
-                                    >{{ formatMoney(movement.amount) }}</span
+                                    <span
+                                        class="shrink-0 text-xs font-medium"
+                                        :class="
+                                            movement.collected
+                                                ? ''
+                                                : 'text-slate-400'
+                                        "
+                                        :title="
+                                            movement.collected
+                                                ? undefined
+                                                : 'No entró a esta caja: se cobra en el check-out'
+                                        "
+                                        >{{
+                                            formatMoney(movement.amount)
+                                        }}</span
+                                    >
+                                </div>
+                                <div
+                                    class="mt-0.5 truncate text-[11px] text-slate-500"
                                 >
+                                    {{ movement.at }} · {{ movement.method
+                                    }}<template v-if="movement.detail">
+                                        · {{ movement.detail }}</template
+                                    >
+                                </div>
                             </div>
                             <p
                                 v-if="!scope.movements.length"
@@ -481,6 +511,14 @@ onMounted(() => {
                             >
                                 Sin movimientos en este periodo.
                             </p>
+                            <Link
+                                v-if="scope.movements.length > ROWS_CAP"
+                                href="/cortes"
+                                class="block px-4 py-2.5 text-xs font-medium text-primary hover:underline"
+                            >
+                                Ver los {{ scope.movements.length }}
+                                movimientos en Cortes
+                            </Link>
                         </div>
 
                         <template v-if="scope.pending && scope.pending.count">
@@ -492,10 +530,12 @@ onMounted(() => {
                                 {{ formatMoney(scope.pending.total) }})
                             </div>
                             <div
-                                class="max-h-56 divide-y divide-slate-200/60 overflow-y-auto dark:divide-darkmode-400"
+                                class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
                             >
                                 <div
-                                    v-for="(item, index) in scope.pending.items"
+                                    v-for="(
+                                        item, index
+                                    ) in scope.pending.items.slice(0, ROWS_CAP)"
                                     :key="index"
                                     class="flex items-center gap-3 px-4 py-2"
                                 >
@@ -514,6 +554,14 @@ onMounted(() => {
                                         >{{ formatMoney(item.amount) }}</span
                                     >
                                 </div>
+                                <p
+                                    v-if="scope.pending.items.length > ROWS_CAP"
+                                    class="px-4 py-2.5 text-[11px] text-slate-500"
+                                >
+                                    Y
+                                    {{ scope.pending.items.length - ROWS_CAP }}
+                                    más; el detalle completo está en Cortes.
+                                </p>
                             </div>
                         </template>
                     </div>
@@ -620,44 +668,51 @@ onMounted(() => {
                         <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
                     </Link>
                 </div>
+                <!-- Etiqueta y monto arriba; fecha y arqueo abajo: en una
+                     sola línea el "Sobró" se encimaba con el total. -->
                 <div
                     v-if="state.recent_cuts.length"
-                    class="max-h-56 divide-y divide-slate-200/60 overflow-y-auto dark:divide-darkmode-400"
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
                 >
                     <div
                         v-for="cut in state.recent_cuts"
                         :key="cut.id"
-                        class="flex items-center gap-3 px-4 py-2 text-xs"
+                        class="px-4 py-2 text-xs"
                     >
-                        <span class="min-w-0 flex-1 truncate">
-                            <span class="font-medium">{{
+                        <div class="flex items-baseline gap-3">
+                            <span class="min-w-0 flex-1 truncate font-medium">{{
                                 cut.scope_label
                             }}</span>
-                            <span class="text-slate-500">
-                                · {{ cut.closed_at }}</span
-                            >
-                        </span>
-                        <span
-                            v-if="
-                                cut.difference !== null && cut.difference !== 0
-                            "
-                            class="shrink-0 rounded-full px-2 py-0.5 text-[11px]"
-                            :class="
-                                cut.difference < 0
-                                    ? 'bg-danger/10 text-danger'
-                                    : 'bg-success/10 text-success'
-                            "
-                            :title="
-                                cut.difference < 0
-                                    ? 'Faltó efectivo en el arqueo'
-                                    : 'Sobró efectivo en el arqueo'
-                            "
-                            >{{ cut.difference < 0 ? 'Faltó' : 'Sobró' }}
-                            {{ formatMoney(Math.abs(cut.difference)) }}</span
+                            <span class="shrink-0 font-medium">{{
+                                formatMoney(cut.grand_total)
+                            }}</span>
+                        </div>
+                        <div
+                            class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-slate-500"
                         >
-                        <span class="w-24 shrink-0 text-right font-medium">{{
-                            formatMoney(cut.grand_total)
-                        }}</span>
+                            {{ cut.closed_at }}
+                            <span
+                                v-if="
+                                    cut.difference !== null &&
+                                    cut.difference !== 0
+                                "
+                                class="rounded-full px-2 py-0.5 font-medium"
+                                :class="
+                                    cut.difference < 0
+                                        ? 'bg-danger/10 text-danger'
+                                        : 'bg-success/10 text-success'
+                                "
+                                :title="
+                                    cut.difference < 0
+                                        ? 'Faltó efectivo en el arqueo'
+                                        : 'Sobró efectivo en el arqueo'
+                                "
+                                >{{ cut.difference < 0 ? 'Faltó' : 'Sobró' }}
+                                {{
+                                    formatMoney(Math.abs(cut.difference))
+                                }}</span
+                            >
+                        </div>
                     </div>
                 </div>
                 <p v-else class="px-4 py-3 text-xs text-slate-500">
