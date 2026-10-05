@@ -695,7 +695,9 @@ onBeforeUnmount(() => {
             </div>
             <div class="grid gap-4 lg:grid-cols-2">
                 <div>
-                    <FormLabel class="flex items-center gap-2">
+                    <FormLabel
+                        class="mb-1.5 flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300"
+                    >
                         Entrada
                         <span
                             class="inline-flex items-center gap-1 rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"
@@ -721,7 +723,7 @@ onBeforeUnmount(() => {
                 <div>
                     <FormLabel
                         htmlFor="walkin-ends"
-                        class="flex items-center gap-2"
+                        class="mb-1.5 flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300"
                     >
                         Salida prevista
                         <span
@@ -836,7 +838,11 @@ onBeforeUnmount(() => {
             </div>
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
-                    <FormLabel htmlFor="walkin-name">Nombre completo</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="walkin-name"
+                        >Nombre completo</FormLabel
+                    >
                     <FormInput
                         class="h-9 text-xs"
                         id="walkin-name"
@@ -846,7 +852,11 @@ onBeforeUnmount(() => {
                     />
                 </div>
                 <div>
-                    <FormLabel htmlFor="walkin-phone">Teléfono</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="walkin-phone"
+                        >Teléfono</FormLabel
+                    >
                     <FormInput
                         class="h-9 text-xs"
                         id="walkin-phone"
@@ -857,7 +867,9 @@ onBeforeUnmount(() => {
                     />
                 </div>
                 <div>
-                    <FormLabel htmlFor="walkin-email"
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="walkin-email"
                         >Correo (opcional)</FormLabel
                     >
                     <FormInput
@@ -889,7 +901,11 @@ onBeforeUnmount(() => {
             </div>
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div>
-                    <FormLabel htmlFor="walkin-plate">Placas</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="walkin-plate"
+                        >Placas</FormLabel
+                    >
                     <FormInput
                         id="walkin-plate"
                         v-model="plate"
@@ -899,7 +915,11 @@ onBeforeUnmount(() => {
                     />
                 </div>
                 <div>
-                    <FormLabel htmlFor="walkin-brand">Marca</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="walkin-brand"
+                        >Marca</FormLabel
+                    >
                     <FormInput
                         class="h-9 text-xs"
                         id="walkin-brand"
@@ -909,7 +929,11 @@ onBeforeUnmount(() => {
                     />
                 </div>
                 <div>
-                    <FormLabel htmlFor="walkin-model">Modelo</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="walkin-model"
+                        >Modelo</FormLabel
+                    >
                     <FormInput
                         class="h-9 text-xs"
                         id="walkin-model"
@@ -919,7 +943,11 @@ onBeforeUnmount(() => {
                     />
                 </div>
                 <div>
-                    <FormLabel htmlFor="walkin-color">Color</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="walkin-color"
+                        >Color</FormLabel
+                    >
                     <FormInput
                         class="h-9 text-xs"
                         id="walkin-color"
@@ -1007,7 +1035,9 @@ onBeforeUnmount(() => {
                     </button>
                 </div>
                 <div v-if="paymentMethod !== 'cash'" class="mt-4 sm:max-w-sm">
-                    <FormLabel htmlFor="walkin-reference"
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="walkin-reference"
                         >Referencia (opcional)</FormLabel
                     >
                     <FormInput
@@ -1134,7 +1164,9 @@ onBeforeUnmount(() => {
                              sale del cajón, esto hay que regresarlo a una
                              cuenta días después. -->
             <div v-if="guaranteeMethod === 'transfer'" class="mt-4 sm:max-w-sm">
-                <FormLabel htmlFor="walkin-guarantee-reference"
+                <FormLabel
+                    class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                    htmlFor="walkin-guarantee-reference"
                     >Folio o referencia del comprobante</FormLabel
                 >
                 <FormInput

@@ -47,6 +47,59 @@ const sectionIcon =
 const cardHeader =
     'flex items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400';
 const statLabel = 'text-[11px] text-slate-400';
+const statCell = 'bg-white px-3 py-2.5 sm:px-4 dark:bg-darkmode-600';
+const statValue = 'mt-0.5 text-sm font-medium';
+
+/** Las tarjetas van a todo el ancho: una sola caja o una abierta. */
+const wideCards = computed(
+    () => scopeOpen.value || (state.value?.scopes.length ?? 0) <= 1,
+);
+
+/** Solo se explica el cajón cuando tiene algo más que el efectivo cobrado. */
+function drawerHasExtras(scope: CashScopeTotals): boolean {
+    return (
+        scope.opening_cash > 0 ||
+        scope.guarantees_cash_in > 0 ||
+        scope.guarantees_cash_out > 0 ||
+        scope.expenses_total > 0
+    );
+}
+
+/**
+ * "En cajón" en palabras: el efectivo cobrado más el fondo y las fianzas en
+ * efectivo, menos lo devuelto y lo gastado. Solo nombra lo que no es cero.
+ */
+function drawerExplanation(scope: CashScopeTotals): string {
+    const parts = [`${formatMoney(scope.cash_total)} cobrados en efectivo`];
+
+    if (scope.opening_cash > 0) {
+        parts.push(`+ ${formatMoney(scope.opening_cash)} de fondo inicial`);
+    }
+
+    if (scope.guarantees_cash_in > 0) {
+        parts.push(
+            `+ ${formatMoney(scope.guarantees_cash_in)} de fianzas recibidas`,
+        );
+    }
+
+    if (scope.guarantees_cash_out > 0) {
+        parts.push(
+            `− ${formatMoney(scope.guarantees_cash_out)} de fianzas devueltas`,
+        );
+    }
+
+    if (scope.expenses_total > 0) {
+        parts.push(`− ${formatMoney(scope.expenses_total)} de gastos`);
+    }
+
+    const text = `En cajón: ${parts.join(' ')}.`;
+
+    // Negativo solo pasa cuando salió dinero que entró en un corte anterior
+    // (una fianza cobrada antes de cortar y devuelta después).
+    return scope.expected_cash < 0
+        ? `${text} Sale negativo porque se devolvió dinero que entró y se entregó en un corte anterior.`
+        : text;
+}
 const sectionRubric =
     'text-[11px] font-medium tracking-wide text-slate-400 uppercase';
 const fieldLabel =
@@ -380,28 +433,49 @@ onMounted(() => {
                         </div>
                     </div>
 
+                    <!-- Las cuatro formas en que entra el dinero suman el
+                         total de arriba; antes faltaba Transferencia y el
+                         total no cuadraba con lo que se veía. -->
                     <dl
-                        class="grid grid-cols-3 divide-x divide-slate-200/60 border-b border-slate-200/60 dark:divide-darkmode-400 dark:border-darkmode-400"
+                        class="grid grid-cols-2 gap-px border-b border-slate-200/60 bg-slate-200/60 dark:border-darkmode-400 dark:bg-darkmode-400"
+                        :class="wideCards ? 'sm:grid-cols-4' : ''"
                     >
-                        <div class="px-3 py-2.5 sm:px-4">
+                        <div :class="statCell">
                             <dt :class="statLabel">Efectivo</dt>
-                            <dd class="mt-0.5 text-sm font-medium">
+                            <dd :class="statValue">
                                 {{ formatMoney(scope.cash_total) }}
                             </dd>
                         </div>
-                        <div class="px-3 py-2.5 sm:px-4">
+                        <div :class="statCell">
                             <dt :class="statLabel">Tarjeta</dt>
-                            <dd class="mt-0.5 text-sm font-medium">
+                            <dd :class="statValue">
                                 {{ formatMoney(scope.card_total) }}
                             </dd>
                         </div>
-                        <div class="px-3 py-2.5 sm:px-4">
+                        <div :class="statCell">
+                            <dt :class="statLabel">Transferencia</dt>
+                            <dd :class="statValue">
+                                {{ formatMoney(scope.transfer_total) }}
+                            </dd>
+                        </div>
+                        <div
+                            :class="statCell"
+                            class="bg-slate-50 dark:bg-darkmode-700"
+                        >
                             <dt :class="statLabel">En cajón</dt>
-                            <dd class="mt-0.5 text-sm font-medium">
+                            <dd :class="statValue" class="font-semibold">
                                 {{ formatMoney(scope.expected_cash) }}
                             </dd>
                         </div>
                     </dl>
+                    <!-- De dónde sale lo del cajón: el efectivo cobrado no es
+                         lo único que hay adentro. -->
+                    <p
+                        v-if="drawerHasExtras(scope)"
+                        class="border-b border-slate-200/60 bg-slate-50/70 px-4 py-2 text-[11px] leading-relaxed text-slate-500 dark:border-darkmode-400 dark:bg-darkmode-700/40"
+                    >
+                        {{ drawerExplanation(scope) }}
+                    </p>
 
                     <!-- En el teléfono, a lo ancho y parejos: con flex-wrap
                          quedaban de dos anchos distintos, uno por renglón. -->

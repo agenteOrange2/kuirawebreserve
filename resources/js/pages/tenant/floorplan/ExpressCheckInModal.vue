@@ -595,7 +595,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                              mismo tamaño que un campo opcional. -->
             <div v-if="arrival === 'vehicle'" class="space-y-4">
                 <div>
-                    <FormLabel htmlFor="express-plate">Placas</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="express-plate"
+                        >Placas</FormLabel
+                    >
                     <FormInput
                         id="express-plate"
                         v-model="plate"
@@ -697,7 +701,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                              campos. En carro solo se pide el vehículo. -->
             <div v-if="arrival === 'foot'" class="space-y-3">
                 <div>
-                    <FormLabel htmlFor="express-guest-name"
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="express-guest-name"
                         >Nombre completo</FormLabel
                     >
                     <FormInput
@@ -713,7 +719,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                 </div>
                 <div class="grid items-start gap-3 sm:grid-cols-2">
                     <div>
-                        <FormLabel htmlFor="express-doc-type"
+                        <FormLabel
+                            class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                            htmlFor="express-doc-type"
                             >Identificación</FormLabel
                         >
                         <FormSelect
@@ -731,7 +739,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                         </FormSelect>
                     </div>
                     <div>
-                        <FormLabel htmlFor="express-doc-number"
+                        <FormLabel
+                            class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                            htmlFor="express-doc-number"
                             >Número (opcional)</FormLabel
                         >
                         <FormInput

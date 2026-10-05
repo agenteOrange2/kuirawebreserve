@@ -574,7 +574,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
             </div>
             <div class="grid gap-4 lg:grid-cols-2">
                 <div>
-                    <FormLabel htmlFor="reserve-starts">Llegada</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="reserve-starts"
+                        >Llegada</FormLabel
+                    >
                     <FormDateTime
                         input-class="h-9 text-xs"
                         id="reserve-starts"
@@ -584,7 +588,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                 <div>
                     <FormLabel
                         htmlFor="reserve-ends"
-                        class="flex items-center gap-2"
+                        class="mb-1.5 flex items-center gap-2 text-xs font-medium text-slate-600 dark:text-slate-300"
                     >
                         Salida
                         <span
@@ -742,7 +746,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
             </div>
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
-                    <FormLabel htmlFor="reserve-name"
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="reserve-name"
                         >Nombre completo</FormLabel
                     >
                     <FormInput
@@ -754,7 +760,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                     />
                 </div>
                 <div>
-                    <FormLabel htmlFor="reserve-phone">Teléfono</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="reserve-phone"
+                        >Teléfono</FormLabel
+                    >
                     <FormInput
                         class="h-9 text-xs"
                         id="reserve-phone"
@@ -765,7 +775,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                     />
                 </div>
                 <div>
-                    <FormLabel htmlFor="reserve-email"
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="reserve-email"
                         >Correo (opcional)</FormLabel
                     >
                     <FormInput
@@ -796,7 +808,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
             </div>
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                 <div>
-                    <FormLabel htmlFor="reserve-plate">Placas</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="reserve-plate"
+                        >Placas</FormLabel
+                    >
                     <FormInput
                         id="reserve-plate"
                         v-model="plate"
@@ -806,7 +822,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                     />
                 </div>
                 <div>
-                    <FormLabel htmlFor="reserve-brand">Marca</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="reserve-brand"
+                        >Marca</FormLabel
+                    >
                     <FormInput
                         class="h-9 text-xs"
                         id="reserve-brand"
@@ -816,7 +836,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                     />
                 </div>
                 <div>
-                    <FormLabel htmlFor="reserve-model">Modelo</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="reserve-model"
+                        >Modelo</FormLabel
+                    >
                     <FormInput
                         class="h-9 text-xs"
                         id="reserve-model"
@@ -826,7 +850,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                     />
                 </div>
                 <div>
-                    <FormLabel htmlFor="reserve-color">Color</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="reserve-color"
+                        >Color</FormLabel
+                    >
                     <FormInput
                         class="h-9 text-xs"
                         id="reserve-color"
@@ -860,7 +888,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
             </div>
             <div v-if="chargeNow" class="mt-5 grid gap-4 sm:grid-cols-2">
                 <div>
-                    <FormLabel htmlFor="reserve-amount">Monto</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        htmlFor="reserve-amount"
+                        >Monto</FormLabel
+                    >
                     <FormInput
                         class="h-9 text-xs"
                         id="reserve-amount"
@@ -875,7 +907,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                     >
                 </div>
                 <div>
-                    <FormLabel>Método</FormLabel>
+                    <FormLabel
+                        class="mb-1.5 text-xs font-medium text-slate-600 dark:text-slate-300"
+                        >Método</FormLabel
+                    >
                     <div class="grid grid-cols-2 gap-2">
                         <button
                             v-for="method in chargeMethods"

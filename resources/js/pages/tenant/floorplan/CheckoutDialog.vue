@@ -527,10 +527,10 @@ function confirm(force = false) {
                     para que todos los turnos cobren lo mismo.
                 </p>
 
-                <div class="mt-3 grid gap-2.5 sm:grid-cols-12">
+                <div class="mt-3 grid gap-3 sm:grid-cols-12">
                     <div class="sm:col-span-6">
                         <label
-                            class="text-xs text-slate-500"
+                            class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                             for="damage-concept"
                             >Qué se dañó</label
                         >
@@ -539,13 +539,13 @@ function confirm(force = false) {
                             v-model="damageConcept"
                             type="text"
                             maxlength="100"
-                            class="mt-1 h-9 text-xs"
+                            class="h-9 text-xs"
                             placeholder="Toalla quemada"
                         />
                     </div>
                     <div class="sm:col-span-3">
                         <label
-                            class="text-xs text-slate-500"
+                            class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
                             for="damage-amount"
                             >Importe</label
                         >
@@ -555,7 +555,7 @@ function confirm(force = false) {
                             type="number"
                             min="0"
                             step="1"
-                            class="mt-1 h-9 text-xs"
+                            class="h-9 text-xs"
                         />
                     </div>
                     <div class="flex items-end sm:col-span-3">

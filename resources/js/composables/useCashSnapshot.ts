@@ -35,6 +35,11 @@ export interface CashScopeTotals {
     transfer_total: number;
     grand_total: number;
     expected_cash: number;
+    /** Desglose de "En cajón": fondo, fianzas en efectivo y lo que salió. */
+    opening_cash: number;
+    guarantees_cash_in: number;
+    guarantees_cash_out: number;
+    expenses_total: number;
     /** Solo cuando se pide el detalle de ESTE ámbito (?detail=). */
     movements: CashMovement[] | null;
     pending: {

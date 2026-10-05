@@ -65,6 +65,12 @@ class CashCutController extends Controller
                     'transfer_total' => $totals['transfer_total'],
                     'grand_total' => $totals['grand_total'],
                     'expected_cash' => $totals['expected_cash'],
+                    // Lo que compone "En cajón" además del efectivo cobrado:
+                    // sin esto la cifra no se podía explicar en el plano.
+                    'opening_cash' => $totals['opening_cash'],
+                    'guarantees_cash_in' => $totals['guarantees_cash_in'],
+                    'guarantees_cash_out' => $totals['guarantees_cash_out'],
+                    'expenses_total' => $totals['expenses_total'],
                     'movements' => $detail === $scope
                         ? $service->movements($user, $context['from'], $context['to'], $context['shift'], $scope)
                         : null,
