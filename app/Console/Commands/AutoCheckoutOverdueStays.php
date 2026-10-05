@@ -53,6 +53,15 @@ class AutoCheckoutOverdueStays extends Command
                 $stay->forceFill(['auto_closed_at' => now()])->saveQuietly();
                 $closed++;
 
+                // La fianza se devuelve al salir si no quedó nada por cobrar
+                // (regla del hotel; la salida manual ya lo hacía). Con saldo
+                // se queda viva para que alguien decida en Cuentas por cerrar.
+                $returned = app(\App\Actions\Payments\ReturnGuaranteeOnExit::class)->handle($stay->fresh());
+
+                if ($returned > 0) {
+                    $this->line("Estancia {$stay->id}: fianza de {$returned} registrada como devuelta.");
+                }
+
                 // Que el hotel se entere: la habitación ya está en sucia.
                 app(\App\Services\StaffAlerts::class)->stayAutoClosed($stay);
 
