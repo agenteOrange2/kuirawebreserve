@@ -117,6 +117,8 @@ class ShiftController extends Controller
                     'grand_total' => $agg['grand_total'],
                     'expected_cash' => $agg['expected_cash'],
                     'opening_cash' => $agg['opening_cash'],
+                    'guarantees_carried' => $agg['guarantees_carried'],
+                    'guarantees_held' => $agg['guarantees_held'],
                     'counted_cash' => null, // automático: sin arqueo físico
                     'difference' => 0,
                     'pending_count' => $pending['count'],

@@ -132,6 +132,9 @@
             @if ((float) $cut->opening_cash > 0)
                 <tr><td>Fondo de caja inicial del turno</td><td class="right">${{ number_format((float) $cut->opening_cash, 2) }}</td></tr>
             @endif
+            @if ((float) $cut->guarantees_carried > 0)
+                <tr><td>Fianzas que venían del corte anterior</td><td class="right">${{ number_format((float) $cut->guarantees_carried, 2) }}</td></tr>
+            @endif
             @if ((int) $cut->expenses_count > 0)
                 <tr>
                     <td>Gastos y retiros del turno ({{ $cut->expenses_count }})</td>
@@ -139,6 +142,10 @@
                 </tr>
             @endif
             <tr><td>Efectivo esperado en cajón</td><td class="right">${{ number_format((float) $cut->expected_cash, 2) }}</td></tr>
+            @if ((float) $cut->guarantees_held > 0)
+                <tr><td>Fianzas por devolver (se quedan en caja)</td><td class="right">${{ number_format((float) $cut->guarantees_held, 2) }}</td></tr>
+                <tr><td style="font-weight: bold;">Efectivo a entregar</td><td class="right" style="font-weight: bold;">${{ number_format(max(0, (float) $cut->expected_cash - (float) $cut->guarantees_held), 2) }}</td></tr>
+            @endif
             @if ($cut->counted_cash !== null)
                 <tr><td>Efectivo contado</td><td class="right">${{ number_format((float) $cut->counted_cash, 2) }}</td></tr>
                 <tr>

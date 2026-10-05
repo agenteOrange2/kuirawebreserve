@@ -147,6 +147,8 @@ class CashCutsPageController extends Controller
             'transfer_total' => (float) $c->transfer_total,
             'expected_cash' => (float) $c->expected_cash,
             'opening_cash' => (float) $c->opening_cash,
+            'guarantees_carried' => (float) $c->guarantees_carried,
+            'guarantees_held' => (float) $c->guarantees_held,
             'expenses_count' => (int) $c->expenses_count,
             'expenses_total' => (float) $c->expenses_total,
             'counted_cash' => $c->counted_cash !== null ? (float) $c->counted_cash : null,

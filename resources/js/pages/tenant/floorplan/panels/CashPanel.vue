@@ -59,6 +59,8 @@ const wideCards = computed(
 function drawerHasExtras(scope: CashScopeTotals): boolean {
     return (
         scope.opening_cash > 0 ||
+        scope.guarantees_carried > 0 ||
+        scope.guarantees_held > 0 ||
         scope.guarantees_cash_in > 0 ||
         scope.guarantees_cash_out > 0 ||
         scope.expenses_total > 0
@@ -74,6 +76,12 @@ function drawerExplanation(scope: CashScopeTotals): string {
 
     if (scope.opening_cash > 0) {
         parts.push(`+ ${formatMoney(scope.opening_cash)} de fondo inicial`);
+    }
+
+    if (scope.guarantees_carried > 0) {
+        parts.push(
+            `+ ${formatMoney(scope.guarantees_carried)} de fianzas que venían del corte anterior`,
+        );
     }
 
     if (scope.guarantees_cash_in > 0) {
@@ -92,13 +100,21 @@ function drawerExplanation(scope: CashScopeTotals): string {
         parts.push(`− ${formatMoney(scope.expenses_total)} de gastos`);
     }
 
-    const text = `En cajón: ${parts.join(' ')}.`;
+    let text = `En cajón: ${parts.join(' ')}.`;
 
-    // Negativo solo pasa cuando salió dinero que entró en un corte anterior
-    // (una fianza cobrada antes de cortar y devuelta después).
+    // Las fianzas vivas son del huésped: al cortar se quedan en caja.
+    if (scope.guarantees_held > 0) {
+        text += ` Al cortar se entregan ${formatMoney(handOver(scope))}; ${formatMoney(scope.guarantees_held)} de fianzas por devolver se quedan en caja.`;
+    }
+
     return scope.expected_cash < 0
-        ? `${text} Sale negativo porque se devolvió dinero que entró y se entregó en un corte anterior.`
+        ? `${text} Sale negativo: salió más efectivo del que había; revisa devoluciones y gastos.`
         : text;
+}
+
+/** Lo que se entrega al cortar: el cajón menos las fianzas que se quedan. */
+function handOver(scope: CashScopeTotals): number {
+    return Math.max(0, scope.expected_cash - scope.guarantees_held);
 }
 const sectionRubric =
     'text-[11px] font-medium tracking-wide text-slate-400 uppercase';
@@ -702,6 +718,20 @@ onMounted(() => {
                         <p v-else class="text-xs text-slate-500">
                             El conteo es opcional: sin él el corte se guarda
                             igual, solo que sin arqueo.
+                        </p>
+                        <p
+                            v-if="scope.guarantees_held > 0"
+                            class="rounded-lg bg-info/10 px-3 py-2 text-xs text-slate-600 dark:text-slate-300"
+                        >
+                            Cuenta el cajón completo. Al cerrar, entrega
+                            <span class="font-medium">{{
+                                formatMoney(handOver(scope))
+                            }}</span>
+                            y deja en caja
+                            <span class="font-medium">{{
+                                formatMoney(scope.guarantees_held)
+                            }}</span>
+                            de fianzas: son de huéspedes que todavía no salen.
                         </p>
                         <div class="flex justify-end gap-2">
                             <Button

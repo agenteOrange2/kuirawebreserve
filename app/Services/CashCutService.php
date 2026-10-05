@@ -131,6 +131,36 @@ class CashCutService
             ->when($scope !== CashCut::SCOPE_ALL, fn ($q) => $q->where('scope', $scope));
     }
 
+    /**
+     * Fianzas en EFECTIVO de este encargado que seguían en su cajón en el
+     * instante `$at`: cobradas hasta ese momento, de estancias que todavía no
+     * salían, menos lo que ya se hubiera devuelto. Al registrar la salida la
+     * fianza se devuelve, se aplica a la cuenta o se retiene; en cualquiera de
+     * los tres casos deja de ser del huésped, así que después de la salida ya
+     * no cuenta como "por devolver".
+     */
+    public function guaranteesHeldAt(User $user, CarbonInterface $at): float
+    {
+        $payments = Payment::query()
+            ->where('kind', Payment::KIND_GUARANTEE)
+            ->where('method', 'cash')
+            ->where('received_by', $user->id)
+            ->where('paid_at', '<=', $at)
+            ->where(fn ($q) => $q
+                ->whereNull('stay_id')
+                ->orWhereHas('stay', fn ($stay) => $stay
+                    ->whereNull('check_out_at')
+                    ->orWhere('check_out_at', '>', $at)))
+            ->withSum(['refunds as refunded_until' => fn ($q) => $q
+                ->where('status', \App\Models\Refund::STATUS_COMPLETED)
+                ->where('refunded_at', '<=', $at)], 'amount')
+            ->get(['id', 'amount']);
+
+        return round((float) $payments->sum(
+            fn (Payment $payment) => max(0, (float) $payment->amount - (float) ($payment->refunded_until ?? 0)),
+        ), 2);
+    }
+
     public function compute(User $user, CarbonInterface $from, CarbonInterface $to, ?Shift $shift = null, string $scope = CashCut::SCOPE_ALL): array
     {
         // Límite inferior exclusivo: evita recontar la venta justo en el
@@ -186,6 +216,19 @@ class CashCutService
 
         $guaranteesCollected = round((float) $guarantees->sum('amount'), 2);
         $guaranteesCashIn = round((float) $guarantees->where('method', 'cash')->sum('amount'), 2);
+
+        // Fianzas en efectivo que ya estaban en el cajón al empezar el
+        // periodo y las que se quedan al cerrarlo. Una fianza es dinero del
+        // huésped: no se entrega con el corte, se queda en caja hasta que
+        // se devuelve. Sin arrastrarla, la que se cobraba antes de un corte
+        // y se devolvía después dejaba el cajón siguiente en negativo
+        // (cabañas, corte del 17/09: esperado −$6,500).
+        $guaranteesCarried = $scope === CashCut::SCOPE_POS
+            ? 0.0
+            : $this->guaranteesHeldAt($user, $from);
+        $guaranteesHeld = $scope === CashCut::SCOPE_POS
+            ? 0.0
+            : $this->guaranteesHeldAt($user, $to);
 
         $guaranteesCashOut = $scope === CashCut::SCOPE_POS
             ? 0.0
@@ -255,9 +298,10 @@ class CashCutService
             'grand_total' => $grandTotal,
             'opening_cash' => $openingCash,
             // Arqueo: el cajón de recepción contiene el fondo inicial del
-            // turno y también las fianzas en efectivo cobradas (menos las
-            // devueltas), aunque no sean venta. Y menos lo que salió.
-            'expected_cash' => round($openingCash + $posCash + $payCash + $guaranteesCashIn - $guaranteesCashOut - $expensesTotal, 2),
+            // turno y también las fianzas en efectivo, aunque no sean venta:
+            // las que venían del corte anterior y las cobradas ahora, menos
+            // las devueltas. Y menos lo que salió.
+            'expected_cash' => round($openingCash + $guaranteesCarried + $posCash + $payCash + $guaranteesCashIn - $guaranteesCashOut - $expensesTotal, 2),
             'expenses_count' => $expenses->count(),
             'expenses_total' => $expensesTotal,
             'expenses_by_category' => $expensesByCategory,
@@ -266,6 +310,10 @@ class CashCutService
             'guarantees_collected' => $guaranteesCollected,
             'guarantees_cash_in' => $guaranteesCashIn,
             'guarantees_cash_out' => $guaranteesCashOut,
+            // Arrastre de fianzas: las que había al abrir el periodo y las que
+            // siguen por devolver al cerrarlo (se quedan en caja, no se entregan).
+            'guarantees_carried' => $guaranteesCarried,
+            'guarantees_held' => $guaranteesHeld,
             'sources' => $sources,
             'methods' => [
                 ['key' => 'cash', 'label' => 'Efectivo', 'total' => $cashTotal],

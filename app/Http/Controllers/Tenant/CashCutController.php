@@ -71,6 +71,8 @@ class CashCutController extends Controller
                     'guarantees_cash_in' => $totals['guarantees_cash_in'],
                     'guarantees_cash_out' => $totals['guarantees_cash_out'],
                     'expenses_total' => $totals['expenses_total'],
+                    'guarantees_carried' => $totals['guarantees_carried'],
+                    'guarantees_held' => $totals['guarantees_held'],
                     'movements' => $detail === $scope
                         ? $service->movements($user, $context['from'], $context['to'], $context['shift'], $scope)
                         : null,
@@ -172,6 +174,8 @@ class CashCutController extends Controller
             'grand_total' => $agg['grand_total'],
             'expected_cash' => $agg['expected_cash'],
             'opening_cash' => $agg['opening_cash'],
+            'guarantees_carried' => $agg['guarantees_carried'],
+            'guarantees_held' => $agg['guarantees_held'],
             'expenses_count' => $agg['expenses_count'],
             'expenses_total' => $agg['expenses_total'],
             'counted_cash' => $countedCash,

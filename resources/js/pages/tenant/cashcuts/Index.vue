@@ -74,6 +74,10 @@ interface Preview {
     guarantees_collected: number;
     guarantees_cash_in: number;
     guarantees_cash_out: number;
+    // Arrastre: fianzas en efectivo que venían del periodo anterior y las
+    // que siguen por devolver al cerrar (se quedan en caja).
+    guarantees_carried: number;
+    guarantees_held: number;
     sources: Source[];
     methods: Method[];
     movements: Movement[];
@@ -118,6 +122,8 @@ interface Cut {
     transfer_total: number;
     expected_cash: number;
     opening_cash: number;
+    guarantees_carried: number;
+    guarantees_held: number;
     expenses_count: number;
     expenses_total: number;
     counted_cash: number | null;
@@ -303,6 +309,18 @@ const expectedCashHint = computed(() => {
                     ? ` menos ${money(props.preview!.guarantees_cash_out)} devueltas`
                     : '') +
                 ' (no son venta).',
+        );
+    }
+
+    if ((props.preview?.guarantees_carried ?? 0) > 0) {
+        parts.push(
+            `Trae ${money(props.preview!.guarantees_carried)} de fianzas del corte anterior.`,
+        );
+    }
+
+    if ((props.preview?.guarantees_held ?? 0) > 0) {
+        parts.push(
+            `De lo esperado, ${money(props.preview!.guarantees_held)} son fianzas por devolver: se quedan en caja.`,
         );
     }
 
@@ -916,6 +934,7 @@ async function openDetail(cut: Cut) {
                         preview.opening_cash > 0 ||
                         preview.guarantees_cash_in > 0 ||
                         preview.guarantees_cash_out > 0 ||
+                        preview.guarantees_carried > 0 ||
                         preview.expenses_total > 0
                     "
                     class="box mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-l-4 border-l-info px-4 py-2.5 text-xs text-slate-500"
@@ -947,6 +966,21 @@ async function openDetail(cut: Cut) {
                             </span>
                             devueltas</template
                         >, que no son venta.
+                    </span>
+                    <span v-if="preview.guarantees_carried > 0">
+                        Trae
+                        <span class="font-medium">
+                            {{ money(preview.guarantees_carried) }}
+                        </span>
+                        de fianzas del corte anterior.
+                    </span>
+                    <span v-if="preview.guarantees_held > 0">
+                        Al cortar,
+                        <span class="font-medium">
+                            {{ money(preview.guarantees_held) }}
+                        </span>
+                        de fianzas por devolver se quedan en caja: no se
+                        entregan.
                     </span>
                     <span v-if="preview.expenses_total > 0">
                         Ya tiene descontados
@@ -1997,6 +2031,16 @@ async function openDetail(cut: Cut) {
                             ><span>{{ money(preview.opening_cash) }}</span>
                         </div>
                         <div
+                            v-if="preview.guarantees_carried > 0"
+                            class="flex justify-between"
+                        >
+                            <span class="text-slate-500"
+                                >Fianzas del corte anterior</span
+                            ><span>{{
+                                money(preview.guarantees_carried)
+                            }}</span>
+                        </div>
+                        <div
                             class="flex justify-between border-t border-dashed border-slate-300/70 pt-2 dark:border-darkmode-400"
                         >
                             <span class="font-medium"
@@ -2005,6 +2049,28 @@ async function openDetail(cut: Cut) {
                                 money(preview.expected_cash)
                             }}</span>
                         </div>
+                        <template v-if="preview.guarantees_held > 0">
+                            <div class="flex justify-between">
+                                <span class="text-slate-500"
+                                    >Fianzas por devolver (se quedan)</span
+                                ><span>{{
+                                    money(preview.guarantees_held)
+                                }}</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="font-medium"
+                                    >Efectivo a entregar</span
+                                ><span class="font-medium">{{
+                                    money(
+                                        Math.max(
+                                            0,
+                                            preview.expected_cash -
+                                                preview.guarantees_held,
+                                        ),
+                                    )
+                                }}</span>
+                            </div>
+                        </template>
                         <div
                             v-if="preview.pending.count > 0"
                             class="flex justify-between"
@@ -2470,6 +2536,17 @@ async function openDetail(cut: Cut) {
                                     }}</span>
                                 </div>
                                 <div
+                                    v-if="detailCut.guarantees_carried > 0"
+                                    class="mb-2 flex items-center justify-between text-sm"
+                                >
+                                    <span class="text-slate-500"
+                                        >Fianzas del corte anterior</span
+                                    >
+                                    <span>{{
+                                        money(detailCut.guarantees_carried)
+                                    }}</span>
+                                </div>
+                                <div
                                     v-if="detailCut.expenses_count > 0"
                                     class="mb-2 flex items-center justify-between text-sm"
                                 >
@@ -2492,6 +2569,35 @@ async function openDetail(cut: Cut) {
                                         money(detailCut.expected_cash)
                                     }}</span>
                                 </div>
+                                <template v-if="detailCut.guarantees_held > 0">
+                                    <div
+                                        class="mt-2 flex items-center justify-between text-sm"
+                                    >
+                                        <span class="text-slate-500"
+                                            >Fianzas por devolver (se
+                                            quedaron)</span
+                                        >
+                                        <span>{{
+                                            money(detailCut.guarantees_held)
+                                        }}</span>
+                                    </div>
+                                    <div
+                                        class="mt-2 flex items-center justify-between text-sm"
+                                    >
+                                        <span class="font-medium"
+                                            >Efectivo a entregar</span
+                                        >
+                                        <span class="font-medium">{{
+                                            money(
+                                                Math.max(
+                                                    0,
+                                                    detailCut.expected_cash -
+                                                        detailCut.guarantees_held,
+                                                ),
+                                            )
+                                        }}</span>
+                                    </div>
+                                </template>
                                 <template
                                     v-if="detailCut.counted_cash !== null"
                                 >

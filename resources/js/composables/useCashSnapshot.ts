@@ -40,6 +40,9 @@ export interface CashScopeTotals {
     guarantees_cash_in: number;
     guarantees_cash_out: number;
     expenses_total: number;
+    /** Fianzas en efectivo que venían del corte anterior / que se quedan. */
+    guarantees_carried: number;
+    guarantees_held: number;
     /** Solo cuando se pide el detalle de ESTE ámbito (?detail=). */
     movements: CashMovement[] | null;
     pending: {
