@@ -96,21 +96,25 @@ async function toggle(key: keyof typeof settings, label: string) {
 }
 
 // Cuota: vacío = la que traiga el plan; un número la fija para este hotel.
-const limitInput = ref(
+// El campo es type="number": en cuanto se teclea, v-model entrega un
+// número, no texto. Por eso todo pasa por limitRaw; un .trim() directo
+// tronaba el render y la pantalla se quedaba en blanco.
+const limitInput = ref<string | number>(
     props.ai.monthly_reply_limit === null
         ? ''
         : String(props.ai.monthly_reply_limit),
 );
+const limitRaw = computed(() => String(limitInput.value ?? '').trim());
 const providerInput = ref<string | number>(props.ai.provider_id ?? '');
 const limitDirty = computed(
     () =>
-        limitInput.value.trim() !==
+        limitRaw.value !==
         (props.ai.monthly_reply_limit === null
             ? ''
             : String(props.ai.monthly_reply_limit)),
 );
 const limitInvalid = computed(() => {
-    const raw = limitInput.value.trim();
+    const raw = limitRaw.value;
     return raw !== '' && !(Number.isInteger(Number(raw)) && Number(raw) >= 0);
 });
 
@@ -120,9 +124,7 @@ async function saveLimit() {
     const ok = await patch(
         {
             monthly_reply_limit:
-                limitInput.value.trim() === ''
-                    ? null
-                    : Number(limitInput.value),
+                limitRaw.value === '' ? null : Number(limitRaw.value),
         },
         'Cuota actualizada',
     );

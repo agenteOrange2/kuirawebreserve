@@ -27,9 +27,18 @@ class PendingReservationsPageController extends ReservationsPageController
 
     protected const SETTLEMENTS_PREVIEW = 10;
 
+    /** Filtros del reloj del apartado (chips y dona). */
+    protected const STATE_FILTERS = ['vencido', 'por_vencer', 'en_tiempo', 'sin_vencimiento', 'transferencia'];
+
     public function __invoke(Request $request): Response
     {
         $property = Property::firstOrFail();
+        $search = trim($request->string('q')->toString());
+        $state = $request->string('estado')->toString();
+        if (! in_array($state, self::STATE_FILTERS, true)) {
+            $state = '';
+        }
+        $now = now();
 
         $paginator = Reservation::query()
             ->with([
@@ -48,6 +57,17 @@ class PendingReservationsPageController extends ReservationsPageController
             // Un apartado de una fecha que ya pasó no es trabajo pendiente:
             // lo resolvió el vencimiento o el no-show.
             ->where('ends_at', '>=', now())
+            ->when($state !== '', fn ($query) => $this->whereState($query, $state, $now))
+            ->when($search !== '', fn ($query) => $query->where(function ($q) use ($search) {
+                $q->where('guest_name', 'like', "%{$search}%")
+                    ->orWhere('code', 'like', "%{$search}%")
+                    ->orWhereHas('room', fn ($r) => $r->where('number', 'like', "%{$search}%"))
+                    ->orWhereHas('guest', fn ($g) => $g->search($search));
+
+                if (preg_match('/(\d+)\s*$/', $search, $m)) {
+                    $q->orWhere('id', (int) ltrim($m[1], '0'));
+                }
+            }))
             // Primero lo que está por vencerse, que es lo que se pierde solo.
             ->orderByRaw('hold_expires_at is null, hold_expires_at')
             ->orderBy('starts_at')
@@ -61,16 +81,10 @@ class PendingReservationsPageController extends ReservationsPageController
             ->get()
             ->groupBy('subject_id');
 
-        $paginator->through(function (Reservation $r) use ($timeline) {
-            $row = $this->serializeReservation($r, $timeline->get($r->id, collect()));
-
-            // El reloj, en palabras. La hora sola ("11:20") no dice si ya
-            // pasó: un apartado vencido se veía igual que uno que aguanta
-            // tres horas.
-            [$row['hold_state'], $row['hold_countdown']] = $this->holdClock($r->hold_expires_at);
-
-            return $row;
-        });
+        // El reloj del apartado en palabras ya viene en serializeReservation
+        // (hold_state / hold_countdown): la hora sola ("11:20") no decía si ya
+        // había pasado.
+        $paginator->through(fn (Reservation $r) => $this->serializeReservation($r, $timeline->get($r->id, collect())));
 
         return Inertia::render('tenant/reservations/Pending', [
             'property' => $property->only(['id', 'name']),
@@ -95,89 +109,25 @@ class PendingReservationsPageController extends ReservationsPageController
                 ]),
             'settlementsTotal' => Stay::query()->pendingSettlement()->count(),
             'summary' => $this->summary(),
+            'filters' => ['q' => $search, 'estado' => $state],
             'canManage' => $request->user()->can('reservations.manage'),
             'holdMinutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
         ]);
     }
 
-    /**
-     * Cuánto le queda al apartado, dicho como lo diría una persona.
-     *
-     * @return array{0: string|null, 1: string|null} estado y frase
-     */
-    protected function holdClock(?\Carbon\CarbonInterface $expiresAt): array
+    protected function whereState(\Illuminate\Database\Eloquent\Builder $query, string $state, \Carbon\CarbonInterface $now): \Illuminate\Database\Eloquent\Builder
     {
-        if (! $expiresAt) {
-            return [null, null];
-        }
-
-        $minutes = (int) round(now()->diffInMinutes($expiresAt, false));
-
-        if ($minutes < 0) {
-            return ['expired', 'venció '.$this->spellMinutes(abs($minutes)).' antes'];
-        }
-
-        // Media hora o menos: es lo que se pierde solo mientras nadie mira.
-        return [$minutes <= 30 ? 'urgent' : 'live', 'en '.$this->spellMinutes($minutes)];
-    }
-
-    /** "45 min", "3 h", "2 días" — sin decimales ni locales del sistema. */
-    protected function spellMinutes(int $minutes): string
-    {
-        if ($minutes < 60) {
-            return max(1, $minutes).' min';
-        }
-
-        if ($minutes < 60 * 24) {
-            $hours = intdiv($minutes, 60);
-
-            return $hours.' h';
-        }
-
-        $days = intdiv($minutes, 60 * 24);
-
-        return $days.($days === 1 ? ' día' : ' días');
+        return app(\App\Services\Reservations\BoardMetrics::class)->whereHoldState($query, $state, $now);
     }
 
     /**
-     * Las dos cifras de la pantalla: lo que está por perderse y el dinero
-     * que sigue sin cobrarse.
+     * Lo que está en juego (BoardMetrics::pending). Con $charts trae también
+     * lo que grafica /reservas/pendientes/reporte.
      *
      * @return array<string, mixed>
      */
-    protected function summary(): array
+    protected function summary(bool $charts = false): array
     {
-        $now = now();
-        $base = fn () => Reservation::query()
-            ->where('status', ReservationStatus::Pending)
-            ->where('ends_at', '>=', $now);
-
-        $total = (float) $base()->sum('total_amount');
-        $paid = (float) \App\Models\Payment::query()
-            ->whereIn('reservation_id', $base()->select('reservations.id'))
-            ->where(fn ($q) => $q->whereNull('kind')->orWhere('kind', '<>', 'guarantee'))
-            ->sum('amount');
-        $balance = round(max(0, $total - $paid), 2);
-
-        // El saldo de las cuentas cerradas: contarlas no dice cuánto dinero
-        // hay ahí afuera, y es la cifra por la que pregunta el dueño.
-        $settlementAmount = round((float) Stay::query()
-            ->pendingSettlement()
-            ->get()
-            ->sum(fn (Stay $stay) => $stay->pendingSettlementAmount()), 2);
-
-        return [
-            'holds' => $base()->count(),
-            'expiring' => $base()
-                ->whereNotNull('hold_expires_at')
-                ->whereBetween('hold_expires_at', [$now, $now->copy()->addMinutes(30)])
-                ->count(),
-            'expired' => $base()
-                ->whereNotNull('hold_expires_at')
-                ->where('hold_expires_at', '<', $now)
-                ->count(),
-            'balance_label' => '$'.number_format($balance, 2),
-            'settlement_amount_label' => '$'.number_format($settlementAmount, 2),
-        ];
+        return app(\App\Services\Reservations\BoardMetrics::class)->pending($charts);
     }
 }

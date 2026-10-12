@@ -44,6 +44,7 @@ class Reservation extends Model
         'deposit_amount',
         'coupon_code',
         'discount_amount',
+        'courtesy_amount',
         'payment_status',
         'payment_due_at',
         'notes',
@@ -72,6 +73,9 @@ class Reservation extends Model
             'experiences' => 'array',
             'deposit_amount' => 'decimal:2',
             'discount_amount' => 'decimal:2',
+            // Cortesía aprobada (módulo cortesias), aparte del cupón: el
+            // total se rearma como bruto − cupón − cortesía.
+            'courtesy_amount' => 'decimal:2',
             'payment_status' => \App\Enums\PaymentStatus::class,
             'payment_due_at' => 'datetime',
             // Alguien resolvió la cuenta sin cobrarla, con el porqué en
@@ -95,7 +99,7 @@ class Reservation extends Model
             ->logOnly([
                 'status', 'room_id', 'starts_at', 'ends_at', 'total_amount', 'cancellation_reason',
                 'guest_id', 'guest_name', 'num_people', 'adults', 'children', 'notes',
-                'rate_plan_id', 'deposit_amount', 'coupon_code', 'discount_amount', 'eta',
+                'rate_plan_id', 'deposit_amount', 'coupon_code', 'discount_amount', 'courtesy_amount', 'eta',
             ])
             ->logOnlyDirty()
             ->dontSubmitEmptyLogs();
@@ -161,6 +165,20 @@ class Reservation extends Model
     public function experienceBookings(): \Illuminate\Database\Eloquent\Relations\HasMany
     {
         return $this->hasMany(ExperienceBooking::class);
+    }
+
+    public function courtesies(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(Courtesy::class);
+    }
+
+    /** La cortesía pendiente o aprobada (una sola a la vez). */
+    public function liveCourtesy(): HasOne
+    {
+        return $this->hasOne(Courtesy::class)->ofMany(
+            ['id' => 'max'],
+            fn ($q) => $q->whereIn('status', Courtesy::LIVE),
+        );
     }
 
     public function payments(): \Illuminate\Database\Eloquent\Relations\HasMany
@@ -246,6 +264,9 @@ class Reservation extends Model
 
         $this->payment_status = match (true) {
             $paid >= (float) $this->total_amount && (float) $this->total_amount > 0 => \App\Enums\PaymentStatus::Paid,
+            // Cortesía que cubrió todo: no hay nada que cobrar. Sin esto una
+            // cuenta en $0 quedaba "Sin pago" y salía como vencida.
+            (float) $this->total_amount <= 0 && (float) $this->courtesy_amount > 0 => \App\Enums\PaymentStatus::Paid,
             (float) $this->deposit_amount > 0 && $paid >= (float) $this->deposit_amount => \App\Enums\PaymentStatus::DepositPaid,
             $paid > 0 => \App\Enums\PaymentStatus::Partial,
             default => \App\Enums\PaymentStatus::Unpaid,
@@ -279,13 +300,10 @@ class Reservation extends Model
         return $this->code ?: self::formatCode($this->id, $this->created_at);
     }
 
-    /**
-     * Por dónde entró, legible para el hotel. Las del asistente dicen además
-     * el canal real de su conversación (WhatsApp, Messenger, Instagram...).
-     */
-    public function channelLabel(): string
+    /** Nombre legible de un `source_channel` (sin el detalle del asistente). */
+    public static function labelForChannel(?string $channel): string
     {
-        $label = match ($this->source_channel) {
+        return match ($channel) {
             'front_desk', 'counter' => 'Mostrador',
             'walk_in' => 'Llegó sin reserva',
             'phone' => 'Teléfono',
@@ -293,8 +311,17 @@ class Reservation extends Model
             'whatsapp' => 'WhatsApp',
             'agent' => 'Asistente IA',
             null, '' => 'Sin canal',
-            default => (string) $this->source_channel,
+            default => (string) $channel,
         };
+    }
+
+    /**
+     * Por dónde entró, legible para el hotel. Las del asistente dicen además
+     * el canal real de su conversación (WhatsApp, Messenger, Instagram...).
+     */
+    public function channelLabel(): string
+    {
+        $label = static::labelForChannel($this->source_channel);
 
         if ($this->source_channel === 'agent') {
             $type = Conversation::query()

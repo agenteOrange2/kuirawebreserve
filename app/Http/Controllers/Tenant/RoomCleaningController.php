@@ -5,11 +5,11 @@ namespace App\Http\Controllers\Tenant;
 use App\Actions\Rooms\ChangeRoomStatus;
 use App\Enums\RoomStatus;
 use App\Http\Controllers\Controller;
-use App\Models\Housekeeper;
 use App\Models\Incident;
 use App\Models\Room;
 use App\Models\RoomCleaning;
 use App\Services\HousekeepingChecklist;
+use App\Services\HousekeepingPolicy;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -61,6 +61,8 @@ class RoomCleaningController extends Controller
             'stay_id' => $room->stays()->latest('check_out_at')->value('id'),
             'kind' => $data['kind'] ?? RoomCleaning::KIND_CHECKOUT,
             'started_at' => now(),
+            // El tiempo con que se va a calificar: foto del ajuste de hoy.
+            'target_minutes' => app(HousekeepingPolicy::class)->cleaningMinutes(),
             'notes' => $data['notes'] ?? null,
             'recorded_by' => $request->user()?->id,
             'source' => RoomCleaning::SOURCE_FLOORPLAN,
@@ -76,7 +78,11 @@ class RoomCleaningController extends Controller
     public function update(Request $request, RoomCleaning $cleaning, ChangeRoomStatus $changeStatus): JsonResponse
     {
         if (! $cleaning->isOpen()) {
-            return response()->json(['message' => 'Esa limpieza ya estaba cerrada.'], 422);
+            return response()->json([
+                'message' => $cleaning->closed_by === RoomCleaning::CLOSED_BY_CLOCK
+                    ? 'Se cumplió el tiempo asignado y el sistema ya la cerró y liberó la habitación.'
+                    : 'Esa limpieza ya estaba cerrada.',
+            ], 422);
         }
 
         $checklist = new HousekeepingChecklist;
@@ -114,7 +120,9 @@ class RoomCleaningController extends Controller
 
         if ($release && $room->status->getMorphClass() === RoomStatus::Cleaning->value) {
             try {
-                $changeStatus->handle($room, RoomStatus::Available->value, $request->user());
+                $changeStatus->handle($room, RoomStatus::Available->value, $request->user(), [
+                    'cleaning_id' => $cleaning->id,
+                ]);
             } catch (CouldNotPerformTransition) {
                 // La habitación cambió de estado mientras se limpiaba (un
                 // ticket, otra persona): el registro se cierra igual.
@@ -160,6 +168,7 @@ class RoomCleaningController extends Controller
             'housekeeper_id' => $data['housekeeper_id'],
             'kind' => $data['kind'] ?? RoomCleaning::KIND_CHECKOUT,
             'started_at' => $started,
+            'target_minutes' => app(HousekeepingPolicy::class)->cleaningMinutes(),
             'checklist' => $checklist->sanitizeChecklist($data['checklist'] ?? []) ?: null,
             'linens' => $checklist->sanitizeLinens($data['linens'] ?? []) ?: null,
             'notes' => $data['notes'] ?? null,
@@ -211,7 +220,9 @@ class RoomCleaningController extends Controller
                     $cleaning->room,
                     RoomStatus::Maintenance->value,
                     $request->user(),
-                    ['incident_id' => $incident->id],
+                    // La limpieza la cierra el formulario en seguida, como
+                    // terminada por la camarista y no como interrumpida.
+                    ['incident_id' => $incident->id, 'cleaning_id' => $cleaning->id],
                 );
             } catch (CouldNotPerformTransition) {
                 // Si no se puede sacar de servicio, el ticket queda igual.
@@ -240,6 +251,14 @@ class RoomCleaningController extends Controller
             'ended_label' => $cleaning->ended_at?->format('H:i'),
             'minutes' => $cleaning->elapsedMinutes(),
             'open' => $cleaning->isOpen(),
+            'target_minutes' => $cleaning->target_minutes,
+            // A qué hora se le acaba el tiempo y si ya se pasó: el tablero
+            // del día lo pinta mientras sigue abierta.
+            'due_label' => $cleaning->isOpen() ? $cleaning->dueAt()?->format('H:i') : null,
+            'overdue' => $cleaning->isOverdue(),
+            'closed_by' => $cleaning->closed_by,
+            'outcome' => $cleaning->outcome(),
+            'outcome_label' => RoomCleaning::OUTCOMES[$cleaning->outcome() ?? ''] ?? null,
             'checklist' => $cleaning->checklist ?? [],
             'linens' => $cleaning->linens ?? [],
             'notes' => $cleaning->notes,

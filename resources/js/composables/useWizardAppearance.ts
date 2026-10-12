@@ -1,5 +1,6 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { usePublicTheme } from '@/composables/usePublicTheme';
+import { onAccentColor, TITLE_FONT_STACKS } from '@/lib/colorContrast';
 
 /** Apariencia elegida por el hotel en /reservas/ajustes (o defaults). */
 export interface WizardAppearance {
@@ -8,6 +9,19 @@ export interface WizardAppearance {
     accent: string;
     theme: 'light' | 'dark' | 'auto';
     logo_url: string | null;
+    // Texto sobre el degradado (nombre, pasos, pie).
+    header_text?: string;
+    // Títulos de las tarjetas en modo claro; null = el del theme.
+    title_color?: string | null;
+    // Texto de los botones llenos: 'auto' o un hex.
+    button_text?: string;
+    title_font?: string;
+    texts?: {
+        tagline: string;
+        title: string;
+        subtitle: string;
+        search_button: string;
+    };
 }
 
 /**
@@ -52,6 +66,19 @@ export function useWizardAppearance(appearance: WizardAppearance) {
         backgroundImage: `linear-gradient(to bottom, ${appearance.bg_from}, ${appearance.bg_to})`,
         '--color-theme-1': appearance.accent,
         '--color-primary': appearance.accent,
+        '--booking-header-text': appearance.header_text ?? '#ffffff',
+        '--booking-bg-from': appearance.bg_from,
+        '--booking-on-accent': onAccentColor(
+            appearance.accent,
+            appearance.button_text,
+        ),
+        '--booking-title-font':
+            TITLE_FONT_STACKS[appearance.title_font ?? 'default'] ?? 'inherit',
+        // El color de títulos es del modo claro: en la piel oscura no
+        // se leería, así que ahí se queda el del theme.
+        ...(appearance.title_color && !isDark.value
+            ? { '--booking-title-color': appearance.title_color }
+            : {}),
     }));
 
     return { isDark, rootStyle };

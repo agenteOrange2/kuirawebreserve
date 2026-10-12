@@ -1,5 +1,9 @@
 <!DOCTYPE html>
-<html lang="{{ str_replace('_', '-', app()->getLocale()) }}"  @class(['dark' => ($appearance ?? 'system') == 'dark'])>
+{{-- Las pantallas de acceso van siempre en claro: el panel blanco y los
+     logos de los hoteles (casi todos en tinta oscura) no tienen versión
+     oscura, y mezclarlas dejaba textos y campos oscuros sobre fondo blanco. --}}
+@php($__lightOnly = in_array($page['component'] ?? null, ['auth/Login', 'auth/ForgotPassword', 'auth/ResetPassword'], true))
+<html lang="{{ str_replace('_', '-', app()->getLocale()) }}"  @class(['dark' => ! $__lightOnly && ($appearance ?? 'system') == 'dark'])>
     <head>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,8 +12,9 @@
         <script>
             (function() {
                 const appearance = '{{ $appearance ?? "system" }}';
+                const lightOnly = {{ $__lightOnly ? 'true' : 'false' }};
 
-                if (appearance === 'system') {
+                if (appearance === 'system' && ! lightOnly) {
                     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
 
                     if (prefersDark) {

@@ -1,20 +1,29 @@
 <script setup lang="ts">
-import { Link, router } from '@inertiajs/vue3';
+import { Link, router, usePage } from '@inertiajs/vue3';
+import type { ChartOptions, TooltipItem } from 'chart.js';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import Chart from '@/components/Base/Chart';
 import { FormDate, FormSelect } from '@/components/Base/Form';
-import { Tab } from '@/components/Base/Headless';
+import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
-import Table from '@/components/Base/Table';
+import { useModules } from '@/composables/useModules';
+import { usePropertyMode } from '@/composables/usePropertyMode';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 
 interface Metric {
+    key: string;
     title: string;
     value: string;
     change: number | null;
     desc: string;
+}
+interface RevenuePoint {
+    label: string;
+    value: number;
+    lodging: number;
+    pos: number;
 }
 interface SeriesPoint {
     label: string;
@@ -29,6 +38,7 @@ interface StatusCount {
 interface ActivityRow {
     id: number;
     room: string | null;
+    room_id: number | null;
     from: string | null;
     to: string;
     to_color: string;
@@ -45,13 +55,17 @@ interface ArrivalRow {
     time: string;
     people: number | null;
     checked_in: boolean;
+    pending: boolean;
 }
 interface DepartureRow {
     id: number;
-    code: string;
+    reservation_id: number | null;
+    room_id: number | null;
+    code: string | null;
     guest_name: string;
     room: string | null;
     time: string;
+    overdue: boolean;
     balance: number;
 }
 
@@ -68,7 +82,7 @@ const props = defineProps<{
     metrics: Metric[];
     series: {
         label: string;
-        revenue: SeriesPoint[];
+        revenue: RevenuePoint[];
         occupancy: SeriesPoint[];
         revenue_total: number;
         revenue_change: number | null;
@@ -102,6 +116,20 @@ const props = defineProps<{
     };
     arrivals: ArrivalRow[];
     departures: DepartureRow[];
+    today: {
+        arrivals: number;
+        arrivals_pending: number;
+        departures: number;
+        overdue: number;
+        settlements: number;
+    };
+    channels: { channel: string; label: string; count: number }[];
+    byMethod: {
+        method: string;
+        label: string;
+        amount: number;
+        count: number;
+    }[];
     totals: {
         rooms: number;
         zones: number;
@@ -113,6 +141,28 @@ const props = defineProps<{
     recentActivity: ActivityRow[];
 }>();
 
+// ── Permisos, módulos y modo: un botón que responde 403 es peor que
+// ninguno, así que cada acceso se pinta solo si la ruta lo dejaría pasar. ──
+const page = usePage();
+const permissions = computed<string[]>(
+    () =>
+        (page.props.panelTenant as { permissions?: string[] } | undefined)
+            ?.permissions ?? [],
+);
+const can = (permission: string) => permissions.value.includes(permission);
+const { hasModule } = useModules();
+const { isMotel } = usePropertyMode();
+
+// ── Formato ──
+const money = (n: number) =>
+    '$' +
+    new Intl.NumberFormat('es-MX', { maximumFractionDigits: 0 }).format(n ?? 0);
+const compactMoney = (n: number) =>
+    '$' +
+    new Intl.NumberFormat('es-MX', { notation: 'compact' }).format(n ?? 0);
+const plural = (n: number, one: string, many: string) =>
+    `${n} ${n === 1 ? one : many}`;
+
 // Antigüedad en palabras: "hace 3 días" pesa más que "454 h".
 const ageLabel = (hours: number) => {
     if (hours < 1) return 'recién';
@@ -122,16 +172,115 @@ const ageLabel = (hours: number) => {
     return `hace ${days} ${days === 1 ? 'día' : 'días'}`;
 };
 
-const money = (n: number) =>
-    '$' +
-    new Intl.NumberFormat('es-MX', { maximumFractionDigits: 0 }).format(n ?? 0);
+const todayLabel = (() => {
+    const label = new Date().toLocaleDateString('es-MX', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+    });
+
+    return label.charAt(0).toUpperCase() + label.slice(1);
+})();
+
+// ── Clases del canon ──
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border';
+const cardHeader =
+    'flex flex-wrap items-center gap-2.5 border-b border-slate-200/60 px-4 py-3 dark:border-darkmode-400';
+const ghostLink =
+    'inline-flex h-8 items-center gap-1 rounded-[0.5rem] border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:border-primary/30 hover:text-primary dark:border-darkmode-400 dark:bg-darkmode-600 dark:text-slate-300';
+// Acción de cabecera de tarjeta: en el teléfono baja a su renglón a todo
+// lo ancho en vez de aplastar el título.
+const headerAction = `${ghostLink} max-sm:w-full max-sm:justify-center`;
+const rowLink =
+    'flex items-center gap-3 px-4 py-3 transition hover:bg-slate-50/80 sm:px-5 dark:hover:bg-darkmode-400/40';
+
+type Tone = 'danger' | 'warning' | 'pending' | 'info' | 'primary' | 'success';
+const toneTint: Record<Tone, string> = {
+    danger: 'border-danger/10 bg-danger/10 text-danger',
+    warning: 'border-warning/10 bg-warning/10 text-warning',
+    pending: 'border-pending/10 bg-pending/10 text-pending',
+    info: 'border-info/10 bg-info/10 text-info',
+    primary: 'border-primary/10 bg-primary/10 text-primary',
+    success: 'border-success/10 bg-success/10 text-success',
+};
+const toneChip: Record<Tone, string> = {
+    danger: 'bg-danger/10 text-danger hover:bg-danger/20',
+    warning: 'bg-warning/10 text-warning hover:bg-warning/20',
+    pending: 'bg-pending/10 text-pending hover:bg-pending/20',
+    info: 'bg-info/10 text-info hover:bg-info/20',
+    primary: 'bg-primary/10 text-primary hover:bg-primary/20',
+    success: 'bg-success/10 text-success hover:bg-success/20',
+};
+
+// ── Semáforo: mismos tokens que el plano (ocupada = danger, no primary:
+// el primario lo elige cada hotel y con un azul oscuro se confundía con
+// mantenimiento). ──
+const statusHex: Record<string, string> = {
+    available: '#0d9488',
+    reserved: '#0891b2',
+    occupied: '#b91c1c',
+    dirty: '#78350f',
+    cleaning: '#ca8a04',
+    maintenance: '#1e293b',
+};
+const statusDot: Record<string, string> = {
+    available: 'bg-success',
+    reserved: 'bg-info',
+    occupied: 'bg-danger',
+    dirty: 'bg-dirty',
+    cleaning: 'bg-warning',
+    maintenance: 'bg-dark',
+};
+const statusTint: Record<string, string> = {
+    available: 'border-success/10 bg-success/10 text-success',
+    reserved: 'border-info/10 bg-info/10 text-info',
+    occupied: 'border-danger/10 bg-danger/10 text-danger',
+    dirty: 'border-dirty/10 bg-dirty/10 text-dirty dark:bg-dirty/30 dark:text-slate-200',
+    cleaning: 'border-warning/10 bg-warning/10 text-warning',
+    maintenance: 'border-dark/10 bg-dark/10 text-dark dark:text-slate-300',
+};
+const statusIcon: Record<string, Icon> = {
+    available: 'BedDouble',
+    reserved: 'CalendarClock',
+    occupied: 'UserCheck',
+    dirty: 'Trash2',
+    cleaning: 'Sparkles',
+    maintenance: 'Wrench',
+};
+// La bitácora trae el color del enum, no el estado.
+const colorToStatus: Record<string, string> = {
+    green: 'available',
+    cyan: 'reserved',
+    red: 'occupied',
+    brown: 'dirty',
+    blue: 'cleaning',
+    gray: 'maintenance',
+};
+
+// El primario lo cambia cada hotel en Apariencia: las gráficas lo leen de
+// la variable CSS para no quedarse con el azul de Kuira.
+const themeHex = (token: string, fallback: string) => {
+    if (typeof window === 'undefined') return fallback;
+    const value = getComputedStyle(document.documentElement)
+        .getPropertyValue(`--color-${token}`)
+        .trim();
+
+    return /^#[0-9a-f]{6}$/i.test(value) ? value : fallback;
+};
+const primaryHex = themeHex('primary', '#03045e');
 
 // ── Filtro de periodo (hoy / semana / mes / personalizado) ──
+// `range` es lo aplicado; `rangeChoice`, lo que muestra el selector. Elegir
+// "Personalizado" abre el modal y solo recarga al aplicar: antes cada fecha
+// tecleada disparaba una recarga y el periodo cambiaba a medias.
 const range = ref(props.filters.range);
+const rangeChoice = ref(props.filters.range);
 const customFrom = ref(props.filters.from ?? '');
 const customTo = ref(props.filters.to ?? '');
+const customOpen = ref(false);
 
-// El backend recorta el rango personalizado a este máximo; el input lo
+// El backend recorta el rango personalizado a este máximo; el campo lo
 // impide antes para que nadie pida 6 meses y reciba 3 sin enterarse.
 const MAX_CUSTOM_DAYS = 92;
 
@@ -143,11 +292,7 @@ const maxCustomTo = computed(() => {
     return limit.toISOString().slice(0, 10);
 });
 
-function applyPeriod() {
-    // El personalizado espera a tener ambas fechas antes de recargar.
-    if (range.value === 'custom' && (!customFrom.value || !customTo.value)) {
-        return;
-    }
+function reload() {
     router.get(
         route('tenant.dashboard'),
         {
@@ -159,69 +304,434 @@ function applyPeriod() {
     );
 }
 
-// Semáforo -> tokens del theme (primary/success/info/warning/pending/dark).
-const dotColor: Record<string, string> = {
-    green: 'bg-success',
-    cyan: 'bg-info',
-    red: 'bg-primary',
-    orange: 'bg-pending',
-    blue: 'bg-warning',
-    gray: 'bg-dark',
-};
-const tint: Record<string, string> = {
-    green: 'border-success/10 bg-success/10 text-success',
-    cyan: 'border-info/10 bg-info/10 text-info',
-    red: 'border-primary/10 bg-primary/10 text-primary',
-    orange: 'border-pending/10 bg-pending/10 text-pending',
-    blue: 'border-warning/10 bg-warning/10 text-warning',
-    gray: 'border-dark/10 bg-dark/10 text-dark',
-};
-const statusIcon: Record<string, Icon> = {
-    available: 'BedDouble',
-    reserved: 'CalendarClock',
-    occupied: 'UserCheck',
-    dirty: 'Trash2',
-    cleaning: 'Sparkles',
-    maintenance: 'Wrench',
-};
+function onRangeChange() {
+    if (rangeChoice.value === 'custom') {
+        customOpen.value = true;
+
+        return;
+    }
+    range.value = rangeChoice.value;
+    reload();
+}
+
+function closeCustom() {
+    customOpen.value = false;
+    rangeChoice.value = range.value;
+}
+
+function applyCustom() {
+    if (!customFrom.value || !customTo.value) return;
+    range.value = 'custom';
+    rangeChoice.value = 'custom';
+    customOpen.value = false;
+    reload();
+}
+
+// ── Avisos: lo que hay que atender ahora, del más grave al más leve ──
+interface NoticeChip {
+    key: string | number;
+    label: string;
+    meta?: string;
+    href: string;
+}
+interface Notice {
+    key: string;
+    tone: Tone;
+    icon: Icon;
+    title: string;
+    detail: string;
+    chips?: NoticeChip[];
+    chipTone?: (chip: NoticeChip) => Tone;
+    action?: { label: string; href: string };
+}
 
 const hasRooms = computed(() => props.totals.rooms > 0);
+const dirtyRooms = computed(
+    () => props.statuses.find((s) => s.value === 'dirty')?.count ?? 0,
+);
 
-const lineOptions = {
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { display: false }, tooltip: { enabled: true } },
-    scales: { x: { display: false }, y: { display: false, beginAtZero: true } },
-    elements: { point: { radius: 0 }, line: { tension: 0.4, borderWidth: 2 } },
-};
-const occupancyLine = computed(() => ({
-    labels: props.series.occupancy.map((p) => p.label),
-    datasets: [
-        {
-            data: props.series.occupancy.map((p) => p.value),
-            borderColor: '#03045e',
-            backgroundColor: 'rgba(3,4,94,0.08)',
-            fill: true,
-        },
-    ],
-}));
-const revenueLine = computed(() => ({
+const notices = computed<Notice[]>(() => {
+    const list: Notice[] = [];
+
+    if (!hasRooms.value) {
+        list.push({
+            key: 'onboarding',
+            tone: 'primary',
+            icon: 'Sparkles',
+            title: 'Configura tu propiedad en dos pasos',
+            detail: 'Define zonas y tipos, da de alta tus habitaciones y acomódalas en el plano.',
+            chips: [
+                {
+                    key: 'catalog',
+                    label: '1. Zonas y tipos',
+                    href: route('tenant.catalog'),
+                },
+                {
+                    key: 'rooms',
+                    label: '2. Habitaciones',
+                    href: route('tenant.rooms'),
+                },
+            ],
+            chipTone: () => 'primary',
+        });
+    }
+
+    // Cortesías esperando al propietario (módulo cortesias): mientras no
+    // contesta, la cuenta sigue con su precio y el mostrador no sabe qué
+    // cobrar. El conteo solo viaja para el propietario.
+    const courtesiesPending =
+        (page.props.panelTenant as { courtesies_pending?: number } | undefined)
+            ?.courtesies_pending ?? 0;
+    if (courtesiesPending > 0) {
+        list.push({
+            key: 'courtesies',
+            tone: 'pending',
+            icon: 'HandHeart',
+            title: `${plural(courtesiesPending, 'cortesía espera', 'cortesías esperan')} tu aprobación`,
+            detail: 'El personal pidió hospedaje gratis o con descuento. Mientras decides, la cuenta sigue con su precio.',
+            action: {
+                label: 'Revisar cortesías',
+                href: route('tenant.reservations.courtesies', {
+                    estado: 'pending',
+                }),
+            },
+        });
+    }
+
+    if (props.today.overdue > 0) {
+        list.push({
+            key: 'overdue',
+            tone: 'danger',
+            icon: 'ClockAlert',
+            title: `${plural(props.today.overdue, 'estancia pasó', 'estancias pasaron')} su hora de salida`,
+            detail: 'Confirma si siguen dentro, cobra el tiempo extra o registra la salida.',
+            chips: props.departures
+                .filter((d) => d.overdue)
+                .map((d) => ({
+                    key: d.id,
+                    label: d.room ? `Hab. ${d.room}` : d.guest_name,
+                    meta: `salía ${d.time}`,
+                    href: departureHref(d),
+                })),
+            chipTone: () => 'danger',
+            action: can('rooms.view')
+                ? { label: 'Abrir el plano', href: route('tenant.plano') }
+                : undefined,
+        });
+    }
+
+    if (props.maintenance && props.maintenance.open > 0) {
+        const m = props.maintenance;
+        list.push({
+            key: 'maintenance',
+            tone: m.overdue > 0 ? 'danger' : 'pending',
+            icon: 'Wrench',
+            title:
+                m.overdue > 0
+                    ? `${plural(m.overdue, 'falla', 'fallas')} sin atender a tiempo`
+                    : `${plural(m.open, 'falla pendiente', 'fallas pendientes')} de mantenimiento`,
+            detail:
+                m.overdue > 0
+                    ? `${plural(m.open, 'abierta', 'abiertas')} en total; estas ya pasaron su tiempo objetivo.`
+                    : 'Ninguna se ha pasado de su tiempo objetivo todavía.',
+            chips: m.items.map((item) => ({
+                key: item.id,
+                label: item.room
+                    ? `Hab. ${item.room} · ${item.title}`
+                    : item.title,
+                meta: ageLabel(item.age_hours),
+                href: route('tenant.incidents.show', item.id),
+            })),
+            chipTone: (chip) =>
+                m.items.find((i) => i.id === chip.key)?.overdue
+                    ? 'danger'
+                    : 'pending',
+            action: {
+                label: 'Ver incidencias',
+                href: route('tenant.incidents'),
+            },
+        });
+    }
+
+    if (props.expiringHolds.length) {
+        list.push({
+            key: 'holds',
+            tone: 'warning',
+            icon: 'AlarmClock',
+            title: `${plural(props.expiringHolds.length, 'apartado vence', 'apartados vencen')} en menos de 30 minutos`,
+            detail: 'Si no llega el pago, la habitación se libera sola al vencer.',
+            chips: props.expiringHolds.map((hold) => ({
+                key: hold.id,
+                label: `${hold.code} · ${hold.guest_name ?? 'Sin nombre'}${hold.room ? ` · hab. ${hold.room}` : ''}`,
+                meta: `vence ${hold.expires_at}`,
+                href: route('tenant.reservations.detail', hold.id),
+            })),
+            chipTone: () => 'warning',
+            action: can('reservations.view')
+                ? {
+                      label: 'Ver pendientes',
+                      href: route('tenant.reservations.pending'),
+                  }
+                : undefined,
+        });
+    }
+
+    if (props.today.settlements > 0 && can('reservations.view')) {
+        list.push({
+            key: 'settlements',
+            tone: 'pending',
+            icon: 'Receipt',
+            title: `${plural(props.today.settlements, 'cuenta', 'cuentas')} por cerrar`,
+            detail: 'Estancias que ya terminaron y se quedaron con dinero sin registrar.',
+            action: {
+                label: 'Revisar cuentas',
+                href: route('tenant.reservations.settlements'),
+            },
+        });
+    }
+
+    if (props.guestStatus.pending > 0 && can('reservations.view')) {
+        list.push({
+            key: 'pending',
+            tone: 'info',
+            icon: 'CalendarClock',
+            title: `${plural(props.guestStatus.pending, 'reserva espera', 'reservas esperan')} confirmación`,
+            detail: 'Apartados sin pago confirmado: revisa comprobantes y confírmalos.',
+            action: {
+                label: 'Confirmar',
+                href: route('tenant.reservations.pending'),
+            },
+        });
+    }
+
+    if (
+        dirtyRooms.value > 0 &&
+        hasModule('limpieza') &&
+        can('rooms.update-status')
+    ) {
+        list.push({
+            key: 'dirty',
+            tone: 'pending',
+            icon: 'Sparkles',
+            title: `${plural(dirtyRooms.value, 'habitación espera', 'habitaciones esperan')} limpieza`,
+            detail: 'No se pueden vender hasta que alguien las deje listas.',
+            action: {
+                label: 'Ir a limpieza',
+                href: route('tenant.housekeeping'),
+            },
+        });
+    }
+
+    return list;
+});
+
+// ── Hoy: cuatro cifras que llevan a donde se trabajan ──
+const departuresWithBalance = computed(
+    () => props.departures.filter((d) => d.balance > 0).length,
+);
+const todayTiles = computed(() => [
+    {
+        key: 'in-house',
+        label: 'En casa ahora',
+        value: props.guestStatus.in_house,
+        hint: `${props.occupancy.occupied} de ${props.occupancy.total} ocupadas`,
+        icon: 'UserCheck' as Icon,
+        tint: toneTint.danger,
+        href: can('reservations.view')
+            ? route('tenant.reservations.in-house')
+            : null,
+    },
+    {
+        key: 'arrivals',
+        label: 'Llegadas hoy',
+        value: props.today.arrivals,
+        hint: props.today.arrivals_pending
+            ? `${props.today.arrivals_pending} por registrar`
+            : 'Todas registradas',
+        icon: 'LogIn' as Icon,
+        tint: toneTint.success,
+        href: can('reservations.view')
+            ? route('tenant.reservations.operation')
+            : null,
+    },
+    {
+        key: 'departures',
+        label: 'Salidas hoy',
+        value: props.today.departures,
+        hint: props.today.overdue
+            ? `${props.today.overdue} pasadas de hora`
+            : departuresWithBalance.value
+              ? `${departuresWithBalance.value} con saldo`
+              : 'Sin saldos pendientes',
+        icon: 'LogOut' as Icon,
+        tint: toneTint.pending,
+        href: can('reservations.view')
+            ? route('tenant.reservations.in-house')
+            : null,
+    },
+    {
+        key: 'available',
+        label: 'Libres ahora',
+        value: props.occupancy.available,
+        hint: `${props.occupancy.reserved} reservadas`,
+        icon: 'BedDouble' as Icon,
+        tint: toneTint.info,
+        href: can('rooms.view') ? route('tenant.plano') : null,
+    },
+]);
+
+// ── Indicadores del periodo ──
+// En un motel la unidad es el uso, no la noche: el mismo número con la
+// etiqueta de hotel no le decía nada al encargado.
+const metricList = computed<Metric[]>(() =>
+    props.metrics.map((m) =>
+        m.key === 'nights' && isMotel.value
+            ? {
+                  ...m,
+                  title: 'Usos vendidos',
+                  desc: 'Habitaciones usadas por día en el periodo, con o sin reserva.',
+              }
+            : m,
+    ),
+);
+const headlineKeys = ['revenue', 'occupancy', 'nights', 'created'];
+const headline = computed(() =>
+    headlineKeys
+        .map((key) => metricList.value.find((m) => m.key === key))
+        .filter((m): m is Metric => Boolean(m)),
+);
+const metricsOpen = ref(false);
+
+const changeClass = (change: number | null) =>
+    change === null || change === 0
+        ? 'bg-slate-100 text-slate-500 dark:bg-darkmode-400 dark:text-slate-300'
+        : change < 0
+          ? 'bg-danger/10 text-danger'
+          : 'bg-success/10 text-success';
+const changeIcon = (change: number | null): Icon =>
+    change !== null && change < 0 ? 'TrendingDown' : 'TrendingUp';
+
+// ── Gráfica de ingresos (barras apiladas) con la ocupación encima ──
+const hasPos = computed(() => props.series.revenue.some((p) => p.pos > 0));
+const hasSeriesData = computed(
+    () =>
+        props.series.revenue.some((p) => p.value > 0) ||
+        props.series.occupancy.some((p) => p.value > 0),
+);
+
+const revenueChart = computed(() => ({
     labels: props.series.revenue.map((p) => p.label),
     datasets: [
         {
-            data: props.series.revenue.map((p) => p.value),
+            type: 'line' as const,
+            label: 'Ocupación',
+            data: props.series.occupancy.map((p) => p.value),
+            yAxisID: 'occ',
             borderColor: '#0d9488',
-            backgroundColor: 'rgba(13,148,136,0.10)',
-            fill: true,
+            backgroundColor: '#0d9488',
+            borderWidth: 2,
+            tension: 0.35,
+            pointRadius: props.series.occupancy.length > 31 ? 0 : 2.5,
+            pointHoverRadius: 4,
+            order: 0,
         },
+        {
+            type: 'bar' as const,
+            label: 'Hospedaje',
+            data: props.series.revenue.map((p) => p.lodging),
+            yAxisID: 'y',
+            backgroundColor: primaryHex,
+            borderRadius: 3,
+            maxBarThickness: 28,
+            stack: 'money',
+            order: 1,
+        },
+        ...(hasPos.value
+            ? [
+                  {
+                      type: 'bar' as const,
+                      label: 'Consumo y POS',
+                      data: props.series.revenue.map((p) => p.pos),
+                      yAxisID: 'y',
+                      backgroundColor: '#0891b2',
+                      borderRadius: 3,
+                      maxBarThickness: 28,
+                      stack: 'money',
+                      order: 1,
+                  },
+              ]
+            : []),
     ],
 }));
 
-// Donut de tipos con la paleta del theme.
-// 10 tonos para que un hotel con muchos tipos no repita color (antes eran
-// 7 y la 8ª cabaña salía igual que la 1ª).
-const donutPalette = [
-    '#03045e',
+const revenueOptions: ChartOptions<'bar'> = {
+    responsive: true,
+    maintainAspectRatio: false,
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+        legend: { display: false },
+        tooltip: {
+            callbacks: {
+                label: (ctx: TooltipItem<'bar'>) =>
+                    ctx.dataset.yAxisID === 'occ'
+                        ? `${ctx.dataset.label}: ${ctx.parsed.y}%`
+                        : `${ctx.dataset.label}: ${money(Number(ctx.parsed.y))}`,
+            },
+        },
+    },
+    scales: {
+        x: {
+            stacked: true,
+            grid: { display: false },
+            ticks: {
+                font: { size: 10 },
+                maxRotation: 0,
+                autoSkip: true,
+                maxTicksLimit: 12,
+            },
+        },
+        y: {
+            stacked: true,
+            beginAtZero: true,
+            border: { display: false },
+            grid: { color: 'rgba(148,163,184,0.18)' },
+            ticks: {
+                font: { size: 10 },
+                maxTicksLimit: 5,
+                callback: (value: number | string) =>
+                    compactMoney(Number(value)),
+            },
+        },
+        occ: {
+            position: 'right',
+            min: 0,
+            max: 100,
+            border: { display: false },
+            grid: { display: false },
+            ticks: {
+                font: { size: 10 },
+                stepSize: 25,
+                callback: (value: number | string) => `${value}%`,
+            },
+        },
+    },
+};
+
+const revenueLegend = computed(() => [
+    { label: 'Hospedaje', color: primaryHex, bar: true },
+    ...(hasPos.value
+        ? [{ label: 'Consumo y POS', color: '#0891b2', bar: true }]
+        : []),
+    { label: 'Ocupación', color: '#0d9488', bar: false },
+]);
+
+// ── Dona de habitaciones: semáforo o por tipo ──
+const roomsView = ref<'status' | 'type'>('status');
+
+const statusSlices = computed(() => props.statuses.filter((s) => s.count > 0));
+
+const typePalette = [
+    primaryHex,
     '#0891b2',
     '#0d9488',
     '#ca8a04',
@@ -232,1216 +742,1376 @@ const donutPalette = [
     '#64748b',
     '#94a3b8',
 ];
-const donutData = computed(() => ({
-    labels: props.roomTypeDistribution.map((t) => t.label),
+
+const roomsDonut = computed(() =>
+    roomsView.value === 'status'
+        ? {
+              labels: statusSlices.value.map((s) => s.label),
+              datasets: [
+                  {
+                      data: statusSlices.value.map((s) => s.count),
+                      backgroundColor: statusSlices.value.map(
+                          (s) => statusHex[s.value] ?? '#94a3b8',
+                      ),
+                      borderWidth: 0,
+                      hoverOffset: 4,
+                  },
+              ],
+          }
+        : {
+              labels: props.roomTypeDistribution.map((t) => t.label),
+              datasets: [
+                  {
+                      data: props.roomTypeDistribution.map((t) => t.count),
+                      backgroundColor: props.roomTypeDistribution.map(
+                          (_, i) => typePalette[i % typePalette.length],
+                      ),
+                      borderWidth: 0,
+                      hoverOffset: 4,
+                  },
+              ],
+          },
+);
+
+const roomsLegend = computed(() =>
+    roomsView.value === 'status'
+        ? props.statuses.map((s) => ({
+              key: s.value,
+              label: s.label,
+              count: s.count,
+              dot: statusDot[s.value],
+              color: undefined as string | undefined,
+          }))
+        : props.roomTypeDistribution.map((t, i) => ({
+              key: t.label,
+              label: t.label,
+              count: t.count,
+              dot: '',
+              color: typePalette[i % typePalette.length],
+          })),
+);
+
+const donutOptions: ChartOptions<'doughnut'> = {
+    cutout: '74%',
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+};
+
+// ── Por dónde llegaron ──
+const channelHex: Record<string, string> = {
+    web: primaryHex,
+    agent: '#0891b2',
+    whatsapp: '#0d9488',
+    front_desk: '#1e293b',
+    walk_in: '#c2410c',
+    phone: '#ca8a04',
+};
+const channelColor = (channel: string, i: number) =>
+    channelHex[channel] ?? typePalette[(i + 6) % typePalette.length];
+const channelsTotal = computed(() =>
+    props.channels.reduce((sum, c) => sum + c.count, 0),
+);
+const channelsDonut = computed(() => ({
+    labels: props.channels.map((c) => c.label),
     datasets: [
         {
-            data: props.roomTypeDistribution.map((t) => t.count),
-            backgroundColor: props.roomTypeDistribution.map(
-                (_, i) => donutPalette[i % donutPalette.length],
+            data: props.channels.map((c) => c.count),
+            backgroundColor: props.channels.map((c, i) =>
+                channelColor(c.channel, i),
             ),
             borderWidth: 0,
             hoverOffset: 4,
         },
     ],
 }));
-const donutOptions = {
-    cutout: '75%',
-    responsive: true,
-    maintainAspectRatio: false,
-    plugins: { legend: { display: false }, tooltip: { enabled: true } },
+
+// ── Cómo se cobró: barras horizontales por método ──
+const methodHex: Record<string, string> = {
+    cash: '#0d9488',
+    card: primaryHex,
+    transfer: '#ca8a04',
+    online: '#1e293b',
 };
-
-// Un periodo sin movimiento dibujaba una raya plana al fondo del canvas:
-// se ve como gráfica rota. Con esto la tarjeta dice que no hubo nada.
-const hasOccupancyData = computed(() =>
-    props.series.occupancy.some((p) => p.value > 0),
+const methodsTotal = computed(() =>
+    props.byMethod.reduce((sum, m) => sum + m.amount, 0),
 );
-const hasRevenueData = computed(() =>
-    props.series.revenue.some((p) => p.value > 0),
+const methodsMax = computed(() =>
+    Math.max(0, ...props.byMethod.map((m) => m.amount)),
 );
 
-const barSegments = computed(() =>
-    props.statuses
-        .filter((s) => s.count > 0)
-        .map((s) => ({
-            ...s,
-            width:
-                props.totals.rooms > 0
-                    ? (s.count / props.totals.rooms) * 100
-                    : 0,
-        })),
-);
+// ── Llegadas y salidas ──
+const arrivalHref = (a: ArrivalRow) =>
+    route('tenant.reservations.detail', a.id);
+// Una salida de mostrador no tiene reserva: se atiende desde la ficha de
+// la habitación.
+function departureHref(d: DepartureRow): string {
+    if (d.reservation_id) {
+        return route('tenant.reservations.detail', d.reservation_id);
+    }
 
-// Movimiento del día para la tarjeta de huéspedes: antes solo decía
-// cuántos hay en casa y el resto de la tarjeta era hueco.
-const guestTiles = computed(() => [
-    {
-        key: 'arrivals',
-        label: 'Llegadas hoy',
-        value: props.arrivals.length,
-        icon: 'LogIn' as Icon,
-        tint: 'border-success/10 bg-success/10 text-success',
-        title: `${props.arrivals.filter((a) => !a.checked_in).length} sin registrar`,
-    },
-    {
-        key: 'departures',
-        label: 'Salidas hoy',
-        value: props.departures.length,
-        icon: 'LogOut' as Icon,
-        tint: 'border-pending/10 bg-pending/10 text-pending',
-        title: 'Estancias que terminan hoy',
-    },
-    {
-        key: 'pending',
-        label: 'Por confirmar',
-        value: props.guestStatus.pending,
-        icon: 'CalendarClock' as Icon,
-        tint: 'border-warning/10 bg-warning/10 text-warning',
-        title: 'Reservas pendientes de confirmar',
-    },
-    {
-        key: 'balance',
-        label: 'Con saldo',
-        value: props.departures.filter((d) => d.balance > 0).length,
-        icon: 'Wallet' as Icon,
-        tint: 'border-danger/10 bg-danger/10 text-danger',
-        title: 'Salidas de hoy que aún deben dinero',
-    },
-]);
-
-const activityIcon = (color: string): Icon => {
-    const status = props.statuses.find((s) => s.color === color);
-    return status ? statusIcon[status.value] : 'Activity';
-};
-
-interface QuickAction {
-    label: string;
-    icon: Icon;
-    route: string;
-    color: string;
+    return d.room_id
+        ? route('tenant.rooms.show', d.room_id)
+        : route('tenant.plano');
 }
-const quickActions: QuickAction[] = [
-    {
-        label: 'Nueva reserva',
-        icon: 'CalendarPlus',
-        route: 'tenant.reservations',
-        color: 'border-primary/10 bg-primary/10 text-primary',
-    },
-    {
-        label: 'Cobrar / POS',
-        icon: 'ShoppingCart',
-        route: 'tenant.pos',
-        color: 'border-success/10 bg-success/10 text-success',
-    },
-    {
-        label: 'Ver plano',
-        icon: 'Map',
-        route: 'tenant.plano',
-        color: 'border-info/10 bg-info/10 text-info',
-    },
-    {
-        label: 'Huéspedes',
-        icon: 'Users',
-        route: 'tenant.guests',
-        color: 'border-pending/10 bg-pending/10 text-pending',
-    },
-];
-
-const cellClass =
-    'box shadow-[5px_3px_5px_#00000005] first:border-l last:border-r first:rounded-l-[0.6rem] last:rounded-r-[0.6rem] rounded-l-none rounded-r-none border-x-0 dark:bg-darkmode-600';
 </script>
 
 <template>
     <RazeLayout title="Dashboard">
-        <div class="grid grid-cols-12 gap-x-5 gap-y-6">
-            <!-- Holds por vencer: apartados que expiran en < 30 min -->
-            <div v-if="expiringHolds.length" class="col-span-12 -mb-5">
-                <div class="box box--stacked border-l-4 border-l-warning p-4">
-                    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-                        <div
-                            class="flex items-center gap-2 text-xs font-medium"
-                        >
-                            <Lucide
-                                icon="AlarmClock"
-                                class="h-4 w-4 text-warning"
-                            />
-                            Apartados por vencer
-                        </div>
-                        <Link
-                            v-for="hold in expiringHolds"
-                            :key="hold.id"
-                            :href="
-                                route('tenant.reservations.operation', {
-                                    reservation: hold.id,
-                                })
-                            "
-                            class="flex items-center gap-1.5 rounded-full bg-warning/10 px-3 py-1.5 text-xs font-medium text-warning transition hover:bg-warning/20"
-                        >
-                            {{ hold.code }} ·
-                            {{ hold.guest_name ?? 'Sin nombre'
-                            }}<template v-if="hold.room">
-                                · hab. {{ hold.room }}</template
-                            >
-                            <span class="font-normal"
-                                >expira {{ hold.expires_at }}</span
-                            >
-                        </Link>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Mantenimiento pendiente: una falla abierta no puede
-                 esperar a que alguien entre a /incidencias. -->
+        <div class="mt-2">
+            <!-- ===================== Encabezado ===================== -->
             <div
-                v-if="maintenance && maintenance.open > 0"
-                class="col-span-12 -mb-5"
+                class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
             >
+                <div class="flex min-w-0 items-center gap-3">
+                    <div
+                        class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                    >
+                        <Lucide icon="LayoutDashboard" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0">
+                        <h1 class="text-base font-medium">Resumen</h1>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            {{ todayLabel }} · cifras de {{ hero.period }}
+                        </p>
+                    </div>
+                </div>
                 <div
-                    class="box box--stacked p-4"
-                    :class="
-                        maintenance.overdue > 0
-                            ? 'border-l-4 border-l-danger'
-                            : 'border-l-4 border-l-pending'
-                    "
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2"
                 >
-                    <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-                        <div
-                            class="flex items-center gap-2 text-xs font-medium"
+                    <div class="relative col-span-2 md:w-40">
+                        <Lucide
+                            icon="CalendarRange"
+                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 text-slate-400"
+                        />
+                        <FormSelect
+                            v-model="rangeChoice"
+                            class="h-9 pl-9 text-xs"
+                            aria-label="Periodo"
+                            @change="onRangeChange"
                         >
-                            <Lucide
-                                icon="Wrench"
-                                class="h-4 w-4"
-                                :class="
-                                    maintenance.overdue > 0
-                                        ? 'text-danger'
-                                        : 'text-pending'
-                                "
-                            />
-                            <template v-if="maintenance.overdue > 0">
-                                {{ maintenance.overdue }} falla(s) sin atender
-                            </template>
-                            <template v-else>
-                                {{ maintenance.open }} falla(s) pendiente(s)
-                            </template>
-                        </div>
-                        <Link
-                            v-for="item in maintenance.items"
-                            :key="item.id"
-                            :href="route('tenant.incidents.show', item.id)"
-                            class="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition"
-                            :class="
-                                item.overdue
-                                    ? 'bg-danger/10 text-danger hover:bg-danger/20'
-                                    : 'bg-pending/10 text-pending hover:bg-pending/20'
-                            "
-                        >
-                            <template v-if="item.room"
-                                >Hab. {{ item.room }} ·
-                            </template>
-                            {{ item.title }}
-                            <span class="font-normal">
-                                {{ ageLabel(item.age_hours) }}
-                            </span>
-                        </Link>
-                        <Link
-                            :href="route('tenant.incidents')"
-                            class="text-xs font-medium text-primary hover:underline"
-                        >
-                            Ver todas
-                        </Link>
+                            <option value="today">Hoy</option>
+                            <option value="week">Esta semana</option>
+                            <option value="month">Este mes</option>
+                            <option value="custom">Personalizado</option>
+                        </FormSelect>
                     </div>
-                </div>
-            </div>
-
-            <!-- Onboarding -->
-            <div v-if="!hasRooms" class="col-span-12">
-                <div class="box box--stacked border-l-4 border-l-primary p-4">
-                    <div class="flex flex-wrap items-center gap-4">
-                        <Lucide icon="Sparkles" class="h-6 w-6 text-primary" />
-                        <div class="flex-1">
-                            <div class="font-medium">
-                                ¡Bienvenido! Configura tu hotel en 2 pasos
-                            </div>
-                            <p class="mt-1 text-xs text-slate-500">
-                                1) Define tus
-                                <Link
-                                    :href="route('tenant.catalog')"
-                                    class="text-primary underline"
-                                    >zonas y tipos</Link
-                                >
-                                · 2) Da de alta tus
-                                <Link
-                                    :href="route('tenant.rooms')"
-                                    class="text-primary underline"
-                                    >habitaciones</Link
-                                >
-                                y acomódalas en el
-                                <Link
-                                    :href="route('tenant.plano')"
-                                    class="text-primary underline"
-                                    >plano</Link
-                                >.
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===================== Hotel Performance Insights ===================== -->
-            <div class="col-span-12 flex flex-col 2xl:col-span-9">
-                <!-- Móvil: título arriba y botones en par a lo ancho; en una
-                     sola fila aplastaban el título contra el borde. -->
-                <div
-                    class="flex flex-col gap-3 sm:flex-row sm:items-center md:h-9"
-                >
-                    <div class="text-sm font-medium">Resumen operativo</div>
-                    <div
-                        class="grid grid-cols-2 gap-2 sm:ml-auto sm:flex sm:gap-2"
+                    <button
+                        v-if="range === 'custom'"
+                        type="button"
+                        class="col-span-2 inline-flex h-9 items-center justify-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-3.5 text-xs font-medium text-primary transition hover:bg-primary/10"
+                        title="Cambiar las fechas"
+                        @click="customOpen = true"
                     >
-                        <Button
-                            as="a"
-                            :href="route('tenant.plano')"
-                            variant="outline-secondary"
-                            class="h-9 rounded-[0.5rem] bg-white text-xs"
-                        >
-                            <Lucide
-                                icon="Map"
-                                class="mr-1.5 h-3.5 w-3.5 stroke-[1.3]"
-                            />
-                            Plano
-                        </Button>
-                        <Button
-                            as="a"
-                            :href="route('tenant.reservations')"
-                            variant="primary"
-                            class="h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
-                        >
-                            <Lucide
-                                icon="CalendarPlus"
-                                class="mr-1.5 h-3.5 w-3.5 stroke-[1.3]"
-                            />
-                            Nueva reserva
-                        </Button>
-                    </div>
-                </div>
-                <div class="mt-3 flex flex-1">
-                    <div
-                        class="box box--stacked flex w-full flex-col gap-3 p-3 xl:flex-row"
-                    >
-                        <!-- Hero de ingresos -->
-                        <div
-                            class="relative flex flex-col items-center gap-5 overflow-hidden rounded-[0.6rem] bg-gradient-to-b from-theme-2/90 to-theme-1/[0.85] px-5 py-6 xl:w-[300px] xl:flex-none xl:items-start"
-                        >
-                            <div
-                                class="flex h-10 w-10 items-center justify-center rounded-full border border-white/10 bg-white/10"
-                            >
-                                <Lucide
-                                    icon="CreditCard"
-                                    class="h-5 w-5 fill-white/10 text-white"
-                                />
-                            </div>
-                            <div class="text-center xl:text-left">
-                                <div class="text-xs text-white/90">
-                                    Ingresos de {{ hero.period }}
-                                </div>
-                                <div
-                                    class="mt-2 flex items-center justify-center xl:justify-start"
-                                >
-                                    <div class="text-xl font-medium text-white">
-                                        {{ hero.revenue }}
-                                    </div>
-                                    <div
-                                        v-if="hero.change !== null"
-                                        class="ml-2.5 flex items-center rounded-full border border-success/50 bg-success/50 py-[2px] pr-1 pl-[7px] text-xs font-medium text-white/90"
-                                    >
-                                        {{ Math.abs(hero.change) }}%
-                                        <Lucide
-                                            :icon="
-                                                hero.change >= 0
-                                                    ? 'ChevronUp'
-                                                    : 'ChevronDown'
-                                            "
-                                            class="ml-px h-4 w-4 stroke-[1.5]"
-                                        />
-                                    </div>
-                                </div>
-                                <div
-                                    class="mt-2 text-xs leading-normal text-white/70"
-                                >
-                                    Pagos de reservas y ventas de POS en el
-                                    periodo elegido.
-                                </div>
-                            </div>
-                            <div class="mt-auto w-full">
-                                <Button
-                                    as="a"
-                                    :href="route('tenant.reservations')"
-                                    rounded
-                                    class="relative w-full justify-start border-white/20 bg-white/10 px-4 py-2 text-xs text-white hover:bg-white/[0.15]"
-                                >
-                                    Ver reservas
-                                    <div
-                                        class="absolute right-0 mr-0.5 flex h-8 w-8 items-center justify-center rounded-full border border-white/10 bg-white/10"
-                                    >
-                                        <Lucide
-                                            icon="ArrowRight"
-                                            class="h-4 w-4"
-                                        />
-                                    </div>
-                                </Button>
-                            </div>
-                        </div>
-
-                        <!-- Rejilla de métricas -->
-                        <div
-                            class="flex w-full flex-col rounded-[0.6rem] border border-dashed border-slate-300/80 p-4 sm:px-5 sm:py-5"
-                        >
-                            <div
-                                class="flex flex-col gap-x-3 gap-y-2 sm:flex-row sm:items-center"
-                            >
-                                <div class="relative">
-                                    <Lucide
-                                        icon="CalendarCheck2"
-                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3]"
-                                    />
-                                    <FormSelect
-                                        v-model="range"
-                                        class="pl-9 sm:w-44"
-                                        @change="applyPeriod"
-                                    >
-                                        <option value="today">Hoy</option>
-                                        <option value="week">
-                                            Esta semana
-                                        </option>
-                                        <option value="month">Este mes</option>
-                                        <option value="custom">
-                                            Personalizado
-                                        </option>
-                                    </FormSelect>
-                                </div>
-                                <div class="text-xs text-slate-500 sm:ml-auto">
-                                    Comparado con el periodo anterior
-                                </div>
-                            </div>
-
-                            <!-- Las dos fechas van en su propio renglón: en
-                                 la misma fila del selector se partían a media
-                                 frase ("Del [fecha] al" y el segundo campo
-                                 abajo). -->
-                            <div
-                                v-if="range === 'custom'"
-                                class="mt-4 flex flex-col gap-3 rounded-[0.6rem] border border-dashed border-slate-300/80 p-3 sm:flex-row sm:items-center dark:border-darkmode-400"
-                            >
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <label
-                                        for="range-from"
-                                        class="text-xs text-slate-500"
-                                        >Del</label
-                                    >
-                                    <FormDate
-                                        id="range-from"
-                                        v-model="customFrom"
-                                        class="w-full sm:w-44"
-                                        :max="customTo || null"
-                                        @change="applyPeriod"
-                                    />
-                                    <label
-                                        for="range-to"
-                                        class="text-xs text-slate-500"
-                                        >al</label
-                                    >
-                                    <FormDate
-                                        id="range-to"
-                                        v-model="customTo"
-                                        class="w-full sm:w-44"
-                                        :min="customFrom || null"
-                                        :max="maxCustomTo"
-                                        @change="applyPeriod"
-                                    />
-                                </div>
-                                <p
-                                    class="flex items-center gap-1.5 text-xs text-slate-500 sm:ml-auto"
-                                >
-                                    <Lucide
-                                        icon="Info"
-                                        class="h-3.5 w-3.5 flex-none stroke-[1.3] text-slate-400"
-                                    />
-                                    <template v-if="!customFrom || !customTo">
-                                        Elige las dos fechas para ver el
-                                        periodo.
-                                    </template>
-                                    <template v-else>
-                                        Hasta {{ MAX_CUSTOM_DAYS }} días por
-                                        consulta.
-                                    </template>
-                                </p>
-                            </div>
-                            <div
-                                class="mt-4 grid flex-1 grid-cols-2 gap-x-5 gap-y-4 sm:grid-cols-3 xl:grid-cols-4"
-                            >
-                                <div
-                                    v-for="metric in metrics"
-                                    :key="metric.title"
-                                    class="flex flex-col justify-center"
-                                >
-                                    <div class="mb-1 flex items-center">
-                                        <div class="text-base font-medium">
-                                            {{ metric.value }}
-                                        </div>
-                                        <div
-                                            v-if="metric.change !== null"
-                                            :class="[
-                                                '-mr-1 ml-2 flex items-center text-xs',
-                                                metric.change < 0
-                                                    ? 'text-danger'
-                                                    : 'text-success',
-                                            ]"
-                                        >
-                                            {{ Math.abs(metric.change) }}%
-                                            <Lucide
-                                                class="ml-px h-4 w-4 stroke-[1]"
-                                                :icon="
-                                                    metric.change < 0
-                                                        ? 'ChevronDown'
-                                                        : 'ChevronUp'
-                                                "
-                                            />
-                                        </div>
-                                    </div>
-                                    <div
-                                        class="flex items-start text-xs leading-tight text-slate-500"
-                                    >
-                                        <span>{{ metric.title }}</span>
-                                        <span
-                                            :title="metric.desc"
-                                            class="inline-flex cursor-help"
-                                        >
-                                            <Lucide
-                                                class="ml-1.5 h-3.5 w-3.5 stroke-[1.3] text-slate-400"
-                                                icon="Info"
-                                            />
-                                        </span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===================== Ocupación vs Ingresos ===================== -->
-            <div class="col-span-12 flex flex-col 2xl:col-span-3">
-                <div class="flex items-center md:h-9">
-                    <div class="text-sm font-medium">
-                        Ocupación vs. ingresos
-                    </div>
-                </div>
-                <!-- Móvil: apiladas (lado a lado se aplastan y el canvas de
-                     la gráfica desborda la página). -->
-                <div
-                    class="mt-3 grid flex-1 grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-6 2xl:auto-rows-fr 2xl:grid-cols-1"
-                >
-                    <div class="box box--stacked flex min-w-0 flex-col p-4">
-                        <div class="text-xs text-slate-500">
-                            Ocupación · {{ series.label }}
-                        </div>
-                        <div class="mt-1 flex items-center">
-                            <div class="text-lg font-medium">
-                                {{ series.occupancy_avg }}%
-                            </div>
-                            <div
-                                v-if="series.occupancy_change !== null"
-                                :class="[
-                                    '-mr-1 ml-2 flex items-center text-xs',
-                                    series.occupancy_change < 0
-                                        ? 'text-danger'
-                                        : 'text-success',
-                                ]"
-                            >
-                                {{ Math.abs(series.occupancy_change) }}%
-                                <Lucide
-                                    :icon="
-                                        series.occupancy_change < 0
-                                            ? 'ChevronDown'
-                                            : 'ChevronUp'
-                                    "
-                                    class="ml-px h-4 w-4"
-                                />
-                            </div>
-                        </div>
-                        <div
-                            class="mt-4 flex min-h-[87px] w-full min-w-0 flex-1 items-end"
-                        >
-                            <Chart
-                                v-if="hasOccupancyData"
-                                type="line"
-                                :data="occupancyLine"
-                                :options="lineOptions"
-                                class="!h-[87px] w-full"
-                            />
-                            <div
-                                v-else
-                                class="flex h-[87px] w-full flex-col items-center justify-center gap-1.5 rounded-[0.6rem] border border-dashed border-slate-300/70 text-center dark:border-darkmode-400"
-                            >
-                                <Lucide
-                                    icon="BedDouble"
-                                    class="h-4 w-4 text-slate-300"
-                                />
-                                <span class="text-xs text-slate-400">
-                                    Sin noches ocupadas en el periodo
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="box box--stacked flex min-w-0 flex-col p-4">
-                        <div class="text-xs text-slate-500">
-                            Ingresos · {{ series.label }}
-                        </div>
-                        <div class="mt-1 flex items-center">
-                            <div class="text-lg font-medium">
-                                {{ money(series.revenue_total) }}
-                            </div>
-                            <div
-                                v-if="series.revenue_change !== null"
-                                :class="[
-                                    '-mr-1 ml-2 flex items-center text-xs',
-                                    series.revenue_change < 0
-                                        ? 'text-danger'
-                                        : 'text-success',
-                                ]"
-                            >
-                                {{ Math.abs(series.revenue_change) }}%
-                                <Lucide
-                                    :icon="
-                                        series.revenue_change < 0
-                                            ? 'ChevronDown'
-                                            : 'ChevronUp'
-                                    "
-                                    class="ml-px h-4 w-4"
-                                />
-                            </div>
-                        </div>
-                        <div
-                            class="mt-4 flex min-h-[87px] w-full min-w-0 flex-1 items-end"
-                        >
-                            <Chart
-                                v-if="hasRevenueData"
-                                type="line"
-                                :data="revenueLine"
-                                :options="lineOptions"
-                                class="!h-[87px] w-full"
-                            />
-                            <div
-                                v-else
-                                class="flex h-[87px] w-full flex-col items-center justify-center gap-1.5 rounded-[0.6rem] border border-dashed border-slate-300/70 text-center dark:border-darkmode-400"
-                            >
-                                <Lucide
-                                    icon="Receipt"
-                                    class="h-4 w-4 text-slate-300"
-                                />
-                                <span class="text-xs text-slate-400">
-                                    Sin cobros en el periodo
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===================== Actividad reciente ===================== -->
-            <div class="col-span-12 flex flex-col md:col-span-6 xl:col-span-4">
-                <div class="flex items-center md:h-9">
-                    <div class="text-sm font-medium">Actividad reciente</div>
-                    <span
-                        v-if="guestStatus.pending"
-                        class="ml-auto rounded-full bg-pending/10 px-2.5 py-0.5 text-xs font-medium text-pending"
-                    >
-                        {{ guestStatus.pending }} por confirmar
-                    </span>
-                </div>
-                <div class="box box--stacked mt-3 flex flex-1 flex-col p-4">
-                    <div
-                        class="mb-4 border-b border-dashed border-slate-300/70 pb-4"
-                    >
-                        <div class="flex items-center">
-                            <div class="text-lg font-medium">
-                                {{ occupancy.occupied }}/{{ occupancy.total }}
-                            </div>
-                            <div class="ml-2 text-xs text-slate-500">
-                                habitaciones ocupadas
-                            </div>
-                            <div
-                                class="ml-auto text-xs font-medium text-slate-500"
-                            >
-                                {{ occupancy.percent }}%
-                            </div>
-                        </div>
-                        <div
-                            class="mt-3 flex h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-darkmode-400"
-                        >
-                            <div
-                                v-for="seg in barSegments"
-                                :key="seg.value"
-                                class="h-full first:rounded-l-full last:rounded-r-full"
-                                :class="dotColor[seg.color]"
-                                :style="{ width: `${seg.width}%` }"
-                                :title="`${seg.label}: ${seg.count}`"
-                            />
-                        </div>
-                        <!-- La barra es el semáforo completo, no ocupación:
-                             sin leyenda, 8 habitaciones limpias se leían como
-                             "lleno". -->
-                        <div
-                            v-if="barSegments.length"
-                            class="mt-2.5 flex flex-wrap gap-x-4 gap-y-1"
-                        >
-                            <span
-                                v-for="seg in barSegments"
-                                :key="seg.value"
-                                class="flex items-center text-xs text-slate-500"
-                            >
-                                <span
-                                    class="mr-1.5 h-1.5 w-1.5 rounded-full"
-                                    :class="dotColor[seg.color]"
-                                />
-                                {{ seg.label }}
-                                <span class="ml-1 font-medium text-slate-600">{{
-                                    seg.count
-                                }}</span>
-                            </span>
-                        </div>
-                    </div>
-                    <div
-                        v-if="recentActivity.length"
-                        class="flex flex-col gap-3.5"
-                    >
-                        <div
-                            v-for="log in recentActivity"
-                            :key="log.id"
-                            class="flex items-center"
-                        >
-                            <div
-                                class="flex h-9 w-9 flex-none items-center justify-center rounded-full border"
-                                :class="tint[log.to_color]"
-                            >
-                                <Lucide
-                                    :icon="activityIcon(log.to_color)"
-                                    class="h-4 w-4"
-                                />
-                            </div>
-                            <div
-                                class="ml-3 flex min-w-0 flex-1 items-center gap-3"
-                            >
-                                <div class="min-w-0 flex-1">
-                                    <div class="truncate text-sm font-medium">
-                                        Hab. {{ log.room ?? '—' }}
-                                    </div>
-                                    <div
-                                        class="mt-0.5 line-clamp-2 text-xs leading-tight text-slate-500"
-                                        :title="`${log.from ?? '—'} → ${log.to} · ${log.by}`"
-                                    >
-                                        {{ log.from ?? '—' }} → {{ log.to }} ·
-                                        {{ log.by }}
-                                    </div>
-                                </div>
-                                <span
-                                    class="flex flex-none items-center rounded-lg border px-2.5 py-1 text-xs font-medium whitespace-nowrap"
-                                    :class="tint[log.to_color]"
-                                    :title="log.at_full"
-                                >
-                                    <span
-                                        class="mr-1.5 h-1 w-1 rounded-full"
-                                        :class="dotColor[log.to_color]"
-                                    />
-                                    <span class="-mt-px">{{ log.at }}</span>
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                    <div v-else class="py-6 text-center text-xs text-slate-500">
-                        Sin movimientos todavía.
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===================== Estado de huéspedes ===================== -->
-            <div class="col-span-12 flex flex-col md:col-span-6 xl:col-span-4">
-                <div class="flex items-center md:h-9">
-                    <div class="text-sm font-medium">Estado de huéspedes</div>
-                </div>
-                <div class="box box--stacked mt-3 flex flex-1 flex-col">
-                    <!-- Banner del theme, más bajo: con el original la
-                         tarjeta quedaba medio vacía cuando no hay nadie. -->
-                    <div
-                        class="box relative m-2.5 flex flex-col rounded-[0.6rem] border border-dashed bg-gradient-to-b from-transparent to-theme-1/[0.03] pt-[40px] shadow-sm before:absolute before:inset-0 before:bg-texture-black before:bg-cover before:bg-[center_1rem] before:bg-no-repeat before:opacity-90 before:content-['']"
-                    >
-                        <div
-                            class="z-10 mx-auto mt-auto -mb-5 h-12 w-12 rounded-full border border-theme-1/20 bg-white/80 p-1"
-                        >
-                            <div
-                                class="relative z-10 flex h-full w-full items-center justify-center rounded-full border border-primary/[0.15] bg-gradient-to-b from-theme-2/90 to-theme-1/[0.85] shadow-sm"
-                            >
-                                <Lucide
-                                    icon="UserCheck"
-                                    class="h-5 w-5 fill-white/10 text-white"
-                                />
-                            </div>
-                        </div>
-                    </div>
-                    <div class="flex flex-1 flex-col p-5">
-                        <div class="mt-6 text-center">
-                            <div class="flex items-center justify-center">
-                                <div class="text-lg font-medium">
-                                    {{ guestStatus.in_house }}
-                                </div>
-                                <div class="ml-2 text-xs text-slate-500">
-                                    en casa
-                                </div>
-                            </div>
-                            <div class="mt-1.5 text-xs text-slate-500">
-                                Huéspedes hospedados en este momento
-                            </div>
-                        </div>
-
-                        <!-- Movimiento del día: lo que hay que atender hoy -->
-                        <!-- auto-rows-fr: si la tarjeta se estira para
-                             emparejar a sus vecinas, crecen las casillas en
-                             vez de dejar un hueco. -->
-                        <div
-                            class="mt-4 grid flex-1 auto-rows-fr grid-cols-2 gap-2.5"
-                        >
-                            <div
-                                v-for="tile in guestTiles"
-                                :key="tile.key"
-                                :title="tile.title"
-                                class="flex items-center gap-2.5 rounded-[0.6rem] border border-slate-200/70 bg-slate-50/60 p-2.5 dark:border-darkmode-400 dark:bg-darkmode-700"
-                            >
-                                <div
-                                    class="flex h-9 w-9 flex-none items-center justify-center rounded-full border"
-                                    :class="tile.tint"
-                                >
-                                    <Lucide :icon="tile.icon" class="h-4 w-4" />
-                                </div>
-                                <div class="min-w-0">
-                                    <div
-                                        class="text-sm leading-none font-medium"
-                                    >
-                                        {{ tile.value }}
-                                    </div>
-                                    <div
-                                        class="mt-1 text-xs leading-tight text-slate-500"
-                                    >
-                                        {{ tile.label }}
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <Button
-                            as="a"
-                            :href="route('tenant.reservations')"
-                            class="mt-4 h-10 w-full border-dashed border-slate-300 text-xs hover:bg-slate-50"
-                        >
-                            <Lucide
-                                icon="ExternalLink"
-                                class="mr-1.5 h-3.5 w-3.5 stroke-[1.3]"
-                            />
-                            Registrar check-in
-                        </Button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- ===================== Distribución por tipo ===================== -->
-            <div class="col-span-12 flex flex-col md:col-span-6 xl:col-span-4">
-                <div class="flex items-center md:h-9">
-                    <div class="text-sm font-medium">
-                        Distribución de habitaciones
-                    </div>
-                </div>
-                <div class="box box--stacked mt-3 flex flex-1 flex-col p-4">
-                    <Tab.Group class="mt-1 flex flex-1 flex-col">
-                        <Tab.List
-                            variant="boxed-tabs"
-                            class="mx-auto w-3/4 rounded-[0.6rem] border-slate-200 bg-white shadow-sm"
-                        >
-                            <Tab
-                                class="bg-slate-50 first:rounded-l-[0.6rem] last:rounded-r-[0.6rem] [&[aria-selected='true']_button]:text-current"
-                            >
-                                <Tab.Button
-                                    class="w-full rounded-[0.6rem] text-xs whitespace-nowrap text-slate-500"
-                                    as="button"
-                                    >Por tipo</Tab.Button
-                                >
-                            </Tab>
-                            <Tab
-                                class="bg-slate-50 first:rounded-l-[0.6rem] last:rounded-r-[0.6rem] [&[aria-selected='true']_button]:text-current"
-                            >
-                                <Tab.Button
-                                    class="w-full rounded-[0.6rem] text-xs whitespace-nowrap text-slate-500"
-                                    as="button"
-                                    >Semáforo</Tab.Button
-                                >
-                            </Tab>
-                        </Tab.List>
-                        <Tab.Panels
-                            class="mt-4 flex flex-1 flex-col justify-center"
-                        >
-                            <!-- Por tipo -->
-                            <Tab.Panel>
-                                <div
-                                    v-if="roomTypeDistribution.length"
-                                    class="relative mx-auto w-4/5"
-                                >
-                                    <div class="h-[190px]">
-                                        <Chart
-                                            type="doughnut"
-                                            :data="donutData"
-                                            :options="donutOptions"
-                                            class="!h-[190px]"
-                                        />
-                                    </div>
-                                    <div
-                                        class="absolute inset-0 flex items-center justify-center"
-                                    >
-                                        <div class="text-center">
-                                            <div
-                                                class="text-lg font-medium text-slate-600/90"
-                                            >
-                                                {{ totals.rooms }}
-                                            </div>
-                                            <div
-                                                class="mt-1 text-xs text-slate-500"
-                                            >
-                                                Habitaciones
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div
-                                    v-else
-                                    class="py-8 text-center text-xs text-slate-500"
-                                >
-                                    Sin tipos de habitación aún.
-                                </div>
-                                <!-- Rejilla en vez de fila centrada: con
-                                     muchos tipos la leyenda quedaba en
-                                     renglones sueltos y desalineados. -->
-                                <div
-                                    v-if="roomTypeDistribution.length"
-                                    class="mt-5 grid grid-cols-1 gap-x-5 gap-y-2 sm:grid-cols-2"
-                                >
-                                    <div
-                                        v-for="(t, i) in roomTypeDistribution"
-                                        :key="t.label"
-                                        class="flex min-w-0 items-center text-xs text-slate-500"
-                                        :title="`${t.label}: ${t.count}`"
-                                    >
-                                        <div
-                                            class="mr-2 h-2 w-2 flex-none rounded-full"
-                                            :style="{
-                                                backgroundColor:
-                                                    donutPalette[
-                                                        i % donutPalette.length
-                                                    ],
-                                            }"
-                                        />
-                                        <span class="truncate">{{
-                                            t.label
-                                        }}</span>
-                                        <span
-                                            class="ml-auto pl-2 font-medium text-slate-600 dark:text-slate-300"
-                                            >{{ t.count }}</span
-                                        >
-                                    </div>
-                                </div>
-                            </Tab.Panel>
-                            <!-- Semáforo -->
-                            <Tab.Panel>
-                                <div class="grid grid-cols-2 gap-3">
-                                    <div
-                                        v-for="status in statuses"
-                                        :key="status.value"
-                                        class="flex items-center"
-                                    >
-                                        <div
-                                            class="flex h-9 w-9 flex-none items-center justify-center rounded-full border"
-                                            :class="tint[status.color]"
-                                        >
-                                            <Lucide
-                                                :icon="statusIcon[status.value]"
-                                                class="h-4 w-4"
-                                            />
-                                        </div>
-                                        <div class="ml-2.5">
-                                            <div
-                                                class="text-sm leading-none font-medium"
-                                            >
-                                                {{ status.count }}
-                                            </div>
-                                            <div
-                                                class="mt-1 text-xs text-slate-500"
-                                            >
-                                                {{ status.label }}
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </Tab.Panel>
-                        </Tab.Panels>
-                    </Tab.Group>
+                        <Lucide icon="CalendarRange" class="h-3.5 w-3.5" />
+                        {{ hero.period }}
+                    </button>
                     <Button
+                        v-if="can('rooms.view')"
                         as="a"
                         :href="route('tenant.plano')"
-                        class="mt-4 h-10 w-full border-dashed border-slate-300 text-xs hover:bg-slate-50"
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                    >
+                        <Lucide icon="Map" class="mr-1.5 h-3.5 w-3.5" />
+                        Plano
+                    </Button>
+                    <Button
+                        v-if="hasModule('pos') && can('orders.manage')"
+                        as="a"
+                        :href="route('tenant.pos')"
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
                     >
                         <Lucide
-                            icon="ExternalLink"
-                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.3]"
+                            icon="ShoppingCart"
+                            class="mr-1.5 h-3.5 w-3.5"
                         />
-                        Ver plano
+                        Punto de venta
+                    </Button>
+                    <Button
+                        v-if="can('reservations.manage')"
+                        as="a"
+                        :href="`${route('tenant.reservations.operation')}?intent=reserve`"
+                        variant="primary"
+                        class="col-span-2 h-9 rounded-[0.5rem] text-xs shadow-md shadow-primary/20"
+                    >
+                        <Lucide
+                            icon="CalendarPlus"
+                            class="mr-1.5 h-3.5 w-3.5"
+                        />
+                        Nueva reserva
                     </Button>
                 </div>
             </div>
 
-            <!-- ===================== Accesos rápidos ===================== -->
-            <div class="col-span-12">
-                <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
-                    <Link
-                        v-for="action in quickActions"
-                        :key="action.label"
-                        :href="route(action.route)"
-                        class="box box--stacked flex items-center gap-2.5 p-3.5 transition hover:-translate-y-0.5"
+            <!-- ===================== Avisos ===================== -->
+            <div class="box box--stacked mt-4 overflow-hidden">
+                <div :class="cardHeader">
+                    <div
+                        :class="[
+                            sectionIcon,
+                            notices.length
+                                ? toneTint[notices[0].tone]
+                                : toneTint.success,
+                        ]"
                     >
-                        <div
-                            class="flex h-9 w-9 flex-none items-center justify-center rounded-full border"
-                            :class="action.color"
+                        <Lucide
+                            :icon="notices.length ? 'BellRing' : 'ShieldCheck'"
+                            class="h-4 w-4"
+                        />
+                    </div>
+                    <div class="min-w-0 flex-1 basis-48">
+                        <div class="text-sm font-medium">Avisos</div>
+                        <div class="text-xs text-slate-500">
+                            {{
+                                notices.length
+                                    ? 'Lo que necesita atención, de lo más urgente a lo menos'
+                                    : 'Nada que atender en este momento'
+                            }}
+                        </div>
+                    </div>
+                    <span
+                        v-if="notices.length"
+                        class="rounded-full px-2.5 py-0.5 text-[11px] font-medium"
+                        :class="toneChip[notices[0].tone]"
+                    >
+                        {{ plural(notices.length, 'aviso', 'avisos') }}
+                    </span>
+                </div>
+
+                <div
+                    v-if="notices.length"
+                    class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                >
+                    <div
+                        v-for="notice in notices"
+                        :key="notice.key"
+                        class="flex flex-col gap-3 px-4 py-3 sm:flex-row sm:items-center sm:px-5"
+                    >
+                        <div class="flex min-w-0 flex-1 items-start gap-3">
+                            <div :class="[sectionIcon, toneTint[notice.tone]]">
+                                <Lucide :icon="notice.icon" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0 flex-1">
+                                <div class="text-sm font-medium">
+                                    {{ notice.title }}
+                                </div>
+                                <div class="mt-0.5 text-xs text-slate-500">
+                                    {{ notice.detail }}
+                                </div>
+                                <div
+                                    v-if="notice.chips?.length"
+                                    class="mt-2 flex flex-wrap gap-1.5"
+                                >
+                                    <Link
+                                        v-for="chip in notice.chips"
+                                        :key="chip.key"
+                                        :href="chip.href"
+                                        class="inline-flex max-w-full items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-medium transition"
+                                        :class="
+                                            toneChip[
+                                                notice.chipTone?.(chip) ??
+                                                    notice.tone
+                                            ]
+                                        "
+                                    >
+                                        <span class="truncate">{{
+                                            chip.label
+                                        }}</span>
+                                        <span
+                                            v-if="chip.meta"
+                                            class="shrink-0 font-normal opacity-80"
+                                            >· {{ chip.meta }}</span
+                                        >
+                                    </Link>
+                                </div>
+                            </div>
+                        </div>
+                        <Link
+                            v-if="notice.action"
+                            :href="notice.action.href"
+                            :class="[
+                                ghostLink,
+                                'shrink-0 self-start sm:self-center',
+                            ]"
                         >
-                            <Lucide :icon="action.icon" class="h-4 w-4" />
-                        </div>
-                        <div>
-                            <div class="text-sm font-medium">
-                                {{ action.label }}
-                            </div>
-                            <div
-                                class="mt-0.5 flex items-center text-xs text-primary"
-                            >
-                                Abrir
-                                <Lucide
-                                    icon="ArrowRight"
-                                    class="ml-1 h-3 w-3"
-                                />
-                            </div>
-                        </div>
-                    </Link>
+                            {{ notice.action.label }}
+                            <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
+                        </Link>
+                    </div>
                 </div>
             </div>
 
-            <!-- ===================== Llegadas / Salidas ===================== -->
-            <div class="col-span-12 xl:col-span-6">
-                <div class="flex items-center md:h-9">
-                    <div class="flex items-center text-sm font-medium">
-                        <div
-                            class="mr-2 flex h-6 w-6 items-center justify-center rounded-full border border-success/10 bg-success/10"
-                        >
-                            <Lucide
-                                icon="LogIn"
-                                class="h-3.5 w-3.5 stroke-[1.5] text-success"
-                            />
-                        </div>
-                        Llegadas de hoy
-                        <span
-                            v-if="arrivals.length"
-                            class="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
-                            >{{ arrivals.length }}</span
-                        >
+            <!-- ===================== Hoy ===================== -->
+            <div class="mt-4 grid auto-rows-fr grid-cols-12 gap-4">
+                <component
+                    :is="tile.href ? Link : 'div'"
+                    v-for="tile in todayTiles"
+                    :key="tile.key"
+                    :href="tile.href ?? undefined"
+                    class="box box--stacked group col-span-6 flex items-center gap-2.5 p-3 xl:col-span-3"
+                    :class="
+                        tile.href
+                            ? 'transition hover:border-primary/30 hover:shadow-md'
+                            : ''
+                    "
+                >
+                    <div :class="[sectionIcon, tile.tint]">
+                        <Lucide :icon="tile.icon" class="h-4 w-4" />
                     </div>
-                    <Link
-                        :href="route('tenant.reservations')"
-                        class="ml-auto text-xs font-medium text-primary"
-                        >Ver reservas</Link
-                    >
-                </div>
-                <div class="mt-2 overflow-auto lg:overflow-visible">
-                    <Table
-                        v-if="arrivals.length"
-                        class="border-separate border-spacing-y-[8px]"
-                    >
-                        <Table.Tbody>
-                            <Table.Tr v-for="a in arrivals" :key="a.id">
-                                <Table.Td :class="cellClass">
-                                    <div
-                                        class="text-sm font-medium whitespace-nowrap"
+                    <div class="min-w-0 flex-1">
+                        <div class="text-sm font-medium">{{ tile.value }}</div>
+                        <div class="truncate text-xs text-slate-500">
+                            {{ tile.label }}
+                        </div>
+                        <div class="truncate text-[11px] text-slate-400">
+                            {{ tile.hint }}
+                        </div>
+                    </div>
+                    <Lucide
+                        v-if="tile.href"
+                        icon="ChevronRight"
+                        class="hidden h-4 w-4 shrink-0 text-slate-300 transition group-hover:text-primary sm:block"
+                    />
+                </component>
+            </div>
+
+            <!-- ===================== Periodo ===================== -->
+            <div class="mt-4 grid grid-cols-12 items-stretch gap-5">
+                <!-- Ingresos y ocupación -->
+                <div class="col-span-12 flex flex-col xl:col-span-8">
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div :class="[sectionIcon, toneTint.primary]">
+                                <Lucide icon="ChartColumn" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0 flex-1 basis-48">
+                                <div class="text-sm font-medium">
+                                    Ingresos y ocupación
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    {{ series.label }} · comparado con el
+                                    periodo anterior
+                                </div>
+                            </div>
+                            <button
+                                type="button"
+                                :class="headerAction"
+                                @click="metricsOpen = true"
+                            >
+                                <Lucide icon="ListChecks" class="h-3.5 w-3.5" />
+                                Todos los indicadores
+                            </button>
+                        </div>
+
+                        <!-- Cifras del periodo -->
+                        <div
+                            class="grid grid-cols-2 border-b border-slate-200/60 bg-slate-50/70 sm:grid-cols-4 dark:border-darkmode-400 dark:bg-darkmode-700/40"
+                        >
+                            <div
+                                v-for="(m, i) in headline"
+                                :key="m.key"
+                                class="min-w-0 px-4 py-3"
+                                :class="[
+                                    i % 2 === 1
+                                        ? 'border-l border-slate-200/60 dark:border-darkmode-400'
+                                        : '',
+                                    i >= 2
+                                        ? 'border-t border-slate-200/60 sm:border-t-0 dark:border-darkmode-400'
+                                        : '',
+                                    i === 2
+                                        ? 'sm:border-l sm:border-slate-200/60 dark:sm:border-darkmode-400'
+                                        : '',
+                                ]"
+                                :title="m.desc"
+                            >
+                                <div
+                                    class="flex flex-wrap items-center gap-1.5"
+                                >
+                                    <span class="text-sm font-medium">{{
+                                        m.value
+                                    }}</span>
+                                    <span
+                                        v-if="m.change !== null"
+                                        class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[11px] font-medium"
+                                        :class="changeClass(m.change)"
                                     >
+                                        <Lucide
+                                            :icon="changeIcon(m.change)"
+                                            class="h-3 w-3"
+                                        />
+                                        {{ Math.abs(m.change) }}%
+                                    </span>
+                                </div>
+                                <div
+                                    class="mt-0.5 truncate text-xs text-slate-500"
+                                >
+                                    {{ m.title }}
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="flex flex-1 flex-col px-4 py-3">
+                            <div
+                                class="flex flex-wrap items-center gap-x-4 gap-y-1"
+                            >
+                                <span
+                                    v-for="item in revenueLegend"
+                                    :key="item.label"
+                                    class="inline-flex items-center gap-1.5 text-[11px] text-slate-500"
+                                >
+                                    <span
+                                        :class="
+                                            item.bar
+                                                ? 'h-2.5 w-2.5 rounded-sm'
+                                                : 'h-0.5 w-3.5 rounded-full'
+                                        "
+                                        :style="{ backgroundColor: item.color }"
+                                    />
+                                    {{ item.label }}
+                                </span>
+                            </div>
+                            <div class="mt-2 min-h-[240px] flex-1">
+                                <Chart
+                                    v-if="hasSeriesData"
+                                    type="bar"
+                                    :data="revenueChart"
+                                    :options="revenueOptions"
+                                    class="!h-[240px] w-full"
+                                />
+                                <div
+                                    v-else
+                                    class="flex h-[240px] flex-col items-center justify-center gap-1.5 rounded-[0.6rem] border border-dashed border-slate-300/70 text-center dark:border-darkmode-400"
+                                >
+                                    <Lucide
+                                        icon="ChartColumn"
+                                        class="h-5 w-5 text-slate-300"
+                                    />
+                                    <span class="text-xs text-slate-400">
+                                        Sin cobros ni ocupación en el periodo
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Habitaciones ahora -->
+                <div class="col-span-12 flex flex-col xl:col-span-4">
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div :class="[sectionIcon, toneTint.danger]">
+                                <Lucide icon="ChartPie" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0 flex-1">
+                                <div class="text-sm font-medium">
+                                    Habitaciones
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    {{
+                                        roomsView === 'status'
+                                            ? 'Ahora mismo'
+                                            : 'Cuántas hay de cada tipo'
+                                    }}
+                                </div>
+                            </div>
+                            <div
+                                class="flex rounded-full border border-slate-200 bg-slate-50 p-0.5 dark:border-darkmode-400 dark:bg-darkmode-700"
+                                role="tablist"
+                            >
+                                <button
+                                    v-for="opt in [
+                                        { key: 'status', label: 'Estado' },
+                                        { key: 'type', label: 'Por tipo' },
+                                    ] as const"
+                                    :key="opt.key"
+                                    type="button"
+                                    role="tab"
+                                    :aria-selected="roomsView === opt.key"
+                                    class="h-7 rounded-full px-3 text-[11px] font-medium transition"
+                                    :class="
+                                        roomsView === opt.key
+                                            ? 'bg-white text-primary shadow-sm dark:bg-darkmode-400 dark:text-slate-200'
+                                            : 'text-slate-500 hover:text-slate-700'
+                                    "
+                                    @click="roomsView = opt.key"
+                                >
+                                    {{ opt.label }}
+                                </button>
+                            </div>
+                        </div>
+                        <div class="flex flex-1 flex-col px-4 py-3">
+                            <template v-if="hasRooms">
+                                <div
+                                    class="relative mx-auto w-full max-w-[180px]"
+                                >
+                                    <div class="h-[170px]">
+                                        <Chart
+                                            type="doughnut"
+                                            :data="roomsDonut"
+                                            :options="donutOptions"
+                                            class="!h-[170px]"
+                                        />
+                                    </div>
+                                    <div
+                                        class="pointer-events-none absolute inset-0 flex items-center justify-center"
+                                    >
+                                        <div class="text-center">
+                                            <div class="text-base font-medium">
+                                                {{
+                                                    roomsView === 'status'
+                                                        ? `${occupancy.percent}%`
+                                                        : totals.rooms
+                                                }}
+                                            </div>
+                                            <div
+                                                class="text-[11px] text-slate-500"
+                                            >
+                                                {{
+                                                    roomsView === 'status'
+                                                        ? 'ocupación'
+                                                        : 'habitaciones'
+                                                }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div
+                                    class="mt-4 grid grid-cols-1 gap-x-4 gap-y-2 sm:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2"
+                                >
+                                    <div
+                                        v-for="row in roomsLegend"
+                                        :key="row.key"
+                                        class="flex min-w-0 items-center text-xs"
+                                        :class="row.count ? '' : 'opacity-50'"
+                                    >
+                                        <span
+                                            class="mr-2 h-2 w-2 shrink-0 rounded-full"
+                                            :class="row.dot"
+                                            :style="
+                                                row.color
+                                                    ? {
+                                                          backgroundColor:
+                                                              row.color,
+                                                      }
+                                                    : undefined
+                                            "
+                                        />
+                                        <span
+                                            class="truncate text-slate-600 dark:text-slate-300"
+                                            >{{ row.label }}</span
+                                        >
+                                        <span
+                                            class="ml-auto pl-2 font-medium"
+                                            >{{ row.count }}</span
+                                        >
+                                    </div>
+                                </div>
+                            </template>
+                            <div
+                                v-else
+                                class="flex flex-1 flex-col items-center justify-center gap-1.5 py-8 text-center"
+                            >
+                                <Lucide
+                                    icon="BedDouble"
+                                    class="h-5 w-5 text-slate-300"
+                                />
+                                <span class="text-xs text-slate-400">
+                                    Aún no hay habitaciones dadas de alta
+                                </span>
+                            </div>
+                            <Link
+                                v-if="can('rooms.view')"
+                                :href="route('tenant.plano')"
+                                :class="[
+                                    ghostLink,
+                                    'mt-4 w-full justify-center',
+                                ]"
+                            >
+                                <Lucide icon="Map" class="h-3.5 w-3.5" />
+                                Abrir el plano
+                            </Link>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ===================== Llegadas y salidas ===================== -->
+            <div class="mt-4 grid grid-cols-12 items-stretch gap-5">
+                <!-- Llegadas -->
+                <div class="col-span-12 flex flex-col xl:col-span-6">
+                    <div
+                        class="box box--stacked flex flex-1 flex-col overflow-hidden"
+                    >
+                        <div :class="cardHeader">
+                            <div :class="[sectionIcon, toneTint.success]">
+                                <Lucide icon="LogIn" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0 flex-1 basis-48">
+                                <div class="text-sm font-medium">
+                                    Llegadas de hoy
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    {{
+                                        today.arrivals
+                                            ? `${plural(today.arrivals, 'reserva', 'reservas')} · ${today.arrivals_pending} por registrar`
+                                            : 'Reservas que llegan hoy'
+                                    }}
+                                </div>
+                            </div>
+                            <Link
+                                v-if="can('reservations.view')"
+                                :href="route('tenant.reservations.operation')"
+                                :class="headerAction"
+                            >
+                                Operación del día
+                                <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
+                            </Link>
+                        </div>
+                        <div
+                            v-if="arrivals.length"
+                            class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                        >
+                            <Link
+                                v-for="a in arrivals"
+                                :key="a.id"
+                                :href="arrivalHref(a)"
+                                :class="rowLink"
+                            >
+                                <div
+                                    :class="[
+                                        sectionIcon,
+                                        a.checked_in
+                                            ? toneTint.success
+                                            : a.pending
+                                              ? toneTint.warning
+                                              : toneTint.info,
+                                        'text-[11px] font-medium',
+                                    ]"
+                                >
+                                    <template v-if="a.room">{{
+                                        a.room
+                                    }}</template>
+                                    <Lucide
+                                        v-else
+                                        icon="BedDouble"
+                                        class="h-4 w-4"
+                                    />
+                                </div>
+                                <div class="min-w-0 flex-1">
+                                    <div class="truncate text-sm font-medium">
                                         {{ a.guest_name }}
                                     </div>
                                     <div
-                                        class="mt-0.5 text-xs whitespace-nowrap text-slate-500"
+                                        class="truncate text-xs text-slate-500"
                                     >
-                                        {{ a.code }}
+                                        {{ a.code }} ·
+                                        {{
+                                            a.room
+                                                ? `Hab. ${a.room}`
+                                                : 'Sin habitación asignada'
+                                        }}
+                                        <template v-if="a.people">
+                                            ·
+                                            {{
+                                                plural(
+                                                    a.people,
+                                                    'persona',
+                                                    'personas',
+                                                )
+                                            }}</template
+                                        >
                                     </div>
-                                </Table.Td>
-                                <Table.Td
-                                    :class="cellClass"
-                                    class="text-xs text-slate-500"
+                                </div>
+                                <div
+                                    class="flex shrink-0 flex-col items-end gap-1"
                                 >
                                     <span
-                                        v-if="a.room"
-                                        class="inline-flex items-center gap-1 whitespace-nowrap"
-                                        ><Lucide
-                                            icon="BedDouble"
+                                        class="inline-flex items-center gap-1 text-xs text-slate-500"
+                                    >
+                                        <Lucide
+                                            icon="Clock"
                                             class="h-3.5 w-3.5"
                                         />
-                                        {{ a.room }}</span
-                                    >
+                                        {{ a.eta || a.time }}
+                                    </span>
                                     <span
-                                        v-else
-                                        class="whitespace-nowrap text-slate-400"
-                                        >Sin asignar</span
+                                        class="rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
+                                        :class="
+                                            a.checked_in
+                                                ? 'bg-success/10 text-success'
+                                                : a.pending
+                                                  ? 'bg-warning/10 text-warning'
+                                                  : 'bg-info/10 text-info'
+                                        "
                                     >
-                                </Table.Td>
-                                <Table.Td
-                                    :class="cellClass"
-                                    class="text-xs whitespace-nowrap text-slate-500"
-                                    ><Lucide
-                                        icon="Clock"
-                                        class="mr-1 inline h-3.5 w-3.5"
-                                    />{{ a.eta || a.time }}</Table.Td
-                                >
-                                <Table.Td :class="cellClass" class="text-right">
-                                    <span
-                                        v-if="a.checked_in"
-                                        class="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-success"
-                                        >En casa</span
-                                    >
-                                    <span
-                                        v-else
-                                        class="rounded-full bg-info/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-info"
-                                        >Por registrar</span
-                                    >
-                                </Table.Td>
-                            </Table.Tr>
-                        </Table.Tbody>
-                    </Table>
-                    <div
-                        v-else
-                        class="box box--stacked flex flex-col items-center justify-center gap-3 py-8 text-center"
-                    >
-                        <div
-                            class="flex h-10 w-10 items-center justify-center rounded-full border border-success/10 bg-success/10"
-                        >
-                            <Lucide
-                                icon="CalendarCheck"
-                                class="h-5 w-5 text-success"
-                            />
+                                        {{
+                                            a.checked_in
+                                                ? 'En casa'
+                                                : a.pending
+                                                  ? 'Por confirmar'
+                                                  : 'Por registrar'
+                                        }}
+                                    </span>
+                                </div>
+                                <Lucide
+                                    icon="ChevronRight"
+                                    class="hidden h-4 w-4 shrink-0 text-slate-300 sm:block"
+                                />
+                            </Link>
                         </div>
-                        <p class="text-xs text-slate-500">
-                            Sin llegadas programadas para hoy.
-                        </p>
+                        <div
+                            v-else
+                            class="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center"
+                        >
+                            <div :class="[sectionIcon, toneTint.success]">
+                                <Lucide icon="CalendarCheck" class="h-4 w-4" />
+                            </div>
+                            <p class="text-xs text-slate-500">
+                                Sin llegadas programadas para hoy.
+                            </p>
+                        </div>
+                        <div
+                            v-if="today.arrivals > arrivals.length"
+                            class="mt-auto border-t border-slate-200/60 px-4 py-2.5 text-xs text-slate-500 dark:border-darkmode-400"
+                        >
+                            Mostrando {{ arrivals.length }} de
+                            {{ today.arrivals }}.
+                            <Link
+                                :href="route('tenant.reservations.operation')"
+                                class="font-medium text-primary hover:underline"
+                                >Ver todas</Link
+                            >
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Salidas -->
+                <div class="col-span-12 flex flex-col xl:col-span-6">
+                    <div
+                        class="box box--stacked flex flex-1 flex-col overflow-hidden"
+                    >
+                        <div :class="cardHeader">
+                            <div :class="[sectionIcon, toneTint.pending]">
+                                <Lucide icon="LogOut" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0 flex-1 basis-48">
+                                <div class="text-sm font-medium">
+                                    Salidas de hoy
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    {{
+                                        today.departures
+                                            ? `${plural(today.departures, 'estancia', 'estancias')} · ${departuresWithBalance} con saldo`
+                                            : 'Estancias que terminan hoy'
+                                    }}
+                                </div>
+                            </div>
+                            <Link
+                                v-if="can('reservations.view')"
+                                :href="route('tenant.reservations.in-house')"
+                                :class="headerAction"
+                            >
+                                Huéspedes en casa
+                                <Lucide icon="ArrowRight" class="h-3.5 w-3.5" />
+                            </Link>
+                        </div>
+                        <div
+                            v-if="departures.length"
+                            class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                        >
+                            <Link
+                                v-for="d in departures"
+                                :key="d.id"
+                                :href="departureHref(d)"
+                                :class="rowLink"
+                            >
+                                <div
+                                    :class="[
+                                        sectionIcon,
+                                        d.overdue
+                                            ? toneTint.danger
+                                            : toneTint.pending,
+                                        'text-[11px] font-medium',
+                                    ]"
+                                >
+                                    <template v-if="d.room">{{
+                                        d.room
+                                    }}</template>
+                                    <Lucide
+                                        v-else
+                                        icon="DoorOpen"
+                                        class="h-4 w-4"
+                                    />
+                                </div>
+                                <div class="min-w-0 flex-1">
+                                    <div class="truncate text-sm font-medium">
+                                        {{ d.guest_name }}
+                                    </div>
+                                    <div
+                                        class="truncate text-xs text-slate-500"
+                                    >
+                                        {{ d.code ?? 'Sin reserva' }} ·
+                                        {{
+                                            d.room
+                                                ? `Hab. ${d.room}`
+                                                : 'Sin habitación'
+                                        }}
+                                    </div>
+                                </div>
+                                <div
+                                    class="flex shrink-0 flex-col items-end gap-1"
+                                >
+                                    <span
+                                        class="inline-flex items-center gap-1 text-xs"
+                                        :class="
+                                            d.overdue
+                                                ? 'font-medium text-danger'
+                                                : 'text-slate-500'
+                                        "
+                                        :title="
+                                            d.overdue
+                                                ? 'Ya pasó su hora de salida'
+                                                : 'Hora de salida'
+                                        "
+                                    >
+                                        <Lucide
+                                            :icon="
+                                                d.overdue
+                                                    ? 'ClockAlert'
+                                                    : 'Clock'
+                                            "
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        {{ d.time }}
+                                    </span>
+                                    <span
+                                        class="rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
+                                        :class="
+                                            d.balance > 0
+                                                ? 'bg-danger/10 text-danger'
+                                                : 'bg-success/10 text-success'
+                                        "
+                                    >
+                                        {{
+                                            d.balance > 0
+                                                ? `Debe ${money(d.balance)}`
+                                                : 'Pagada'
+                                        }}
+                                    </span>
+                                </div>
+                                <Lucide
+                                    icon="ChevronRight"
+                                    class="hidden h-4 w-4 shrink-0 text-slate-300 sm:block"
+                                />
+                            </Link>
+                        </div>
+                        <div
+                            v-else
+                            class="flex flex-1 flex-col items-center justify-center gap-2 px-4 py-8 text-center"
+                        >
+                            <div :class="[sectionIcon, toneTint.pending]">
+                                <Lucide icon="DoorOpen" class="h-4 w-4" />
+                            </div>
+                            <p class="text-xs text-slate-500">
+                                Sin salidas programadas para hoy.
+                            </p>
+                        </div>
+                        <div
+                            v-if="today.departures > departures.length"
+                            class="mt-auto border-t border-slate-200/60 px-4 py-2.5 text-xs text-slate-500 dark:border-darkmode-400"
+                        >
+                            Mostrando {{ departures.length }} de
+                            {{ today.departures }}.
+                            <Link
+                                v-if="can('reservations.view')"
+                                :href="route('tenant.reservations.in-house')"
+                                class="font-medium text-primary hover:underline"
+                                >Ver todas</Link
+                            >
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <div class="col-span-12 xl:col-span-6">
-                <div class="flex items-center md:h-9">
-                    <div class="flex items-center text-sm font-medium">
-                        <div
-                            class="mr-2 flex h-6 w-6 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
-                        >
-                            <Lucide
-                                icon="LogOut"
-                                class="h-3.5 w-3.5 stroke-[1.5] text-pending"
-                            />
+            <!-- ===================== Análisis del periodo ===================== -->
+            <div class="mt-4 grid grid-cols-12 items-stretch gap-5">
+                <!-- Por dónde llegaron -->
+                <div
+                    class="col-span-12 flex flex-col md:col-span-6 xl:col-span-4"
+                >
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div :class="[sectionIcon, toneTint.info]">
+                                <Lucide icon="Signpost" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0 flex-1 basis-48">
+                                <div class="text-sm font-medium">
+                                    Por dónde llegaron
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    Reservas y entradas sin reserva ·
+                                    {{ hero.period }}
+                                </div>
+                            </div>
                         </div>
-                        Salidas de hoy
-                        <span
-                            v-if="departures.length"
-                            class="ml-2 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500 dark:bg-darkmode-400"
-                            >{{ departures.length }}</span
+                        <div
+                            class="flex flex-1 flex-col justify-center px-4 py-4"
                         >
-                    </div>
-                    <Link
-                        :href="route('tenant.pos')"
-                        class="ml-auto text-xs font-medium text-primary"
-                        >Ir a cobrar</Link
-                    >
-                </div>
-                <div class="mt-2 overflow-auto lg:overflow-visible">
-                    <Table
-                        v-if="departures.length"
-                        class="border-separate border-spacing-y-[8px]"
-                    >
-                        <Table.Tbody>
-                            <Table.Tr v-for="d in departures" :key="d.id">
-                                <Table.Td :class="cellClass">
-                                    <div
-                                        class="text-sm font-medium whitespace-nowrap"
-                                    >
-                                        {{ d.guest_name }}
-                                    </div>
-                                    <div
-                                        class="mt-0.5 text-xs whitespace-nowrap text-slate-500"
-                                    >
-                                        {{ d.code }}
-                                    </div>
-                                </Table.Td>
-                                <Table.Td
-                                    :class="cellClass"
-                                    class="text-xs text-slate-500"
+                            <template v-if="channels.length">
+                                <div
+                                    class="relative mx-auto w-full max-w-[160px]"
                                 >
-                                    <span
-                                        v-if="d.room"
-                                        class="inline-flex items-center gap-1 whitespace-nowrap"
-                                        ><Lucide
-                                            icon="BedDouble"
-                                            class="h-3.5 w-3.5"
+                                    <div class="h-[150px]">
+                                        <Chart
+                                            type="doughnut"
+                                            :data="channelsDonut"
+                                            :options="donutOptions"
+                                            class="!h-[150px]"
                                         />
-                                        {{ d.room }}</span
+                                    </div>
+                                    <div
+                                        class="pointer-events-none absolute inset-0 flex items-center justify-center"
                                     >
-                                    <span v-else class="text-slate-400">—</span>
-                                </Table.Td>
-                                <Table.Td
-                                    :class="cellClass"
-                                    class="text-xs whitespace-nowrap text-slate-500"
-                                    ><Lucide
-                                        icon="Clock"
-                                        class="mr-1 inline h-3.5 w-3.5"
-                                    />{{ d.time }}</Table.Td
-                                >
-                                <Table.Td :class="cellClass" class="text-right">
-                                    <span
-                                        v-if="d.balance > 0"
-                                        class="rounded-full bg-danger/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-danger"
-                                        >Saldo {{ money(d.balance) }}</span
+                                        <div class="text-center">
+                                            <div class="text-base font-medium">
+                                                {{ channelsTotal }}
+                                            </div>
+                                            <div
+                                                class="text-[11px] text-slate-500"
+                                            >
+                                                {{
+                                                    channelsTotal === 1
+                                                        ? 'entrada'
+                                                        : 'entradas'
+                                                }}
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mt-4 space-y-2">
+                                    <div
+                                        v-for="(c, i) in channels"
+                                        :key="c.channel"
+                                        class="flex items-center text-xs"
                                     >
-                                    <span
-                                        v-else
-                                        class="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium whitespace-nowrap text-success"
-                                        >Pagada</span
-                                    >
-                                </Table.Td>
-                            </Table.Tr>
-                        </Table.Tbody>
-                    </Table>
-                    <div
-                        v-else
-                        class="box box--stacked flex flex-col items-center justify-center gap-3 py-8 text-center"
-                    >
+                                        <span
+                                            class="mr-2 h-2 w-2 shrink-0 rounded-full"
+                                            :style="{
+                                                backgroundColor: channelColor(
+                                                    c.channel,
+                                                    i,
+                                                ),
+                                            }"
+                                        />
+                                        <span
+                                            class="truncate text-slate-600 dark:text-slate-300"
+                                            >{{ c.label }}</span
+                                        >
+                                        <span
+                                            class="ml-auto pl-2 font-medium"
+                                            >{{ c.count }}</span
+                                        >
+                                        <span
+                                            class="ml-2 w-9 text-right text-[11px] text-slate-400"
+                                        >
+                                            {{
+                                                Math.round(
+                                                    (c.count / channelsTotal) *
+                                                        100,
+                                                )
+                                            }}%
+                                        </span>
+                                    </div>
+                                </div>
+                            </template>
+                            <div
+                                v-else
+                                class="flex flex-1 flex-col items-center justify-center gap-1.5 py-8 text-center"
+                            >
+                                <Lucide
+                                    icon="Signpost"
+                                    class="h-5 w-5 text-slate-300"
+                                />
+                                <span class="text-xs text-slate-400">
+                                    Sin reservas ni entradas en el periodo
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Cómo se cobró -->
+                <div
+                    class="col-span-12 flex flex-col md:col-span-6 xl:col-span-4"
+                >
+                    <div class="box box--stacked flex flex-1 flex-col">
+                        <div :class="cardHeader">
+                            <div :class="[sectionIcon, toneTint.success]">
+                                <Lucide icon="Wallet" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0 flex-1 basis-48">
+                                <div class="text-sm font-medium">
+                                    Cómo se cobró
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    Abonos por método · {{ hero.period }}
+                                </div>
+                            </div>
+                        </div>
                         <div
-                            class="flex h-10 w-10 items-center justify-center rounded-full border border-pending/10 bg-pending/10"
+                            class="flex flex-1 flex-col justify-center px-4 py-4"
+                        >
+                            <template v-if="byMethod.length">
+                                <div class="flex items-baseline gap-1.5">
+                                    <span class="text-sm font-medium">{{
+                                        money(methodsTotal)
+                                    }}</span>
+                                    <span class="text-xs text-slate-500"
+                                        >en
+                                        {{
+                                            plural(
+                                                byMethod.reduce(
+                                                    (s, m) => s + m.count,
+                                                    0,
+                                                ),
+                                                'abono',
+                                                'abonos',
+                                            )
+                                        }}</span
+                                    >
+                                </div>
+                                <div class="mt-4 space-y-3.5">
+                                    <div v-for="m in byMethod" :key="m.method">
+                                        <div class="flex items-center text-xs">
+                                            <span
+                                                class="text-slate-600 dark:text-slate-300"
+                                                >{{ m.label }}</span
+                                            >
+                                            <span
+                                                class="ml-1.5 text-[11px] text-slate-400"
+                                                >{{ m.count }}</span
+                                            >
+                                            <span class="ml-auto font-medium">{{
+                                                money(m.amount)
+                                            }}</span>
+                                            <span
+                                                class="ml-2 w-9 text-right text-[11px] text-slate-400"
+                                            >
+                                                {{
+                                                    methodsTotal
+                                                        ? Math.round(
+                                                              (m.amount /
+                                                                  methodsTotal) *
+                                                                  100,
+                                                          )
+                                                        : 0
+                                                }}%
+                                            </span>
+                                        </div>
+                                        <div
+                                            class="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-slate-100 dark:bg-darkmode-400"
+                                        >
+                                            <div
+                                                class="h-full rounded-full"
+                                                :style="{
+                                                    width: `${methodsMax ? Math.max(2, (m.amount / methodsMax) * 100) : 0}%`,
+                                                    backgroundColor:
+                                                        methodHex[m.method] ??
+                                                        '#94a3b8',
+                                                }"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                                <p class="mt-4 text-[11px] text-slate-400">
+                                    Las ventas de mostrador del POS no son
+                                    abonos y no entran aquí; la fianza tampoco.
+                                </p>
+                            </template>
+                            <div
+                                v-else
+                                class="flex flex-1 flex-col items-center justify-center gap-1.5 py-8 text-center"
+                            >
+                                <Lucide
+                                    icon="Receipt"
+                                    class="h-5 w-5 text-slate-300"
+                                />
+                                <span class="text-xs text-slate-400">
+                                    Sin abonos registrados en el periodo
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Actividad reciente -->
+                <div class="col-span-12 flex flex-col xl:col-span-4">
+                    <div
+                        class="box box--stacked flex flex-1 flex-col overflow-hidden"
+                    >
+                        <div :class="cardHeader">
+                            <div :class="[sectionIcon, toneTint.primary]">
+                                <Lucide icon="History" class="h-4 w-4" />
+                            </div>
+                            <div class="min-w-0 flex-1 basis-48">
+                                <div class="text-sm font-medium">
+                                    Actividad reciente
+                                </div>
+                                <div class="text-xs text-slate-500">
+                                    Últimos cambios del semáforo
+                                </div>
+                            </div>
+                        </div>
+                        <div
+                            v-if="recentActivity.length"
+                            class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                        >
+                            <component
+                                :is="
+                                    log.room_id && can('rooms.view')
+                                        ? Link
+                                        : 'div'
+                                "
+                                v-for="log in recentActivity"
+                                :key="log.id"
+                                :href="
+                                    log.room_id && can('rooms.view')
+                                        ? route(
+                                              'tenant.rooms.show',
+                                              log.room_id,
+                                          )
+                                        : undefined
+                                "
+                                :class="rowLink"
+                            >
+                                <div
+                                    :class="[
+                                        sectionIcon,
+                                        statusTint[
+                                            colorToStatus[log.to_color]
+                                        ] ?? toneTint.primary,
+                                    ]"
+                                >
+                                    <Lucide
+                                        :icon="
+                                            statusIcon[
+                                                colorToStatus[log.to_color]
+                                            ] ?? 'Activity'
+                                        "
+                                        class="h-4 w-4"
+                                    />
+                                </div>
+                                <div class="min-w-0 flex-1">
+                                    <div class="truncate text-sm font-medium">
+                                        {{
+                                            log.room
+                                                ? `Hab. ${log.room}`
+                                                : 'Habitación eliminada'
+                                        }}
+                                    </div>
+                                    <div
+                                        class="truncate text-xs text-slate-500"
+                                        :title="`${log.from ?? 'Sin estado'} → ${log.to} · ${log.by}`"
+                                    >
+                                        {{ log.from ?? 'Sin estado' }} →
+                                        {{ log.to }} · {{ log.by }}
+                                    </div>
+                                </div>
+                                <span
+                                    class="shrink-0 text-[11px] whitespace-nowrap text-slate-400"
+                                    :title="log.at_full"
+                                    >{{ log.at }}</span
+                                >
+                            </component>
+                        </div>
+                        <div
+                            v-else
+                            class="flex flex-1 flex-col items-center justify-center gap-1.5 py-8 text-center"
                         >
                             <Lucide
-                                icon="DoorOpen"
-                                class="h-5 w-5 text-pending"
+                                icon="History"
+                                class="h-5 w-5 text-slate-300"
                             />
+                            <span class="text-xs text-slate-400">
+                                Sin movimientos todavía
+                            </span>
                         </div>
-                        <p class="text-xs text-slate-500">
-                            Sin salidas programadas para hoy.
-                        </p>
                     </div>
                 </div>
             </div>
         </div>
+
+        <!-- ===================== Modal: todos los indicadores ===================== -->
+        <Dialog :open="metricsOpen" size="lg" @close="metricsOpen = false">
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[720px]">
+                <div class="flex max-h-[calc(100dvh-6rem)] flex-col">
+                    <div
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="ListChecks" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                Indicadores de {{ hero.period }}
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                El porcentaje compara contra el mismo avance del
+                                periodo anterior.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            title="Cerrar"
+                            @click="metricsOpen = false"
+                        >
+                            <Lucide icon="X" class="h-4 w-4" />
+                        </button>
+                    </div>
+                    <div class="min-h-0 flex-1 overflow-y-auto">
+                        <div
+                            class="grid grid-cols-1 divide-y divide-slate-200/60 sm:grid-cols-2 sm:divide-y-0 dark:divide-darkmode-400"
+                        >
+                            <div
+                                v-for="m in metricList"
+                                :key="m.key"
+                                class="flex items-start gap-3 border-slate-200/60 px-5 py-3 sm:border-b sm:odd:border-r dark:border-darkmode-400"
+                            >
+                                <div class="min-w-0 flex-1">
+                                    <div class="text-xs font-medium">
+                                        {{ m.title }}
+                                    </div>
+                                    <div
+                                        class="mt-0.5 text-[11px] leading-snug text-slate-500"
+                                    >
+                                        {{ m.desc }}
+                                    </div>
+                                </div>
+                                <div
+                                    class="flex shrink-0 flex-col items-end gap-1"
+                                >
+                                    <span class="text-sm font-medium">{{
+                                        m.value
+                                    }}</span>
+                                    <span
+                                        class="inline-flex items-center gap-0.5 rounded-full px-1.5 py-px text-[11px] font-medium"
+                                        :class="changeClass(m.change)"
+                                    >
+                                        <template v-if="m.change !== null">
+                                            <Lucide
+                                                :icon="changeIcon(m.change)"
+                                                class="h-3 w-3"
+                                            />
+                                            {{ Math.abs(m.change) }}%
+                                        </template>
+                                        <template v-else>Sin comparar</template>
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
+                    >
+                        <Button
+                            variant="outline-secondary"
+                            class="h-9 px-5 text-xs"
+                            @click="metricsOpen = false"
+                            >Cerrar</Button
+                        >
+                    </div>
+                </div>
+            </Dialog.Panel>
+        </Dialog>
+
+        <!-- ===================== Modal: periodo personalizado ===================== -->
+        <Dialog :open="customOpen" @close="closeCustom">
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[480px]">
+                <form
+                    class="flex max-h-[calc(100dvh-6rem)] flex-col"
+                    @submit.prevent="applyCustom"
+                >
+                    <div
+                        class="flex items-center gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    >
+                        <div
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
+                        >
+                            <Lucide icon="CalendarRange" class="h-4 w-4" />
+                        </div>
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
+                                Periodo personalizado
+                            </h2>
+                            <p class="text-xs text-slate-500">
+                                Hasta {{ MAX_CUSTOM_DAYS }} días por consulta.
+                            </p>
+                        </div>
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                            title="Cerrar"
+                            @click="closeCustom"
+                        >
+                            <Lucide icon="X" class="h-4 w-4" />
+                        </button>
+                    </div>
+                    <div
+                        class="grid min-h-0 flex-1 grid-cols-1 gap-4 overflow-y-auto px-5 py-4 sm:grid-cols-2"
+                    >
+                        <div>
+                            <label
+                                for="range-from"
+                                class="mb-1.5 block text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                                >Desde</label
+                            >
+                            <FormDate
+                                id="range-from"
+                                v-model="customFrom"
+                                input-class="h-9 text-xs"
+                                :max="customTo || null"
+                            />
+                        </div>
+                        <div>
+                            <label
+                                for="range-to"
+                                class="mb-1.5 block text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                                >Hasta</label
+                            >
+                            <FormDate
+                                id="range-to"
+                                v-model="customTo"
+                                input-class="h-9 text-xs"
+                                :min="customFrom || null"
+                                :max="maxCustomTo"
+                            />
+                        </div>
+                    </div>
+                    <div
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
+                    >
+                        <Button
+                            type="button"
+                            variant="outline-secondary"
+                            class="h-9 px-5 text-xs"
+                            @click="closeCustom"
+                            >Cancelar</Button
+                        >
+                        <Button
+                            type="submit"
+                            variant="primary"
+                            class="h-9 px-5 text-xs"
+                            :disabled="!customFrom || !customTo"
+                            >Ver periodo</Button
+                        >
+                    </div>
+                </form>
+            </Dialog.Panel>
+        </Dialog>
     </RazeLayout>
 </template>

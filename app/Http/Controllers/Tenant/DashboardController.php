@@ -42,6 +42,9 @@ class DashboardController extends Controller
 {
     private const MAX_CUSTOM_DAYS = 92;
 
+    /** Tope de renglones de llegadas y salidas: el resto vive en su lista. */
+    private const LIST_LIMIT = 8;
+
     public function __invoke(Request $request): Response
     {
         $data = $request->validate([
@@ -174,18 +177,18 @@ class DashboardController extends Controller
 
         // --- Rejilla de métricas del periodo ---
         $metrics = [
-            ['title' => 'Ingresos', 'value' => $this->money($revenue['total']), 'change' => $pct($revenue['total'], $revenuePrev['total']), 'desc' => 'Hospedaje cobrado más ventas de POS en el periodo.'],
-            ['title' => 'Hospedaje cobrado', 'value' => $this->money($revenue['lodging']), 'change' => $pct($revenue['lodging'], $revenuePrev['lodging']), 'desc' => 'Pagos de reservas y estancias; las fianzas no cuentan.'],
-            ['title' => 'Consumo y POS', 'value' => $this->money($revenue['pos']), 'change' => $pct($revenue['pos'], $revenuePrev['pos']), 'desc' => 'Ventas de barra/cocina y consumos liquidados en folio.'],
-            ['title' => 'Ocupación promedio', 'value' => $occupancyAvg.'%', 'change' => $pct($occupancyAvg, $occupancyAvgPrev), 'desc' => 'Promedio diario de habitaciones ocupadas: estancias registradas más reservas vendidas sin check-in.'],
-            ['title' => 'Noches vendidas', 'value' => (string) $roomNights, 'change' => $pct($roomNights, $roomNightsPrev), 'desc' => 'Noches-habitación vendidas en el periodo, se haya registrado la llegada o no.'],
-            ['title' => 'Reservas nuevas', 'value' => (string) $counts['created'], 'change' => $pct($counts['created'], $countsPrev['created']), 'desc' => 'Reservas capturadas en el periodo, por cualquier canal.'],
-            ['title' => 'Llegadas', 'value' => (string) $counts['arrivals'], 'change' => $pct($counts['arrivals'], $countsPrev['arrivals']), 'desc' => 'Reservas con llegada dentro del periodo.'],
-            ['title' => 'Check-ins', 'value' => (string) $counts['check_ins'], 'change' => $pct($counts['check_ins'], $countsPrev['check_ins']), 'desc' => 'Huéspedes registrados en el periodo.'],
-            ['title' => 'Check-outs', 'value' => (string) $counts['check_outs'], 'change' => $pct($counts['check_outs'], $countsPrev['check_outs']), 'desc' => 'Salidas procesadas en el periodo.'],
-            ['title' => 'Canceladas', 'value' => (string) $counts['cancelled'], 'change' => $pct($counts['cancelled'], $countsPrev['cancelled']), 'desc' => 'Reservas canceladas con llegada en el periodo.'],
-            ['title' => 'Ticket promedio POS', 'value' => $this->money($counts['avg_order']), 'change' => $pct($counts['avg_order'], $countsPrev['avg_order']), 'desc' => 'Importe medio por orden de POS del periodo.'],
-            ['title' => 'Huéspedes nuevos', 'value' => (string) $counts['guests'], 'change' => $pct($counts['guests'], $countsPrev['guests']), 'desc' => 'Huéspedes dados de alta en el periodo.'],
+            ['key' => 'revenue', 'title' => 'Ingresos', 'value' => $this->money($revenue['total']), 'change' => $pct($revenue['total'], $revenuePrev['total']), 'desc' => 'Hospedaje cobrado más ventas de POS en el periodo.'],
+            ['key' => 'lodging', 'title' => 'Hospedaje cobrado', 'value' => $this->money($revenue['lodging']), 'change' => $pct($revenue['lodging'], $revenuePrev['lodging']), 'desc' => 'Pagos de reservas y estancias; las fianzas no cuentan.'],
+            ['key' => 'pos', 'title' => 'Consumo y POS', 'value' => $this->money($revenue['pos']), 'change' => $pct($revenue['pos'], $revenuePrev['pos']), 'desc' => 'Ventas de barra/cocina y consumos liquidados en folio.'],
+            ['key' => 'occupancy', 'title' => 'Ocupación promedio', 'value' => $occupancyAvg.'%', 'change' => $pct($occupancyAvg, $occupancyAvgPrev), 'desc' => 'Promedio diario de habitaciones ocupadas: estancias registradas más reservas vendidas sin check-in.'],
+            ['key' => 'nights', 'title' => 'Noches vendidas', 'value' => (string) $roomNights, 'change' => $pct($roomNights, $roomNightsPrev), 'desc' => 'Noches-habitación vendidas en el periodo, se haya registrado la llegada o no.'],
+            ['key' => 'created', 'title' => 'Reservas nuevas', 'value' => (string) $counts['created'], 'change' => $pct($counts['created'], $countsPrev['created']), 'desc' => 'Reservas capturadas en el periodo, por cualquier canal.'],
+            ['key' => 'arrivals', 'title' => 'Llegadas', 'value' => (string) $counts['arrivals'], 'change' => $pct($counts['arrivals'], $countsPrev['arrivals']), 'desc' => 'Reservas con llegada dentro del periodo.'],
+            ['key' => 'check_ins', 'title' => 'Check-ins', 'value' => (string) $counts['check_ins'], 'change' => $pct($counts['check_ins'], $countsPrev['check_ins']), 'desc' => 'Huéspedes registrados en el periodo.'],
+            ['key' => 'check_outs', 'title' => 'Check-outs', 'value' => (string) $counts['check_outs'], 'change' => $pct($counts['check_outs'], $countsPrev['check_outs']), 'desc' => 'Salidas procesadas en el periodo.'],
+            ['key' => 'cancelled', 'title' => 'Canceladas', 'value' => (string) $counts['cancelled'], 'change' => $pct($counts['cancelled'], $countsPrev['cancelled']), 'desc' => 'Reservas canceladas con llegada en el periodo.'],
+            ['key' => 'avg_order', 'title' => 'Ticket promedio POS', 'value' => $this->money($counts['avg_order']), 'change' => $pct($counts['avg_order'], $countsPrev['avg_order']), 'desc' => 'Importe medio por orden de POS del periodo.'],
+            ['key' => 'guests', 'title' => 'Huéspedes nuevos', 'value' => (string) $counts['guests'], 'change' => $pct($counts['guests'], $countsPrev['guests']), 'desc' => 'Huéspedes dados de alta en el periodo.'],
         ];
 
         // --- Movimiento del día (operación de HOY, no depende del filtro) ---
@@ -196,15 +199,29 @@ class DashboardController extends Controller
             ->orderBy('starts_at')
             ->get();
 
-        $departures = Reservation::query()
-            ->with(['room:id,number'])
-            ->whereDate('ends_at', $today)
-            ->where('status', ReservationStatus::CheckedIn)
-            ->orderBy('ends_at')
+        // Salidas: se leen de las ESTANCIAS abiertas, no de las reservas. En
+        // un motel casi todo entra por mostrador sin reserva (La Cúpula: 21
+        // de 28 estancias) y con reservas el tablero decía "nadie sale hoy"
+        // con la casa llena. Incluye las que ya se pasaron de su hora: son
+        // justo las que hay que ir a tocar.
+        $departuresQuery = Stay::query()
+            ->active()
+            ->whereNotNull('planned_end_at')
+            ->where('planned_end_at', '<=', $today->endOfDay());
+
+        $departuresTotal = (clone $departuresQuery)->count();
+        $overdueStays = (clone $departuresQuery)->where('planned_end_at', '<', $now)->count();
+
+        $departures = $departuresQuery
+            ->with(['room:id,number', 'reservation'])
+            ->orderBy('planned_end_at')
+            ->take(self::LIST_LIMIT)
             ->get();
 
-        $inHouse = Reservation::query()->where('status', ReservationStatus::CheckedIn)->count();
+        // En casa = estancias abiertas (con o sin reserva).
+        $inHouse = Stay::query()->active()->count();
         $pendingReservations = Reservation::query()->where('status', ReservationStatus::Pending)->count();
+        $arrivalsTotal = $arrivals->count();
         $checkOutsToday = Stay::query()->whereDate('check_out_at', $today)->count();
 
         $roomTypeDistribution = RoomType::query()
@@ -220,11 +237,12 @@ class DashboardController extends Controller
         $recentActivity = RoomStatusLog::query()
             ->with(['room:id,number', 'changedBy:id,name'])
             ->latest('created_at')
-            ->take(6)
+            ->take(5)
             ->get()
             ->map(fn (RoomStatusLog $log) => [
                 'id' => $log->id,
                 'room' => $log->room?->number,
+                'room_id' => $log->room_id,
                 'from' => $log->from_status ? RoomStatus::tryFrom($log->from_status)?->label() : null,
                 'to' => RoomStatus::tryFrom($log->to_status)?->label() ?? $log->to_status,
                 'to_color' => RoomStatus::tryFrom($log->to_status)?->color() ?? 'gray',
@@ -283,7 +301,7 @@ class DashboardController extends Controller
             'maintenance' => $this->maintenance(),
             'statuses' => $statuses,
             'occupancy' => ['occupied' => $occupied, 'total' => $totalRooms, 'percent' => $occupancyPct, 'reserved' => $reserved, 'available' => $available],
-            'arrivals' => $arrivals->map(fn (Reservation $r) => [
+            'arrivals' => $arrivals->take(self::LIST_LIMIT)->map(fn (Reservation $r) => [
                 'id' => $r->id,
                 'code' => $r->displayCode(),
                 'guest_name' => $r->guest_name,
@@ -292,15 +310,30 @@ class DashboardController extends Controller
                 'time' => $r->starts_at->format('H:i'),
                 'people' => $r->num_people,
                 'checked_in' => $r->status === ReservationStatus::CheckedIn,
+                'pending' => $r->status === ReservationStatus::Pending,
+            ])->values(),
+            'departures' => $departures->map(fn (Stay $s) => [
+                'id' => $s->id,
+                'reservation_id' => $s->reservation_id,
+                'room_id' => $s->room_id,
+                'code' => $s->reservation?->displayCode(),
+                'guest_name' => $s->guest_name ?: ($s->reservation?->guest_name ?? 'Sin nombre'),
+                'room' => $s->room?->number,
+                'time' => $s->planned_end_at->format('H:i'),
+                'overdue' => $s->planned_end_at < $now,
+                'balance' => $s->folio()['grand_pending'],
             ]),
-            'departures' => $departures->map(fn (Reservation $r) => [
-                'id' => $r->id,
-                'code' => $r->displayCode(),
-                'guest_name' => $r->guest_name,
-                'room' => $r->room?->number,
-                'time' => $r->ends_at->format('H:i'),
-                'balance' => $r->pendingBalance(),
-            ]),
+            'today' => [
+                'arrivals' => $arrivalsTotal,
+                'arrivals_pending' => $arrivals->filter(fn (Reservation $r) => $r->status !== ReservationStatus::CheckedIn)->count(),
+                'departures' => $departuresTotal,
+                'overdue' => $overdueStays,
+                // Cuentas por cerrar: estancias cerradas a las que les quedó
+                // dinero sin registrar (/reservas/cuentas).
+                'settlements' => Stay::query()->pendingSettlement()->count(),
+            ],
+            'channels' => $this->channelMix($start, $elapsedEnd),
+            'byMethod' => $revenue['by_method'],
             'totals' => [
                 'rooms' => $totalRooms,
                 'zones' => Zone::count(),
@@ -378,7 +411,7 @@ class DashboardController extends Controller
      * misma que usan los cortes, los reportes y el centro de pagos, para que
      * las tres pantallas nunca digan cifras distintas del mismo día.
      *
-     * @return array{lodging: float, pos: float, total: float}
+     * @return array{lodging: float, pos: float, total: float, by_method: array<int, array<string, mixed>>}
      */
     private function revenueBetween(CarbonImmutable $start, CarbonImmutable $end): array
     {
@@ -388,6 +421,7 @@ class DashboardController extends Controller
             'lodging' => $summary['lodging'],
             'pos' => $summary['pos'],
             'total' => $summary['collected'],
+            'by_method' => $summary['by_method'],
         ];
     }
 
@@ -422,16 +456,19 @@ class DashboardController extends Controller
      * Series diarias de ingresos y ocupación para los mini-charts, en dos
      * consultas (los días se arman en PHP).
      *
-     * @return array{0: array<int, array{label: string, value: float}>, 1: array<int, array{label: string, value: int}>}
+     * @return array{0: array<int, array{label: string, value: float, lodging: float, pos: float}>, 1: array<int, array{label: string, value: int}>}
      */
     private function buildSeries(CarbonImmutable $start, CarbonImmutable $end, callable $occupiedOn, int $totalRooms): array
     {
+        // Partido igual que CashLedger: el consumo liquidado en folio es
+        // POS, lo demás es hospedaje, y la fianza no es ingreso.
         $paymentsByDay = Payment::query()
             ->whereBetween('paid_at', [$start, $end])
             ->where(fn ($q) => $q->whereNull('kind')->orWhere('kind', '!=', Payment::KIND_GUARANTEE))
-            ->selectRaw('DATE(paid_at) AS day, SUM(amount) AS total')
+            ->selectRaw('DATE(paid_at) AS day, SUM(CASE WHEN kind = ? THEN 0 ELSE amount END) AS lodging, SUM(CASE WHEN kind = ? THEN amount ELSE 0 END) AS consumption', [Payment::KIND_CONSUMPTION, Payment::KIND_CONSUMPTION])
             ->groupBy('day')
-            ->pluck('total', 'day');
+            ->get()
+            ->keyBy('day');
 
         $ordersByDay = Order::query()
             ->where('status', Order::STATUS_COMPLETED)
@@ -451,9 +488,14 @@ class DashboardController extends Controller
                 ? ucfirst($day->locale('es')->isoFormat('dd'))
                 : $day->locale('es')->isoFormat('D MMM');
 
+            $lodging = (float) ($paymentsByDay[$key]->lodging ?? 0);
+            $pos = (float) ($paymentsByDay[$key]->consumption ?? 0) + (float) ($ordersByDay[$key] ?? 0);
+
             $revenueSeries[] = [
                 'label' => $label,
-                'value' => round((float) ($paymentsByDay[$key] ?? 0) + (float) ($ordersByDay[$key] ?? 0), 2),
+                'value' => round($lodging + $pos, 2),
+                'lodging' => round($lodging, 2),
+                'pos' => round($pos, 2),
             ];
             $occupancySeries[] = [
                 'label' => $label,
@@ -473,6 +515,50 @@ class DashboardController extends Controller
         }
 
         return $total;
+    }
+
+    /**
+     * Por dónde entró el trabajo del periodo: reservas capturadas por canal
+     * más las estancias de mostrador que nunca tuvieron reserva. Sin esas
+     * últimas un motel veía solo sus reservas web (3 de 28 entradas).
+     *
+     * @return array<int, array{channel: string, label: string, count: int}>
+     */
+    private function channelMix(CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $byChannel = Reservation::query()
+            ->whereBetween('created_at', [$start, $end])
+            ->selectRaw('source_channel, COUNT(*) AS total')
+            ->groupBy('source_channel')
+            ->pluck('total', 'source_channel')
+            ->map(fn ($total) => (int) $total)
+            ->all();
+
+        $walkIns = Stay::query()
+            ->whereNull('reservation_id')
+            ->whereBetween('check_in_at', [$start, $end])
+            ->count();
+
+        if ($walkIns > 0) {
+            $byChannel['walk_in'] = ($byChannel['walk_in'] ?? 0) + $walkIns;
+        }
+
+        // Mostrador tiene dos llaves históricas; se juntan en un renglón.
+        if (isset($byChannel['counter'])) {
+            $byChannel['front_desk'] = ($byChannel['front_desk'] ?? 0) + $byChannel['counter'];
+            unset($byChannel['counter']);
+        }
+
+        return collect($byChannel)
+            ->map(fn (int $count, string $channel) => [
+                'channel' => $channel,
+                'label' => Reservation::labelForChannel($channel),
+                'count' => $count,
+            ])
+            ->filter(fn (array $row) => $row['count'] > 0)
+            ->sortByDesc('count')
+            ->values()
+            ->all();
     }
 
     private function money(float $amount): string

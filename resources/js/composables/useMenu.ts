@@ -16,6 +16,10 @@ export interface MenuItem {
     // Permiso (spatie) que exige la ruta del item: sin él, el item se
     // esconde (panelTenant.permissions) — mismo gate que el middleware.
     permission?: string;
+    // Área de config/panel-areas.php: el propietario puede ocultarla a un
+    // rol desde /usuarios/roles (panelTenant.hidden_areas) aunque el rol
+    // tenga el permiso — mismo gate que EnsurePanelArea.
+    area?: string;
     // Modos de operación en los que existe el item (hotel | motel | both);
     // ausente = en todos. Es el espejo del middleware `mode:` de la ruta:
     // hay herramientas que no se compran, simplemente no aplican al negocio.
@@ -109,12 +113,14 @@ const tenantMenu: Array<MenuItem | string> = [
     {
         icon: 'Map',
         pageName: 'tenant.plano',
+        area: 'plano',
         title: 'Plano',
         permission: 'rooms.view',
     },
     {
         icon: 'MessagesSquare',
         pageName: 'tenant.inbox',
+        area: 'bandeja',
         title: 'Bandeja',
         permission: 'reservations.view',
         module: 'mensajeria',
@@ -122,6 +128,7 @@ const tenantMenu: Array<MenuItem | string> = [
     {
         icon: 'Share2',
         pageName: 'tenant.social',
+        area: 'redes',
         title: 'Redes sociales',
         permission: 'reservations.view',
         module: 'redes-sociales',
@@ -133,30 +140,35 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'CalendarDays',
                 pageName: 'tenant.reservations',
+                area: 'reservas',
                 title: 'Reservas',
                 permission: 'reservations.view',
             },
             {
                 icon: 'ClipboardList',
                 pageName: 'tenant.reservations.operation',
+                area: 'reservas',
                 title: 'Operación del día',
                 permission: 'reservations.view',
             },
             {
                 icon: 'AlarmClock',
                 pageName: 'tenant.reservations.pending',
+                area: 'reservas',
                 title: 'Pendientes',
                 permission: 'reservations.view',
             },
             {
                 icon: 'CalendarRange',
                 pageName: 'tenant.reservations.calendar',
+                area: 'reservas',
                 title: 'Calendario',
                 permission: 'reservations.view',
             },
             {
                 icon: 'UsersRound',
                 pageName: 'tenant.groups',
+                area: 'grupos',
                 title: 'Reservas grupales',
                 module: 'grupos',
                 permission: 'reservations.view',
@@ -164,6 +176,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Compass',
                 pageName: 'tenant.experiences',
+                area: 'experiencias',
                 title: 'Experiencias',
                 module: 'experiencias',
                 permission: 'reservations.view',
@@ -171,6 +184,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Gift',
                 pageName: 'tenant.extras',
+                area: 'extras',
                 title: 'Extras de reserva',
                 module: 'extras',
                 permission: 'properties.manage',
@@ -178,6 +192,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'BellRing',
                 pageName: 'tenant.waitlist',
+                area: 'lista-espera',
                 title: 'Lista de espera',
                 module: 'lista-espera',
                 permission: 'reservations.manage',
@@ -185,9 +200,18 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'TicketPercent',
                 pageName: 'tenant.coupons',
+                area: 'cupones',
                 title: 'Cupones',
                 module: 'cupones',
                 permission: 'properties.manage',
+            },
+            {
+                icon: 'HandHeart',
+                pageName: 'tenant.reservations.courtesies',
+                area: 'cortesias',
+                title: 'Cortesías',
+                module: 'cortesias',
+                permission: 'courtesies.request',
             },
         ],
     },
@@ -201,6 +225,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Users',
                 pageName: 'tenant.guests',
+                area: 'huespedes',
                 title: 'Huéspedes',
                 permission: 'guests.view',
             },
@@ -211,6 +236,7 @@ const tenantMenu: Array<MenuItem | string> = [
                 // modo "ambos" suma funcionalidad, nunca la resta.
                 icon: 'Car',
                 pageName: 'tenant.vehicles',
+                area: 'vehiculos',
                 title: 'Vehículos',
                 permission: 'guests.view',
                 mode: ['motel', 'both'],
@@ -218,12 +244,14 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'BedDouble',
                 pageName: 'tenant.rooms',
+                area: 'habitaciones',
                 title: 'Habitaciones',
                 permission: 'rooms.view',
             },
             {
                 icon: 'Brush',
                 pageName: 'tenant.housekeeping',
+                area: 'limpieza',
                 title: 'Limpieza',
                 module: 'limpieza',
                 permission: 'rooms.update-status',
@@ -231,6 +259,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Wrench',
                 pageName: 'tenant.incidents',
+                area: 'incidencias',
                 title: 'Incidencias',
                 module: 'incidencias',
                 permission: 'rooms.view',
@@ -238,6 +267,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Smile',
                 pageName: 'tenant.surveys',
+                area: 'encuestas',
                 title: 'Encuestas',
                 module: 'encuestas',
                 permission: 'reports.view',
@@ -245,6 +275,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Shapes',
                 pageName: 'tenant.catalog',
+                area: 'catalogo',
                 title: 'Zonas y tipos',
                 permission: 'rooms.view',
             },
@@ -257,6 +288,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'ShoppingCart',
                 pageName: 'tenant.pos',
+                area: 'pos',
                 title: 'POS',
                 module: 'pos',
                 permission: 'orders.manage',
@@ -264,6 +296,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Package',
                 pageName: 'tenant.inventory',
+                area: 'inventario',
                 title: 'Inventario',
                 module: 'pos',
                 permission: 'inventory.manage',
@@ -271,6 +304,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'UtensilsCrossed',
                 pageName: 'tenant.menu-digital',
+                area: 'menu-digital',
                 title: 'Menú digital',
                 module: 'menu-digital',
                 permission: 'orders.manage',
@@ -278,6 +312,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'ChefHat',
                 pageName: 'tenant.menu-kitchen',
+                area: 'cocina',
                 title: 'Cocina',
                 module: 'menu-digital',
                 permission: 'orders.manage',
@@ -295,36 +330,42 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'LayoutGrid',
                 pageName: 'tenant.payments',
+                area: 'pagos',
                 title: 'Resumen',
                 permission: 'reservations.view',
             },
             {
                 icon: 'Landmark',
                 pageName: 'tenant.payments.verify',
+                area: 'pagos-verificar',
                 title: 'Por verificar',
                 permission: 'reservations.manage',
             },
             {
                 icon: 'TriangleAlert',
                 pageName: 'tenant.payments.collect',
+                area: 'pagos-cobrar',
                 title: 'Por cobrar',
                 permission: 'reservations.view',
             },
             {
                 icon: 'ArrowLeftRight',
                 pageName: 'tenant.payments.movements',
+                area: 'pagos-movimientos',
                 title: 'Movimientos',
                 permission: 'reservations.view',
             },
             {
                 icon: 'ReceiptText',
                 pageName: 'tenant.reservations.settlements',
+                area: 'cuentas',
                 title: 'Cuentas por cerrar',
                 permission: 'reservations.view',
             },
             {
                 icon: 'Clock',
                 pageName: 'tenant.shifts',
+                area: 'turnos',
                 title: 'Turnos',
                 module: 'corte-caja',
                 permission: 'orders.manage',
@@ -332,6 +373,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Calculator',
                 pageName: 'tenant.cashcuts',
+                area: 'cortes',
                 title: 'Cortes de caja',
                 module: 'corte-caja',
                 permission: 'orders.manage',
@@ -339,6 +381,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Globe',
                 pageName: 'tenant.online-payments',
+                area: 'cobros-en-linea',
                 title: 'Cobros en línea',
                 permission: 'reservations.view',
             },
@@ -351,12 +394,14 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'UserCog',
                 pageName: 'tenant.users',
+                area: 'usuarios',
                 title: 'Usuarios',
                 permission: 'users.manage',
             },
             {
                 icon: 'History',
                 pageName: 'tenant.activity',
+                area: 'actividad',
                 title: 'Actividad',
                 module: 'bitacora',
                 permission: 'reports.view',
@@ -364,6 +409,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Bot',
                 pageName: 'tenant.agent',
+                area: 'asistente',
                 title: 'Asistente IA',
                 permission: 'properties.manage',
                 module: 'mensajeria',
@@ -371,6 +417,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Plug',
                 pageName: 'tenant.integration',
+                area: 'integracion',
                 title: 'Integración',
                 module: 'motor-web',
                 permission: 'properties.manage',
@@ -378,6 +425,7 @@ const tenantMenu: Array<MenuItem | string> = [
             {
                 icon: 'Settings',
                 pageName: 'tenant.hotel-settings',
+                area: 'ajustes',
                 title: 'Ajustes',
                 permission: 'properties.manage',
             },
@@ -415,14 +463,17 @@ export function useMenu() {
         const shared = page.props.panelTenant as {
             modules?: string[];
             permissions?: string[];
+            hidden_areas?: string[];
             property_mode?: PropertyModeValue;
         } | null;
         const modules = shared?.modules ?? [];
         const permissions = shared?.permissions ?? [];
+        const hiddenAreas = shared?.hidden_areas ?? [];
         const propertyMode = shared?.property_mode ?? 'hotel';
         const enabled = (item: MenuItem) =>
             (!item.module || modules.includes(item.module)) &&
             (!item.permission || permissions.includes(item.permission)) &&
+            (!item.area || !hiddenAreas.includes(item.area)) &&
             (!item.mode || item.mode.includes(propertyMode));
 
         // El nombre del grupo sigue al negocio: "Hotel" en un hotel,

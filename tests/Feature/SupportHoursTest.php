@@ -79,8 +79,10 @@ it('le dice al huésped cuándo lo retoman, en palabras', function () {
         ->and($hours->label())->toBe('de 9:00 a 17:00, todos los días');
 
     expect($hours->afterHoursNotice(atLocal('2026-09-08 22:00')))
-        ->toContain('horario de atención es de 9:00 a 17:00')
-        ->toContain('mañana a partir de las 9:00');
+        ->toContain('horario de atención con personal es de 9:00 a 17:00')
+        ->toContain('yo te atiendo')
+        ->toContain('te responden mañana a partir de las 9:00')
+        ->not->toContain('Tomo tu solicitud');
 });
 
 it('el hotel que habla de usted no dice que alguien lo contacta: el asistente sigue atendiendo', function () {
@@ -201,4 +203,18 @@ it('el "¿sigues por ahí?" no persigue a nadie de madrugada', function () {
     expect($conversation->messages()->count())->toBe($antes);
 
     CarbonImmutable::setTestNow();
+});
+
+it('fuera de horario el traspaso dice el horario y que lo contactan lo más pronto posible', function () {
+    // Pedido del dueño (cabañas 2026-10-12): un domingo a las 18:48 el bot
+    // dijo "en un momento te atienden" y nadie contestó hasta el otro día.
+    $linea = reloadHours()->afterHoursHandoffLine(atLocal('2026-10-11 18:48'));
+
+    expect($linea)->toBe('Te paso con una persona del hotel. Nuestro horario de atención es de 9:00 a 17:00, todos los días; te contactan lo más pronto posible, mañana a partir de las 9:00.');
+
+    $this->property->update(['settings' => [...$this->property->settings, 'formal_address' => true]]);
+
+    expect(reloadHours()->afterHoursHandoffLine(atLocal('2026-10-11 18:48')))
+        ->toStartWith('Le paso su mensaje a una persona del hotel.')
+        ->toContain('le contactan lo más pronto posible');
 });

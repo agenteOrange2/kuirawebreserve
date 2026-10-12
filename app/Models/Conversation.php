@@ -250,6 +250,28 @@ class Conversation extends Model
         return $this->hasMany(Message::class);
     }
 
+    /** Canales de Meta que solo dejan escribir texto libre 24 h después del último mensaje del huésped. */
+    public const WINDOW_CHANNELS = ['whatsapp', 'messenger', 'instagram'];
+
+    public const WINDOW_HOURS = 24;
+
+    /**
+     * Cuándo se cierra (o se cerró) la ventana para contestar con texto
+     * libre: 24 h después del último mensaje del huésped. null si el canal
+     * no tiene ventana (webchat, Evolution, Telegram) o el huésped nunca
+     * escribió.
+     */
+    public function windowClosesAt(): ?\Illuminate\Support\Carbon
+    {
+        if (! in_array($this->channel?->type, self::WINDOW_CHANNELS, true)) {
+            return null;
+        }
+
+        $last = $this->messages()->where('direction', 'in')->max('created_at');
+
+        return $last ? \Illuminate\Support\Carbon::parse($last)->addHours(self::WINDOW_HOURS) : null;
+    }
+
     /**
      * ¿Sigue abierta la ventana de 24 h de WhatsApp? La Cloud API solo deja
      * mandar texto libre si el huésped escribió en las últimas 24 h; fuera

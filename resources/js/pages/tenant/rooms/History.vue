@@ -132,16 +132,16 @@ const statusByDay = computed(() => {
 const dotColor: Record<string, string> = {
     green: 'bg-success',
     cyan: 'bg-info',
-    red: 'bg-primary',
-    orange: 'bg-pending',
+    red: 'bg-danger',
+    brown: 'bg-dirty',
     blue: 'bg-warning',
     gray: 'bg-dark',
 };
 const tint: Record<string, string> = {
     green: 'border-success/10 bg-success/10 text-success',
     cyan: 'border-info/10 bg-info/10 text-info',
-    red: 'border-primary/10 bg-primary/10 text-primary',
-    orange: 'border-pending/10 bg-pending/10 text-pending',
+    red: 'border-danger/10 bg-danger/10 text-danger',
+    brown: 'border-dirty/10 bg-dirty/10 text-dirty dark:bg-dirty/30 dark:text-slate-200',
     blue: 'border-warning/10 bg-warning/10 text-warning',
     gray: 'border-dark/10 bg-dark/10 text-dark',
 };

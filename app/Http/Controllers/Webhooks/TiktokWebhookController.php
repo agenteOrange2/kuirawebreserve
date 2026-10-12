@@ -220,8 +220,12 @@ class TiktokWebhookController extends Controller
 
             $brain = app(AgentBrain::class);
 
-            if ($channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
-                $reply = $brain->replyTo($conversation, $message);
+            // De guardia: el bot pasó la conversación al personal y nadie la
+            // ha tomado; lo nuevo que pregunte el huésped lo contesta él.
+            $covering = false;
+
+            if ($channel->mode === 'auto' && ($conversation->bot_enabled || ($covering = $brain->coversHandoff($conversation))) && $brain->isConfigured()) {
+                $reply = $brain->replyTo($conversation, $message, $covering);
 
                 if ($reply?->body && ! $this->api->sendText($link, $from, $reply->body)) {
                     app(\App\Services\Channels\OutboundMessenger::class)->flagUndelivered($conversation, $reply);

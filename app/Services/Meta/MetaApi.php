@@ -1497,6 +1497,132 @@ class MetaApi
     }
 
     /** Canal conectado del tenant para esta conversación, si lo hay. */
+    /**
+     * Plantillas APROBADAS de la cuenta de WhatsApp (WABA) del hotel.
+     *
+     * Fuera de la ventana de 24 h WhatsApp solo acepta plantillas aprobadas
+     * por Meta; con texto libre el personal veía "No se entregó" (cabañas,
+     * septiembre-octubre 2026). La bandeja ofrece estas para retomar la
+     * conversación. null = no se pudo consultar (sin WABA o token vencido).
+     *
+     * @return array<int, array{name: string, language: string, category: string, body: string, params: int}>|null
+     */
+    public function approvedTemplates(MetaChannelLink $link): ?array
+    {
+        if ($link->type !== 'whatsapp' || ! $link->waba_id) {
+            return null;
+        }
+
+        $graph = rtrim(config('meta.graph_url'), '/');
+
+        try {
+            $response = Http::withToken($link->access_token)->timeout(10)
+                ->get("{$graph}/{$link->waba_id}/message_templates", [
+                    'fields' => 'name,status,language,category,components',
+                    'limit' => 200,
+                ]);
+
+            if ($response->failed()) {
+                Log::warning('Meta: no se pudieron leer las plantillas', [
+                    'tenant' => $link->tenant_id,
+                    'status' => $response->status(),
+                    'body' => $response->json(),
+                ]);
+
+                return null;
+            }
+
+            return collect($response->json('data') ?? [])
+                ->filter(fn ($t) => ($t['status'] ?? '') === 'APPROVED')
+                ->map(function (array $t) {
+                    $body = (string) (collect($t['components'] ?? [])->firstWhere('type', 'BODY')['text'] ?? '');
+                    preg_match_all('/\{\{\s*(\d+)\s*\}\}/', $body, $vars);
+
+                    return [
+                        'name' => (string) $t['name'],
+                        'language' => (string) ($t['language'] ?? 'es_MX'),
+                        'category' => (string) ($t['category'] ?? ''),
+                        'body' => $body,
+                        // Solo plantillas sin encabezado con imagen/video: la
+                        // bandeja no arma esos parámetros.
+                        'params' => count(array_unique($vars[1] ?? [])),
+                        'usable' => collect($t['components'] ?? [])->every(fn ($c) => ($c['type'] ?? '') !== 'HEADER' || ($c['format'] ?? 'TEXT') === 'TEXT'),
+                    ];
+                })
+                ->filter(fn (array $t) => $t['usable'])
+                ->map(fn (array $t) => array_diff_key($t, ['usable' => true]))
+                ->values()
+                ->all();
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
+    /**
+     * Manda una plantilla aprobada (el único mensaje que WhatsApp acepta con
+     * la ventana de 24 h cerrada). $params llena {{1}}, {{2}}… del cuerpo.
+     *
+     * @param  array<int, string>  $params
+     */
+    public function sendTemplate(MetaChannelLink $link, string $to, string $name, string $language, array $params = []): bool
+    {
+        $this->lastSentIds = [];
+
+        if ($link->type !== 'whatsapp') {
+            return false;
+        }
+
+        $graph = rtrim(config('meta.graph_url'), '/');
+        $template = ['name' => $name, 'language' => ['code' => $language]];
+
+        if ($params !== []) {
+            $template['components'] = [[
+                'type' => 'body',
+                'parameters' => array_map(fn (string $value) => ['type' => 'text', 'text' => $value], array_values($params)),
+            ]];
+        }
+
+        try {
+            $response = Http::withToken($link->access_token)
+                ->post("{$graph}/{$link->external_id}/messages", [
+                    'messaging_product' => 'whatsapp',
+                    'to' => $this->normalizeWhatsappNumber($link, $to),
+                    'type' => 'template',
+                    'template' => $template,
+                ]);
+
+            if ($response->failed()) {
+                Log::warning('Meta: plantilla no enviada', [
+                    'tenant' => $link->tenant_id,
+                    'template' => $name,
+                    'to' => $to,
+                    'status' => $response->status(),
+                    'body' => $response->json(),
+                ]);
+
+                return false;
+            }
+
+            if ($id = $response->json('messages.0.id')) {
+                $this->lastSentIds[] = (string) $id;
+            }
+
+            return true;
+        } catch (Throwable $e) {
+            report($e);
+
+            return false;
+        }
+    }
+
+    /** El vínculo de Meta por el que se le contesta a esta conversación. */
+    public function linkFor(Conversation $conversation): ?MetaChannelLink
+    {
+        return $this->linkForConversation($conversation);
+    }
+
     protected function linkForConversation(Conversation $conversation): ?MetaChannelLink
     {
         $type = $conversation->channel?->type;

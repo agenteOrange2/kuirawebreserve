@@ -90,6 +90,10 @@ class HousekeepingReportsController extends Controller
             ->get();
 
         $closed = $cleanings->whereNotNull('ended_at');
+        // Los minutos que esperó el reloj (o los que corrieron hasta que otro
+        // cambio la interrumpió) no son trabajo medido: cuentan como
+        // habitación limpiada pero no entran a los promedios.
+        $timed = $this->timed($closed);
 
         return [
             'filters' => [
@@ -104,8 +108,9 @@ class HousekeepingReportsController extends Controller
             'kpis' => [
                 'rooms' => $closed->count(),
                 'in_progress' => $cleanings->whereNull('ended_at')->count(),
-                'avg_minutes' => $closed->count() > 0 ? (int) round($closed->avg('minutes')) : null,
-                'total_hours' => round($closed->sum('minutes') / 60, 1),
+                'avg_minutes' => $timed->count() > 0 ? (int) round($timed->avg('minutes')) : null,
+                'total_hours' => round($timed->sum('minutes') / 60, 1),
+                'outcomes' => $this->outcomeCounts($closed),
                 'turnaround' => $this->turnaround($from, $to),
             ],
             'byHousekeeper' => $this->byHousekeeper($closed),
@@ -167,6 +172,9 @@ class HousekeepingReportsController extends Controller
                 'minutes' => $cleaning->elapsedMinutes(),
                 'open' => $cleaning->isOpen(),
                 'source' => $cleaning->source,
+                'outcome' => $cleaning->outcome(),
+                'outcome_label' => RoomCleaning::OUTCOMES[$cleaning->outcome() ?? ''] ?? null,
+                'target_minutes' => $cleaning->target_minutes,
                 'linens' => $this->linenTotals(collect([$cleaning])),
             ]);
     }
@@ -189,17 +197,54 @@ class HousekeepingReportsController extends Controller
     {
         return $cleanings
             ->groupBy(fn (RoomCleaning $c) => $c->housekeeper?->name ?? 'Sin camarista')
-            ->map(fn ($group, $name) => [
-                'name' => $name,
-                'rooms' => $group->count(),
-                'avg_minutes' => (int) round($group->avg('minutes')),
-                'total_minutes' => (int) $group->sum('minutes'),
-                'fastest' => (int) $group->min('minutes'),
-                'slowest' => (int) $group->max('minutes'),
-                'linens' => $this->linenTotals($group),
-            ])
+            ->map(function ($group, $name) {
+                $timed = $this->timed($group);
+
+                return [
+                    'name' => $name,
+                    'rooms' => $group->count(),
+                    'avg_minutes' => (int) round($timed->avg('minutes') ?? 0),
+                    'total_minutes' => (int) $timed->sum('minutes'),
+                    'fastest' => (int) ($timed->min('minutes') ?? 0),
+                    'slowest' => (int) ($timed->max('minutes') ?? 0),
+                    'outcomes' => $this->outcomeCounts($group),
+                    'linens' => $this->linenTotals($group),
+                ];
+            })
             ->sortByDesc('rooms')
             ->values()
+            ->all();
+    }
+
+    /**
+     * Las limpiezas cuyo tiempo midió una persona: fuera las que cerró el
+     * reloj y las interrumpidas.
+     *
+     * @param  \Illuminate\Support\Collection<int, RoomCleaning>  $cleanings
+     * @return \Illuminate\Support\Collection<int, RoomCleaning>
+     */
+    protected function timed($cleanings)
+    {
+        return $cleanings->reject(fn (RoomCleaning $c) => in_array(
+            $c->closed_by,
+            [RoomCleaning::CLOSED_BY_CLOCK, RoomCleaning::CLOSED_BY_STATUS],
+            true,
+        ));
+    }
+
+    /**
+     * Cuántas se entregaron a tiempo, fuera de tiempo, por el reloj o
+     * interrumpidas.
+     *
+     * @param  \Illuminate\Support\Collection<int, RoomCleaning>  $cleanings
+     * @return array<string, int>
+     */
+    protected function outcomeCounts($cleanings): array
+    {
+        return collect(array_keys(RoomCleaning::OUTCOMES))
+            ->mapWithKeys(fn (string $outcome) => [
+                $outcome => $cleanings->filter(fn (RoomCleaning $c) => $c->outcome() === $outcome)->count(),
+            ])
             ->all();
     }
 

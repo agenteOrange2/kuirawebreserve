@@ -68,7 +68,7 @@ class CreateWalkInStay
 
             // Techo real de la habitación, igual que CreateReservation: el
             // walk-in era el único canal que no lo hacía cumplir.
-            $capacity = $room->effectiveMaxOccupancy();
+            $capacity = $room->effectiveMaxOccupancy($ratePlan);
             $people = max(1, (int) ($data['num_people'] ?? 1));
             if ($capacity !== null && $people > $capacity) {
                 throw NoAvailabilityException::exceedsCapacity($room->number, $capacity);
@@ -91,6 +91,9 @@ class CreateWalkInStay
             // tenga: correo capturado en mostrador y documento del exprés.
             if ($guest) {
                 $guest->fill(array_filter([
+                    // Elegido del buscador sin teléfono en su ficha: el que se
+                    // tecleó ahora se le queda, sin pisar uno ya guardado.
+                    'phone' => $guest->phone ? null : ($data['guest_phone'] ?? null),
                     'email' => $guest->email ? null : ($data['guest_email'] ?? null),
                     'id_document_type' => $guest->id_document_number ? null : ($data['id_document_type'] ?? null),
                     'id_document_number' => $guest->id_document_number ? null : ($data['id_document_number'] ?? null),
@@ -111,6 +114,7 @@ class CreateWalkInStay
                 max(1, (int) ($data['num_people'] ?? 1)),
                 $ratePlan->unitsFor($start, $end),
                 $data['extra_charges'] ?? [],
+                $ratePlan,
             );
 
             $stay = Stay::create([
@@ -153,10 +157,24 @@ class CreateWalkInStay
                 'created_by' => $user?->id,
             ]);
 
+            // Cortesía capturada en el mismo modal (módulo cortesias). La
+            // del propietario baja el hospedaje ANTES de cobrarlo; la del
+            // resto del personal queda esperando y el cobro sigue normal.
+            if (! empty($data['courtesy']) && $user !== null) {
+                app(\App\Services\Courtesies\CourtesyService::class)->request(
+                    $stay,
+                    $data['courtesy'],
+                    $user,
+                    (bool) ($data['courtesy']['confirm_over_cap'] ?? false),
+                );
+                $stay->refresh();
+            }
+
             // Cobro al registrar la llegada (walkin_charge=checkin en
             // /ajustes/metodos-pago): el hospedaje queda pagado desde el
             // inicio y entra al corte del cobrador; al salir solo consumos.
-            if (! empty($data['payment_method'])) {
+            // Una cortesía que dejó la cuenta en $0 no deja un pago vacío.
+            if (! empty($data['payment_method']) && (float) $stay->amount > 0) {
                 $stay->payments()->create([
                     'amount' => $stay->amount,
                     'method' => $data['payment_method'],

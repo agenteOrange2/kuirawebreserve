@@ -39,6 +39,13 @@ interface Folio {
     /** Con qué se recibió el depósito: por ahí se devuelve. */
     guarantee_method_label: string | null;
     guarantee_reference: string | null;
+    /** Cortesía viva (módulo cortesias). */
+    courtesy?: {
+        status: string;
+        kind_label: string;
+        amount: number;
+        requested_by_name: string | null;
+    } | null;
 }
 
 const props = defineProps<{
@@ -270,6 +277,36 @@ function confirm(force = false) {
                         <span class="font-medium">{{
                             money(folio.lodging_pending)
                         }}</span>
+                    </div>
+                    <div
+                        v-if="folio.courtesy?.status === 'approved'"
+                        class="mt-1.5 flex items-center justify-between text-xs"
+                    >
+                        <span class="text-slate-500"
+                            >Cortesía ({{ folio.courtesy.kind_label }})</span
+                        >
+                        <span class="font-medium text-pending"
+                            >−{{ money(folio.courtesy.amount) }} ya
+                            restada</span
+                        >
+                    </div>
+                    <div
+                        v-if="folio.courtesy?.status === 'pending'"
+                        class="mt-2 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2 text-xs text-warning"
+                    >
+                        <Lucide
+                            icon="Clock"
+                            class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                        />
+                        <span
+                            >{{ folio.courtesy.requested_by_name }} pidió una
+                            cortesía ({{ folio.courtesy.kind_label }}, −{{
+                                money(folio.courtesy.amount)
+                            }}) y el propietario aún no contesta. Si el huésped
+                            se va sin pagar esa parte, usa «Salir sin cobrar»:
+                            la cuenta queda en Cuentas por cerrar y ahí la
+                            decide el propietario.</span
+                        >
                     </div>
                     <div
                         class="mt-1.5 flex items-center justify-between text-xs"
@@ -669,7 +706,7 @@ function confirm(force = false) {
                 variant="outline-danger"
                 class="h-9 justify-center rounded-[0.5rem] px-5 text-xs"
                 :disabled="busy || !reviewed"
-                title="El huésped se va debiendo; el saldo queda en su historial"
+                title="El huésped se va debiendo; la cuenta queda en Cuentas por cerrar hasta que se cobre o el propietario la cierre"
                 @click="confirm(true)"
                 >Salir sin cobrar</Button
             >

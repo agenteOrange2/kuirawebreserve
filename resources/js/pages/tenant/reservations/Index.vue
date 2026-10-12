@@ -25,11 +25,34 @@ import { Dialog, Menu, Slideover } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
 import type { Icon } from '@/components/Base/Lucide';
 import Table from '@/components/Base/Table';
+import CourtesySection from '@/components/courtesies/CourtesySection.vue';
+import {
+    courtesyFormReady,
+    courtesyPayload,
+    emptyCourtesyForm,
+    estimateCourtesy,
+} from '@/components/courtesies/types';
+import type { CourtesyForm } from '@/components/courtesies/types';
+import { useCourtesyAccess } from '@/components/courtesies/useCourtesyAccess';
 import type { CounterMethod } from '@/composables/useCounterMethods';
 import { useCounterMethods } from '@/composables/useCounterMethods';
 import { useModules } from '@/composables/useModules';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+import {
+    arrivalUrgency,
+    groupByArrivalDay,
+    groupByDeparture,
+    stayUrgency,
+    urgencyBorder,
+} from './board/grouping';
+import GroupRow from './board/GroupRow.vue';
+import GuestCell from './board/GuestCell.vue';
+import KpiStrip from './board/KpiStrip.vue';
+import type { KpiItem } from './board/KpiStrip.vue';
+import PayMeter from './board/PayMeter.vue';
+import ScreenGuide from './board/ScreenGuide.vue';
+import { useScreenGuide } from './board/useScreenGuide';
 import MonthCalendar from './MonthCalendar.vue';
 import PaymentModal from './PaymentModal.vue';
 import RackCalendar from './RackCalendar.vue';
@@ -118,6 +141,14 @@ interface ReservationRow {
     starts_today: boolean;
     /** La hora de entrada ya pasó y nadie registró la llegada. */
     arrival_pending: boolean;
+    /** Fechas en palabras ("Hoy 15:37", "2 noches") y el día del grupo. */
+    starts_label: string;
+    ends_label: string;
+    span_label: string | null;
+    day_key: string;
+    day_label: string;
+    hold_state: 'expired' | 'urgent' | 'live' | null;
+    hold_countdown: string | null;
     source_channel: string;
     notes: string | null;
     guest_notes: string | null;
@@ -163,7 +194,9 @@ interface ReservationRow {
 interface StayRow {
     id: number;
     room: string | null;
+    reservation_id: number | null;
     guest_name: string | null;
+    guest_phone: string | null;
     num_people: number;
     vehicle_plate: string | null;
     vehicle_desc: string | null;
@@ -171,7 +204,15 @@ interface StayRow {
     check_in_at: string;
     planned_end_at: string;
     planned_end_at_iso: string;
+    /** "Ayer 16:37", "Hoy 12:00", "2 noches". */
+    check_in_label: string;
+    planned_end_label: string;
+    span_label: string | null;
     overdue: boolean;
+    departs_today: boolean;
+    departs_tomorrow: boolean;
+    /** Lo que debe (hospedaje + consumos); null si la consulta no lo trajo. */
+    balance: number | null;
     amount: string;
     channel: string;
 }
@@ -297,10 +338,133 @@ type ListTab = 'upcoming' | 'stays' | 'history';
 
 const listTab = ref<ListTab>('upcoming');
 
+// ── Guía, avance del día y semáforo ──
+const guide = useScreenGuide('operacion');
+
+// "Viernes, 9 de octubre": solo la primera letra en mayúscula (la clase
+// capitalize ponía "9 De Octubre").
+const todayLabel = (() => {
+    const text = new Intl.DateTimeFormat('es-MX', {
+        weekday: 'long',
+        day: 'numeric',
+        month: 'long',
+    }).format(new Date());
+
+    return text.charAt(0).toUpperCase() + text.slice(1);
+})();
+
+const operationSteps = [
+    {
+        icon: 'Plus' as Icon,
+        title: 'Vende desde arriba',
+        text: '"Nueva reserva" aparta para otro día; "Llegó sin reserva" registra a quien está en el mostrador y le da la habitación ahora.',
+    },
+    {
+        icon: 'TriangleAlert' as Icon,
+        title: 'Resuelve lo que avisa',
+        text: 'La caja "Requiere atención" junta lo atorado: apartados por vencer, llegadas sin registrar, salidas vencidas y cuentas sin cobrar.',
+    },
+    {
+        icon: 'ListChecks' as Icon,
+        title: 'Trabaja las listas del día',
+        text: 'En "Por llegar" confirmas y recibes; en "En casa" das la salida y cobras la cuenta final. Las cifras abren su lista.',
+    },
+];
+
+/**
+ * Recibir solo el día que llega (o si ya se le pasó la hora). Antes cada
+ * confirmada traía "Registrar llegada" aunque llegara en diez días, y en la
+ * capacitación se registró una llegada adelantada por error. Se sigue
+ * pudiendo desde el menú de tres puntos (el modal avisa que es anticipada).
+ */
+const receiveNow = (r: ReservationRow) =>
+    props.manualCheckinAllowed &&
+    r.status === 'confirmed' &&
+    (r.starts_today || r.arrival_pending);
+
+// Mismo ancho para el botón principal en todos los renglones: la columna
+// de acciones queda alineada aunque uno diga "Confirmar" y otro "Cobrar".
+const mainButton =
+    'h-8 w-[6.75rem] justify-center rounded-[0.5rem] text-xs whitespace-nowrap';
+
+// La franja de cifras del día (antes cuatro tarjetas altas).
+const dayKpis = computed<KpiItem[]>(() => [
+    {
+        key: 'arrivals',
+        icon: 'LogIn',
+        tone: 'info',
+        value: arrivalsToday.value,
+        label: 'llegan hoy',
+        hint: arrivalPendingCount.value
+            ? `${arrivalPendingCount.value} sin registrar`
+            : `${props.reservations.length} por llegar cargadas`,
+        alert: arrivalPendingCount.value > 0,
+    },
+    {
+        key: 'pending',
+        icon: 'AlarmClock',
+        tone: 'pending',
+        value: pendingCount.value,
+        label: 'por confirmar',
+        hint: expiringHolds.value.length
+            ? `${expiringHolds.value.length} por vencer`
+            : 'Esperan anticipo o confirmación',
+        alert: expiringHolds.value.length > 0,
+    },
+    {
+        key: 'stays',
+        icon: 'DoorOpen',
+        tone: 'primary',
+        value: props.staysTotal,
+        label: 'en casa',
+        hint: 'Habitaciones en uso ahora',
+    },
+    {
+        key: 'departures',
+        icon: 'LogOut',
+        tone: overdueStays.value ? 'danger' : 'success',
+        value: departuresToday.value,
+        label: 'salen hoy',
+        hint: overdueStays.value
+            ? `${overdueStays.value} ${overdueStays.value === 1 ? 'vencida' : 'vencidas'}`
+            : 'Sin salidas vencidas',
+        alert: overdueStays.value > 0,
+    },
+]);
+
+function onDayKpi(key: string) {
+    if (key === 'arrivals') focusList('upcoming');
+    else if (key === 'pending') focusList('upcoming', 'pending');
+    else focusList('stays');
+}
+
+// Las listas agrupadas: por día de llegada y por cuándo salen. Las cuentas
+// de los grupos se dan solo si la lista trae todo (sin el tope de 30).
+const arrivalGroups = computed(() => {
+    const complete = props.upcomingTotal <= props.reservations.length;
+    const counts: Record<string, number> = {};
+    if (complete) {
+        for (const r of props.reservations) {
+            counts[r.day_key] = (counts[r.day_key] ?? 0) + 1;
+        }
+    }
+    return groupByArrivalDay(filteredReservations.value, counts);
+});
+
+// La estancia enfocada (?stay=) llega primero desde el servidor; para
+// agrupar se reordena por salida.
+const stayGroups = computed(() =>
+    groupByDeparture(
+        [...props.stays].sort((a, b) =>
+            a.planned_end_at_iso.localeCompare(b.planned_end_at_iso),
+        ),
+    ),
+);
+
 const listTabs = computed(() => [
     {
         key: 'upcoming' as ListTab,
-        label: 'Próximas',
+        label: 'Por llegar',
         icon: 'CalendarDays' as Icon,
         count: props.reservations.length,
     },
@@ -1145,10 +1309,21 @@ watch(
 
 interface AvailabilityResult {
     total: number;
+    regular_total: number;
+    price_breakdown: {
+        concept: string;
+        amount: number;
+        regular_amount?: number;
+    }[];
     units: number;
     duration_label: string;
     advance_error: string | null;
-    rooms: ({ id: number; number: string; status: string } & RoomChargeInfo)[];
+    rooms: ({
+        id: number;
+        number: string;
+        status: string;
+        base_total: number;
+    } & RoomChargeInfo)[];
 }
 const availability = ref<AvailabilityResult | null>(null);
 const searching = ref(false);
@@ -1165,6 +1340,32 @@ const selectedRoomInfo = computed<RoomChargeInfo | null>(() => {
     );
 });
 
+// ── Cortesía al crear (módulo cortesias) ──
+// La del propietario nace aplicada; la del resto queda esperando su
+// aprobación con el precio normal (en una llegada, el hospedaje se cobra al
+// salir). Solo en altas: en una reserva ya hecha se da desde su ficha.
+const courtesyAccess = useCourtesyAccess();
+const courtesyOn = ref(false);
+const courtesyForm = ref<CourtesyForm>(emptyCourtesyForm());
+const courtesyCapWarning = ref<string | null>(null);
+const courtesyLodging = computed(() =>
+    estimate.value
+        ? estimate.value.base + (estimate.value.extraGuests?.amount ?? 0)
+        : 0,
+);
+const courtesyDiscount = computed(() =>
+    courtesyOn.value && courtesyAccess.value.is_owner
+        ? estimateCourtesy(courtesyForm.value, courtesyLodging.value)
+        : 0,
+);
+const courtesyDefersCharge = computed(
+    () => courtesyOn.value && !courtesyAccess.value.is_owner,
+);
+watch(
+    () => [courtesyForm.value.kind, courtesyForm.value.value, courtesyOn.value],
+    () => (courtesyCapWarning.value = null),
+);
+
 // Estimación en vivo; el total definitivo lo recalcula el servidor al
 // guardar (puede variar por modificador de precio de la habitación).
 const estimate = computed(() => {
@@ -1178,9 +1379,35 @@ const estimate = computed(() => {
     const end = fromLocalInput(form.ends_at) ?? suggestedEndFor(plan, start);
     if (end <= start) return null;
     const units = unitsForEstimate(plan, start, end);
-    const unitPrice = Number(plan.price);
-    if (!Number.isFinite(unitPrice)) return null;
-    const base = Math.round(units * unitPrice * 100) / 100;
+    const planPrice = Number(plan.price);
+    if (!Number.isFinite(planPrice)) return null;
+    // Con la disponibilidad ya consultada manda el precio del servidor
+    // (temporadas, descuento por semana/mes y ajuste del cuarto): precio
+    // base × unidades enseñaba $22,500 donde el sistema cobra $18,000.
+    const avail =
+        availability.value && availability.value.units === units
+            ? availability.value
+            : null;
+    const availRoom = avail?.rooms.find(
+        (room) => room.id === Number(form.room_id),
+    );
+    const base =
+        availRoom?.base_total ??
+        avail?.total ??
+        Math.round(units * planPrice * 100) / 100;
+    const unitPrice = Math.round((base / Math.max(1, units)) * 100) / 100;
+    const discountLine = avail?.price_breakdown.find(
+        (line) => line.regular_amount && line.regular_amount > line.amount,
+    );
+    const discount =
+        avail && discountLine && avail.regular_total > avail.total
+            ? {
+                  label: discountLine.concept.replace(/\s*\([^)]*\)$/, ''),
+                  amount:
+                      Math.round((avail.regular_total - avail.total) * 100) /
+                      100,
+              }
+            : null;
 
     // Cargos de la ficha del cuarto: personas sobre las incluidas (por
     // noche/periodo) + cargos opcionales elegidos (una sola vez).
@@ -1231,6 +1458,7 @@ const estimate = computed(() => {
                   : `${units} × ${plan.duration_label}`,
         unitPrice,
         base,
+        discount,
         extraGuests,
         optionalCharges,
         total,
@@ -1293,6 +1521,9 @@ function openCreate(
     form.eta = '';
     form.confirmed = false;
     form.coupon_code = '';
+    courtesyOn.value = false;
+    courtesyForm.value = emptyCourtesyForm();
+    courtesyCapWarning.value = null;
     form.extra_charges = [];
     form.notes = '';
     form.guest_notes = '';
@@ -1523,6 +1754,16 @@ watch(
 );
 
 async function submitCreate() {
+    if (
+        courtesyOn.value &&
+        !editingReservationId.value &&
+        !courtesyFormReady(courtesyForm.value)
+    ) {
+        modalError.value =
+            'Completa la cortesía: el valor y un motivo de al menos 4 letras.';
+        return;
+    }
+
     saving.value = true;
     modalError.value = null;
     Object.keys(errors).forEach((k) => delete errors[k]);
@@ -1561,11 +1802,15 @@ async function submitCreate() {
                 vehicle_desc: form.vehicle_desc || null,
                 extra_charges: form.extra_charges,
                 notes: form.notes || undefined,
-                payment_method: props.walkinChargeOnCheckin
-                    ? coerceCounterMethod(form.payment_method)
-                    : undefined,
+                // Cortesía pedida al propietario: se cobra al salir.
+                payment_method:
+                    props.walkinChargeOnCheckin && !courtesyDefersCharge.value
+                        ? coerceCounterMethod(form.payment_method)
+                        : undefined,
                 payment_reference:
-                    props.walkinChargeOnCheckin && form.payment_reference
+                    props.walkinChargeOnCheckin &&
+                    !courtesyDefersCharge.value &&
+                    form.payment_reference
                         ? form.payment_reference
                         : undefined,
                 // Fianza activa: el registro de llegada la cobra siempre
@@ -1574,6 +1819,11 @@ async function submitCreate() {
                     props.guaranteeAmount > 0 && guaranteeMethods.value.length
                         ? form.guarantee_method
                         : undefined,
+                courtesy: courtesyPayload(
+                    courtesyAccess.value.enabled && courtesyOn.value,
+                    courtesyForm.value,
+                    courtesyCapWarning.value !== null,
+                ),
             });
             toast.success(
                 'Llegada registrada',
@@ -1597,6 +1847,11 @@ async function submitCreate() {
             await axios.post('/api/reservations', {
                 ...reservationPayload,
                 confirmed: form.confirmed,
+                courtesy: courtesyPayload(
+                    courtesyAccess.value.enabled && courtesyOn.value,
+                    courtesyForm.value,
+                    courtesyCapWarning.value !== null,
+                ),
             });
             toast.success(
                 form.confirmed ? 'Reserva creada' : 'Hold creado',
@@ -1610,6 +1865,11 @@ async function submitCreate() {
         reload();
     } catch (error: any) {
         const data = error.response?.data;
+        if (error.response?.status === 409) {
+            // La cortesía pasa el tope del mes: nada se guardó.
+            courtesyCapWarning.value = data?.message ?? 'Pasa el tope del mes.';
+            return;
+        }
         if (data?.errors) {
             Object.entries(data.errors).forEach(
                 ([key, msgs]) => (errors[key] = (msgs as string[])[0]),
@@ -1646,15 +1906,6 @@ const statusFor = (status: string) =>
     };
 
 // ── Pagos (spec §7.5) ────────────────────────────────────────
-function paymentBadge(r: ReservationRow): string {
-    if (r.payment_overdue) return 'bg-danger/10 text-danger';
-    if (r.payment_status === 'paid') return 'bg-success/10 text-success';
-    // Abonó algo pero no llegó al anticipo: que se note, no "sin pago".
-    if (r.payment_status === 'partial') return 'bg-pending/10 text-pending';
-    if (r.payment_status === 'deposit_paid') return 'bg-info/10 text-info';
-    return 'bg-slate-100 text-slate-500 dark:bg-darkmode-400';
-}
-
 // El modal de pagos vive en PaymentModal.vue; aquí solo se le pide abrir.
 const paymentModal = ref<InstanceType<typeof PaymentModal> | null>(null);
 
@@ -1681,16 +1932,12 @@ const channelBadge: Record<string, string> = {
     agent: 'bg-primary/10 text-primary',
 };
 
-const channelIcon: Record<string, Icon> = {
-    front_desk: 'ConciergeBell',
-    phone: 'Phone',
-    web: 'Globe',
-    whatsapp: 'MessageCircle',
-    walk_in: 'Footprints',
-    agent: 'Bot',
-};
-
 const paxLabel = (r: ReservationRow) => {
+    // Las reservas que no capturan adultos/niños (bot, migradas) traen solo
+    // num_people: decía "1 adulto" en una reserva de cuatro.
+    if (r.adults + r.children < r.num_people) {
+        return `${r.num_people} ${r.num_people === 1 ? 'persona' : 'personas'}`;
+    }
     const adults = `${r.adults} ${r.adults === 1 ? 'adulto' : 'adultos'}`;
     const children = `${r.children} ${r.children === 1 ? 'niño' : 'niños'}`;
 
@@ -1722,7 +1969,9 @@ const modalDescription = computed(() => {
 </script>
 
 <template>
-    <RazeLayout :title="view === 'calendar' ? 'Calendario' : 'Reservas'">
+    <RazeLayout
+        :title="view === 'calendar' ? 'Calendario' : 'Operación del día'"
+    >
         <div class="mt-2">
             <div
                 class="box box--stacked flex flex-col gap-3 p-4 sm:p-5 md:flex-row md:items-center md:justify-between"
@@ -1745,24 +1994,52 @@ const modalDescription = computed(() => {
                             {{
                                 view === 'calendar'
                                     ? 'Calendario de ocupación'
-                                    : 'Reservas'
+                                    : 'Operación del día'
                             }}
                         </h1>
                         <p class="mt-0.5 text-xs text-slate-500">
-                            {{ property.name }} ·
-                            {{
-                                view === 'calendar'
-                                    ? 'qué habitaciones están ocupadas o disponibles'
-                                    : 'llegadas, huéspedes alojados y reservas pendientes'
-                            }}
+                            <template v-if="view === 'calendar'">
+                                {{ property.name }} · qué habitaciones están
+                                ocupadas o disponibles
+                            </template>
+                            <template v-else>
+                                {{ todayLabel }} · llegadas, en casa y salidas
+                            </template>
                         </p>
                     </div>
                 </div>
                 <!-- Móvil: cuadrícula uniforme de 2 columnas (el CTA a lo
                      ancho); escritorio: fila de botones como siempre. -->
+                <!-- En xl no se parte: "Nueva reserva" caía sola a un segundo
+                     renglón, justo el botón que más se usa. -->
                 <div
-                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2.5"
+                    class="grid w-full grid-cols-2 gap-2 md:flex md:w-auto md:flex-wrap md:items-center md:gap-2 xl:shrink-0 xl:flex-nowrap"
                 >
+                    <button
+                        v-if="view === 'list'"
+                        type="button"
+                        class="inline-flex h-9 items-center justify-center gap-1.5 rounded-full border border-slate-200 bg-white px-3.5 text-xs font-medium text-slate-500 shadow-sm transition hover:border-info/30 hover:text-info dark:border-darkmode-400 dark:bg-darkmode-600"
+                        :class="
+                            guide.open.value ? 'border-info/30 text-info' : ''
+                        "
+                        @click="guide.toggle()"
+                    >
+                        <Lucide icon="Lightbulb" class="h-3.5 w-3.5" />
+                        Cómo se usa
+                    </button>
+                    <Button
+                        v-if="view === 'list'"
+                        :as="Link"
+                        :href="route('tenant.reservations.operation.report')"
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
+                    >
+                        <Lucide
+                            icon="ChartColumn"
+                            class="mr-1.5 h-3.5 w-3.5 stroke-[1.5]"
+                        />
+                        Ver reporte
+                    </Button>
                     <Button
                         v-if="view === 'list'"
                         :as="Link"
@@ -1789,7 +2066,10 @@ const modalDescription = computed(() => {
                         />
                         Lista de reservas
                     </Button>
+                    <!-- En el calendario sigue el acceso a los reportes completos;
+                         en la lista, "Ver reporte" (que también enlaza a ellos). -->
                     <Button
+                        v-if="view === 'calendar'"
                         as="a"
                         :href="route('tenant.reservations.reports')"
                         variant="outline-secondary"
@@ -1832,6 +2112,13 @@ const modalDescription = computed(() => {
                     pending: pendingCount,
                     settlements: settlementsPending,
                 }"
+            />
+
+            <ScreenGuide
+                v-if="view === 'list' && guide.open.value"
+                purpose="La pantalla del mostrador para hoy: quién llega, quién está dentro y quién sale. Todo lo que se cobra en el momento se hace desde aquí."
+                :steps="operationSteps"
+                @close="guide.close()"
             />
 
             <div
@@ -2028,137 +2315,13 @@ const modalDescription = computed(() => {
                 </div>
             </div>
 
-            <!-- Cómo va el día. Cada cifra abre la lista que le toca. -->
-            <template v-if="view === 'list'">
-                <div class="mt-4 flex items-center gap-2">
-                    <span :class="sectionLabel">Cómo va el día</span>
-                    <span class="hidden text-[11px] text-slate-400 sm:inline">
-                        Toca una cifra para ver su lista
-                    </span>
-                </div>
-                <div class="mt-2 grid auto-rows-fr grid-cols-12 gap-4">
-                    <button
-                        type="button"
-                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
-                        @click="focusList('upcoming')"
-                    >
-                        <div
-                            :class="[
-                                sectionIcon,
-                                'border-info/10 bg-info/10 text-info',
-                            ]"
-                        >
-                            <Lucide icon="LogIn" class="h-4 w-4" />
-                        </div>
-                        <div class="min-w-0">
-                            <div class="text-sm font-medium">
-                                {{ arrivalsToday }}
-                            </div>
-                            <div class="truncate text-xs text-slate-500">
-                                Llegadas hoy
-                            </div>
-                            <div class="truncate text-[11px] text-slate-400">
-                                {{ reservations.length }} próximas cargadas
-                            </div>
-                        </div>
-                    </button>
-                    <button
-                        type="button"
-                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
-                        @click="focusList('upcoming', 'pending')"
-                    >
-                        <div
-                            :class="[
-                                sectionIcon,
-                                'border-pending/10 bg-pending/10 text-pending',
-                            ]"
-                        >
-                            <Lucide icon="AlarmClock" class="h-4 w-4" />
-                        </div>
-                        <div class="min-w-0">
-                            <div class="text-sm font-medium">
-                                {{ pendingCount }}
-                            </div>
-                            <div class="truncate text-xs text-slate-500">
-                                Por confirmar
-                            </div>
-                            <div class="truncate text-[11px] text-slate-400">
-                                <template v-if="expiringHolds.length">
-                                    {{ expiringHolds.length }} por vencer
-                                </template>
-                                <template v-else>
-                                    Esperan anticipo o confirmación
-                                </template>
-                            </div>
-                        </div>
-                    </button>
-                    <button
-                        type="button"
-                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
-                        @click="focusList('stays')"
-                    >
-                        <div
-                            :class="[
-                                sectionIcon,
-                                'border-primary/10 bg-primary/10 text-primary',
-                            ]"
-                        >
-                            <Lucide icon="DoorOpen" class="h-4 w-4" />
-                        </div>
-                        <div class="min-w-0">
-                            <div class="text-sm font-medium">
-                                {{ staysTotal }}
-                            </div>
-                            <div class="truncate text-xs text-slate-500">
-                                Huéspedes alojados
-                            </div>
-                            <div class="truncate text-[11px] text-slate-400">
-                                Habitaciones en uso ahora
-                            </div>
-                        </div>
-                    </button>
-                    <button
-                        type="button"
-                        class="box box--stacked col-span-6 flex items-center gap-2.5 p-3 text-left transition hover:border-primary/30 xl:col-span-3"
-                        @click="focusList('stays')"
-                    >
-                        <div
-                            :class="[
-                                sectionIcon,
-                                'border-success/10 bg-success/10 text-success',
-                            ]"
-                        >
-                            <Lucide icon="LogOut" class="h-4 w-4" />
-                        </div>
-                        <div class="min-w-0">
-                            <div class="text-sm font-medium">
-                                {{ departuresToday }}
-                            </div>
-                            <div class="truncate text-xs text-slate-500">
-                                Salidas hoy
-                            </div>
-                            <div
-                                class="truncate text-[11px]"
-                                :class="
-                                    overdueStays
-                                        ? 'text-danger'
-                                        : 'text-slate-400'
-                                "
-                            >
-                                <template v-if="overdueStays">
-                                    {{ overdueStays }}
-                                    {{
-                                        overdueStays === 1
-                                            ? 'vencida'
-                                            : 'vencidas'
-                                    }}
-                                </template>
-                                <template v-else>Sin salidas vencidas</template>
-                            </div>
-                        </div>
-                    </button>
-                </div>
-            </template>
+            <!-- La franja de cifras: cada una abre la lista que le toca. El
+                 avance del día y las habitaciones viven en el reporte. -->
+            <KpiStrip
+                v-if="view === 'list'"
+                :items="dayKpis"
+                @select="onDayKpi"
+            />
 
             <!-- Calendario: mes clásico o rack de ocupación (habitaciones × días) -->
             <div v-if="view === 'calendar'" class="mt-4">
@@ -2215,7 +2378,7 @@ const modalDescription = computed(() => {
             >
                 <div :class="cardHeader">
                     <div
-                        class="inline-flex gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
+                        class="inline-flex max-w-full flex-wrap gap-1 rounded-[0.7rem] border border-slate-200/80 bg-slate-100/70 p-1 dark:border-darkmode-400 dark:bg-darkmode-700"
                     >
                         <button
                             v-for="tab in listTabs"
@@ -2425,17 +2588,15 @@ const modalDescription = computed(() => {
                             </div>
                         </div>
                     </div>
-                    <!-- Escritorio: tabla densa, sin cebra. La cebra del
-                         theme pinta un renglón sí y otro no en gris y con
-                         seis columnas de datos cansa; aquí manda el
-                         separador fino y el subrayado al pasar. -->
+                    <!-- Escritorio: tabla agrupada por día de llegada, con
+                         las fechas en palabras y el cobro en una barrita. -->
                     <div
                         class="hidden overflow-auto lg:block lg:overflow-visible"
                     >
                         <Table v-if="filteredReservations.length" hover>
                             <Table.Thead>
                                 <Table.Tr>
-                                    <Table.Th :class="tableHead"
+                                    <Table.Th :class="[tableHead, 'pl-5']"
                                         >Huésped</Table.Th
                                     >
                                     <Table.Th :class="tableHead"
@@ -2445,7 +2606,7 @@ const modalDescription = computed(() => {
                                         >Estancia</Table.Th
                                     >
                                     <Table.Th :class="[tableHead, 'text-right']"
-                                        >Total</Table.Th
+                                        >Cobro</Table.Th
                                     >
                                     <Table.Th :class="tableHead"
                                         >Estado</Table.Th
@@ -2459,566 +2620,436 @@ const modalDescription = computed(() => {
                                 </Table.Tr>
                             </Table.Thead>
                             <Table.Tbody>
-                                <Table.Tr
-                                    v-for="r in filteredReservations"
-                                    :key="r.id"
-                                    class="align-top"
+                                <template
+                                    v-for="group in arrivalGroups"
+                                    :key="group.key"
                                 >
-                                    <!-- Quién viene -->
-                                    <Table.Td class="max-w-[22rem]">
+                                    <GroupRow
+                                        :label="group.label"
+                                        :count="group.count"
+                                        :tone="group.tone"
+                                        :colspan="canManage ? 6 : 5"
+                                    />
+                                    <Table.Tr
+                                        v-for="r in group.rows"
+                                        :key="r.id"
+                                        class="align-middle"
+                                    >
+                                        <Table.Td
+                                            class="max-w-[20rem] py-3"
+                                            :class="
+                                                urgencyBorder(arrivalUrgency(r))
+                                            "
+                                        >
+                                            <GuestCell
+                                                :name="r.guest_name"
+                                                :meta="[
+                                                    r.code,
+                                                    channelLabel[
+                                                        r.source_channel
+                                                    ] ?? r.source_channel,
+                                                ]"
+                                                :phone="r.guest_phone"
+                                                @open="
+                                                    router.visit(
+                                                        `/reservas/${r.id}`,
+                                                    )
+                                                "
+                                            />
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="py-3 whitespace-nowrap"
+                                        >
+                                            <div class="text-sm font-medium">
+                                                {{ r.room ?? 'Sin asignar' }}
+                                            </div>
+                                            <div class="text-xs text-slate-500">
+                                                {{ r.room_type }}
+                                            </div>
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="py-3 whitespace-nowrap"
+                                        >
+                                            <div
+                                                class="text-xs font-medium tabular-nums"
+                                            >
+                                                {{ r.starts_label }}
+                                                <span
+                                                    class="font-normal text-slate-400"
+                                                    >→</span
+                                                >
+                                                {{ r.ends_label }}
+                                            </div>
+                                            <div
+                                                class="mt-0.5 text-xs text-slate-500"
+                                            >
+                                                {{ r.span_label }} ·
+                                                {{ paxLabel(r) }}
+                                                <template v-if="r.eta">
+                                                    · llega
+                                                    {{ r.eta }}</template
+                                                >
+                                                <template
+                                                    v-if="r.vehicle_plate"
+                                                >
+                                                    ·
+                                                    {{
+                                                        r.vehicle_plate
+                                                    }}</template
+                                                >
+                                            </div>
+                                        </Table.Td>
+                                        <Table.Td class="py-3">
+                                            <PayMeter
+                                                :total="Number(r.total_amount)"
+                                                :paid="r.paid_total"
+                                                :balance="r.pending_balance"
+                                                :overdue="r.payment_overdue"
+                                            />
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="py-3 whitespace-nowrap"
+                                        >
+                                            <span
+                                                class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                :class="
+                                                    statusFor(r.status).class
+                                                "
+                                            >
+                                                <Lucide
+                                                    :icon="
+                                                        statusFor(r.status).icon
+                                                    "
+                                                    class="h-3 w-3"
+                                                />
+                                                {{
+                                                    r.arrival_pending
+                                                        ? 'Sin llegada'
+                                                        : friendlyStatusLabel(r)
+                                                }}
+                                            </span>
+                                            <div
+                                                v-if="r.hold_countdown"
+                                                class="mt-0.5 text-[11px]"
+                                                :class="
+                                                    r.hold_state === 'expired'
+                                                        ? 'text-danger'
+                                                        : r.hold_state ===
+                                                            'urgent'
+                                                          ? 'text-warning'
+                                                          : 'text-slate-400'
+                                                "
+                                            >
+                                                {{
+                                                    r.hold_state === 'expired'
+                                                        ? r.hold_countdown
+                                                        : `se libera ${r.hold_countdown}`
+                                                }}
+                                            </div>
+                                            <div
+                                                v-else-if="
+                                                    r.pending_transfer_request
+                                                "
+                                                class="mt-0.5 text-[11px] text-pending"
+                                            >
+                                                Transferencia por verificar
+                                            </div>
+                                        </Table.Td>
+                                        <Table.Td v-if="canManage" class="py-3">
+                                            <div
+                                                class="flex items-center justify-end gap-1.5"
+                                            >
+                                                <Button
+                                                    v-if="
+                                                        r.status === 'pending'
+                                                    "
+                                                    variant="primary"
+                                                    :class="mainButton"
+                                                    @click="askConfirm(r)"
+                                                >
+                                                    <Lucide
+                                                        icon="CircleCheck"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Confirmar
+                                                </Button>
+                                                <Button
+                                                    v-else-if="receiveNow(r)"
+                                                    variant="success"
+                                                    :class="[
+                                                        mainButton,
+                                                        'text-white',
+                                                    ]"
+                                                    @click="askCheckIn(r)"
+                                                >
+                                                    <Lucide
+                                                        icon="LogIn"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Recibir
+                                                </Button>
+                                                <Button
+                                                    v-else-if="
+                                                        r.pending_balance > 0
+                                                    "
+                                                    variant="outline-primary"
+                                                    :class="[
+                                                        mainButton,
+                                                        'bg-white dark:bg-darkmode-600',
+                                                    ]"
+                                                    @click="openPayment(r)"
+                                                >
+                                                    <Lucide
+                                                        icon="Banknote"
+                                                        class="mr-1.5 h-3.5 w-3.5"
+                                                    />
+                                                    Cobrar
+                                                </Button>
+                                                <span
+                                                    v-else
+                                                    :class="mainButton"
+                                                    aria-hidden="true"
+                                                />
+                                                <Menu>
+                                                    <Menu.Button
+                                                        as="button"
+                                                        type="button"
+                                                        :class="rowAction"
+                                                        class="hover:bg-slate-100 dark:hover:bg-darkmode-400"
+                                                        title="Más acciones"
+                                                    >
+                                                        <Lucide
+                                                            icon="MoreVertical"
+                                                            class="h-4 w-4"
+                                                        />
+                                                    </Menu.Button>
+                                                    <Menu.Items class="w-52">
+                                                        <Menu.Item
+                                                            as="button"
+                                                            type="button"
+                                                            @click="openEdit(r)"
+                                                        >
+                                                            <Lucide
+                                                                icon="Pencil"
+                                                                class="mr-1.5 h-3.5 w-3.5"
+                                                            />
+                                                            Editar reserva
+                                                        </Menu.Item>
+                                                        <Menu.Item
+                                                            v-if="
+                                                                r.pending_balance >
+                                                                0
+                                                            "
+                                                            as="button"
+                                                            type="button"
+                                                            class="text-pending"
+                                                            @click="
+                                                                openPayment(r)
+                                                            "
+                                                        >
+                                                            <Lucide
+                                                                icon="Banknote"
+                                                                class="mr-1.5 h-3.5 w-3.5"
+                                                            />
+                                                            Registrar pago
+                                                        </Menu.Item>
+                                                        <Menu.Item
+                                                            v-if="
+                                                                manualCheckinAllowed &&
+                                                                !receiveNow(r)
+                                                            "
+                                                            as="button"
+                                                            type="button"
+                                                            class="text-success"
+                                                            @click="
+                                                                askCheckIn(r)
+                                                            "
+                                                        >
+                                                            <Lucide
+                                                                icon="LogIn"
+                                                                class="mr-1.5 h-3.5 w-3.5"
+                                                            />
+                                                            Registrar llegada
+                                                        </Menu.Item>
+                                                        <Menu.Divider />
+                                                        <Menu.Item
+                                                            as="button"
+                                                            type="button"
+                                                            class="text-warning"
+                                                            @click="
+                                                                askNoShow(r)
+                                                            "
+                                                        >
+                                                            <Lucide
+                                                                icon="UserX"
+                                                                class="mr-1.5 h-3.5 w-3.5"
+                                                            />
+                                                            El huésped no llegó
+                                                        </Menu.Item>
+                                                        <Menu.Item
+                                                            as="button"
+                                                            type="button"
+                                                            class="text-danger"
+                                                            @click="
+                                                                askCancel(r)
+                                                            "
+                                                        >
+                                                            <Lucide
+                                                                icon="Ban"
+                                                                class="mr-1.5 h-3.5 w-3.5"
+                                                            />
+                                                            Cancelar reserva
+                                                        </Menu.Item>
+                                                    </Menu.Items>
+                                                </Menu>
+                                            </div>
+                                        </Table.Td>
+                                    </Table.Tr>
+                                </template>
+                            </Table.Tbody>
+                        </Table>
+                    </div>
+
+                    <!-- Móvil y tablet: los mismos grupos, apilados -->
+                    <div v-if="filteredReservations.length" class="lg:hidden">
+                        <template
+                            v-for="group in arrivalGroups"
+                            :key="`m-${group.key}`"
+                        >
+                            <GroupRow
+                                as="div"
+                                :label="group.label"
+                                :count="group.count"
+                                :tone="group.tone"
+                            />
+                            <div
+                                class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                            >
+                                <div
+                                    v-for="r in group.rows"
+                                    :key="`m-${r.id}`"
+                                    class="px-4 py-3"
+                                    :class="urgencyBorder(arrivalUrgency(r))"
+                                >
+                                    <div
+                                        class="flex items-start justify-between gap-3"
+                                    >
+                                        <GuestCell
+                                            class="min-w-0 flex-1"
+                                            :name="r.guest_name"
+                                            :meta="[
+                                                r.code,
+                                                r.room
+                                                    ? `Hab. ${r.room}`
+                                                    : null,
+                                            ]"
+                                            @open="
+                                                router.visit(
+                                                    `/reservas/${r.id}`,
+                                                )
+                                            "
+                                        />
+                                        <PayMeter
+                                            class="!w-24 shrink-0"
+                                            :total="Number(r.total_amount)"
+                                            :paid="r.paid_total"
+                                            :balance="r.pending_balance"
+                                            :overdue="r.payment_overdue"
+                                        />
+                                    </div>
+                                    <div
+                                        class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
+                                    >
+                                        <span
+                                            class="font-medium text-slate-700 tabular-nums dark:text-slate-300"
+                                        >
+                                            {{ r.starts_label }} →
+                                            {{ r.ends_label }}
+                                        </span>
+                                        <span>· {{ r.span_label }}</span>
+                                        <span
+                                            class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                            :class="statusFor(r.status).class"
+                                        >
+                                            {{
+                                                r.arrival_pending
+                                                    ? 'Sin llegada'
+                                                    : friendlyStatusLabel(r)
+                                            }}
+                                        </span>
+                                    </div>
+                                    <div
+                                        v-if="canManage"
+                                        class="mt-2.5 flex items-center justify-end gap-1.5"
+                                    >
                                         <button
                                             type="button"
-                                            class="truncate text-left text-sm font-medium transition hover:text-primary"
+                                            :class="rowAction"
+                                            class="hover:bg-primary/10 hover:text-primary"
+                                            title="Ver la ficha de la reserva"
                                             @click="
                                                 router.visit(
                                                     `/reservas/${r.id}`,
                                                 )
                                             "
                                         >
-                                            {{ r.guest_name ?? 'Anónimo' }}
-                                        </button>
-                                        <div
-                                            class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
-                                        >
-                                            <span
-                                                class="font-medium text-slate-600 dark:text-slate-300"
-                                            >
-                                                {{ r.code }}
-                                            </span>
-                                            <span
-                                                class="text-slate-300 dark:text-darkmode-400"
-                                                >·</span
-                                            >
-                                            <span
-                                                class="inline-flex items-center gap-1"
-                                            >
-                                                <Lucide
-                                                    :icon="
-                                                        channelIcon[
-                                                            r.source_channel
-                                                        ] ?? 'Tag'
-                                                    "
-                                                    class="h-3.5 w-3.5 stroke-[1.3]"
-                                                />
-                                                {{
-                                                    channelLabel[
-                                                        r.source_channel
-                                                    ] ?? r.source_channel
-                                                }}
-                                            </span>
-                                            <span
-                                                class="text-slate-300 dark:text-darkmode-400"
-                                                >·</span
-                                            >
-                                            <span>{{ paxLabel(r) }}</span>
-                                        </div>
-                                        <div
-                                            v-if="r.eta || r.vehicle_plate"
-                                            class="mt-1 flex flex-wrap gap-1.5"
-                                        >
-                                            <span
-                                                v-if="r.eta"
-                                                class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
-                                                title="Hora estimada de llegada"
-                                            >
-                                                <Lucide
-                                                    icon="Clock"
-                                                    class="h-3 w-3"
-                                                />
-                                                {{ r.eta }}
-                                            </span>
-                                            <span
-                                                v-if="r.vehicle_plate"
-                                                class="inline-flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
-                                                :title="
-                                                    r.vehicle_desc ?? 'Vehículo'
-                                                "
-                                            >
-                                                <Lucide
-                                                    icon="Car"
-                                                    class="h-3 w-3"
-                                                />
-                                                {{ r.vehicle_plate }}
-                                            </span>
-                                        </div>
-                                    </Table.Td>
-
-                                    <!-- Dónde -->
-                                    <Table.Td class="whitespace-nowrap">
-                                        <div class="text-sm font-medium">
-                                            {{ r.room ?? 'Sin asignar' }}
-                                        </div>
-                                        <div class="text-xs text-slate-500">
-                                            {{ r.room_type }}
-                                        </div>
-                                    </Table.Td>
-
-                                    <!-- Cuándo -->
-                                    <Table.Td class="whitespace-nowrap">
-                                        <div class="text-xs tabular-nums">
-                                            {{ r.starts_at }}
-                                        </div>
-                                        <div
-                                            class="text-xs text-slate-500 tabular-nums"
-                                        >
-                                            sale {{ r.ends_at }}
-                                        </div>
-                                        <div class="mt-1 flex flex-wrap gap-1">
-                                            <span
-                                                v-if="r.starts_today"
-                                                class="rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"
-                                            >
-                                                Llega hoy
-                                            </span>
-                                            <!-- La entrada pasó y nadie la
-                                                 registró: antes solo se notaba
-                                                 porque la habitación seguía
-                                                 apartada en el plano. -->
-                                            <span
-                                                v-if="r.arrival_pending"
-                                                class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
-                                                title="La hora de entrada ya pasó y nadie registró la llegada"
-                                            >
-                                                Sin llegada
-                                            </span>
-                                        </div>
-                                    </Table.Td>
-
-                                    <!-- Cuánto -->
-                                    <Table.Td
-                                        class="text-right whitespace-nowrap"
-                                    >
-                                        <div
-                                            class="text-sm font-medium tabular-nums"
-                                        >
-                                            {{ money(Number(r.total_amount)) }}
-                                        </div>
-                                        <span
-                                            class="mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium"
-                                            :class="paymentBadge(r)"
-                                        >
-                                            {{
-                                                r.payment_overdue
-                                                    ? 'Pago vencido'
-                                                    : r.payment_status_label
-                                            }}
-                                        </span>
-                                        <div
-                                            v-if="
-                                                r.paid_total > 0 &&
-                                                r.pending_balance > 0
-                                            "
-                                            class="mt-0.5 text-[11px] text-slate-400 tabular-nums"
-                                        >
-                                            debe {{ money(r.pending_balance) }}
-                                        </div>
-                                        <div
-                                            v-if="
-                                                r.payment_due_at &&
-                                                r.payment_status !== 'paid'
-                                            "
-                                            class="text-[11px] text-slate-400"
-                                        >
-                                            antes de {{ r.payment_due_at }}
-                                        </div>
-                                    </Table.Td>
-
-                                    <!-- Cómo va -->
-                                    <Table.Td class="whitespace-nowrap">
-                                        <span
-                                            class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                                            :class="statusFor(r.status).class"
-                                        >
                                             <Lucide
-                                                :icon="statusFor(r.status).icon"
-                                                class="h-3 w-3"
-                                            />
-                                            {{ friendlyStatusLabel(r) }}
-                                        </span>
-                                        <div
-                                            v-if="r.hold_expires_at"
-                                            class="mt-0.5 text-[11px] text-slate-400"
-                                        >
-                                            apartada hasta
-                                            {{ r.hold_expires_at }}
-                                        </div>
-                                    </Table.Td>
-
-                                    <Table.Td v-if="canManage">
-                                        <div
-                                            class="flex items-center justify-end gap-1.5"
-                                        >
-                                            <!-- Acción principal contextual -->
-                                            <Button
-                                                v-if="r.status === 'pending'"
-                                                variant="primary"
-                                                class="h-8 rounded-[0.5rem] text-xs whitespace-nowrap"
-                                                @click="askConfirm(r)"
-                                            >
-                                                <Lucide
-                                                    icon="CircleCheck"
-                                                    class="mr-1.5 h-3.5 w-3.5"
-                                                />
-                                                Confirmar
-                                            </Button>
-                                            <Button
-                                                v-else-if="manualCheckinAllowed"
-                                                variant="outline-success"
-                                                class="h-8 rounded-[0.5rem] bg-white text-xs whitespace-nowrap"
-                                                @click="askCheckIn(r)"
-                                            >
-                                                <Lucide
-                                                    icon="LogIn"
-                                                    class="mr-1.5 h-3.5 w-3.5"
-                                                />
-                                                Registrar llegada
-                                            </Button>
-                                            <button
-                                                type="button"
-                                                :class="rowAction"
-                                                class="hover:bg-primary/10 hover:text-primary"
-                                                title="Ver la ficha de la reserva"
-                                                @click="
-                                                    router.visit(
-                                                        `/reservas/${r.id}`,
-                                                    )
-                                                "
-                                            >
-                                                <Lucide
-                                                    icon="Eye"
-                                                    class="h-4 w-4"
-                                                />
-                                            </button>
-
-                                            <!-- Menú de acciones secundarias -->
-                                            <Menu>
-                                                <Menu.Button
-                                                    :class="rowAction"
-                                                    class="hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                                                    title="Más acciones"
-                                                >
-                                                    <Lucide
-                                                        icon="MoreVertical"
-                                                        class="h-4 w-4"
-                                                    />
-                                                </Menu.Button>
-                                                <Menu.Items class="w-52">
-                                                    <Menu.Item
-                                                        as="button"
-                                                        type="button"
-                                                        @click="openEdit(r)"
-                                                    >
-                                                        <Lucide
-                                                            icon="Pencil"
-                                                            class="mr-1.5 h-3.5 w-3.5"
-                                                        />
-                                                        Editar reserva
-                                                    </Menu.Item>
-                                                    <Menu.Item
-                                                        v-if="
-                                                            r.pending_balance >
-                                                            0
-                                                        "
-                                                        as="button"
-                                                        type="button"
-                                                        class="text-pending"
-                                                        @click="openPayment(r)"
-                                                    >
-                                                        <Lucide
-                                                            icon="Banknote"
-                                                            class="mr-1.5 h-3.5 w-3.5"
-                                                        />
-                                                        Registrar pago
-                                                    </Menu.Item>
-                                                    <Menu.Item
-                                                        v-if="
-                                                            r.status ===
-                                                                'pending' &&
-                                                            manualCheckinAllowed
-                                                        "
-                                                        as="button"
-                                                        type="button"
-                                                        class="text-success"
-                                                        @click="askCheckIn(r)"
-                                                    >
-                                                        <Lucide
-                                                            icon="LogIn"
-                                                            class="mr-1.5 h-3.5 w-3.5"
-                                                        />
-                                                        Registrar llegada
-                                                    </Menu.Item>
-                                                    <Menu.Divider />
-                                                    <Menu.Item
-                                                        as="button"
-                                                        type="button"
-                                                        class="text-warning"
-                                                        @click="askNoShow(r)"
-                                                    >
-                                                        <Lucide
-                                                            icon="UserX"
-                                                            class="mr-1.5 h-3.5 w-3.5"
-                                                        />
-                                                        El huésped no llegó
-                                                    </Menu.Item>
-                                                    <Menu.Item
-                                                        as="button"
-                                                        type="button"
-                                                        class="text-danger"
-                                                        @click="askCancel(r)"
-                                                    >
-                                                        <Lucide
-                                                            icon="Ban"
-                                                            class="mr-1.5 h-3.5 w-3.5"
-                                                        />
-                                                        Cancelar reserva
-                                                    </Menu.Item>
-                                                </Menu.Items>
-                                            </Menu>
-                                        </div>
-                                    </Table.Td>
-                                </Table.Tr>
-                            </Table.Tbody>
-                        </Table>
-                    </div>
-
-                    <!-- Móvil y tablet: los mismos datos apilados. La tabla
-                         se arrastraba de lado en el celular del mostrador. -->
-                    <div
-                        v-if="filteredReservations.length"
-                        class="divide-y divide-slate-200/60 lg:hidden dark:divide-darkmode-400"
-                    >
-                        <div
-                            v-for="r in filteredReservations"
-                            :key="`m-${r.id}`"
-                            class="px-4 py-3.5"
-                        >
-                            <div class="flex items-start justify-between gap-3">
-                                <div class="min-w-0">
-                                    <div
-                                        class="flex flex-wrap items-center gap-1.5"
-                                    >
-                                        <span
-                                            class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
-                                        >
-                                            {{ r.code }}
-                                        </span>
-                                        <span
-                                            v-if="r.starts_today"
-                                            class="rounded-full bg-success/10 px-2 py-0.5 text-[11px] font-medium text-success"
-                                        >
-                                            Llega hoy
-                                        </span>
-                                        <span
-                                            v-if="r.arrival_pending"
-                                            class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
-                                        >
-                                            Sin llegada
-                                        </span>
-                                    </div>
-                                    <button
-                                        type="button"
-                                        class="mt-1.5 block truncate text-left text-sm font-medium transition hover:text-primary"
-                                        @click="
-                                            router.visit(`/reservas/${r.id}`)
-                                        "
-                                    >
-                                        {{ r.guest_name ?? 'Anónimo' }}
-                                    </button>
-                                    <div class="text-xs text-slate-500">
-                                        {{ paxLabel(r) }} ·
-                                        {{
-                                            channelLabel[r.source_channel] ??
-                                            r.source_channel
-                                        }}
-                                    </div>
-                                </div>
-                                <div class="shrink-0 text-right">
-                                    <div
-                                        class="text-sm font-medium tabular-nums"
-                                    >
-                                        {{ money(Number(r.total_amount)) }}
-                                    </div>
-                                    <span
-                                        class="mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium"
-                                        :class="paymentBadge(r)"
-                                    >
-                                        {{
-                                            r.payment_overdue
-                                                ? 'Pago vencido'
-                                                : r.payment_status_label
-                                        }}
-                                    </span>
-                                </div>
-                            </div>
-
-                            <div
-                                class="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3"
-                            >
-                                <span
-                                    class="inline-flex min-w-0 items-center gap-1.5"
-                                >
-                                    <Lucide
-                                        icon="BedDouble"
-                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
-                                    />
-                                    <span class="truncate">
-                                        {{ r.room ?? 'Sin asignar' }}
-                                        <span
-                                            v-if="r.room_type"
-                                            class="text-slate-400"
-                                        >
-                                            · {{ r.room_type }}
-                                        </span>
-                                    </span>
-                                </span>
-                                <span
-                                    class="inline-flex items-center gap-1.5 tabular-nums"
-                                >
-                                    <Lucide
-                                        icon="CalendarDays"
-                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
-                                    />
-                                    {{ r.starts_at }}
-                                    <span class="text-slate-400">→</span>
-                                    {{ r.ends_at }}
-                                </span>
-                            </div>
-
-                            <div
-                                class="mt-2.5 flex flex-wrap items-center gap-1.5"
-                            >
-                                <span
-                                    class="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                                    :class="statusFor(r.status).class"
-                                >
-                                    <Lucide
-                                        :icon="statusFor(r.status).icon"
-                                        class="h-3 w-3"
-                                    />
-                                    {{ friendlyStatusLabel(r) }}
-                                </span>
-                                <span
-                                    v-if="r.hold_expires_at"
-                                    class="text-[11px] text-slate-400"
-                                >
-                                    apartada hasta {{ r.hold_expires_at }}
-                                </span>
-                                <template v-if="canManage">
-                                    <Button
-                                        v-if="r.status === 'pending'"
-                                        variant="primary"
-                                        class="ml-auto h-8 rounded-[0.5rem] text-xs"
-                                        @click="askConfirm(r)"
-                                    >
-                                        <Lucide
-                                            icon="CircleCheck"
-                                            class="mr-1.5 h-3.5 w-3.5"
-                                        />
-                                        Confirmar
-                                    </Button>
-                                    <Button
-                                        v-else-if="manualCheckinAllowed"
-                                        variant="outline-success"
-                                        class="ml-auto h-8 rounded-[0.5rem] bg-white text-xs"
-                                        @click="askCheckIn(r)"
-                                    >
-                                        <Lucide
-                                            icon="LogIn"
-                                            class="mr-1.5 h-3.5 w-3.5"
-                                        />
-                                        Llegada
-                                    </Button>
-                                    <Menu>
-                                        <Menu.Button
-                                            :class="rowAction"
-                                            class="hover:bg-slate-100 dark:hover:bg-darkmode-400"
-                                            title="Más acciones"
-                                        >
-                                            <Lucide
-                                                icon="MoreVertical"
+                                                icon="Eye"
                                                 class="h-4 w-4"
                                             />
-                                        </Menu.Button>
-                                        <Menu.Items class="w-52">
-                                            <Menu.Item
-                                                as="button"
-                                                type="button"
-                                                @click="
-                                                    router.visit(
-                                                        `/reservas/${r.id}`,
-                                                    )
-                                                "
-                                            >
-                                                <Lucide
-                                                    icon="Eye"
-                                                    class="mr-1.5 h-3.5 w-3.5"
-                                                />
-                                                Ver detalle
-                                            </Menu.Item>
-                                            <Menu.Item
-                                                as="button"
-                                                type="button"
-                                                @click="openEdit(r)"
-                                            >
-                                                <Lucide
-                                                    icon="Pencil"
-                                                    class="mr-1.5 h-3.5 w-3.5"
-                                                />
-                                                Editar reserva
-                                            </Menu.Item>
-                                            <Menu.Item
-                                                v-if="r.pending_balance > 0"
-                                                as="button"
-                                                type="button"
-                                                class="text-pending"
-                                                @click="openPayment(r)"
-                                            >
-                                                <Lucide
-                                                    icon="Banknote"
-                                                    class="mr-1.5 h-3.5 w-3.5"
-                                                />
-                                                Registrar pago
-                                            </Menu.Item>
-                                            <Menu.Divider />
-                                            <Menu.Item
-                                                as="button"
-                                                type="button"
-                                                class="text-warning"
-                                                @click="askNoShow(r)"
-                                            >
-                                                <Lucide
-                                                    icon="UserX"
-                                                    class="mr-1.5 h-3.5 w-3.5"
-                                                />
-                                                El huésped no llegó
-                                            </Menu.Item>
-                                            <Menu.Item
-                                                as="button"
-                                                type="button"
-                                                class="text-danger"
-                                                @click="askCancel(r)"
-                                            >
-                                                <Lucide
-                                                    icon="Ban"
-                                                    class="mr-1.5 h-3.5 w-3.5"
-                                                />
-                                                Cancelar reserva
-                                            </Menu.Item>
-                                        </Menu.Items>
-                                    </Menu>
-                                </template>
-                                <button
-                                    v-else
-                                    type="button"
-                                    :class="rowAction"
-                                    class="ml-auto hover:bg-primary/10 hover:text-primary"
-                                    title="Ver la ficha de la reserva"
-                                    @click="router.visit(`/reservas/${r.id}`)"
-                                >
-                                    <Lucide icon="Eye" class="h-4 w-4" />
-                                </button>
+                                        </button>
+                                        <Button
+                                            v-if="r.status === 'pending'"
+                                            variant="primary"
+                                            class="h-8 rounded-[0.5rem] text-xs"
+                                            @click="askConfirm(r)"
+                                        >
+                                            <Lucide
+                                                icon="CircleCheck"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            Confirmar
+                                        </Button>
+                                        <Button
+                                            v-else-if="receiveNow(r)"
+                                            variant="success"
+                                            class="h-8 rounded-[0.5rem] text-xs text-white"
+                                            @click="askCheckIn(r)"
+                                        >
+                                            <Lucide
+                                                icon="LogIn"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            Recibir
+                                        </Button>
+                                        <Button
+                                            v-else-if="r.pending_balance > 0"
+                                            variant="outline-primary"
+                                            class="h-8 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                                            @click="openPayment(r)"
+                                        >
+                                            <Lucide
+                                                icon="Banknote"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            Cobrar
+                                        </Button>
+                                        <Button
+                                            v-if="
+                                                manualCheckinAllowed &&
+                                                r.status !== 'pending' &&
+                                                !receiveNow(r)
+                                            "
+                                            variant="outline-secondary"
+                                            class="h-8 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                                            @click="askCheckIn(r)"
+                                        >
+                                            Llegada
+                                        </Button>
+                                    </div>
+                                </div>
                             </div>
-                        </div>
+                        </template>
                     </div>
 
                     <div
@@ -3066,25 +3097,24 @@ const modalDescription = computed(() => {
                 </template>
 
                 <template v-else-if="listTab === 'stays'">
-                    <!-- Escritorio -->
+                    <!-- Escritorio: agrupada por cuándo salen -->
                     <div
                         class="hidden overflow-auto lg:block lg:overflow-visible"
                     >
                         <Table v-if="stays.length" hover>
                             <Table.Thead>
                                 <Table.Tr>
+                                    <Table.Th :class="[tableHead, 'pl-5']"
+                                        >Huésped</Table.Th
+                                    >
                                     <Table.Th :class="tableHead"
                                         >Habitación</Table.Th
                                     >
                                     <Table.Th :class="tableHead"
-                                        >Huésped</Table.Th
+                                        >Estancia</Table.Th
                                     >
-                                    <Table.Th :class="tableHead"
-                                        >Entró</Table.Th
-                                    >
-                                    <Table.Th :class="tableHead">Sale</Table.Th>
                                     <Table.Th :class="[tableHead, 'text-right']"
-                                        >Monto</Table.Th
+                                        >Debe</Table.Th
                                     >
                                     <Table.Th
                                         v-if="canManage"
@@ -3095,207 +3125,228 @@ const modalDescription = computed(() => {
                                 </Table.Tr>
                             </Table.Thead>
                             <Table.Tbody>
-                                <Table.Tr
-                                    v-for="s in stays"
-                                    :key="s.id"
-                                    class="align-top"
+                                <template
+                                    v-for="group in stayGroups"
+                                    :key="group.key"
                                 >
-                                    <Table.Td class="whitespace-nowrap">
-                                        <div class="flex items-center gap-2">
-                                            <div
-                                                class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                                            >
-                                                <Lucide
-                                                    icon="BedDouble"
-                                                    class="h-3.5 w-3.5"
-                                                />
+                                    <GroupRow
+                                        :label="group.label"
+                                        :count="group.count"
+                                        :tone="group.tone"
+                                        :colspan="canManage ? 5 : 4"
+                                    />
+                                    <Table.Tr
+                                        v-for="s in group.rows"
+                                        :key="s.id"
+                                        class="align-middle"
+                                    >
+                                        <Table.Td
+                                            class="max-w-[20rem] py-3"
+                                            :class="
+                                                urgencyBorder(stayUrgency(s))
+                                            "
+                                        >
+                                            <GuestCell
+                                                :name="s.guest_name"
+                                                :meta="[
+                                                    s.reservation_id
+                                                        ? (channelLabel[
+                                                              s.channel
+                                                          ] ?? s.channel)
+                                                        : 'Llegó sin reserva',
+                                                    s.vehicle_plate,
+                                                ]"
+                                                :phone="s.guest_phone"
+                                                @open="
+                                                    canManage && askCheckOut(s)
+                                                "
+                                            />
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="py-3 whitespace-nowrap"
+                                        >
+                                            <div class="text-sm font-medium">
+                                                {{ s.room }}
                                             </div>
-                                            <span class="text-sm font-medium">{{
-                                                s.room
-                                            }}</span>
-                                        </div>
-                                    </Table.Td>
-                                    <Table.Td class="max-w-[20rem]">
-                                        <div
-                                            class="truncate text-sm font-medium"
+                                            <div class="text-xs text-slate-500">
+                                                {{ s.rate_plan }}
+                                            </div>
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="py-3 whitespace-nowrap"
                                         >
-                                            {{ s.guest_name ?? 'Anónimo' }}
-                                        </div>
-                                        <div
-                                            class="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-slate-500"
-                                        >
-                                            <span>
+                                            <div
+                                                class="text-xs font-medium tabular-nums"
+                                            >
+                                                {{ s.check_in_label }}
+                                                <span
+                                                    class="font-normal text-slate-400"
+                                                    >→</span
+                                                >
+                                                <span
+                                                    :class="
+                                                        s.overdue
+                                                            ? 'text-danger'
+                                                            : ''
+                                                    "
+                                                    >{{
+                                                        s.planned_end_label
+                                                    }}</span
+                                                >
+                                            </div>
+                                            <div
+                                                class="mt-0.5 text-xs text-slate-500"
+                                            >
+                                                {{ s.span_label }} ·
                                                 {{ s.num_people }}
                                                 {{
                                                     s.num_people === 1
                                                         ? 'persona'
                                                         : 'personas'
                                                 }}
-                                            </span>
-                                            <span
-                                                class="text-slate-300 dark:text-darkmode-400"
-                                                >·</span
+                                            </div>
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="py-3 text-right whitespace-nowrap"
+                                        >
+                                            <div
+                                                class="text-sm font-medium tabular-nums"
+                                                :class="
+                                                    (s.balance ?? 0) > 0
+                                                        ? 'text-danger'
+                                                        : 'text-success'
+                                                "
                                             >
-                                            <span>{{
-                                                channelLabel[s.channel] ??
-                                                s.channel
-                                            }}</span>
-                                            <template v-if="s.vehicle_plate">
-                                                <span
-                                                    class="text-slate-300 dark:text-darkmode-400"
-                                                    >·</span
-                                                >
-                                                <span
-                                                    class="inline-flex items-center gap-1"
-                                                    :title="
-                                                        s.vehicle_desc ??
-                                                        'Vehículo'
+                                                {{
+                                                    (s.balance ?? 0) > 0
+                                                        ? money(s.balance ?? 0)
+                                                        : 'Al corriente'
+                                                }}
+                                            </div>
+                                            <div
+                                                class="text-[11px] text-slate-400 tabular-nums"
+                                            >
+                                                estancia
+                                                {{ money(Number(s.amount)) }}
+                                            </div>
+                                        </Table.Td>
+                                        <Table.Td v-if="canManage" class="py-3">
+                                            <div class="flex justify-end">
+                                                <Button
+                                                    :variant="
+                                                        s.overdue ||
+                                                        s.departs_today
+                                                            ? 'primary'
+                                                            : 'outline-primary'
                                                     "
+                                                    class="h-8 w-[9.5rem] justify-center rounded-[0.5rem] text-xs whitespace-nowrap"
+                                                    :class="
+                                                        s.overdue ||
+                                                        s.departs_today
+                                                            ? ''
+                                                            : 'bg-white dark:bg-darkmode-600'
+                                                    "
+                                                    @click="askCheckOut(s)"
                                                 >
                                                     <Lucide
-                                                        icon="Car"
-                                                        class="h-3.5 w-3.5 stroke-[1.3]"
+                                                        icon="LogOut"
+                                                        class="mr-1.5 h-3.5 w-3.5"
                                                     />
-                                                    {{ s.vehicle_plate }}
-                                                </span>
-                                            </template>
-                                        </div>
-                                    </Table.Td>
-                                    <Table.Td
-                                        class="text-xs whitespace-nowrap tabular-nums"
-                                    >
-                                        {{ s.check_in_at }}
-                                    </Table.Td>
-                                    <Table.Td class="whitespace-nowrap">
-                                        <div class="text-xs tabular-nums">
-                                            {{ s.planned_end_at }}
-                                        </div>
-                                        <span
-                                            v-if="s.overdue"
-                                            class="mt-1 inline-block rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
-                                        >
-                                            Salida vencida
-                                        </span>
-                                    </Table.Td>
-                                    <Table.Td
-                                        class="text-right text-sm font-medium whitespace-nowrap tabular-nums"
-                                    >
-                                        {{ money(Number(s.amount)) }}
-                                    </Table.Td>
-                                    <Table.Td v-if="canManage">
-                                        <div class="flex justify-end">
-                                            <Button
-                                                variant="outline-primary"
-                                                class="h-8 rounded-[0.5rem] bg-white text-xs whitespace-nowrap"
-                                                @click="askCheckOut(s)"
-                                            >
-                                                <Lucide
-                                                    icon="LogOut"
-                                                    class="mr-1.5 h-3.5 w-3.5"
-                                                />
-                                                Registrar salida
-                                            </Button>
-                                        </div>
-                                    </Table.Td>
-                                </Table.Tr>
+                                                    Registrar salida
+                                                </Button>
+                                            </div>
+                                        </Table.Td>
+                                    </Table.Tr>
+                                </template>
                             </Table.Tbody>
                         </Table>
                     </div>
-
-                    <!-- Móvil y tablet -->
-                    <div
-                        v-if="stays.length"
-                        class="divide-y divide-slate-200/60 lg:hidden dark:divide-darkmode-400"
-                    >
-                        <div
-                            v-for="s in stays"
-                            :key="`m-${s.id}`"
-                            class="px-4 py-3.5"
+                    <!-- Móvil y tablet: los mismos grupos -->
+                    <div v-if="stays.length" class="lg:hidden">
+                        <template
+                            v-for="group in stayGroups"
+                            :key="`m-${group.key}`"
                         >
-                            <div class="flex items-start justify-between gap-3">
-                                <div class="min-w-0">
-                                    <div
-                                        class="flex flex-wrap items-center gap-1.5"
-                                    >
-                                        <span
-                                            class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
-                                        >
-                                            {{ s.room }}
-                                        </span>
-                                        <span
-                                            v-if="s.overdue"
-                                            class="rounded-full bg-danger/10 px-2 py-0.5 text-[11px] font-medium text-danger"
-                                        >
-                                            Salida vencida
-                                        </span>
-                                    </div>
-                                    <div
-                                        class="mt-1.5 truncate text-sm font-medium"
-                                    >
-                                        {{ s.guest_name ?? 'Anónimo' }}
-                                    </div>
-                                    <div class="text-xs text-slate-500">
-                                        {{ s.num_people }}
-                                        {{
-                                            s.num_people === 1
-                                                ? 'persona'
-                                                : 'personas'
-                                        }}
-                                        ·
-                                        {{
-                                            channelLabel[s.channel] ?? s.channel
-                                        }}
-                                    </div>
-                                </div>
+                            <GroupRow
+                                as="div"
+                                :label="group.label"
+                                :count="group.count"
+                                :tone="group.tone"
+                            />
+                            <div
+                                class="divide-y divide-slate-200/60 dark:divide-darkmode-400"
+                            >
                                 <div
-                                    class="shrink-0 text-sm font-medium tabular-nums"
+                                    v-for="s in group.rows"
+                                    :key="`m-${s.id}`"
+                                    class="px-4 py-3"
+                                    :class="urgencyBorder(stayUrgency(s))"
                                 >
-                                    {{ money(Number(s.amount)) }}
+                                    <div
+                                        class="flex items-start justify-between gap-3"
+                                    >
+                                        <GuestCell
+                                            class="min-w-0 flex-1"
+                                            :name="s.guest_name"
+                                            :meta="[
+                                                s.room
+                                                    ? `Hab. ${s.room}`
+                                                    : null,
+                                                s.vehicle_plate,
+                                            ]"
+                                            @open="canManage && askCheckOut(s)"
+                                        />
+                                        <div
+                                            class="shrink-0 text-right text-sm font-medium tabular-nums"
+                                            :class="
+                                                (s.balance ?? 0) > 0
+                                                    ? 'text-danger'
+                                                    : 'text-success'
+                                            "
+                                        >
+                                            {{
+                                                (s.balance ?? 0) > 0
+                                                    ? money(s.balance ?? 0)
+                                                    : 'Al corriente'
+                                            }}
+                                        </div>
+                                    </div>
+                                    <div class="mt-2 text-xs text-slate-500">
+                                        <span
+                                            class="font-medium text-slate-700 tabular-nums dark:text-slate-300"
+                                        >
+                                            {{ s.check_in_label }} →
+                                            <span
+                                                :class="
+                                                    s.overdue
+                                                        ? 'text-danger'
+                                                        : ''
+                                                "
+                                                >{{ s.planned_end_label }}</span
+                                            >
+                                        </span>
+                                        · {{ s.span_label }}
+                                    </div>
+                                    <div
+                                        v-if="canManage"
+                                        class="mt-2.5 flex justify-end"
+                                    >
+                                        <Button
+                                            variant="outline-primary"
+                                            class="h-8 rounded-[0.5rem] bg-white text-xs dark:bg-darkmode-600"
+                                            @click="askCheckOut(s)"
+                                        >
+                                            <Lucide
+                                                icon="LogOut"
+                                                class="mr-1.5 h-3.5 w-3.5"
+                                            />
+                                            Registrar salida
+                                        </Button>
+                                    </div>
                                 </div>
                             </div>
-
-                            <div
-                                class="mt-2 flex flex-col gap-1 text-xs text-slate-500 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3"
-                            >
-                                <span
-                                    class="inline-flex items-center gap-1.5 tabular-nums"
-                                >
-                                    <Lucide
-                                        icon="LogIn"
-                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
-                                    />
-                                    entró {{ s.check_in_at }}
-                                </span>
-                                <span
-                                    class="inline-flex items-center gap-1.5 tabular-nums"
-                                >
-                                    <Lucide
-                                        icon="LogOut"
-                                        class="h-3.5 w-3.5 shrink-0 stroke-[1.3]"
-                                    />
-                                    sale {{ s.planned_end_at }}
-                                </span>
-                            </div>
-
-                            <div
-                                v-if="canManage"
-                                class="mt-2.5 flex justify-end"
-                            >
-                                <Button
-                                    variant="outline-primary"
-                                    class="h-8 rounded-[0.5rem] bg-white text-xs"
-                                    @click="askCheckOut(s)"
-                                >
-                                    <Lucide
-                                        icon="LogOut"
-                                        class="mr-1.5 h-3.5 w-3.5"
-                                    />
-                                    Registrar salida
-                                </Button>
-                            </div>
-                        </div>
+                        </template>
                     </div>
-
                     <div
                         v-else
                         class="flex flex-col items-center gap-2 px-5 py-10 text-center"
@@ -3746,536 +3797,589 @@ const modalDescription = computed(() => {
             :open="confirmAction !== null"
             @close="confirmAction = null"
         >
-            <Dialog.Panel>
-                <div v-if="confirmAction" class="p-5">
-                    <div class="flex items-start gap-3.5">
+            <!-- Cabecera y pie fijos con el cuerpo scrolleable: con la cuenta
+                 final larga, el botón de cobrar quedaba fuera de la pantalla
+                 en una laptop. -->
+            <Dialog.Panel class="sm:w-[94vw] lg:w-[600px]">
+                <div
+                    v-if="confirmAction"
+                    class="flex max-h-[calc(100dvh-6rem)] flex-col"
+                >
+                    <div
+                        class="flex items-start gap-3 border-b border-slate-200/70 px-5 py-4 dark:border-darkmode-400"
+                    >
                         <div
-                            class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full"
+                            class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full"
                             :class="confirmMeta[confirmAction.kind].tone"
                         >
                             <Lucide
                                 :icon="confirmMeta[confirmAction.kind].icon"
-                                class="h-7 w-7"
+                                class="h-4 w-4"
                             />
                         </div>
-                        <div class="min-w-0">
-                            <h2 class="text-lg font-medium">
+                        <div class="min-w-0 flex-1">
+                            <h2 class="text-base font-medium">
                                 {{ confirmMeta[confirmAction.kind].title }}
                             </h2>
-                            <p class="mt-0.5 text-sm text-slate-500">
+                            <p class="mt-0.5 text-xs text-slate-500">
                                 {{ confirmSubtitle }}
                             </p>
                         </div>
-                    </div>
-
-                    <div
-                        class="mt-4 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 p-3.5 text-sm text-slate-600 dark:border-darkmode-400 dark:bg-darkmode-700 dark:text-slate-300"
-                    >
-                        <p class="font-medium">¿Qué pasará?</p>
-                        <ul
-                            class="mt-2 list-inside list-disc space-y-1.5 text-sm"
+                        <button
+                            type="button"
+                            class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-darkmode-400"
+                            title="Cerrar"
+                            @click="confirmAction = null"
                         >
-                            <template v-if="confirmAction.kind === 'confirm'">
-                                <li>
-                                    La reserva queda confirmada y la habitación
-                                    se mantiene apartada para el huésped.
-                                </li>
-                                <li>
-                                    Deja de aplicar el límite de
-                                    {{ holdLabel }} de la reserva temporal.
-                                </li>
-                            </template>
-                            <template
-                                v-else-if="confirmAction.kind === 'check_in'"
-                            >
-                                <li>
-                                    El huésped queda registrado y la reserva
-                                    aparecerá entre los huéspedes alojados.
-                                </li>
-                                <li>
-                                    La habitación cambia a
-                                    <span class="font-medium">Ocupada</span> en
-                                    el plano.
-                                </li>
-                                <li v-if="guaranteeDue > 0">
-                                    Se cobra la
-                                    <span class="font-medium">fianza</span>
-                                    de {{ money(guaranteeDue) }}; se devuelve al
-                                    registrar la salida.
-                                </li>
-                            </template>
-                            <template
-                                v-else-if="confirmAction.kind === 'check_out'"
-                            >
-                                <li>
-                                    La estancia termina y la habitación pasa a
-                                    <span class="font-medium">Por limpiar</span>
-                                    (limpieza puede entrar).
-                                </li>
-                                <li v-if="folio && folio.grand_pending > 0">
-                                    Se cobra la
-                                    <span class="font-medium"
-                                        >cuenta final</span
-                                    >
-                                    (hospedaje + consumos) y entra a tu corte.
-                                </li>
-                            </template>
-                            <template
-                                v-else-if="confirmAction.kind === 'no_show'"
-                            >
-                                <li>
-                                    Registra que el huésped
-                                    <span class="font-medium"
-                                        >no se presentó</span
-                                    >; la habitación se libera para venta.
-                                </li>
-                                <li>
-                                    Pasa a
-                                    <span class="font-medium">Historial</span>
-                                    como "No llegó" y queda registrado en el
-                                    historial del huésped.
-                                </li>
-                            </template>
-                            <template v-else>
-                                <li>
-                                    La reserva se cancela y la habitación se
-                                    libera.
-                                </li>
-                                <li>
-                                    Pasa a
-                                    <span class="font-medium">Historial</span>
-                                    como "Cancelada"; los reembolsos se
-                                    gestionan aparte.
-                                </li>
-                            </template>
-                        </ul>
+                            <Lucide icon="X" class="h-4 w-4" />
+                        </button>
                     </div>
-
-                    <!-- Transferencia esperando verificación: confirmar a
-                         mano NO registra ese dinero — se aprueba en Pagos. -->
-                    <div
-                        v-if="
-                            confirmAction.kind === 'confirm' &&
-                            confirmAction.reservation.pending_transfer_request
-                        "
-                        class="mt-3 flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 p-3.5 text-xs text-slate-700 dark:text-slate-200"
-                    >
-                        <Lucide
-                            icon="TriangleAlert"
-                            class="mt-0.5 h-4 w-4 shrink-0 text-warning"
-                        />
-                        <div class="min-w-0">
-                            <p class="font-medium">
-                                Esta reserva tiene una transferencia esperando
-                                verificación.
+                    <div class="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+                        <div
+                            class="rounded-lg border border-dashed border-slate-300/70 bg-slate-50 p-3.5 text-xs text-slate-600 dark:border-darkmode-400 dark:bg-darkmode-700 dark:text-slate-300"
+                        >
+                            <p
+                                class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                Qué va a pasar
                             </p>
-                            <p class="mt-1">
-                                Confirmar aquí no registra ese pago: la reserva
-                                quedará "Sin pago" y el huésped seguirá viendo
-                                "Confirmando tu pago". Si ya recibiste el
-                                depósito, apruébalo en
-                                <a
-                                    href="/pagos"
-                                    class="font-medium text-primary underline"
-                                    >Pagos</a
+                            <ul
+                                class="mt-2 list-inside list-disc space-y-1.5 text-xs"
+                            >
+                                <template
+                                    v-if="confirmAction.kind === 'confirm'"
                                 >
-                                — eso registra el dinero, confirma la reserva y
-                                le avisa al huésped.
-                            </p>
+                                    <li>
+                                        La reserva queda confirmada y la
+                                        habitación se mantiene apartada para el
+                                        huésped.
+                                    </li>
+                                    <li>
+                                        Deja de aplicar el límite de
+                                        {{ holdLabel }} de la reserva temporal.
+                                    </li>
+                                </template>
+                                <template
+                                    v-else-if="
+                                        confirmAction.kind === 'check_in'
+                                    "
+                                >
+                                    <li>
+                                        El huésped queda registrado y la reserva
+                                        aparecerá entre los huéspedes alojados.
+                                    </li>
+                                    <li>
+                                        La habitación cambia a
+                                        <span class="font-medium">Ocupada</span>
+                                        en el plano.
+                                    </li>
+                                    <li v-if="guaranteeDue > 0">
+                                        Se cobra la
+                                        <span class="font-medium">fianza</span>
+                                        de {{ money(guaranteeDue) }}; se
+                                        devuelve al registrar la salida.
+                                    </li>
+                                </template>
+                                <template
+                                    v-else-if="
+                                        confirmAction.kind === 'check_out'
+                                    "
+                                >
+                                    <li>
+                                        La estancia termina y la habitación pasa
+                                        a
+                                        <span class="font-medium"
+                                            >Por limpiar</span
+                                        >
+                                        (limpieza puede entrar).
+                                    </li>
+                                    <li v-if="folio && folio.grand_pending > 0">
+                                        Se cobra la
+                                        <span class="font-medium"
+                                            >cuenta final</span
+                                        >
+                                        (hospedaje + consumos) y entra a tu
+                                        corte.
+                                    </li>
+                                </template>
+                                <template
+                                    v-else-if="confirmAction.kind === 'no_show'"
+                                >
+                                    <li>
+                                        Registra que el huésped
+                                        <span class="font-medium"
+                                            >no se presentó</span
+                                        >; la habitación se libera para venta.
+                                    </li>
+                                    <li>
+                                        Pasa a
+                                        <span class="font-medium"
+                                            >Historial</span
+                                        >
+                                        como "No llegó" y queda registrado en el
+                                        historial del huésped.
+                                    </li>
+                                </template>
+                                <template v-else>
+                                    <li>
+                                        La reserva se cancela y la habitación se
+                                        libera.
+                                    </li>
+                                    <li>
+                                        Pasa a
+                                        <span class="font-medium"
+                                            >Historial</span
+                                        >
+                                        como "Cancelada"; los reembolsos se
+                                        gestionan aparte.
+                                    </li>
+                                </template>
+                            </ul>
                         </div>
-                    </div>
 
-                    <!-- Llegada anticipada: la entrada es de otro día. Se
+                        <!-- Transferencia esperando verificación: confirmar a
+                         mano NO registra ese dinero — se aprueba en Pagos. -->
+                        <div
+                            v-if="
+                                confirmAction.kind === 'confirm' &&
+                                confirmAction.reservation
+                                    .pending_transfer_request
+                            "
+                            class="mt-3 flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 p-3.5 text-xs text-slate-700 dark:text-slate-200"
+                        >
+                            <Lucide
+                                icon="TriangleAlert"
+                                class="mt-0.5 h-4 w-4 shrink-0 text-warning"
+                            />
+                            <div class="min-w-0">
+                                <p class="font-medium">
+                                    Esta reserva tiene una transferencia
+                                    esperando verificación.
+                                </p>
+                                <p class="mt-1">
+                                    Confirmar aquí no registra ese pago: la
+                                    reserva quedará "Sin pago" y el huésped
+                                    seguirá viendo "Confirmando tu pago". Si ya
+                                    recibiste el depósito, apruébalo en
+                                    <a
+                                        href="/pagos"
+                                        class="font-medium text-primary underline"
+                                        >Pagos</a
+                                    >
+                                    — eso registra el dinero, confirma la
+                                    reserva y le avisa al huésped.
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Llegada anticipada: la entrada es de otro día. Se
                          permite —los huéspedes llegan antes y los hoteles los
                          reciben—, pero diciendo lo que cuesta: la estancia
                          hereda la salida y el importe de la reserva. -->
-                    <div
-                        v-if="
-                            confirmAction.kind === 'check_in' &&
-                            confirmAction.reservation &&
-                            !confirmAction.reservation.starts_today
-                        "
-                        class="mt-3 flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 p-3.5 text-xs text-slate-700 dark:text-slate-200"
-                    >
-                        <Lucide
-                            icon="TriangleAlert"
-                            class="mt-0.5 h-4 w-4 shrink-0 text-warning"
-                        />
-                        <div class="min-w-0">
-                            <p class="font-medium">
-                                Esta reserva llega el
-                                {{ confirmAction.reservation.starts_at }}.
-                            </p>
-                            <p class="mt-1">
-                                Registrar la llegada hoy adelanta la entrada
-                                real: la salida sigue prevista para el
-                                {{ confirmAction.reservation.ends_at }} y el
-                                cargo no cambia, así que las noches de más van
-                                sin cobrar.
-                            </p>
-                        </div>
-                    </div>
-
-                    <!-- Fianza al registrar la llegada (solo check-in con
-                         fianza activa): método presencial del mostrador -->
-                    <div
-                        v-if="
-                            confirmAction.kind === 'check_in' &&
-                            guaranteeDue > 0
-                        "
-                        class="mt-4 rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
-                    >
                         <div
-                            class="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300"
+                            v-if="
+                                confirmAction.kind === 'check_in' &&
+                                confirmAction.reservation &&
+                                !confirmAction.reservation.starts_today
+                            "
+                            class="mt-3 flex items-start gap-2.5 rounded-lg border border-warning/30 bg-warning/10 p-3.5 text-xs text-slate-700 dark:text-slate-200"
                         >
                             <Lucide
-                                icon="ShieldCheck"
-                                class="h-4 w-4 text-primary"
+                                icon="TriangleAlert"
+                                class="mt-0.5 h-4 w-4 shrink-0 text-warning"
                             />
-                            Fianza: {{ money(guaranteeDue) }}
-                            <button
-                                v-if="!guaranteeEditing"
-                                type="button"
-                                class="ml-auto text-xs font-medium text-primary hover:underline"
-                                @click="guaranteeEditing = true"
-                            >
-                                Cobrar otro monto
-                            </button>
+                            <div class="min-w-0">
+                                <p class="font-medium">
+                                    Esta reserva llega el
+                                    {{ confirmAction.reservation.starts_at }}.
+                                </p>
+                                <p class="mt-1">
+                                    Registrar la llegada hoy adelanta la entrada
+                                    real: la salida sigue prevista para el
+                                    {{ confirmAction.reservation.ends_at }} y el
+                                    cargo no cambia, así que las noches de más
+                                    van sin cobrar.
+                                </p>
+                            </div>
                         </div>
-                        <p class="mt-1 text-xs text-slate-500">
-                            Depósito en garantía: se cobra ahora y se devuelve
-                            al registrar la salida. No cuenta como pago del
-                            hospedaje.
-                        </p>
 
-                        <!-- Ajuste a mano: el caso real es el grupo que
+                        <!-- Fianza al registrar la llegada (solo check-in con
+                         fianza activa): método presencial del mostrador -->
+                        <div
+                            v-if="
+                                confirmAction.kind === 'check_in' &&
+                                guaranteeDue > 0
+                            "
+                            class="mt-4 rounded-lg border border-slate-200/70 p-3.5 dark:border-darkmode-400"
+                        >
+                            <div
+                                class="flex flex-wrap items-center gap-2 text-sm font-medium text-slate-600 dark:text-slate-300"
+                            >
+                                <Lucide
+                                    icon="ShieldCheck"
+                                    class="h-4 w-4 text-primary"
+                                />
+                                Fianza: {{ money(guaranteeDue) }}
+                                <button
+                                    v-if="!guaranteeEditing"
+                                    type="button"
+                                    class="ml-auto text-xs font-medium text-primary hover:underline"
+                                    @click="guaranteeEditing = true"
+                                >
+                                    Cobrar otro monto
+                                </button>
+                            </div>
+                            <p class="mt-1 text-xs text-slate-500">
+                                Depósito en garantía: se cobra ahora y se
+                                devuelve al registrar la salida. No cuenta como
+                                pago del hospedaje.
+                            </p>
+
+                            <!-- Ajuste a mano: el caso real es el grupo que
                              apartó por separado y llega junto, o el que trae
                              menos efectivo del que pide la política. El
                              motivo es obligatorio porque quien devuelva ese
                              dinero días después solo va a tener esta nota. -->
-                        <div
-                            v-if="guaranteeEditing"
-                            class="mt-3 rounded-lg bg-slate-50 p-3 dark:bg-darkmode-700"
-                        >
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="text-xs text-slate-500"
-                                    >Cobrar</span
-                                >
-                                <span class="text-sm text-slate-500">$</span>
-                                <FormInput
-                                    v-model="guaranteeAmountInput"
-                                    type="number"
-                                    step="0.01"
-                                    min="0"
-                                    class="!w-28 text-center"
-                                />
-                                <button
-                                    type="button"
-                                    class="ml-auto text-xs font-medium text-slate-400 hover:text-slate-600"
-                                    @click="
-                                        guaranteeEditing = false;
-                                        guaranteeAmountInput = guaranteeDue;
-                                        guaranteeReason = '';
-                                    "
-                                >
-                                    Usar {{ money(guaranteeDue) }}
-                                </button>
-                            </div>
-                            <FormInput
-                                v-if="guaranteeAdjusted"
-                                v-model="guaranteeReason"
-                                type="text"
-                                maxlength="255"
-                                class="mt-2"
-                                placeholder="Motivo del ajuste (queda en el registro del pago)"
-                            />
-                            <p
-                                v-if="guaranteeAdjusted && !guaranteeReason"
-                                class="mt-1 text-xs text-danger"
-                            >
-                                Sin motivo no se puede cobrar un monto distinto
-                                al de la política.
-                            </p>
-                        </div>
-                        <div
-                            class="mt-3 grid gap-2"
-                            :class="
-                                guaranteeMethods.length > 2
-                                    ? 'grid-cols-3'
-                                    : 'grid-cols-2'
-                            "
-                        >
-                            <button
-                                v-for="m in guaranteeMethods"
-                                :key="m.key"
-                                type="button"
-                                class="flex h-10 flex-col items-center justify-center gap-1 rounded-lg border py-2 text-xs font-medium transition"
-                                :class="
-                                    guaranteeMethod === m.key
-                                        ? 'border-primary bg-primary/10 text-primary'
-                                        : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
-                                "
-                                @click="guaranteeMethod = m.key"
-                            >
-                                <Lucide :icon="m.icon" class="h-4 w-4" />
-                                {{ m.short }}
-                            </button>
-                        </div>
-                        <!-- El folio es lo único con lo que se puede devolver
-                             una fianza recibida por transferencia. -->
-                        <FormInput
-                            v-if="guaranteeMethod === 'transfer'"
-                            v-model="guaranteeReference"
-                            type="text"
-                            class="mt-2 h-9 text-xs"
-                            placeholder="Folio o referencia del comprobante"
-                            maxlength="100"
-                        />
-                    </div>
-
-                    <!-- Cuenta final (solo check-out) -->
-                    <div v-if="confirmAction.kind === 'check_out'" class="mt-4">
-                        <div
-                            v-if="folioLoading"
-                            class="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-500 dark:bg-darkmode-700"
-                        >
-                            <Lucide
-                                icon="RefreshCw"
-                                class="h-4 w-4 animate-spin text-primary"
-                            />
-                            Calculando cuenta final…
-                        </div>
-                        <template v-else-if="folio">
                             <div
-                                class="rounded-lg border border-slate-200/70 dark:border-darkmode-400"
+                                v-if="guaranteeEditing"
+                                class="mt-3 rounded-lg bg-slate-50 p-3 dark:bg-darkmode-700"
                             >
-                                <div
-                                    class="flex items-center gap-2 border-b border-slate-200/70 px-4 py-2.5 text-xs font-medium tracking-wide text-slate-400 uppercase dark:border-darkmode-400"
-                                >
-                                    <Lucide
-                                        icon="ReceiptText"
-                                        class="h-3.5 w-3.5"
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="text-xs text-slate-500"
+                                        >Cobrar</span
+                                    >
+                                    <span class="text-sm text-slate-500"
+                                        >$</span
+                                    >
+                                    <FormInput
+                                        v-model="guaranteeAmountInput"
+                                        type="number"
+                                        step="0.01"
+                                        min="0"
+                                        class="!w-28 text-center"
                                     />
-                                    Cuenta final
+                                    <button
+                                        type="button"
+                                        class="ml-auto text-xs font-medium text-slate-400 hover:text-slate-600"
+                                        @click="
+                                            guaranteeEditing = false;
+                                            guaranteeAmountInput = guaranteeDue;
+                                            guaranteeReason = '';
+                                        "
+                                    >
+                                        Usar {{ money(guaranteeDue) }}
+                                    </button>
                                 </div>
-                                <div class="space-y-2 px-4 py-3 text-sm">
-                                    <div
-                                        class="flex items-center justify-between"
-                                    >
-                                        <span
-                                            class="flex items-center gap-2 text-slate-500"
-                                            ><Lucide
-                                                icon="BedDouble"
-                                                class="h-4 w-4"
-                                            />
-                                            Hospedaje pendiente</span
-                                        >
-                                        <span class="font-medium">{{
-                                            money(folio.lodging_pending)
-                                        }}</span>
-                                    </div>
-                                    <div
-                                        v-for="o in folio.orders"
-                                        :key="o.id"
-                                        class="flex items-center justify-between"
-                                    >
-                                        <span
-                                            class="flex min-w-0 items-center gap-2 text-slate-500"
-                                        >
-                                            <Lucide
-                                                icon="ShoppingCart"
-                                                class="h-4 w-4 shrink-0"
-                                            />
-                                            <span class="truncate"
-                                                >{{ o.summary }}
-                                                <span class="text-slate-400"
-                                                    >· {{ o.created_at }}</span
-                                                ></span
-                                            >
-                                        </span>
-                                        <span class="shrink-0 font-medium">{{
-                                            money(o.total)
-                                        }}</span>
-                                    </div>
-                                    <div
-                                        class="flex items-center justify-between border-t border-dashed border-slate-300/70 pt-2.5 dark:border-darkmode-400"
-                                    >
-                                        <span class="font-medium"
-                                            >Total a cobrar</span
-                                        >
-                                        <span
-                                            class="text-base font-medium"
-                                            :class="
-                                                folio.grand_pending > 0
-                                                    ? 'text-danger'
-                                                    : 'text-success'
-                                            "
-                                        >
-                                            {{
-                                                folio.grand_pending > 0
-                                                    ? money(folio.grand_pending)
-                                                    : 'Sin saldo — todo pagado'
-                                            }}
-                                        </span>
-                                    </div>
-                                </div>
+                                <FormInput
+                                    v-if="guaranteeAdjusted"
+                                    v-model="guaranteeReason"
+                                    type="text"
+                                    maxlength="255"
+                                    class="mt-2"
+                                    placeholder="Motivo del ajuste (queda en el registro del pago)"
+                                />
+                                <p
+                                    v-if="guaranteeAdjusted && !guaranteeReason"
+                                    class="mt-1 text-xs text-danger"
+                                >
+                                    Sin motivo no se puede cobrar un monto
+                                    distinto al de la política.
+                                </p>
                             </div>
-
-                            <template v-if="folio.grand_pending > 0">
-                                <div v-if="!folioForce" class="mt-3">
-                                    <label
-                                        class="mb-1.5 block text-sm text-slate-500"
-                                        >Método de pago</label
-                                    >
-                                    <div class="grid grid-cols-3 gap-2">
-                                        <button
-                                            v-for="m in folioMethods"
-                                            :key="m.key"
-                                            type="button"
-                                            class="flex flex-col items-center gap-1 rounded-lg border py-2.5 text-xs font-medium transition"
-                                            :class="
-                                                folioMethod === m.key
-                                                    ? 'border-primary bg-primary/10 text-primary'
-                                                    : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
-                                            "
-                                            @click="folioMethod = m.key"
-                                        >
-                                            <Lucide
-                                                :icon="m.icon"
-                                                class="h-4 w-4"
-                                            />
-                                            {{ m.label }}
-                                        </button>
-                                    </div>
-                                </div>
-                                <label
-                                    class="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 text-xs transition"
+                            <div
+                                class="mt-3 grid gap-2"
+                                :class="
+                                    guaranteeMethods.length > 2
+                                        ? 'grid-cols-3'
+                                        : 'grid-cols-2'
+                                "
+                            >
+                                <button
+                                    v-for="m in guaranteeMethods"
+                                    :key="m.key"
+                                    type="button"
+                                    class="flex h-10 flex-col items-center justify-center gap-1 rounded-lg border py-2 text-xs font-medium transition"
                                     :class="
-                                        folioForce
-                                            ? 'border-danger/30 bg-danger/5 text-danger'
+                                        guaranteeMethod === m.key
+                                            ? 'border-primary bg-primary/10 text-primary'
                                             : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
                                     "
+                                    @click="guaranteeMethod = m.key"
                                 >
-                                    <input
-                                        v-model="folioForce"
-                                        type="checkbox"
-                                        class="mt-0.5 h-4 w-4 rounded border-slate-300 text-danger focus:ring-danger/30"
-                                    />
-                                    <span
-                                        ><span class="font-medium"
-                                            >Salida con saldo pendiente</span
-                                        >
-                                        — el huésped se va sin pagar
-                                        {{ money(folio.grand_pending) }}; queda
-                                        registrado en su expediente.</span
-                                    >
-                                </label>
-                            </template>
+                                    <Lucide :icon="m.icon" class="h-4 w-4" />
+                                    {{ m.short }}
+                                </button>
+                            </div>
+                            <!-- El folio es lo único con lo que se puede devolver
+                             una fianza recibida por transferencia. -->
+                            <FormInput
+                                v-if="guaranteeMethod === 'transfer'"
+                                v-model="guaranteeReference"
+                                type="text"
+                                class="mt-2 h-9 text-xs"
+                                placeholder="Folio o referencia del comprobante"
+                                maxlength="100"
+                            />
+                        </div>
 
-                            <!-- Fianza viva: devolverla (default) o retenerla
-                                 por daños con motivo obligatorio -->
-                            <template v-if="folio.guarantee_refundable > 0">
-                                <label
-                                    class="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 text-xs transition"
-                                    :class="
-                                        guaranteeRefund
-                                            ? 'border-success/30 bg-success/5 text-slate-600 dark:text-slate-300'
-                                            : 'border-warning/40 bg-warning/5 text-slate-600 dark:text-slate-300'
-                                    "
+                        <!-- Cuenta final (solo check-out) -->
+                        <div
+                            v-if="confirmAction.kind === 'check_out'"
+                            class="mt-4"
+                        >
+                            <div
+                                v-if="folioLoading"
+                                class="flex items-center gap-2 rounded-lg bg-slate-50 px-3 py-3 text-sm text-slate-500 dark:bg-darkmode-700"
+                            >
+                                <Lucide
+                                    icon="RefreshCw"
+                                    class="h-4 w-4 animate-spin text-primary"
+                                />
+                                Calculando cuenta final…
+                            </div>
+                            <template v-else-if="folio">
+                                <div
+                                    class="rounded-lg border border-slate-200/70 dark:border-darkmode-400"
                                 >
-                                    <input
-                                        v-model="guaranteeRefund"
-                                        type="checkbox"
-                                        class="mt-0.5 h-4 w-4 rounded border-slate-300 text-success focus:ring-success/30"
-                                    />
-                                    <span
-                                        ><span class="font-medium"
-                                            >Devolver fianza
-                                            {{
-                                                money(
-                                                    folio.guarantee_refundable,
-                                                )
-                                            }}</span
-                                        >
-                                        — el depósito en garantía regresa al
-                                        huésped al registrar la salida.</span
+                                    <div
+                                        class="flex items-center gap-2 border-b border-slate-200/70 px-4 py-2.5 text-xs font-medium tracking-wide text-slate-400 uppercase dark:border-darkmode-400"
                                     >
-                                </label>
-                                <div v-if="!guaranteeRefund" class="mt-2">
-                                    <FormLabel htmlFor="guarantee-reason">
-                                        Motivo de la retención
-                                    </FormLabel>
-                                    <FormInput
-                                        id="guarantee-reason"
-                                        v-model="guaranteeRetainReason"
-                                        type="text"
-                                        placeholder="Daños en la habitación, faltante de toallas…"
-                                    />
-                                    <!-- Retener ya no es quedarse el depósito
+                                        <Lucide
+                                            icon="ReceiptText"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                        Cuenta final
+                                    </div>
+                                    <div class="space-y-2 px-4 py-3 text-sm">
+                                        <div
+                                            class="flex items-center justify-between"
+                                        >
+                                            <span
+                                                class="flex items-center gap-2 text-slate-500"
+                                                ><Lucide
+                                                    icon="BedDouble"
+                                                    class="h-4 w-4"
+                                                />
+                                                Hospedaje pendiente</span
+                                            >
+                                            <span class="font-medium">{{
+                                                money(folio.lodging_pending)
+                                            }}</span>
+                                        </div>
+                                        <div
+                                            v-for="o in folio.orders"
+                                            :key="o.id"
+                                            class="flex items-center justify-between"
+                                        >
+                                            <span
+                                                class="flex min-w-0 items-center gap-2 text-slate-500"
+                                            >
+                                                <Lucide
+                                                    icon="ShoppingCart"
+                                                    class="h-4 w-4 shrink-0"
+                                                />
+                                                <span class="truncate"
+                                                    >{{ o.summary }}
+                                                    <span class="text-slate-400"
+                                                        >·
+                                                        {{ o.created_at }}</span
+                                                    ></span
+                                                >
+                                            </span>
+                                            <span
+                                                class="shrink-0 font-medium"
+                                                >{{ money(o.total) }}</span
+                                            >
+                                        </div>
+                                        <div
+                                            class="flex items-center justify-between border-t border-dashed border-slate-300/70 pt-2.5 dark:border-darkmode-400"
+                                        >
+                                            <span class="font-medium"
+                                                >Total a cobrar</span
+                                            >
+                                            <span
+                                                class="text-base font-medium"
+                                                :class="
+                                                    folio.grand_pending > 0
+                                                        ? 'text-danger'
+                                                        : 'text-success'
+                                                "
+                                            >
+                                                {{
+                                                    folio.grand_pending > 0
+                                                        ? money(
+                                                              folio.grand_pending,
+                                                          )
+                                                        : 'Sin saldo — todo pagado'
+                                                }}
+                                            </span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <template v-if="folio.grand_pending > 0">
+                                    <div v-if="!folioForce" class="mt-3">
+                                        <label
+                                            class="mb-1.5 block text-sm text-slate-500"
+                                            >Método de pago</label
+                                        >
+                                        <div class="grid grid-cols-3 gap-2">
+                                            <button
+                                                v-for="m in folioMethods"
+                                                :key="m.key"
+                                                type="button"
+                                                class="flex flex-col items-center gap-1 rounded-lg border py-2.5 text-xs font-medium transition"
+                                                :class="
+                                                    folioMethod === m.key
+                                                        ? 'border-primary bg-primary/10 text-primary'
+                                                        : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
+                                                "
+                                                @click="folioMethod = m.key"
+                                            >
+                                                <Lucide
+                                                    :icon="m.icon"
+                                                    class="h-4 w-4"
+                                                />
+                                                {{ m.label }}
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <label
+                                        class="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 text-xs transition"
+                                        :class="
+                                            folioForce
+                                                ? 'border-danger/30 bg-danger/5 text-danger'
+                                                : 'border-slate-200/70 text-slate-500 hover:bg-slate-50 dark:border-darkmode-400'
+                                        "
+                                    >
+                                        <input
+                                            v-model="folioForce"
+                                            type="checkbox"
+                                            class="mt-0.5 h-4 w-4 rounded border-slate-300 text-danger focus:ring-danger/30"
+                                        />
+                                        <span
+                                            ><span class="font-medium"
+                                                >Salida con saldo
+                                                pendiente</span
+                                            >
+                                            — el huésped se va sin pagar
+                                            {{ money(folio.grand_pending) }};
+                                            queda registrado en su
+                                            expediente.</span
+                                        >
+                                    </label>
+                                </template>
+
+                                <!-- Fianza viva: devolverla (default) o retenerla
+                                 por daños con motivo obligatorio -->
+                                <template v-if="folio.guarantee_refundable > 0">
+                                    <label
+                                        class="mt-3 flex cursor-pointer items-start gap-2.5 rounded-lg border p-3 text-xs transition"
+                                        :class="
+                                            guaranteeRefund
+                                                ? 'border-success/30 bg-success/5 text-slate-600 dark:text-slate-300'
+                                                : 'border-warning/40 bg-warning/5 text-slate-600 dark:text-slate-300'
+                                        "
+                                    >
+                                        <input
+                                            v-model="guaranteeRefund"
+                                            type="checkbox"
+                                            class="mt-0.5 h-4 w-4 rounded border-slate-300 text-success focus:ring-success/30"
+                                        />
+                                        <span
+                                            ><span class="font-medium"
+                                                >Devolver fianza
+                                                {{
+                                                    money(
+                                                        folio.guarantee_refundable,
+                                                    )
+                                                }}</span
+                                            >
+                                            — el depósito en garantía regresa al
+                                            huésped al registrar la
+                                            salida.</span
+                                        >
+                                    </label>
+                                    <div v-if="!guaranteeRefund" class="mt-2">
+                                        <FormLabel htmlFor="guarantee-reason">
+                                            Motivo de la retención
+                                        </FormLabel>
+                                        <FormInput
+                                            id="guarantee-reason"
+                                            v-model="guaranteeRetainReason"
+                                            type="text"
+                                            placeholder="Daños en la habitación, faltante de toallas…"
+                                        />
+                                        <!-- Retener ya no es quedarse el depósito
                                          Y cobrar la cuenta completa: cubre lo
                                          que se deba hasta donde alcance y solo
                                          el excedente se cobra en mostrador. -->
-                                    <p class="mt-1 text-xs text-slate-500">
-                                        <template
-                                            v-if="folio.grand_pending > 0"
-                                        >
-                                            Se aplican
-                                            {{
-                                                money(
-                                                    Math.min(
-                                                        folio.guarantee_refundable,
-                                                        folio.grand_pending,
-                                                    ),
-                                                )
-                                            }}
-                                            a la cuenta y solo se cobra el
-                                            resto; si sobra fianza, se devuelve.
-                                        </template>
-                                        <template v-else>
-                                            La cuenta está en ceros: la fianza
-                                            se queda como penalización.
-                                        </template>
-                                        El motivo se guarda en el registro del
-                                        pago.
-                                    </p>
-                                </div>
+                                        <p class="mt-1 text-xs text-slate-500">
+                                            <template
+                                                v-if="folio.grand_pending > 0"
+                                            >
+                                                Se aplican
+                                                {{
+                                                    money(
+                                                        Math.min(
+                                                            folio.guarantee_refundable,
+                                                            folio.grand_pending,
+                                                        ),
+                                                    )
+                                                }}
+                                                a la cuenta y solo se cobra el
+                                                resto; si sobra fianza, se
+                                                devuelve.
+                                            </template>
+                                            <template v-else>
+                                                La cuenta está en ceros: la
+                                                fianza se queda como
+                                                penalización.
+                                            </template>
+                                            El motivo se guarda en el registro
+                                            del pago.
+                                        </p>
+                                    </div>
+                                </template>
                             </template>
-                        </template>
+                        </div>
+
+                        <div
+                            v-if="confirmMeta[confirmAction.kind].reason"
+                            class="mt-4"
+                        >
+                            <FormLabel htmlFor="confirm-reason">
+                                Motivo
+                                <span class="text-slate-400"
+                                    >(opcional, queda en el registro)</span
+                                >
+                            </FormLabel>
+                            <FormInput
+                                id="confirm-reason"
+                                v-model="confirmReason"
+                                type="text"
+                                :placeholder="
+                                    confirmAction.kind === 'no_show'
+                                        ? 'No contestó el teléfono, no llegó a las 23:00…'
+                                        : 'El huésped avisó que no viene, cambio de planes…'
+                                "
+                            />
+                        </div>
                     </div>
 
                     <div
-                        v-if="confirmMeta[confirmAction.kind].reason"
-                        class="mt-4"
+                        class="flex items-center justify-end gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
-                        <FormLabel htmlFor="confirm-reason">
-                            Motivo
-                            <span class="text-slate-400"
-                                >(opcional, queda en el registro)</span
-                            >
-                        </FormLabel>
-                        <FormInput
-                            id="confirm-reason"
-                            v-model="confirmReason"
-                            type="text"
-                            :placeholder="
-                                confirmAction.kind === 'no_show'
-                                    ? 'No contestó el teléfono, no llegó a las 23:00…'
-                                    : 'El huésped avisó que no viene, cambio de planes…'
-                            "
-                        />
-                    </div>
-
-                    <div class="mt-6 flex justify-end gap-3">
                         <Button
                             variant="outline-secondary"
-                            class="h-10 px-5 text-xs"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             @click="confirmAction = null"
                         >
                             Volver
                         </Button>
                         <Button
                             :variant="confirmMeta[confirmAction.kind].variant"
-                            class="h-10 px-5 text-xs"
+                            class="h-9 rounded-[0.5rem] px-5 text-xs"
                             :disabled="
                                 confirmBusy ||
                                 (confirmAction.kind === 'check_out' &&
@@ -4611,17 +4715,37 @@ const modalDescription = computed(() => {
                                     class="ml-auto text-base font-medium text-primary"
                                 >
                                     Total estimado: ${{
-                                        estimate.total.toFixed(2)
+                                        Math.max(
+                                            0,
+                                            estimate.total - courtesyDiscount,
+                                        ).toFixed(2)
                                     }}
                                 </div>
                             </div>
                             <div
                                 v-if="
+                                    estimate.discount ||
                                     estimate.extraGuests ||
                                     estimate.optionalCharges.length
                                 "
                                 class="mt-1.5 space-y-0.5 text-xs text-slate-500"
                             >
+                                <div
+                                    v-if="estimate.discount"
+                                    class="flex items-center gap-1.5 text-success"
+                                >
+                                    <Lucide
+                                        icon="BadgePercent"
+                                        class="h-3.5 w-3.5"
+                                    />
+                                    {{ estimate.discount.label }}: ahorra
+                                    <span class="font-medium"
+                                        >${{
+                                            estimate.discount.amount.toFixed(2)
+                                        }}</span
+                                    >
+                                    sobre el precio normal
+                                </div>
                                 <div
                                     v-if="estimate.extraGuests"
                                     class="flex items-center gap-1.5"
@@ -5318,6 +5442,22 @@ const modalDescription = computed(() => {
                                 >
                             </div>
                         </template>
+
+                        <!-- Cortesía (módulo cortesias): solo en altas -->
+                        <div v-if="!editingReservationId" class="col-span-full">
+                            <CourtesySection
+                                v-model:on="courtesyOn"
+                                v-model:form="courtesyForm"
+                                :lodging="courtesyLodging"
+                                :disabled="saving"
+                                :cap-warning="courtesyCapWarning"
+                                :pending-note="
+                                    walkIn
+                                        ? 'Se le pide al propietario. La llegada se registra igual y el hospedaje se cobra al salir, con lo que él decida.'
+                                        : 'Se le pide al propietario. La reserva se guarda con su precio normal y, si aprueba, el descuento entra solo.'
+                                "
+                            />
+                        </div>
 
                         <div
                             v-if="!walkIn && !editingReservationId"

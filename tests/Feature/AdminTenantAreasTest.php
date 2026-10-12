@@ -17,6 +17,7 @@ it('cada área del hotel tiene su propia URL', function () {
         'admin.tenants.plan' => 'admin/tenants/{tenant}/plan',
         'admin.tenants.modules' => 'admin/tenants/{tenant}/modulos',
         'admin.tenants.team' => 'admin/tenants/{tenant}/equipo',
+        'admin.tenants.roles' => 'admin/tenants/{tenant}/roles',
         'admin.tenants.assistant' => 'admin/tenants/{tenant}/asistente',
         'admin.tenants.channels' => 'admin/tenants/{tenant}/canales',
         'admin.tenants.payments' => 'admin/tenants/{tenant}/cobros',

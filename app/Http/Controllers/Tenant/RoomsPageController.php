@@ -67,7 +67,7 @@ class RoomsPageController extends Controller
                 ]),
             'zones' => Zone::where('property_id', $property->id)->orderBy('sort_order')->get(['id', 'name', 'kind', 'color']),
             'roomTypes' => RoomType::query()
-                ->select(['id', 'name', 'capacity'])
+                ->select(['id', 'name', 'capacity', 'amenities'])
                 ->where('property_id', $property->id)
                 ->withMin(['ratePlans as price_from' => fn ($q) => $q->where('active', true)], 'price')
                 ->orderBy('sort_order')
@@ -76,6 +76,9 @@ class RoomsPageController extends Controller
                     'id' => $type->id,
                     'name' => $type->name,
                     'capacity' => $type->capacity,
+                    // El formulario de la habitación las muestra como heredadas
+                    // para que no se vuelvan a capturar en cada cuarto.
+                    'amenities' => $type->amenities ?? [],
                     'price_from' => $type->priceFrom(),
                     'has_active_rate' => $type->hasActiveRate(),
                 ]),

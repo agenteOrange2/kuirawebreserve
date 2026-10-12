@@ -24,6 +24,7 @@ class PlatformAlertController extends Controller
     public const TYPES = [
         'ai_quota' => 'Cuota de IA',
         'ai_providers' => 'Llaves de IA',
+        'ai_outage' => 'Asistente sin contestar',
         'new_tenant' => 'Hotel nuevo',
         'new_prospect' => 'Prospecto',
         'module_request' => 'Solicitud de módulo',

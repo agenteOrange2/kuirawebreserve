@@ -23,6 +23,8 @@ class AdminActivityPresenter
         'status' => 'Estado',
         'price' => 'Precio',
         'price_monthly' => 'Precio mensual',
+        'activation_fee' => 'Activación',
+        'billing_periods' => 'Pago por adelantado',
         'model' => 'Modelo',
         'provider' => 'Proveedor',
         'title' => 'Título',

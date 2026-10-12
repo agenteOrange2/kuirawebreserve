@@ -1,5 +1,4 @@
 <script setup lang="ts">
-import { Head } from '@inertiajs/vue3';
 import axios from 'axios';
 import {
     computed,
@@ -18,24 +17,47 @@ import {
     FormTextarea,
 } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
-import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
+import BackButton from '@/components/Booking/BackButton.vue';
+import BookingCard from '@/components/Booking/BookingCard.vue';
+import BookingModal from '@/components/Booking/BookingModal.vue';
 import DateRangePicker from '@/components/Booking/DateRangePicker.vue';
-import { useEmbedResize } from '@/composables/useEmbedResize';
+import NightlyBars from '@/components/Booking/NightlyBars.vue';
+import PaymentPanel from '@/components/Booking/PaymentPanel.vue';
+import PhoneField from '@/components/Booking/PhoneField.vue';
+import PhotoGallery from '@/components/Booking/PhotoGallery.vue';
+import PublicShell from '@/components/Booking/PublicShell.vue';
+import QtyStepper from '@/components/Booking/QtyStepper.vue';
+import type { RoomOption } from '@/components/Booking/RoomOptionCard.vue';
+import RoomOptionCard from '@/components/Booking/RoomOptionCard.vue';
+import type { SummaryLine } from '@/components/Booking/StaySummary.vue';
+import StaySummary from '@/components/Booking/StaySummary.vue';
+import type { PublicContact } from '@/components/Booking/theme';
+import type { DonutPart } from '@/components/Booking/TotalDonut.vue';
+import { revealElement } from '@/composables/useEmbedResize';
 import type { WizardAppearance } from '@/composables/useWizardAppearance';
-import { useWizardAppearance } from '@/composables/useWizardAppearance';
 import {
+    downloadIcs,
+    emailError,
     formatFriendlyDateTime,
+    formatLongDay,
+    formatMoney,
     formatStayRange,
     formatTime,
     humanizeDurationLabel,
     humanizeMinutes,
+    internationalPhone,
+    nightsBetween,
+    phoneError,
 } from '@/lib/bookingFormat';
+import type { PriceLine } from '@/lib/bookingPricing';
+import {
+    breakdownDetail,
+    breakdownLabel,
+    breakdownPercent,
+    breakdownSavings,
+    longStayHint,
+} from '@/lib/bookingPricing';
 import { randomUuid } from '@/lib/uuid';
-
-interface PriceLine {
-    concept: string;
-    amount: number;
-}
 
 interface TypePhoto {
     id: number;
@@ -43,25 +65,7 @@ interface TypePhoto {
     thumb_url: string;
 }
 
-interface Option {
-    room_type_id: number;
-    room_id: number | null;
-    name: string;
-    description: string | null;
-    capacity: number;
-    effective_capacity: number;
-    amenities: string[];
-    photos: TypePhoto[];
-    duration_label: string;
-    starts_at: string;
-    ends_at: string;
-    total: number;
-    price_breakdown: PriceLine[];
-    requires_prepayment: boolean;
-    available: boolean;
-    rooms_count: number;
-    advance_error: string | null;
-}
+type Option = RoomOption;
 
 interface ExtraProduct {
     id: number;
@@ -133,6 +137,7 @@ interface ExperienceLine {
 interface HoldResult {
     code: string;
     room_type: string;
+    room_photo?: string | null;
     starts_at: string;
     ends_at: string;
     room_total: number;
@@ -157,55 +162,18 @@ interface HoldResult {
     hold_minutes: number;
 }
 
-interface GatewayOption {
-    provider: 'stripe' | 'mercadopago' | 'paypal';
-    label: string;
-}
-
-interface PaymentOptions {
-    gateways: GatewayOption[];
-    transfer: { available: boolean; accounts_count: number };
-}
-
-interface PaymentResult {
-    method: 'gateway' | 'transfer';
-    provider?: string;
-    amount: number;
-    amount_label: string;
-    checkout_url?: string;
-    bank_accounts?: {
-        banco: string;
-        titular: string;
-        cuenta: string;
-        tipo?: string;
-        aviso?: string | null;
-        /** La tarjeta, para quien en su app solo puede transferir a tarjeta. */
-        alternativa?: {
-            cuenta: string;
-            tipo: string;
-            aviso?: string | null;
-        } | null;
-    }[];
-    whatsapps?: string[];
-    valid_hours?: number;
-    // "1 hora", "20 minutos": en horas enteras un cobro de 60 min decía "0 horas".
-    valid_label?: string | null;
-    return_url: string;
-}
-
 // Pasos (restructurado 2026-07-11, a pedido explícito): "Fechas" ya NO
-// pide personas — solo cuándo. Elegido el tipo, "Confirmar habitación"
-// pregunta cuántos son con un tope duro (la ocupación real de ESE cuarto,
-// / ajustes/rooms), ahí mismo se ve el cargo por persona extra si aplica.
-// "Extras" solo si el hotel lo activó Y tiene productos curados
-// (/ajustes/wizard). "Datos" y "Confirmación" siempre cierran.
+// pide personas — solo cuándo. Elegido el tipo, "Tu habitación" pregunta
+// cuántos son con un tope duro (la ocupación real de ESE cuarto). "Extras"
+// solo si el hotel lo activó Y tiene algo que ofrecer. "Datos" y
+// "Confirmación" siempre cierran.
 type StepKey = 'dates' | 'room' | 'extras' | 'guest' | 'confirm';
 const STEP_LABELS: Record<StepKey, string> = {
     dates: 'Cuándo',
     room: 'Tu habitación',
     extras: 'Complementos',
     guest: 'Tus datos',
-    confirm: 'Revisa',
+    confirm: 'Listo',
 };
 
 const props = defineProps<{
@@ -225,16 +193,14 @@ const props = defineProps<{
         block_mode_label: string;
     };
     // Las modalidades NO son un toggle fijo: se detectan de las tarifas
-    // activas reales del catálogo (spec-motor-reservas-web §13.2). Un
-    // motel 100% por bloque nunca ve la pestaña "Por noche", y viceversa.
+    // activas reales del catálogo. Un motel 100% por bloque nunca ve la
+    // pestaña "Por noche", y viceversa.
     hasNightRates: boolean;
     hasBlockRates: boolean;
     holdMinutes: number;
     // Política de cancelación default del hotel: se enseña ANTES de apartar.
     cancellationPolicy: { label: string | null; text: string | null };
-    // Fianza (depósito en garantía) que se cobra AL LLEGAR, aparte del
-    // precio: el huésped tiene que saberlo antes de venir. null = el hotel
-    // no cobra fianza.
+    // Fianza que se cobra AL LLEGAR, aparte del precio.
     guarantee: {
         amount: number;
         label: string;
@@ -243,51 +209,20 @@ const props = defineProps<{
     } | null;
     hasExperiences: boolean;
     hasGroups: boolean;
-    // Lista de espera (módulo lista-espera): sin disponibilidad se ofrece
-    // dejar contacto para avisar cuando se libere espacio.
     hasWaitlist: boolean;
-    // Cupones (módulo cupones): input de código antes de apartar.
     hasCoupons: boolean;
-    // Embed de UNA sola habitación (?habitacion=<id> desde /integracion):
-    // el wizard no ofrece catálogo, solo cotiza y aparta esta. null = el
-    // wizard completo de siempre.
+    // Embed de UNA sola habitación (?habitacion=<id> desde /integracion).
     lockedRoomType: { id: number; name: string } | null;
-    // Contacto público del hotel (redes, mapa, sitio) para el pie: que la
-    // página se sienta DEL hotel, no del sistema.
-    contact: {
-        website: string | null;
-        maps_url: string | null;
-        socials: { type: string; url: string; icon: Icon }[];
-    };
+    contact: PublicContact;
 }>();
-
-// Widget incrustado: reporta su alto al iframe padre.
-useEmbedResize();
-
-// ── Apariencia personalizada (/reservas/ajustes) ──
-const { isDark, rootStyle } = useWizardAppearance(props.appearance);
 
 const adultsOnly = computed(
     () => props.property.guest_policy === 'adults_only',
 );
-// Ambas modalidades activas → se puede elegir; si solo hay una, no hace
-// falta ni mostrar el selector, se usa esa directo.
 const bothModesAvailable = computed(
     () => props.hasNightRates && props.hasBlockRates,
 );
-
-const money = (n: number) =>
-    `$${Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2 })} ${props.property.currency}`;
-
-// Doble moneda: referencia "aprox" en la segunda divisa (el cobro es en la
-// primaria). exchange_rate = cuántas de la primaria equivalen a 1 secundaria.
-const secondaryMoney = (n: number): string => {
-    const rate = props.property.exchange_rate;
-    const sec = props.property.currency_secondary;
-    if (!sec || !rate || rate <= 0) return '';
-    const converted = n / rate;
-    return `≈ $${converted.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${sec}`;
-};
+const money = (n: number) => formatMoney(n, props.property.currency);
 
 function localDateInput(date: Date): string {
     const y = date.getFullYear();
@@ -299,16 +234,11 @@ function localDateInput(date: Date): string {
 function roundedNowInput(): string {
     const d = new Date();
     d.setMinutes(d.getMinutes() + (30 - (d.getMinutes() % 30)), 0, 0);
-    const y = d.getFullYear();
-    const m = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    const h = String(d.getHours()).padStart(2, '0');
-    const min = String(d.getMinutes()).padStart(2, '0');
-    return `${y}-${m}-${day}T${h}:${min}`;
+    return `${localDateInput(d)}T${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
 
-// ── Catálogo de extras (se carga una sola vez; decide si el paso existe):
-// products = POS con stock; addons = módulo extras (solo cargo) ──
+// ── Catálogo de extras (decide si el paso existe): products = POS con
+// stock; addons = módulo extras (solo cargo) ──
 const extrasCatalog = ref<{
     enabled: boolean;
     products: ExtraProduct[];
@@ -334,8 +264,8 @@ const extrasByCategory = computed(() => {
     return [...groups.entries()];
 });
 
-// product_id → cantidad elegida (0 = no seleccionado).
 const selectedProducts = ref<Record<number, number>>({});
+const selectedAddons = ref<Record<number, number>>({});
 
 function setProductQty(productId: number, qty: number) {
     selectedProducts.value = {
@@ -343,9 +273,6 @@ function setProductQty(productId: number, qty: number) {
         [productId]: Math.max(0, Math.min(20, qty)),
     };
 }
-
-// extra_id (add-on) → cantidad elegida.
-const selectedAddons = ref<Record<number, number>>({});
 
 function setAddonQty(addonId: number, qty: number) {
     selectedAddons.value = {
@@ -360,7 +287,6 @@ const productsSubtotal = computed(() =>
         0,
     ),
 );
-
 const addonsSubtotal = computed(() =>
     (extrasCatalog.value?.addons ?? []).reduce(
         (sum, a) => sum + (selectedAddons.value[a.id] ?? 0) * a.price,
@@ -368,9 +294,7 @@ const addonsSubtotal = computed(() =>
     ),
 );
 
-// Líneas de extras elegidos (para el resumen en "Tus datos" y el desglose
-// de cada paso — antes los extras desaparecían del resumen hasta el final).
-// Une productos del POS y add-ons en una sola lista para mostrar.
+// Add-ons y productos en una sola lista para el resumen.
 const selectedProductLines = computed(() => [
     ...(extrasCatalog.value?.addons ?? [])
         .filter((a) => (selectedAddons.value[a.id] ?? 0) > 0)
@@ -391,8 +315,7 @@ const selectedProductLines = computed(() => [
 ]);
 
 // ── Experiencias (módulo `experiencias`): tours con sesiones durante la
-// estancia. Se cargan al elegir habitación (ya hay fechas firmes) y se
-// agregan en el paso Extras como plus que suma al total ──
+// estancia, se cargan al elegir habitación (ya hay fechas firmes) ──
 const experiencesCatalog = ref<{
     enabled: boolean;
     experiences: ExperienceOption[];
@@ -405,7 +328,6 @@ interface ExperiencePick {
 }
 
 const experiencePicks = ref<ExperiencePick[]>([]);
-// Borrador por experiencia (sesión + personas) antes de "Agregar".
 const expDraft = ref<
     Record<number, { session_id: number | ''; people: number }>
 >({});
@@ -443,12 +365,20 @@ function experienceById(id: number): ExperienceOption | undefined {
     return experiencesCatalog.value?.experiences.find((e) => e.id === id);
 }
 
-function pickKey(pick: ExperiencePick): string {
-    return `s-${pick.session_id}`;
+// Tope real de personas para el borrador: el cupo de la sesión elegida y
+// el máximo del tour. Antes el + subía sin límite y se recortaba en
+// silencio al agregar.
+function experienceCap(exp: ExperienceOption): number {
+    const draft = expDraft.value[exp.id];
+    const session = exp.sessions.find(
+        (s) => s.id === Number(draft?.session_id),
+    );
+    return Math.max(
+        exp.min_people,
+        Math.min(session?.remaining ?? 100, exp.max_people ?? 100),
+    );
 }
 
-// Líneas vivas de experiencias elegidas (nombre, fecha, total) — mismo
-// papel que selectedProductLines pero para tours.
 const experienceLines = computed(() =>
     experiencePicks.value.flatMap((pick) => {
         const exp = experienceById(pick.experience_id);
@@ -456,7 +386,7 @@ const experienceLines = computed(() =>
         if (!exp || !session) return [];
         return [
             {
-                id: pickKey(pick),
+                id: `s-${pick.session_id}`,
                 session_id: pick.session_id,
                 name: exp.name,
                 starts_at: session.starts_at,
@@ -479,11 +409,10 @@ function addExperiencePick(exp: ExperienceOption) {
     if (!draft || draft.session_id === '') return;
     const session = exp.sessions.find((s) => s.id === Number(draft.session_id));
     if (!session) return;
-    const cap = Math.min(
-        session.remaining,
-        exp.max_people ?? session.remaining,
+    const people = Math.max(
+        exp.min_people,
+        Math.min(draft.people, experienceCap(exp)),
     );
-    const people = Math.max(exp.min_people, Math.min(draft.people, cap));
     // Una línea por sesión: volver a agregar la misma sesión la reemplaza.
     experiencePicks.value = [
         ...experiencePicks.value.filter((p) => p.session_id !== session.id),
@@ -499,7 +428,7 @@ function removeExperiencePick(sessionId: number) {
     );
 }
 
-// ── Orden de pasos (dinámico: "Extras" solo si aplica) ──
+// ── Orden de pasos (dinámico: "Complementos" solo si aplica) ──
 const step = ref<StepKey>('dates');
 
 const stepOrder = computed<StepKey[]>(() => [
@@ -511,23 +440,26 @@ const stepOrder = computed<StepKey[]>(() => [
     'guest',
     'confirm',
 ]);
+const shellSteps = computed(() =>
+    stepOrder.value.map((key) => ({ key, label: STEP_LABELS[key] })),
+);
 
-function stepNumber(key: StepKey): number {
-    return stepOrder.value.indexOf(key) + 1;
-}
+// Cada paso nuevo arranca arriba: antes se quedaba la vista donde estaba
+// el botón del paso anterior (en el celular, a media página).
+const stepTop = ref<HTMLElement | null>(null);
+watch(step, async () => {
+    await nextTick();
+    revealElement(stepTop.value);
+});
 
-const currentStepLabel = computed(() => STEP_LABELS[step.value]);
-// Modo inicial: el que de verdad tenga tarifas (si solo hay una modalidad,
-// arranca directo en esa; si hay ambas, bloque va primero por ser el caso
-// más común hoy — el hotelero puede tener las dos sin problema).
+// Modo inicial: el que de verdad tenga tarifas; si hay ambas, bloque
+// primero por ser el caso más común hoy.
 const mode = ref<'block' | 'night'>(
     props.hasBlockRates || !props.hasNightRates ? 'block' : 'night',
 );
 const arriveDate = ref(localDateInput(new Date()));
 const departDate = ref(localDateInput(new Date(Date.now() + 86400000)));
 const arriveAt = ref(roundedNowInput());
-// Cuántos son se pregunta hasta el paso "Confirmar habitación" (más abajo),
-// ya con un cuarto concreto elegido y su tope real a la vista — no aquí.
 const adults = ref(1);
 const children = ref(0);
 
@@ -536,25 +468,56 @@ const searchError = ref<string | null>(null);
 const searched = ref(false);
 const options = ref<Option[]>([]);
 const anyAvailable = ref(false);
-// Los resultados aparecen ABAJO del botón: sin scroll automático mucha
-// gente ni se entera de que ya salieron.
 const resultsEl = ref<HTMLElement | null>(null);
+// Se buscó y luego se cambiaron las fechas: la lista vieja ya no aplica.
+const staleSearch = ref(false);
 
-// Desglose de precio (spec-wizard-precios-y-pasos §3): colapsado por
-// default, un toggle por tarjeta — solo vale la pena mostrarlo cuando hay
-// algo más que la tarifa base (persona extra, ajuste del cuarto...).
-const expandedBreakdown = ref<Set<number>>(new Set());
-function toggleBreakdown(roomTypeId: number) {
-    const next = new Set(expandedBreakdown.value);
-    if (next.has(roomTypeId)) next.delete(roomTypeId);
-    else next.add(roomTypeId);
-    expandedBreakdown.value = next;
-}
+// Por horas: una llegada que ya pasó se rechazaba en el servidor; se dice
+// antes de buscar.
+const blockTimeError = computed(() => {
+    if (mode.value !== 'block') return null;
+    const at = Date.parse(arriveAt.value);
+    if (Number.isNaN(at)) return 'Elige el día y la hora de llegada.';
+    return at < Date.now() - 5 * 60000
+        ? 'Esa hora ya pasó; elige una más adelante.'
+        : null;
+});
+
+const searchedNights = computed(() =>
+    mode.value === 'night'
+        ? nightsBetween(arriveDate.value, departDate.value)
+        : null,
+);
+
+// Bug real (oct-2026): se buscaba, se cambiaban las fechas y se elegía de
+// la lista vieja — el apartado se creaba con las fechas NUEVAS pero la
+// pantalla mostraba el precio de las viejas. Cambiar fechas o modalidad
+// borra los resultados y pide buscar otra vez.
+watch([mode, arriveDate, departDate, arriveAt], () => {
+    if (step.value !== 'dates' || !searched.value) return;
+    searched.value = false;
+    options.value = [];
+    staleSearch.value = true;
+});
+
+// Orden de los resultados: disponibles primero, y el precio a elección.
+const sortBy = ref<'recommended' | 'price_asc' | 'price_desc'>('recommended');
+const sortedOptions = computed(() => {
+    const list = [...options.value];
+    if (sortBy.value === 'price_asc') list.sort((a, b) => a.total - b.total);
+    if (sortBy.value === 'price_desc') list.sort((a, b) => b.total - a.total);
+    return list.sort((a, b) => Number(b.available) - Number(a.available));
+});
+const availableCount = computed(
+    () => options.value.filter((o) => o.available).length,
+);
 
 async function searchAvailability() {
+    if (blockTimeError.value) return;
     searching.value = true;
     searchError.value = null;
     searched.value = false;
+    staleSearch.value = false;
     waitlistDone.value = false;
     waitlistError.value = null;
     try {
@@ -567,8 +530,6 @@ async function searchAvailability() {
         } else {
             params.arrive_at = arriveAt.value;
         }
-        // Embed de una sola habitación: se cotiza SOLO esa (mismo parámetro
-        // que ya usa el paso "Confirmar habitación").
         if (props.lockedRoomType) {
             params.room_type_id = props.lockedRoomType.id;
         }
@@ -579,22 +540,14 @@ async function searchAvailability() {
         anyAvailable.value = data.any_available;
         searched.value = true;
         // Con la habitación fija no hay nada que elegir: si está libre se
-        // pasa derecho a confirmarla. Si no, se cae al bloque de "sin
-        // disponibilidad" de abajo (con lista de espera si está activa) —
-        // nunca se le ofrecen las otras habitaciones, que para eso el
-        // hotel puso este embed en la página de ESTA.
+        // pasa derecho a confirmarla.
         const onlyOption = props.lockedRoomType ? data.options[0] : null;
         if (onlyOption?.available) {
             chooseOption(onlyOption);
             return;
         }
-        // Llevar la vista a los resultados: aparecen abajo del botón y sin
-        // esto mucha gente no baja a verlos.
         await nextTick();
-        resultsEl.value?.scrollIntoView({
-            behavior: 'smooth',
-            block: 'start',
-        });
+        revealElement(resultsEl.value);
     } catch (error: any) {
         searchError.value =
             error.response?.data?.message ??
@@ -604,17 +557,50 @@ async function searchAvailability() {
     }
 }
 
-// ── Lista de espera (módulo lista-espera): captura bajo el aviso de "sin
-// disponibilidad" — nombre + contacto y el rango que buscaba ──
+// ── Detalle de una habitación (modal): galería, todo lo que incluye y de
+// qué se compone el precio ──
+const detailsOption = ref<Option | null>(null);
+
+// La gráfica por noche solo dice algo si el precio cambia entre noches.
+function nightlyVaries(option: Option | null): boolean {
+    const n = option?.nightly ?? [];
+    return n.length > 1 && new Set(n.map((x) => x.price)).size > 1;
+}
+
+// Descuento por semana/mes de la habitación elegida: el servidor ya lo
+// cobra; aquí solo se hace visible (precio normal tachado + ahorro).
+const selectedSavings = computed(() =>
+    breakdownSavings(selected.value?.price_breakdown),
+);
+const selectedDiscount = computed(() => {
+    const line = selected.value?.price_breakdown.find(
+        (l) => l.regular_amount && l.regular_amount > l.amount,
+    );
+    if (!line || !selectedSavings.value) return null;
+    return {
+        name: line.concept.replace(/\s*\(\d+ noches?\)$/, ''),
+        percent: breakdownPercent(selected.value?.price_breakdown),
+        unit: line.unit_price ?? 0,
+        regular: line.regular_unit_price ?? 0,
+    };
+});
+const selectedOfferHint = computed(() =>
+    selected.value?.available
+        ? longStayHint(selected.value.long_stay_offers, props.property.currency)
+        : null,
+);
+
+// ── Lista de espera: sin disponibilidad, dejar contacto para el aviso ──
 const waitlistName = ref('');
+const waitlistCountry = ref<'52' | '1' | 'otro'>('52');
 const waitlistPhone = ref('');
+const waitlistLada = ref('');
 const waitlistEmail = ref('');
 const waitlistSending = ref(false);
 const waitlistDone = ref(false);
 const waitlistError = ref<string | null>(null);
+const waitlistAttempted = ref(false);
 
-// Rango en fechas calendario de lo que se buscó: por noche es
-// llegada/salida; por bloque, el día de llegada y el siguiente.
 function searchedDateRange(): { starts_at: string; ends_at: string } {
     if (mode.value === 'night') {
         return { starts_at: arriveDate.value, ends_at: departDate.value };
@@ -625,16 +611,41 @@ function searchedDateRange(): { starts_at: string; ends_at: string } {
     return { starts_at: start, ends_at: localDateInput(next) };
 }
 
+const waitlistPhoneError = computed(() =>
+    waitlistPhone.value.trim()
+        ? phoneError(
+              waitlistCountry.value,
+              waitlistPhone.value,
+              waitlistLada.value,
+          )
+        : null,
+);
+
 async function submitWaitlist() {
+    waitlistAttempted.value = true;
+    if (
+        !waitlistName.value.trim() ||
+        (!waitlistPhone.value.trim() && !waitlistEmail.value.trim()) ||
+        waitlistPhoneError.value ||
+        emailError(waitlistEmail.value)
+    ) {
+        return;
+    }
     waitlistSending.value = true;
     waitlistError.value = null;
     try {
         await axios.post('/api/booking/waitlist', {
             guest_name: waitlistName.value,
-            guest_phone: waitlistPhone.value || null,
+            // Con lada, igual que la reserva: antes se mandaba el número
+            // pelón y uno de USA se volvía mexicano.
+            guest_phone: waitlistPhone.value.trim()
+                ? internationalPhone(
+                      waitlistCountry.value,
+                      waitlistPhone.value,
+                      waitlistLada.value,
+                  )
+                : null,
             guest_email: waitlistEmail.value || null,
-            // Con embed de una habitación, el aviso queda ligado a ESA
-            // (no a "cualquier cosa que se libere").
             room_type_id: props.lockedRoomType?.id ?? null,
             ...searchedDateRange(),
         });
@@ -652,12 +663,9 @@ async function submitWaitlist() {
     }
 }
 
-// ── Paso "Confirmar habitación": cuántos son, con tope real del cuarto ──
+// ── Paso "Tu habitación": cuántos son, con tope real del cuarto ──
 const selected = ref<Option | null>(null);
 
-// Total real de lo que se va a apartar: habitación + extras (POS y
-// add-ons) + experiencias. selected.total ya trae persona extra y ajustes
-// del cuarto.
 const grandTotal = computed(
     () =>
         (selected.value?.total ?? 0) +
@@ -666,19 +674,21 @@ const grandTotal = computed(
         experiencesSubtotal.value,
 );
 
-// ── Cupón (módulo cupones): se valida contra el servidor para mostrar el
-// descuento; la verdad se revalida al crear el hold ──
+// ── Cupón: se valida contra el servidor para mostrar el descuento; la
+// verdad se revalida al crear el apartado ──
 const couponInput = ref('');
 const couponApplying = ref(false);
 const couponError = ref<string | null>(null);
 const appliedCoupon = ref<{ code: string; discount: number } | null>(null);
+const couponOpen = ref(false);
 
 const discountedTotal = computed(() =>
     Math.max(0, grandTotal.value - (appliedCoupon.value?.discount ?? 0)),
 );
 
 async function applyCoupon() {
-    if (!couponInput.value.trim()) return;
+    const code = couponInput.value.trim().toUpperCase();
+    if (!code) return;
     couponApplying.value = true;
     couponError.value = null;
     try {
@@ -686,16 +696,17 @@ async function applyCoupon() {
             code: string;
             discount: number;
         }>('/api/booking/coupons/check', {
-            code: couponInput.value.trim(),
+            code,
             subtotal: grandTotal.value,
-            // Contexto para validar condiciones (noches mínimas, tipo,
-            // frecuente, cumpleaños) antes del hold; el hold revalida todo.
             room_type_id: selected.value?.room_type_id ?? null,
             starts_at: selected.value?.starts_at ?? null,
             ends_at: selected.value?.ends_at ?? null,
-            guest_phone: guestPhoneForSubmit.value || null,
+            guest_phone: guestPhone.value.trim()
+                ? guestPhoneForSubmit.value
+                : null,
         });
         appliedCoupon.value = { code: data.code, discount: data.discount };
+        couponOpen.value = false;
     } catch (error: any) {
         appliedCoupon.value = null;
         couponError.value =
@@ -712,55 +723,51 @@ function removeCoupon() {
     couponError.value = null;
 }
 
-// Si el total cambia con un cupón puesto (agregó extras, cambió de
-// cuarto), el descuento porcentual se recalcula solo contra el servidor.
+// Si el total cambia con un cupón puesto, el descuento porcentual se
+// recalcula contra el servidor.
 watch(grandTotal, () => {
     if (!appliedCoupon.value) return;
     couponInput.value = appliedCoupon.value.code;
     applyCoupon();
 });
+
+// ── Datos del huésped ──
 const guestName = ref('');
 const guestPhone = ref('');
-// Lada del teléfono: se manda SIEMPRE en internacional +<lada><número>,
-// el mismo formato que ya produce el alta del panel (reservations/Index).
-// DirectGuestMessenger quita el + y, al no quedar 10 dígitos, ya no
-// antepone el 52 — un número de USA deja de convertirse en uno mexicano.
 const phoneCountry = ref<'52' | '1' | 'otro'>('52');
 const phoneLada = ref('');
-const guestPhoneForSubmit = computed(() => {
-    const digits = guestPhone.value.replace(/\D/g, '');
-    if (!digits) return guestPhone.value.trim();
-    const code =
-        phoneCountry.value === 'otro'
-            ? phoneLada.value.replace(/\D/g, '')
-            : phoneCountry.value;
-    return code ? `+${code}${digits}` : digits;
-});
+const guestPhoneForSubmit = computed(() =>
+    internationalPhone(phoneCountry.value, guestPhone.value, phoneLada.value),
+);
 const guestEmail = ref('');
 const notes = ref('');
-const honeypot = ref(''); // campo trampa: invisible para personas, los bots lo rellenan
+const honeypot = ref(''); // campo trampa: invisible para personas
 const renderedAt = ref('');
+const guestAttempted = ref(false);
 let idempotencyKey = randomUuid();
+
+const nameError = computed(() =>
+    guestName.value.trim().length >= 3 ? null : 'Escribe tu nombre completo.',
+);
+const guestPhoneError = computed(() =>
+    phoneError(phoneCountry.value, guestPhone.value, phoneLada.value),
+);
+const guestEmailError = computed(() => emailError(guestEmail.value));
+const guestValid = computed(
+    () => !nameError.value && !guestPhoneError.value && !guestEmailError.value,
+);
 
 const submitting = ref(false);
 const submitError = ref<string | null>(null);
 const roomQuoteLoading = ref(false);
 const roomQuoteError = ref<string | null>(null);
 
-// Galería del paso "Confirmar habitación": índice de la foto grande.
-const galleryIndex = ref(0);
-
 function chooseOption(option: Option) {
     selected.value = option;
-    galleryIndex.value = 0;
+    detailsOption.value = null;
     adults.value = 1;
     children.value = 0;
-    guestName.value = '';
-    guestPhone.value = '';
-    phoneCountry.value = '52';
-    phoneLada.value = '';
-    guestEmail.value = '';
-    notes.value = '';
+    guestAttempted.value = false;
     honeypot.value = '';
     renderedAt.value = new Date().toISOString();
     idempotencyKey = randomUuid();
@@ -772,17 +779,12 @@ function chooseOption(option: Option) {
     appliedCoupon.value = null;
     couponInput.value = '';
     couponError.value = null;
-    // Con fechas firmes: qué tours tienen sesiones durante la estancia.
     loadExperiences();
     step.value = 'room';
 }
 
-// Re-cotiza ESE tipo con el número de personas real — el mismo endpoint
-// de disponibilidad, acotado por room_type_id (spec-reservas-avanzado):
-// puede cambiar el total (cargo por persona extra), el room_id ofrecido
-// (otro cuarto del mismo tipo puede convenir más para ese grupo) y
-// `available` (si nadie del tipo admite tanta gente, se avisa aquí en vez
-// de que la opción desaparezca de la lista original).
+// Re-cotiza ESE tipo con el número de personas real: puede cambiar el
+// total (persona extra), el cuarto ofrecido y si hay cupo.
 async function refreshRoomQuote() {
     if (!selected.value) return;
     roomQuoteLoading.value = true;
@@ -821,13 +823,10 @@ watch([adults, children], () => {
     roomQuoteTimer = window.setTimeout(refreshRoomQuote, 300);
 });
 
-// Tope real del cuarto elegido — el stepper de personas nunca deja pasar
-// de aquí. Es ayuda de UX nada más: quien de verdad blinda esto es
-// CreateReservation en el servidor, por si alguien manda la petición
-// directa sin pasar por esta pantalla.
+// Tope real del cuarto elegido: ayuda de UX; quien de verdad lo blinda es
+// CreateReservation en el servidor.
 const maxGuests = computed(() => selected.value?.effective_capacity ?? 20);
 
-// "2 adultos + 1 niño" para el resumen — mismo formato que el wizard de grupos.
 const occupancyLabel = computed(() => {
     const a = `${adults.value} ${adults.value === 1 ? 'adulto' : 'adultos'}`;
     const c = children.value
@@ -836,23 +835,13 @@ const occupancyLabel = computed(() => {
     return `${a}${c}`;
 });
 
-function setAdults(n: number) {
-    // adultsOnly deja children.value siempre en 0, así que restarlo aquí
-    // no cambia nada en ese caso — no hace falta un caso especial.
-    adults.value = Math.max(1, Math.min(n, maxGuests.value - children.value));
-}
-
-function setChildren(n: number) {
-    children.value = Math.max(0, Math.min(n, maxGuests.value - adults.value));
-}
-
 function continueFromRoom() {
-    if (!selected.value?.available) return;
+    if (!selected.value?.available || roomQuoteLoading.value) return;
     step.value = stepOrder.value.includes('extras') ? 'extras' : 'guest';
 }
 
-// Volver un paso (no directo a fechas): "room"→"dates" sí invalida la
-// habitación elegida, el resto solo retrocede sin perder nada.
+// Volver un paso: "room"→"dates" sí suelta la habitación elegida, el resto
+// solo retrocede sin perder nada.
 function goBack() {
     const idx = stepOrder.value.indexOf(step.value);
     if (idx <= 0) return;
@@ -862,9 +851,13 @@ function goBack() {
 }
 
 const hold = ref<HoldResult | null>(null);
+const paymentPanel = ref<InstanceType<typeof PaymentPanel> | null>(null);
+// Eligió pagar en el hotel (o el hotel no cobra por adelantado).
+const payLater = ref(false);
 
 async function submitHold() {
-    if (!selected.value) return;
+    guestAttempted.value = true;
+    if (!selected.value || !guestValid.value) return;
     submitting.value = true;
     submitError.value = null;
     try {
@@ -874,9 +867,9 @@ async function submitHold() {
             room_id: selected.value.room_id,
             adults: adults.value,
             children: children.value,
-            guest_name: guestName.value,
+            guest_name: guestName.value.trim(),
             guest_phone: guestPhoneForSubmit.value,
-            guest_email: guestEmail.value || null,
+            guest_email: guestEmail.value.trim() || null,
             notes: notes.value || null,
             website: honeypot.value,
             rendered_at: renderedAt.value,
@@ -893,8 +886,6 @@ async function submitHold() {
                 session_id: pick.session_id,
                 people: pick.people,
             })),
-            // Cupón aplicado: el servidor lo revalida y congela el
-            // descuento real en la reserva.
             coupon_code: appliedCoupon.value?.code ?? null,
         };
         if (mode.value === 'night') {
@@ -907,15 +898,9 @@ async function submitHold() {
         const { data } = await axios.post<HoldResult>(
             '/api/booking/holds',
             payload,
-            {
-                headers: { 'Idempotency-Key': idempotencyKey },
-            },
+            { headers: { 'Idempotency-Key': idempotencyKey } },
         );
-        hold.value = data;
-        step.value = 'confirm';
-        if (data.requires_prepayment) {
-            preparePayment();
-        }
+        openHold(data);
     } catch (error: any) {
         const errors = error.response?.data?.errors as
             | Record<string, string[]>
@@ -929,129 +914,22 @@ async function submitHold() {
     }
 }
 
-// ── Confirmación / pago (solo si la tarifa lo exige) ──
-const payment = ref<PaymentResult | null>(null);
-const paymentLoading = ref(false);
-const paymentError = ref<string | null>(null);
-// Si hay MÁS DE UN método listo, se le pregunta al huésped en vez de que
-// el sistema decida solo — antes se resolvía en silencio a favor de la
-// pasarela.
-const paymentChoice = ref<PaymentOptions | null>(null);
-
-// Con anticipo configurado el huésped elige CUÁNTO paga hoy: solo el
-// anticipo (mínimo para apartar) o todo de una vez. El resto se cobra
-// después por link o transferencia.
-const payAmountChoice = ref<'deposit' | 'full'>('deposit');
-const depositApplies = computed(
-    () =>
-        !!hold.value &&
-        hold.value.deposit > 0 &&
-        hold.value.deposit < hold.value.total,
-);
-// Efectivo: el huésped eligió pagar en el hotel — se muestra la
-// confirmación normal y el hotel cobra en el lugar.
-const payLater = ref(false);
-
-// Avisa al backend para que el apartado pase del hold corto al plazo de
-// efectivo del hotel (Plazos, default 24 h, con tope en el check-in) y
-// refleja la nueva fecha límite en pantalla. Si la llamada falla, la
-// confirmación se muestra igual — el apartado conserva su plazo corto.
-async function choosePayLater() {
-    payLater.value = true;
-    if (!hold.value) return;
-    try {
-        const { data } = await axios.post<{ hold_expires_at: string | null }>(
-            `/api/booking/holds/${hold.value.code}/pay-later`,
-        );
-        if (data.hold_expires_at) {
-            hold.value.hold_expires_at = data.hold_expires_at;
-        }
-    } catch {
-        // Sin extensión: el plazo corto del hold sigue mandando.
-    }
-}
-
-async function preparePayment() {
-    paymentLoading.value = true;
-    paymentError.value = null;
-    payAmountChoice.value = 'deposit';
+async function openHold(data: HoldResult) {
+    hold.value = data;
     payLater.value = false;
-    try {
-        const { data } = await axios.get<PaymentOptions>(
-            '/api/booking/payment-options',
-        );
-        const optionsCount =
-            data.gateways.length + Number(data.transfer.available);
-
-        // Efectivo activo pero SIN ningún método en línea listo: no hay
-        // nada que elegir ni que cobrar — se confirma directo y se paga en
-        // el hotel (antes esto moría en un intento de cobro imposible).
-        if (hold.value?.payment_optional && optionsCount === 0) {
-            await choosePayLater();
-            paymentLoading.value = false;
-            return;
-        }
-
-        // Con anticipo o con efectivo activo, SIEMPRE se muestra la
-        // pantalla de elección aunque solo haya un método — el huésped
-        // decide cuánto paga y si paga ahora o en el hotel.
-        if (
-            optionsCount >= 2 ||
-            ((depositApplies.value || hold.value?.payment_optional) &&
-                optionsCount >= 1)
-        ) {
-            paymentChoice.value = data;
-            paymentLoading.value = false;
-            return;
-        }
-
-        if (data.gateways.length === 1) {
-            await requestPayment('gateway', data.gateways[0].provider);
-        } else {
-            await requestPayment('transfer');
-        }
-    } catch {
-        // Si falla la consulta, se intenta igual sin preferencia (el
-        // backend decide con su propia lógica de respaldo).
-        await requestPayment();
+    step.value = 'confirm';
+    if (data.requires_prepayment) {
+        await nextTick();
+        paymentPanel.value?.start();
     }
 }
 
-async function requestPayment(
-    method?: 'gateway' | 'transfer',
-    provider?: GatewayOption['provider'],
-) {
-    if (!hold.value) return;
-    paymentLoading.value = true;
-    paymentError.value = null;
-    paymentChoice.value = null;
-    try {
-        const { data } = await axios.post<PaymentResult>(
-            `/api/booking/holds/${hold.value.code}/payment`,
-            {
-                method,
-                provider,
-                pay: depositApplies.value ? payAmountChoice.value : undefined,
-            },
-        );
-        payment.value = data;
-        if (data.method === 'gateway' && data.checkout_url) {
-            window.location.href = data.checkout_url;
-        }
-    } catch (error: any) {
-        paymentError.value =
-            error.response?.data?.message ??
-            'No se pudo generar el cobro. Tu apartado sigue vigente; contáctanos para completarlo.';
-    } finally {
-        paymentLoading.value = false;
-    }
+function onPayLater(expiresAt: string | null) {
+    payLater.value = true;
+    if (hold.value && expiresAt) hold.value.hold_expires_at = expiresAt;
 }
 
 // ── Retomar el pago al volver de la pasarela sin pagar (?retomar=uuid) ──
-// Al irse al checkout el wizard pierde todo lo que tenía en memoria. Quien
-// entraba a Mercado Pago por error ya no podía regresar a elegir
-// transferencia: la página de retorno lo manda aquí, al mismo paso de pago
-// con el mismo apartado (cabañas, 17-sep-2026).
 onMounted(async () => {
     const uuid = new URLSearchParams(window.location.search).get('retomar');
     if (!uuid) return;
@@ -1060,21 +938,15 @@ onMounted(async () => {
             HoldResult & { mode: 'block' | 'night' }
         >(`/api/booking/resume/${encodeURIComponent(uuid)}`);
         mode.value = data.mode;
-        hold.value = data;
-        step.value = 'confirm';
-        if (data.requires_prepayment) {
-            preparePayment();
-        }
+        openHold(data);
     } catch (error: any) {
-        // Apartado vencido o ya pagado: se dice en el primer paso, donde el
-        // huésped puede empezar una reserva nueva.
         searchError.value =
             error.response?.data?.message ??
             'No pudimos retomar tu apartado. Puedes hacer una reserva nueva.';
     }
 });
 
-// ── Cuenta regresiva del hold ──
+// ── Cuenta regresiva del apartado ──
 const nowMs = ref(Date.now());
 let clock: number | null = null;
 onMounted(() => {
@@ -1084,23 +956,36 @@ onBeforeUnmount(() => {
     if (clock) window.clearInterval(clock);
 });
 
+const holdExpired = computed(
+    () =>
+        !!hold.value?.hold_expires_at &&
+        Date.parse(hold.value.hold_expires_at) <= nowMs.value,
+);
+
 const holdCountdown = computed(() => {
-    if (!hold.value?.hold_expires_at) return null;
+    if (!hold.value?.hold_expires_at || holdExpired.value) return null;
     const diff = Date.parse(hold.value.hold_expires_at) - nowMs.value;
-    if (diff <= 0) return 'Expiró';
     const m = Math.floor(diff / 60000);
-    // Con horas de margen, "179:58" parece error de sistema: se lee mejor
-    // "2 h 59 min"; el minutero corre solo en los últimos 60 minutos.
+    // Con horas de margen se lee mejor "2 h 59 min"; el minutero corre
+    // solo en la última hora.
     if (m >= 60) return `${Math.floor(m / 60)} h ${m % 60} min`;
     const s = Math.floor((diff % 60000) / 1000);
     return `${m}:${String(s).padStart(2, '0')}`;
 });
 
-// Resumen del rango según modalidad: por noche cuenta noches; por horas
-// dice a qué hora llegas y a qué hora sales.
 function stayLabel(startIso: string, endIso: string): string {
     if (mode.value === 'night') return formatStayRange(startIso, endIso);
     return `Llegas ${formatFriendlyDateTime(startIso)} · sales ${formatFriendlyDateTime(endIso)}`;
+}
+
+// Reserva nueva: misma página sin el apartado retomado (conserva el embed
+// y la habitación fija, si los hay).
+function startOver() {
+    const params = new URLSearchParams(window.location.search);
+    params.delete('retomar');
+    const query = params.toString();
+    window.location.href =
+        window.location.pathname + (query ? `?${query}` : '');
 }
 
 const codeCopied = ref(false);
@@ -1111,302 +996,517 @@ async function copyCode() {
         codeCopied.value = true;
         window.setTimeout(() => (codeCopied.value = false), 2000);
     } catch {
-        // Silencioso: el código ya está bien visible en pantalla si falla.
+        // El código ya está bien visible en pantalla si falla.
     }
 }
+
+function addToCalendar() {
+    if (!hold.value) return;
+    downloadIcs({
+        uid: hold.value.code,
+        title: `${hold.value.room_type} · ${props.property.name}`,
+        start: hold.value.starts_at,
+        end: hold.value.ends_at,
+        description: `Código de reserva: ${hold.value.code}`,
+        location: props.property.name,
+    });
+}
+
+// ── Resumen "Tu reserva": vivo antes de apartar, el del servidor después ──
+const summaryOpen = ref(false);
+
+const summary = computed(() => {
+    if (hold.value) {
+        const h = hold.value;
+        const lines: SummaryLine[] = [
+            ...(h.price_breakdown.length
+                ? h.price_breakdown.map((l, i) => ({
+                      id: `b-${i}`,
+                      label: breakdownLabel(l),
+                      detail: breakdownDetail(l, props.property.currency),
+                      amount: l.amount,
+                      regularAmount: l.regular_amount ?? null,
+                  }))
+                : [{ id: 'room', label: 'Habitación', amount: h.room_total }]),
+            ...(h.experiences ?? []).map((l, i) => ({
+                id: `e-${i}`,
+                label: `${l.people}× ${l.name}`,
+                detail: formatFriendlyDateTime(l.starts_at),
+                amount: l.total,
+            })),
+            ...h.extras.map((l) => ({
+                id: `a-${l.extra_id}`,
+                label: `${l.qty}× ${l.name}`,
+                amount: l.total,
+            })),
+            ...h.products.map((l) => ({
+                id: `p-${l.product_id}`,
+                label: `${l.qty}× ${l.name}`,
+                amount: l.total,
+            })),
+        ];
+        const parts: DonutPart[] = [
+            { key: 'room', label: 'Hospedaje', amount: h.room_total },
+            {
+                key: 'extras',
+                label: 'Complementos',
+                amount: h.products_total + h.extras_total,
+            },
+            {
+                key: 'experiences',
+                label: 'Experiencias',
+                amount: h.experiences_total,
+            },
+        ];
+        return {
+            photo: h.room_photo ?? selected.value?.photos[0]?.thumb_url ?? null,
+            name: h.room_type,
+            stay: stayLabel(h.starts_at, h.ends_at),
+            occupancy: selected.value ? occupancyLabel.value : null,
+            lines,
+            discount:
+                h.discount > 0 && h.coupon_code
+                    ? { code: h.coupon_code, amount: h.discount }
+                    : null,
+            total: h.total,
+            parts,
+        };
+    }
+    if (!selected.value) return null;
+    const s = selected.value;
+    const lines: SummaryLine[] = [
+        ...(s.price_breakdown.length
+            ? s.price_breakdown.map((l, i) => ({
+                  id: `b-${i}`,
+                  label: breakdownLabel(l),
+                  detail: breakdownDetail(l, props.property.currency),
+                  amount: l.amount,
+                  regularAmount: l.regular_amount ?? null,
+              }))
+            : [{ id: 'room', label: 'Habitación', amount: s.total }]),
+        ...experienceLines.value.map((l) => ({
+            id: l.id,
+            label: `${l.people}× ${l.name}`,
+            detail: formatFriendlyDateTime(l.starts_at),
+            amount: l.total,
+            removable: step.value !== 'confirm',
+        })),
+        ...selectedProductLines.value.map((l) => ({
+            id: l.id,
+            label: `${l.qty}× ${l.name}`,
+            amount: l.total,
+            removable: step.value !== 'confirm',
+        })),
+    ];
+    return {
+        photo: s.photos[0]?.thumb_url ?? null,
+        name: s.name,
+        stay: stayLabel(s.starts_at, s.ends_at),
+        occupancy: occupancyLabel.value,
+        lines,
+        discount: appliedCoupon.value
+            ? {
+                  code: appliedCoupon.value.code,
+                  amount: appliedCoupon.value.discount,
+              }
+            : null,
+        total: discountedTotal.value,
+        parts: [
+            { key: 'room', label: 'Hospedaje', amount: s.total },
+            {
+                key: 'extras',
+                label: 'Complementos',
+                amount: productsSubtotal.value + addonsSubtotal.value,
+            },
+            {
+                key: 'experiences',
+                label: 'Experiencias',
+                amount: experiencesSubtotal.value,
+            },
+        ] as DonutPart[],
+    };
+});
+
+// Quitar una línea desde el resumen (experiencias y extras).
+function removeSummaryLine(id: string) {
+    if (id.startsWith('s-')) removeExperiencePick(Number(id.slice(2)));
+    if (id.startsWith('a-')) setAddonQty(Number(id.slice(2)), 0);
+    if (id.startsWith('p-')) setProductQty(Number(id.slice(2)), 0);
+}
+
+const sectionBox = 'rounded-xl border border-slate-200';
+const sectionHead =
+    'flex items-center gap-3 border-b border-slate-200 px-4 py-3';
+const sectionIcon =
+    'flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary';
+const groupLabel =
+    'mb-2 text-xs font-medium tracking-wide text-slate-500 uppercase';
+const primaryBtn = 'h-11 rounded-full px-6 text-sm shadow-md shadow-primary/20';
 </script>
 
 <template>
-    <Head :title="`Reservar · ${property.name}`" />
-    <!-- flex + m-auto: centrado vertical cuando el contenido es corto, scroll
-         normal (sin recortar arriba) cuando es largo — justify-center recorta. -->
-    <div
-        class="flex min-h-screen bg-linear-to-b from-theme-1 to-theme-2 px-4 py-8 sm:px-8"
-        :style="rootStyle"
+    <PublicShell
+        title="Reservar"
+        :appearance="appearance"
+        :property="property"
+        :contact="contact"
+        :steps="shellSteps"
+        :current-step="step"
+        :tagline="appearance.texts?.tagline"
     >
-        <div class="m-auto w-full max-w-4xl">
-            <!-- Header -->
-            <div class="mb-5 flex items-center gap-3 px-1 text-white">
-                <img
-                    v-if="property.logo_url"
-                    :src="property.logo_url"
-                    :alt="`Logo de ${property.name}`"
-                    class="h-11 w-11 shrink-0 rounded-full bg-white object-contain p-1"
-                />
-                <div
-                    v-else
-                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-white/10"
-                >
-                    <Lucide icon="Building2" class="h-5 w-5" />
-                </div>
-                <div class="min-w-0 flex-1">
-                    <div class="truncate text-lg font-medium">
-                        {{ property.name }}
-                    </div>
-                    <div class="text-xs text-white/70">
-                        Reserva directamente con nosotros, sin intermediarios
-                    </div>
-                </div>
-                <a
-                    v-if="property.phone"
-                    :href="`tel:${property.phone}`"
-                    class="flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white transition hover:bg-white/20"
-                >
-                    <Lucide icon="Phone" class="h-4 w-4" />
-                </a>
-            </div>
+        <div ref="stepTop" class="scroll-mt-4" />
 
-            <!-- En celular se muestra solo el paso actual para evitar una
-                 hilera apretada; desde sm se conserva el recorrido completo. -->
-            <div class="mb-5 px-1 text-xs font-medium text-white/80">
-                <div class="sm:hidden">
-                    <div class="flex items-center justify-between gap-3">
-                        <span class="text-white">
-                            Paso {{ stepNumber(step) }} de
-                            {{ stepOrder.length }}
-                        </span>
-                        <span>{{ currentStepLabel }}</span>
-                    </div>
-                    <div
-                        class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/20"
-                    >
-                        <div
-                            class="h-full rounded-full bg-white transition-all"
-                            :style="{
-                                width: `${(stepNumber(step) / stepOrder.length) * 100}%`,
-                            }"
-                        />
-                    </div>
-                </div>
-                <div class="hidden items-center gap-2 sm:flex">
-                    <template v-for="(key, i) in stepOrder" :key="key">
-                        <span
-                            class="flex items-center gap-1.5"
-                            :class="stepNumber(step) >= i + 1 && 'text-white'"
-                        >
-                            <span
-                                class="flex h-5 w-5 items-center justify-center rounded-full"
-                                :class="
-                                    stepNumber(step) >= i + 1
-                                        ? 'bg-white text-theme-1'
-                                        : 'bg-white/20'
-                                "
-                            >
-                                {{ i + 1 }}
-                            </span>
-                            {{ STEP_LABELS[key] }}
-                        </span>
-                        <span
-                            v-if="i < stepOrder.length - 1"
-                            class="h-px w-6 bg-white/30"
-                        />
-                    </template>
-                </div>
-            </div>
-
-            <div
-                class="overflow-hidden rounded-2xl bg-white shadow-2xl"
-                :class="isDark && 'booking-dark'"
+        <!-- ═══ PASO 1: cuándo ═══ -->
+        <div v-if="step === 'dates'" class="space-y-5">
+            <BookingCard
+                icon="CalendarDays"
+                :title="
+                    lockedRoomType
+                        ? `Reserva ${lockedRoomType.name}`
+                        : (appearance.texts?.title ?? '¿Cuándo nos visitas?')
+                "
+                :subtitle="
+                    lockedRoomType
+                        ? 'Elige tus fechas y revisamos al momento si está libre, con su precio real.'
+                        : (appearance.texts?.subtitle ??
+                          'Elige tus fechas y te mostramos lo disponible al momento, con su precio real.')
+                "
             >
-                <!-- ═══ PASO: fechas y personas ═══ -->
-                <div v-if="step === 'dates'" class="p-5 sm:p-7">
-                    <h1 class="text-lg font-medium text-slate-800">
-                        {{
-                            lockedRoomType
-                                ? `Reserva ${lockedRoomType.name}`
-                                : '¿Cuándo nos visitas?'
-                        }}
-                    </h1>
-                    <p class="mt-1 text-sm text-slate-500">
-                        {{
-                            lockedRoomType
-                                ? 'Elige tus fechas y revisamos al momento si está libre, con su precio real.'
-                                : 'Elige tus fechas y te mostramos lo disponible al momento, con su precio real.'
-                        }}
-                    </p>
-                    <p
-                        v-if="adultsOnly"
-                        class="mt-2 flex items-center gap-1.5 text-xs font-medium text-warning"
-                    >
-                        <Lucide icon="ShieldAlert" class="h-3.5 w-3.5" />
-                        Establecimiento exclusivo para mayores de edad.
-                    </p>
+                <div
+                    v-if="adultsOnly"
+                    class="mb-4 flex items-center gap-2 rounded-lg bg-warning/10 px-3 py-2 text-sm text-slate-700"
+                >
+                    <Lucide
+                        icon="ShieldAlert"
+                        class="h-4 w-4 shrink-0 text-warning"
+                    />
+                    Establecimiento exclusivo para mayores de edad.
+                </div>
 
-                    <!-- El selector solo aparece si el catálogo realmente vende en ambas modalidades -->
-                    <div
-                        v-if="bothModesAvailable"
-                        class="mt-5 inline-flex rounded-xl bg-slate-100 p-1 text-sm"
+                <!-- Solo si el catálogo de verdad vende en ambas modalidades -->
+                <div
+                    v-if="bothModesAvailable"
+                    class="mb-4 inline-flex rounded-full bg-slate-100 p-1 text-sm"
+                    role="tablist"
+                >
+                    <button
+                        v-for="m in ['night', 'block'] as const"
+                        :key="m"
+                        type="button"
+                        role="tab"
+                        class="inline-flex h-10 items-center gap-1.5 rounded-full px-4 font-medium transition"
+                        :class="
+                            mode === m
+                                ? 'bg-white text-primary shadow-sm'
+                                : 'text-slate-500 hover:text-slate-700'
+                        "
+                        :aria-selected="mode === m"
+                        @click="mode = m"
                     >
-                        <button
-                            type="button"
-                            class="rounded-lg px-4 py-2 font-medium transition"
-                            :class="
-                                mode === 'block'
-                                    ? 'bg-white text-theme-1 shadow-sm'
-                                    : 'text-slate-500'
-                            "
-                            @click="mode = 'block'"
-                        >
-                            Por unas horas
-                        </button>
-                        <button
-                            type="button"
-                            class="rounded-lg px-4 py-2 font-medium transition"
-                            :class="
-                                mode === 'night'
-                                    ? 'bg-white text-theme-1 shadow-sm'
-                                    : 'text-slate-500'
-                            "
-                            @click="mode = 'night'"
-                        >
-                            Por una o más noches
-                        </button>
-                    </div>
-                    <div v-else class="mt-5 text-sm font-medium text-slate-600">
+                        <Lucide
+                            :icon="m === 'night' ? 'Moon' : 'Clock'"
+                            class="h-4 w-4"
+                        />
                         {{
-                            mode === 'night'
-                                ? 'Por una o más noches'
-                                : 'Por unas horas'
+                            m === 'night'
+                                ? 'Por noches'
+                                : property.block_mode_label
                         }}
-                    </div>
+                    </button>
+                </div>
 
-                    <!-- Por noche: calendario de rango siempre visible (nada
-                         de inputs de fecha del navegador); por horas se queda
-                         el datetime nativo — ahí la hora exacta manda. La caja
-                         con título e instrucción es a propósito: sin ella el
-                         calendario "flota" y hay gente que no sabe qué hacer. -->
-                    <div
-                        v-if="mode === 'night'"
-                        class="mt-4 rounded-xl border border-slate-200 p-4 sm:p-5"
-                    >
-                        <div class="flex items-center gap-3">
-                            <div
-                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                            >
-                                <Lucide icon="CalendarDays" class="h-4 w-4" />
-                            </div>
-                            <div class="min-w-0">
-                                <div class="text-sm font-medium text-slate-800">
-                                    Elige tus fechas
-                                </div>
-                                <div class="text-xs text-slate-500">
-                                    Toca el día que llegas y luego el día que te
-                                    vas.
-                                </div>
-                            </div>
-                        </div>
+                <!-- Por noche: calendario y, al lado, cómo queda la estancia -->
+                <div
+                    v-if="mode === 'night'"
+                    class="grid gap-5 lg:grid-cols-[minmax(0,1fr)_250px]"
+                >
+                    <div :class="sectionBox" class="p-3 sm:p-4">
+                        <p class="mb-2 px-1 text-sm text-slate-500">
+                            Toca el día que llegas y luego el día que te vas.
+                        </p>
                         <DateRangePicker
                             v-model:start="arriveDate"
                             v-model:end="departDate"
-                            class="mt-3"
                         />
-                        <div
-                            class="mt-2 rounded-lg bg-slate-50 px-3 py-2.5 text-center"
-                        >
-                            <div class="text-xs text-slate-500">
+                    </div>
+                    <div class="flex flex-col gap-3">
+                        <div class="rounded-xl bg-slate-50 p-4">
+                            <div
+                                class="text-xs font-medium tracking-wide text-slate-500 uppercase"
+                            >
                                 Tu estancia
                             </div>
-                            <div class="text-sm font-medium text-slate-800">
-                                {{ formatStayRange(arriveDate, departDate) }}
+                            <div class="mt-3 space-y-3">
+                                <div class="flex items-start gap-2.5">
+                                    <Lucide
+                                        icon="LogIn"
+                                        class="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                                    />
+                                    <div>
+                                        <div class="text-xs text-slate-500">
+                                            Llegas
+                                        </div>
+                                        <div
+                                            class="text-sm font-medium text-slate-800"
+                                        >
+                                            {{ formatLongDay(arriveDate) }}
+                                        </div>
+                                        <div class="text-xs text-slate-500">
+                                            desde las
+                                            {{
+                                                formatTime(
+                                                    property.check_in_time,
+                                                )
+                                            }}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="flex items-start gap-2.5">
+                                    <Lucide
+                                        icon="LogOut"
+                                        class="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                                    />
+                                    <div>
+                                        <div class="text-xs text-slate-500">
+                                            Te vas
+                                        </div>
+                                        <div
+                                            class="text-sm font-medium text-slate-800"
+                                        >
+                                            {{ formatLongDay(departDate) }}
+                                        </div>
+                                        <div class="text-xs text-slate-500">
+                                            antes de las
+                                            {{
+                                                formatTime(
+                                                    property.check_out_time,
+                                                )
+                                            }}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div
+                                class="mt-3 flex items-center gap-2 border-t border-slate-200 pt-3 text-sm text-slate-700"
+                            >
+                                <Lucide
+                                    icon="Moon"
+                                    class="h-4 w-4 text-primary"
+                                />
+                                {{ searchedNights }}
+                                {{ searchedNights === 1 ? 'noche' : 'noches' }}
                             </div>
                         </div>
-                    </div>
-                    <div v-else class="mt-4">
-                        <FormLabel>Fecha y hora de llegada</FormLabel>
-                        <FormDateTime v-model="arriveAt" />
-                    </div>
-                    <div
-                        v-if="mode === 'night'"
-                        class="mt-3 flex flex-wrap justify-center gap-2"
-                    >
-                        <span
-                            class="flex items-center gap-1.5 rounded-full bg-slate-50 px-3 py-1.5 text-xs text-slate-600"
+                        <p
+                            class="flex items-start gap-2 px-1 text-xs text-slate-500"
                         >
                             <Lucide
-                                icon="LogIn"
-                                class="h-3.5 w-3.5 text-primary"
+                                icon="Users"
+                                class="mt-px h-3.5 w-3.5 shrink-0"
                             />
-                            Entrada desde las
-                            {{ formatTime(property.check_in_time) }}
-                        </span>
-                        <span
-                            class="flex items-center gap-1.5 rounded-full bg-slate-50 px-3 py-1.5 text-xs text-slate-600"
-                        >
-                            <Lucide
-                                icon="LogOut"
-                                class="h-3.5 w-3.5 text-primary"
-                            />
-                            Salida antes de las
-                            {{ formatTime(property.check_out_time) }}
-                        </span>
+                            Cuántos son lo indicas al elegir habitación.
+                        </p>
                     </div>
-                    <p class="mt-2 text-center text-xs text-slate-500">
-                        Después podrás indicar cuántas personas se hospedarán.
-                    </p>
+                </div>
 
+                <!-- Por horas: la hora exacta manda -->
+                <div v-else class="max-w-md">
+                    <FormLabel for="arrive-at">Día y hora de llegada</FormLabel>
+                    <FormDateTime
+                        id="arrive-at"
+                        v-model="arriveAt"
+                        input-class="h-11 text-sm"
+                    />
+                    <p v-if="blockTimeError" class="mt-1.5 text-xs text-danger">
+                        {{ blockTimeError }}
+                    </p>
+                    <p v-else class="mt-1.5 text-xs text-slate-500">
+                        Cuántos son lo indicas al elegir habitación.
+                    </p>
+                </div>
+
+                <template #footer>
+                    <p
+                        v-if="searchError"
+                        class="flex w-full items-start gap-2 text-sm text-danger sm:w-auto sm:flex-1"
+                    >
+                        <Lucide
+                            icon="CircleAlert"
+                            class="mt-0.5 h-4 w-4 shrink-0"
+                        />
+                        {{ searchError }}
+                    </p>
+                    <p
+                        v-else-if="staleSearch"
+                        class="flex w-full items-start gap-2 text-sm text-slate-600 sm:w-auto sm:flex-1"
+                    >
+                        <Lucide
+                            icon="RefreshCw"
+                            class="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                        />
+                        Cambiaste las fechas: busca de nuevo para ver precios
+                        reales.
+                    </p>
                     <Button
                         variant="primary"
-                        class="mt-5 w-full shadow-md shadow-primary/20"
-                        :disabled="searching"
+                        class="w-full sm:ml-auto sm:w-auto"
+                        :class="primaryBtn"
+                        :disabled="searching || !!blockTimeError"
                         @click="searchAvailability"
                     >
                         <Lucide
-                            :icon="searching ? 'RefreshCw' : 'CalendarCheck2'"
+                            :icon="searching ? 'LoaderCircle' : 'Search'"
                             class="mr-2 h-4 w-4"
                             :class="searching && 'animate-spin'"
                         />
                         {{
                             searching
-                                ? 'Buscando habitaciones…'
-                                : 'Buscar habitaciones'
+                                ? 'Buscando…'
+                                : lockedRoomType
+                                  ? 'Ver si está libre'
+                                  : (appearance.texts?.search_button ??
+                                    'Ver habitaciones disponibles')
                         }}
                     </Button>
+                </template>
+            </BookingCard>
 
-                    <p v-if="searchError" class="mt-3 text-sm text-danger">
-                        {{ searchError }}
-                    </p>
-
-                    <!-- Resultados -->
-                    <div
-                        v-if="searched"
-                        ref="resultsEl"
-                        class="mt-6 scroll-mt-4 space-y-4"
-                    >
-                        <div
-                            v-if="!anyAvailable"
-                            class="flex flex-col items-center gap-3 rounded-xl border border-dashed border-slate-300 py-8 text-center"
+            <!-- Resultados -->
+            <div v-if="searched" ref="resultsEl" class="scroll-mt-4">
+                <BookingCard
+                    v-if="anyAvailable"
+                    icon="BedDouble"
+                    :title="
+                        availableCount === 1
+                            ? '1 habitación disponible'
+                            : `${availableCount} habitaciones disponibles`
+                    "
+                    :subtitle="
+                        mode === 'night'
+                            ? formatStayRange(arriveDate, departDate)
+                            : `Llegas ${formatFriendlyDateTime(arriveAt)}`
+                    "
+                >
+                    <template v-if="options.length > 1" #actions>
+                        <FormSelect
+                            v-model="sortBy"
+                            class="h-10 w-full text-sm sm:w-48"
+                            aria-label="Ordenar habitaciones"
                         >
-                            <Lucide
-                                icon="CircleAlert"
-                                class="h-8 w-8 text-slate-300"
-                            />
-                            <div>
-                                <p class="text-sm font-medium text-slate-600">
-                                    {{
-                                        lockedRoomType
-                                            ? `${lockedRoomType.name} no está disponible en esas fechas`
-                                            : 'Sin disponibilidad para esas fechas'
-                                    }}
-                                </p>
-                                <p class="mt-0.5 text-xs text-slate-500">
-                                    Prueba con otras fechas, o escríbenos y te
-                                    ayudamos a encontrar una opción.
-                                </p>
-                            </div>
+                            <option value="recommended">Recomendadas</option>
+                            <option value="price_asc">Menor precio</option>
+                            <option value="price_desc">Mayor precio</option>
+                        </FormSelect>
+                    </template>
+
+                    <div
+                        v-if="hasGroups"
+                        class="mb-4 flex items-start gap-2.5 rounded-lg bg-slate-50 px-4 py-3 text-sm text-slate-600"
+                    >
+                        <Lucide
+                            icon="UsersRound"
+                            class="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                        />
+                        <span>
+                            ¿Vienen en grupo y necesitan varias habitaciones?
+                            <a
+                                href="/reservar/grupos"
+                                class="font-medium text-primary hover:underline"
+                                >Aparta todas de una vez</a
+                            >.
+                        </span>
+                    </div>
+
+                    <div class="grid grid-cols-1 gap-4 md:grid-cols-2">
+                        <RoomOptionCard
+                            v-for="option in sortedOptions"
+                            :key="option.room_type_id"
+                            :option="option"
+                            :currency="property.currency"
+                            :nights="mode === 'night' ? searchedNights : null"
+                            @choose="chooseOption(option)"
+                            @details="detailsOption = option"
+                        />
+                    </div>
+                </BookingCard>
+
+                <!-- Sin disponibilidad -->
+                <BookingCard
+                    v-else
+                    icon="CalendarX2"
+                    tone="warning"
+                    :title="
+                        lockedRoomType
+                            ? `${lockedRoomType.name} no está disponible en esas fechas`
+                            : 'Sin disponibilidad para esas fechas'
+                    "
+                    subtitle="Prueba con otras fechas, o escríbenos y te ayudamos a encontrar una opción."
+                >
+                    <div
+                        class="grid gap-5"
+                        :class="hasWaitlist && 'md:grid-cols-[1fr_1.4fr]'"
+                    >
+                        <div class="space-y-2.5">
                             <a
                                 href="/chat"
-                                class="flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                                class="flex items-center gap-3 rounded-xl border border-slate-200 p-4 transition hover:border-primary/40"
                             >
-                                <Lucide icon="MessageCircle" class="h-4 w-4" />
-                                Hablar con el hotel
+                                <span :class="sectionIcon">
+                                    <Lucide
+                                        icon="MessageCircle"
+                                        class="h-4 w-4"
+                                    />
+                                </span>
+                                <span class="min-w-0 flex-1">
+                                    <span
+                                        class="block text-sm font-medium text-slate-800"
+                                        >Escríbenos</span
+                                    >
+                                    <span class="block text-xs text-slate-500"
+                                        >Te ayudamos a encontrar fecha</span
+                                    >
+                                </span>
                             </a>
-
-                            <!-- Lista de espera (módulo lista-espera):
-                                 dejar contacto para el aviso automático -->
-                            <div
-                                v-if="hasWaitlist"
-                                class="mt-2 w-full max-w-md border-t border-dashed border-slate-200 px-4 pt-4 text-left"
+                            <a
+                                v-if="property.phone"
+                                :href="`tel:${property.phone}`"
+                                class="flex items-center gap-3 rounded-xl border border-slate-200 p-4 transition hover:border-primary/40"
                             >
+                                <span :class="sectionIcon">
+                                    <Lucide icon="Phone" class="h-4 w-4" />
+                                </span>
+                                <span class="min-w-0 flex-1">
+                                    <span
+                                        class="block text-sm font-medium text-slate-800"
+                                        >Llámanos</span
+                                    >
+                                    <span
+                                        class="block text-xs text-slate-500"
+                                        >{{ property.phone }}</span
+                                    >
+                                </span>
+                            </a>
+                        </div>
+
+                        <!-- Lista de espera: dejar contacto para el aviso -->
+                        <div v-if="hasWaitlist" :class="sectionBox">
+                            <div :class="sectionHead">
+                                <span :class="sectionIcon">
+                                    <Lucide icon="BellRing" class="h-4 w-4" />
+                                </span>
+                                <div class="min-w-0">
+                                    <div
+                                        class="text-sm font-medium text-slate-800"
+                                    >
+                                        Avísame si se libera
+                                    </div>
+                                    <div class="text-xs text-slate-500">
+                                        Te escribimos en cuanto haya espacio
+                                        para tus fechas.
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="p-4">
                                 <div
                                     v-if="waitlistDone"
                                     class="flex items-start gap-2 rounded-lg bg-success/10 px-3 py-2.5 text-sm text-success"
@@ -1418,441 +1518,166 @@ async function copyCode() {
                                     Listo, te avisaremos si se libera espacio
                                     para tus fechas.
                                 </div>
-                                <template v-else>
-                                    <div
-                                        class="flex items-center gap-1.5 text-sm font-medium text-slate-700"
-                                    >
-                                        <Lucide
-                                            icon="BellRing"
-                                            class="h-4 w-4 text-primary"
-                                        />
-                                        Avísame si se libera
-                                    </div>
-                                    <p class="mt-1 text-xs text-slate-500">
-                                        Déjanos tu contacto y te escribimos en
-                                        cuanto haya espacio para tus fechas.
-                                    </p>
-                                    <div class="mt-3 space-y-3">
-                                        <div>
-                                            <FormLabel>Nombre</FormLabel>
-                                            <FormInput
-                                                v-model="waitlistName"
-                                                type="text"
-                                                placeholder="Tu nombre"
-                                            />
-                                        </div>
-                                        <div
-                                            class="grid grid-cols-1 gap-3 sm:grid-cols-2"
+                                <div v-else class="space-y-3">
+                                    <div>
+                                        <FormLabel for="wl-name"
+                                            >Nombre</FormLabel
                                         >
-                                            <div>
-                                                <FormLabel>Teléfono</FormLabel>
-                                                <FormInput
-                                                    v-model="waitlistPhone"
-                                                    type="tel"
-                                                    placeholder="10 dígitos"
-                                                />
-                                            </div>
-                                            <div>
-                                                <FormLabel>Email</FormLabel>
-                                                <FormInput
-                                                    v-model="waitlistEmail"
-                                                    type="email"
-                                                    placeholder="tu@correo.com"
-                                                />
-                                            </div>
-                                        </div>
+                                        <FormInput
+                                            id="wl-name"
+                                            v-model="waitlistName"
+                                            type="text"
+                                            class="h-11 text-sm"
+                                            placeholder="Tu nombre"
+                                        />
                                         <p
-                                            v-if="waitlistError"
-                                            class="text-xs text-danger"
-                                        >
-                                            {{ waitlistError }}
-                                        </p>
-                                        <Button
-                                            variant="outline-primary"
-                                            class="min-h-11 w-full"
-                                            :disabled="
-                                                waitlistSending ||
-                                                !waitlistName.trim() ||
-                                                (!waitlistPhone.trim() &&
-                                                    !waitlistEmail.trim())
+                                            v-if="
+                                                waitlistAttempted &&
+                                                !waitlistName.trim()
                                             "
-                                            @click="submitWaitlist"
+                                            class="mt-1 text-xs text-danger"
                                         >
-                                            <Lucide
-                                                :icon="
-                                                    waitlistSending
-                                                        ? 'RefreshCw'
-                                                        : 'BellRing'
-                                                "
-                                                class="mr-2 h-4 w-4"
-                                                :class="
-                                                    waitlistSending &&
-                                                    'animate-spin'
-                                                "
-                                            />
-                                            {{
-                                                waitlistSending
-                                                    ? 'Registrando…'
-                                                    : 'Avisarme si se libera'
-                                            }}
-                                        </Button>
+                                            Escribe tu nombre.
+                                        </p>
                                     </div>
-                                </template>
-                            </div>
-                        </div>
-
-                        <!-- Grupos: el alta multi-habitación la arma el hotel -->
-                        <div
-                            v-if="hasGroups && anyAvailable"
-                            class="flex items-start gap-2 rounded-xl border border-dashed border-slate-200 px-4 py-3 text-xs text-slate-500"
-                        >
-                            <Lucide
-                                icon="UsersRound"
-                                class="mt-0.5 h-4 w-4 shrink-0 text-primary"
-                            />
-                            <span>
-                                ¿Vienen en grupo y necesitan varias
-                                habitaciones?
-                                <a
-                                    v-if="property.phone"
-                                    :href="`tel:${property.phone}`"
-                                    class="font-medium text-primary hover:underline"
-                                    >Llámanos</a
-                                >
-                                <a
-                                    v-else
-                                    href="/chat"
-                                    class="font-medium text-primary hover:underline"
-                                    >Escríbenos</a
-                                >
-                                y te armamos la reserva completa con folio de
-                                grupo.
-                            </span>
-                        </div>
-
-                        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                            <div
-                                v-for="option in options"
-                                :key="option.room_type_id"
-                                class="flex flex-col overflow-hidden rounded-xl border transition"
-                                :class="
-                                    option.available
-                                        ? 'border-slate-200 hover:border-primary/40 hover:shadow-lg hover:shadow-slate-200/60'
-                                        : 'border-slate-100 opacity-60'
-                                "
-                            >
-                                <!-- Zona visual SIEMPRE: foto real o
-                                     placeholder — sin ella la lista se siente
-                                     de sistema, no de hotel -->
-                                <div
-                                    class="relative h-40 w-full shrink-0 bg-slate-100 sm:h-44"
-                                >
-                                    <img
-                                        v-if="option.photos.length"
-                                        :src="option.photos[0].thumb_url"
-                                        :alt="option.name"
-                                        class="h-full w-full cursor-pointer object-cover"
-                                        loading="lazy"
-                                        @click="
-                                            option.available &&
-                                            chooseOption(option)
-                                        "
-                                    />
-                                    <div
-                                        v-else
-                                        class="flex h-full w-full items-center justify-center"
-                                    >
-                                        <Lucide
-                                            icon="BedDouble"
-                                            class="h-10 w-10 text-slate-300"
+                                    <div>
+                                        <FormLabel for="wl-phone"
+                                            >Teléfono</FormLabel
+                                        >
+                                        <PhoneField
+                                            id="wl-phone"
+                                            v-model:country="waitlistCountry"
+                                            v-model:number="waitlistPhone"
+                                            v-model:lada="waitlistLada"
+                                            :show-errors="
+                                                waitlistAttempted &&
+                                                !!waitlistPhone.trim()
+                                            "
                                         />
                                     </div>
-                                    <span
-                                        v-if="option.photos.length > 1"
-                                        class="absolute right-2 bottom-2 flex items-center gap-1 rounded-full bg-black/50 px-2 py-0.5 text-[11px] font-medium text-white"
+                                    <div>
+                                        <FormLabel for="wl-email"
+                                            >Correo</FormLabel
+                                        >
+                                        <FormInput
+                                            id="wl-email"
+                                            v-model="waitlistEmail"
+                                            type="email"
+                                            class="h-11 text-sm"
+                                            placeholder="tu@correo.com"
+                                        />
+                                        <p
+                                            v-if="
+                                                waitlistAttempted &&
+                                                emailError(waitlistEmail)
+                                            "
+                                            class="mt-1 text-xs text-danger"
+                                        >
+                                            {{ emailError(waitlistEmail) }}
+                                        </p>
+                                        <p
+                                            v-else-if="
+                                                waitlistAttempted &&
+                                                !waitlistPhone.trim() &&
+                                                !waitlistEmail.trim()
+                                            "
+                                            class="mt-1 text-xs text-danger"
+                                        >
+                                            Déjanos un teléfono o un correo.
+                                        </p>
+                                    </div>
+                                    <p
+                                        v-if="waitlistError"
+                                        class="text-sm text-danger"
                                     >
-                                        <Lucide icon="Image" class="h-3 w-3" />
-                                        {{ option.photos.length }}
-                                    </span>
-                                    <!-- Urgencia honesta: cuartos que de
-                                         verdad quedan de este tipo -->
-                                    <span
-                                        v-if="
-                                            option.available &&
-                                            option.rooms_count >= 1 &&
-                                            option.rooms_count <= 3
-                                        "
-                                        class="absolute top-2 left-2 rounded-full bg-warning px-2.5 py-1 text-[11px] font-medium text-white shadow-sm"
+                                        {{ waitlistError }}
+                                    </p>
+                                    <Button
+                                        variant="outline-primary"
+                                        class="h-11 w-full rounded-full text-sm"
+                                        :disabled="waitlistSending"
+                                        @click="submitWaitlist"
                                     >
+                                        <Lucide
+                                            :icon="
+                                                waitlistSending
+                                                    ? 'LoaderCircle'
+                                                    : 'BellRing'
+                                            "
+                                            class="mr-2 h-4 w-4"
+                                            :class="
+                                                waitlistSending &&
+                                                'animate-spin'
+                                            "
+                                        />
                                         {{
-                                            option.rooms_count === 1
-                                                ? 'Solo queda 1'
-                                                : `Quedan ${option.rooms_count}`
+                                            waitlistSending
+                                                ? 'Registrando…'
+                                                : 'Avisarme si se libera'
                                         }}
-                                    </span>
-                                    <span
-                                        v-if="!option.available"
-                                        class="absolute top-2 left-2 rounded-full bg-black/50 px-2.5 py-1 text-[11px] font-medium text-white"
-                                    >
-                                        Sin disponibilidad
-                                    </span>
-                                </div>
-                                <div class="flex flex-1 flex-col p-4">
-                                    <div class="font-medium text-slate-800">
-                                        {{ option.name }}
-                                    </div>
-                                    <p
-                                        v-if="option.description"
-                                        class="mt-1 line-clamp-2 text-xs text-slate-500"
-                                    >
-                                        {{ option.description }}
-                                    </p>
-                                    <div
-                                        class="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500"
-                                    >
-                                        <span class="flex items-center gap-1">
-                                            <Lucide
-                                                icon="Users"
-                                                class="h-3.5 w-3.5"
-                                            />
-                                            Hasta {{ option.capacity }}
-                                            <template
-                                                v-if="
-                                                    option.effective_capacity >
-                                                    option.capacity
-                                                "
-                                            >
-                                                ({{ option.effective_capacity }}
-                                                con cargo extra)
-                                            </template>
-                                        </span>
-                                        <span class="flex items-center gap-1"
-                                            ><Lucide
-                                                icon="Clock"
-                                                class="h-3.5 w-3.5"
-                                            />
-                                            {{
-                                                humanizeDurationLabel(
-                                                    option.duration_label,
-                                                )
-                                            }}</span
-                                        >
-                                    </div>
-                                    <div
-                                        v-if="option.amenities.length"
-                                        class="mt-2 flex flex-wrap gap-1"
-                                    >
-                                        <span
-                                            v-for="a in option.amenities.slice(
-                                                0,
-                                                3,
-                                            )"
-                                            :key="a"
-                                            class="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-500"
-                                            >{{ a }}</span
-                                        >
-                                        <span
-                                            v-if="option.amenities.length > 3"
-                                            class="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-500"
-                                            >+{{
-                                                option.amenities.length - 3
-                                            }}</span
-                                        >
-                                    </div>
-                                    <p
-                                        v-if="option.advance_error"
-                                        class="mt-1.5 text-[11px] text-warning"
-                                    >
-                                        {{ option.advance_error }}
-                                    </p>
-                                    <div
-                                        class="mt-auto flex flex-wrap items-center justify-between gap-2 pt-3"
-                                    >
-                                        <div>
-                                            <div
-                                                class="text-base font-semibold text-slate-800"
-                                            >
-                                                {{ money(option.total) }}
-                                            </div>
-                                            <button
-                                                v-if="
-                                                    option.price_breakdown
-                                                        .length > 1
-                                                "
-                                                type="button"
-                                                class="text-[11px] font-medium text-primary hover:underline"
-                                                @click="
-                                                    toggleBreakdown(
-                                                        option.room_type_id,
-                                                    )
-                                                "
-                                            >
-                                                {{
-                                                    expandedBreakdown.has(
-                                                        option.room_type_id,
-                                                    )
-                                                        ? 'Ocultar detalle'
-                                                        : '¿Por qué este precio?'
-                                                }}
-                                            </button>
-                                        </div>
-                                        <Button
-                                            v-if="option.available"
-                                            variant="primary"
-                                            class="max-sm:w-full"
-                                            @click="chooseOption(option)"
-                                        >
-                                            Elegir
-                                        </Button>
-                                    </div>
-                                    <div
-                                        v-if="
-                                            expandedBreakdown.has(
-                                                option.room_type_id,
-                                            ) &&
-                                            option.price_breakdown.length > 1
-                                        "
-                                        class="mt-3 space-y-1 border-t border-slate-100 pt-3 text-xs text-slate-500"
-                                    >
-                                        <div
-                                            v-for="line in option.price_breakdown"
-                                            :key="line.concept"
-                                            class="flex justify-between"
-                                        >
-                                            <span>{{ line.concept }}</span
-                                            ><span>{{
-                                                money(line.amount)
-                                            }}</span>
-                                        </div>
-                                    </div>
+                                    </Button>
                                 </div>
                             </div>
                         </div>
                     </div>
-                </div>
+                </BookingCard>
+            </div>
+        </div>
 
-                <!-- ═══ PASO: confirmar habitación (cuántos son, con el tope real de ESTE cuarto) ═══ -->
-                <div v-else-if="step === 'room' && selected" class="p-5 sm:p-7">
-                    <button
-                        type="button"
-                        class="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
-                        @click="goBack"
-                    >
-                        <Lucide icon="ArrowLeft" class="h-4 w-4" /> Cambiar
-                        fechas
-                    </button>
-
-                    <!-- Galería: foto grande + miniaturas para cambiarla -->
-                    <div v-if="selected.photos.length" class="mb-4">
-                        <div
-                            class="relative h-56 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-72"
+        <!-- ═══ PASOS 2+: contenido a la izquierda, "Tu reserva" al lado ═══ -->
+        <div
+            v-else
+            class="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_330px]"
+        >
+            <div class="min-w-0 space-y-4">
+                <!-- Celular: el resumen se abre en una ventana -->
+                <button
+                    v-if="summary && step !== 'confirm'"
+                    type="button"
+                    class="flex w-full items-center gap-3 rounded-2xl bg-white px-4 py-3 text-left shadow-xl shadow-black/10 lg:hidden"
+                    @click="summaryOpen = true"
+                >
+                    <span :class="sectionIcon">
+                        <Lucide icon="ReceiptText" class="h-4 w-4" />
+                    </span>
+                    <span class="min-w-0 flex-1">
+                        <span
+                            class="block truncate text-sm font-medium text-slate-800"
+                            >{{ summary.name }}</span
                         >
-                            <img
-                                :src="
-                                    selected.photos[
-                                        Math.min(
-                                            galleryIndex,
-                                            selected.photos.length - 1,
-                                        )
-                                    ].url
-                                "
-                                :alt="selected.name"
-                                class="h-full w-full object-cover"
-                            />
-                        </div>
-                        <div
-                            v-if="selected.photos.length > 1"
-                            class="mt-2 flex gap-2 overflow-x-auto pb-1"
+                        <span class="block truncate text-xs text-slate-500">{{
+                            summary.stay
+                        }}</span>
+                    </span>
+                    <span class="shrink-0 text-right">
+                        <span
+                            class="block text-sm font-semibold text-slate-800"
+                            >{{ money(summary.total) }}</span
                         >
-                            <button
-                                v-for="(photo, index) in selected.photos"
-                                :key="photo.id"
-                                type="button"
-                                class="h-14 w-20 shrink-0 overflow-hidden rounded-lg border-2 transition"
-                                :class="
-                                    index === galleryIndex
-                                        ? 'border-primary'
-                                        : 'border-transparent opacity-70 hover:opacity-100'
-                                "
-                                @click="galleryIndex = index"
-                            >
-                                <img
-                                    :src="photo.thumb_url"
-                                    alt=""
-                                    class="h-full w-full object-cover"
-                                    loading="lazy"
-                                />
-                            </button>
-                        </div>
-                    </div>
-                    <!-- Sin fotos cargadas: zona visual igual, que el paso
-                         no arranque en texto pelón -->
-                    <div
-                        v-else
-                        class="mb-4 flex h-40 w-full items-center justify-center rounded-xl bg-slate-100 sm:h-48"
-                    >
-                        <Lucide
-                            icon="BedDouble"
-                            class="h-12 w-12 text-slate-300"
-                        />
-                    </div>
+                        <span class="block text-xs font-medium text-primary"
+                            >Ver detalle</span
+                        >
+                    </span>
+                </button>
 
-                    <h2 class="text-lg font-medium text-slate-800">
-                        {{ selected.name }}
-                    </h2>
+                <!-- ═══ PASO: tu habitación (cuántos son) ═══ -->
+                <BookingCard
+                    v-if="step === 'room' && selected"
+                    icon="BedDouble"
+                    :title="selected.name"
+                    :subtitle="stayLabel(selected.starts_at, selected.ends_at)"
+                >
+                    <PhotoGallery
+                        :photos="selected.photos"
+                        :alt="selected.name"
+                    />
+
                     <p
                         v-if="selected.description"
-                        class="mt-1 text-sm text-slate-500"
+                        class="mt-4 text-sm leading-relaxed text-slate-600"
                     >
                         {{ selected.description }}
                     </p>
-                    <!-- Cada dato en su renglón y a 14px: en una sola hilera
-                         de 12px las fechas se enredaban con la duración -->
-                    <div
-                        class="mt-3 flex flex-col gap-1.5 text-sm text-slate-500"
-                    >
-                        <span class="flex items-center gap-1.5"
-                            ><Lucide icon="Clock" class="h-4 w-4 shrink-0" />
-                            {{
-                                humanizeDurationLabel(selected.duration_label)
-                            }}</span
-                        >
-                        <!-- Por noches cabe en una línea; por horas la
-                             llegada y la salida van cada una con su icono -->
-                        <span
-                            v-if="mode === 'night'"
-                            class="flex items-start gap-1.5"
-                        >
-                            <Lucide
-                                icon="Calendar"
-                                class="mt-0.5 h-4 w-4 shrink-0"
-                            />
-                            {{
-                                formatStayRange(
-                                    selected.starts_at,
-                                    selected.ends_at,
-                                )
-                            }}
-                        </span>
-                        <template v-else>
-                            <span class="flex items-start gap-1.5">
-                                <Lucide
-                                    icon="LogIn"
-                                    class="mt-0.5 h-4 w-4 shrink-0"
-                                />
-                                Llegas
-                                {{ formatFriendlyDateTime(selected.starts_at) }}
-                            </span>
-                            <span class="flex items-start gap-1.5">
-                                <Lucide
-                                    icon="LogOut"
-                                    class="mt-0.5 h-4 w-4 shrink-0"
-                                />
-                                Sales
-                                {{ formatFriendlyDateTime(selected.ends_at) }}
-                            </span>
-                        </template>
-                    </div>
                     <div
                         v-if="selected.amenities.length"
                         class="mt-3 flex flex-wrap gap-1.5"
@@ -1860,919 +1685,412 @@ async function copyCode() {
                         <span
                             v-for="a in selected.amenities"
                             :key="a"
-                            class="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-500"
+                            class="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600"
                             >{{ a }}</span
                         >
                     </div>
 
-                    <!-- Caja con título e instrucción, igual que el
-                         calendario: cada decisión del paso en su propia
-                         sección obvia -->
-                    <div
-                        class="mt-6 rounded-xl border border-slate-200 p-4 sm:p-5"
-                    >
-                        <div class="flex items-center gap-3">
-                            <div
-                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                            >
+                    <div :class="sectionBox" class="mt-5">
+                        <div :class="sectionHead">
+                            <span :class="sectionIcon">
                                 <Lucide icon="Users" class="h-4 w-4" />
-                            </div>
+                            </span>
                             <div class="min-w-0">
                                 <div class="text-sm font-medium text-slate-800">
                                     ¿Cuántos son?
                                 </div>
                                 <div class="text-xs text-slate-500">
-                                    Esta habitación admite hasta
-                                    {{ maxGuests }} persona{{
-                                        maxGuests === 1 ? '' : 's'
+                                    Esta habitación admite hasta {{ maxGuests }}
+                                    {{
+                                        maxGuests === 1 ? 'persona' : 'personas'
                                     }}
                                     en total.
                                 </div>
                             </div>
                         </div>
-                        <!-- Filas de ancho completo (etiqueta | control): un
-                             stepper suelto a la izquierda deja un hueco raro,
-                             sobre todo en hoteles solo-adultos -->
-                        <div class="mt-4 space-y-3">
+                        <div class="divide-y divide-slate-200">
                             <div
-                                class="flex items-center justify-between gap-3"
+                                class="flex items-center justify-between gap-3 px-4 py-3"
                             >
-                                <FormLabel class="mb-0">Adultos</FormLabel>
-                                <div class="flex items-center gap-2">
-                                    <button
-                                        type="button"
-                                        class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
-                                        :disabled="adults <= 1"
-                                        @click="setAdults(adults - 1)"
-                                    >
-                                        <Lucide
-                                            icon="Minus"
-                                            class="h-3.5 w-3.5"
-                                        />
-                                    </button>
-                                    <span
-                                        class="w-8 text-center text-base font-medium"
-                                        >{{ adults }}</span
-                                    >
-                                    <button
-                                        type="button"
-                                        class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
-                                        :disabled="
-                                            adults + children >= maxGuests
-                                        "
-                                        @click="setAdults(adults + 1)"
-                                    >
-                                        <Lucide
-                                            icon="Plus"
-                                            class="h-3.5 w-3.5"
-                                        />
-                                    </button>
+                                <div class="text-sm font-medium text-slate-700">
+                                    Adultos
                                 </div>
+                                <QtyStepper
+                                    v-model="adults"
+                                    :min="1"
+                                    :max="maxGuests - children"
+                                    label="adulto"
+                                />
                             </div>
                             <div
                                 v-if="!adultsOnly"
-                                class="flex items-center justify-between gap-3"
+                                class="flex items-center justify-between gap-3 px-4 py-3"
                             >
-                                <FormLabel class="mb-0">Niños</FormLabel>
-                                <div class="flex items-center gap-2">
-                                    <button
-                                        type="button"
-                                        class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
-                                        :disabled="children <= 0"
-                                        @click="setChildren(children - 1)"
-                                    >
-                                        <Lucide
-                                            icon="Minus"
-                                            class="h-3.5 w-3.5"
-                                        />
-                                    </button>
-                                    <span
-                                        class="w-8 text-center text-base font-medium"
-                                        >{{ children }}</span
-                                    >
-                                    <button
-                                        type="button"
-                                        class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
-                                        :disabled="
-                                            adults + children >= maxGuests
-                                        "
-                                        @click="setChildren(children + 1)"
-                                    >
-                                        <Lucide
-                                            icon="Plus"
-                                            class="h-3.5 w-3.5"
-                                        />
-                                    </button>
+                                <div class="text-sm font-medium text-slate-700">
+                                    Niños
                                 </div>
+                                <QtyStepper
+                                    v-model="children"
+                                    :min="0"
+                                    :max="maxGuests - adults"
+                                    label="niño"
+                                />
                             </div>
                         </div>
                         <p
                             v-if="adultsOnly"
-                            class="mt-3 flex items-center gap-1.5 text-xs font-medium text-warning"
+                            class="flex items-center gap-1.5 border-t border-slate-200 px-4 py-2.5 text-xs font-medium text-warning"
                         >
                             <Lucide icon="ShieldAlert" class="h-3.5 w-3.5" />
                             Establecimiento exclusivo para mayores de edad.
                         </p>
                     </div>
 
-                    <div class="mt-5 rounded-xl bg-slate-50 p-4">
-                        <div
-                            v-if="roomQuoteLoading"
-                            class="flex items-center gap-2 text-sm text-slate-500"
-                        >
-                            <Lucide
-                                icon="RefreshCw"
-                                class="h-4 w-4 animate-spin"
-                            />
-                            Recalculando…
-                        </div>
-                        <template v-else>
-                            <div
-                                v-if="!selected.available"
-                                class="flex items-center gap-2 text-sm text-warning"
-                            >
-                                <Lucide
-                                    icon="TriangleAlert"
-                                    class="h-4 w-4 shrink-0"
-                                />
-                                Esta habitación no tiene cupo disponible para
-                                {{ adults + children }} persona{{
-                                    adults + children === 1 ? '' : 's'
-                                }}
-                                en ese horario.
-                            </div>
-                            <template v-else>
-                                <div
-                                    v-for="line in selected.price_breakdown"
-                                    :key="line.concept"
-                                    class="flex justify-between text-xs text-slate-500"
-                                >
-                                    <span>{{ line.concept }}</span
-                                    ><span>{{ money(line.amount) }}</span>
-                                </div>
-                                <div
-                                    class="mt-1.5 flex items-center justify-between border-t border-slate-200 pt-1.5 text-base font-semibold text-slate-800"
-                                >
-                                    <span>Total</span
-                                    ><span>{{ money(selected.total) }}</span>
-                                </div>
-                            </template>
-                        </template>
+                    <!-- Precio: barras por noche cuando cambia entre noches -->
+                    <div
+                        v-if="nightlyVaries(selected)"
+                        :class="sectionBox"
+                        class="mt-4 p-4"
+                    >
+                        <NightlyBars
+                            :nights="selected.nightly ?? []"
+                            :currency="property.currency"
+                        />
                     </div>
-                    <p v-if="roomQuoteError" class="mt-2 text-xs text-danger">
+
+                    <div
+                        v-if="selectedDiscount && !roomQuoteLoading"
+                        class="mt-4 flex items-start gap-2.5 rounded-xl bg-success/10 px-4 py-3 text-sm text-slate-700"
+                    >
+                        <Lucide
+                            icon="BadgePercent"
+                            class="mt-0.5 h-4 w-4 shrink-0 text-success"
+                        />
+                        <div class="min-w-0">
+                            <div class="font-medium text-slate-800">
+                                {{ selectedDiscount.name }} aplicado
+                            </div>
+                            <div class="text-xs text-slate-600">
+                                La noche queda en
+                                {{ money(selectedDiscount.unit) }} en vez de
+                                {{ money(selectedDiscount.regular) }}: ahorras
+                                {{ money(selectedSavings) }} ({{
+                                    selectedDiscount.percent
+                                }}% menos).
+                            </div>
+                        </div>
+                    </div>
+                    <p
+                        v-else-if="selectedOfferHint && !roomQuoteLoading"
+                        class="mt-4 flex items-start gap-2 text-xs text-success"
+                    >
+                        <Lucide
+                            icon="BadgePercent"
+                            class="mt-px h-3.5 w-3.5 shrink-0"
+                        />
+                        {{ selectedOfferHint }}
+                    </p>
+
+                    <div
+                        v-if="roomQuoteLoading"
+                        class="mt-4 flex items-center gap-2 text-sm text-slate-500"
+                    >
+                        <Lucide
+                            icon="LoaderCircle"
+                            class="h-4 w-4 animate-spin"
+                        />
+                        Recalculando el precio…
+                    </div>
+                    <div
+                        v-else-if="!selected.available"
+                        class="mt-4 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-sm text-slate-700"
+                    >
+                        <Lucide
+                            icon="TriangleAlert"
+                            class="mt-0.5 h-4 w-4 shrink-0 text-warning"
+                        />
+                        No hay una habitación de este tipo libre para
+                        {{ adults + children }}
+                        {{ adults + children === 1 ? 'persona' : 'personas' }}
+                        en esas fechas. Prueba con menos personas u otra
+                        habitación.
+                    </div>
+                    <p v-if="roomQuoteError" class="mt-3 text-sm text-danger">
                         {{ roomQuoteError }}
                     </p>
 
-                    <Button
-                        variant="primary"
-                        class="mt-5 w-full shadow-md shadow-primary/20"
-                        :disabled="roomQuoteLoading || !selected.available"
-                        @click="continueFromRoom"
-                    >
-                        <Lucide icon="ArrowRight" class="mr-2 h-4 w-4" />
-                        Continuar
-                    </Button>
-                </div>
-
-                <!-- ═══ PASO: datos del huésped ═══ -->
-                <div
-                    v-else-if="step === 'guest' && selected"
-                    class="p-5 sm:p-7"
-                >
-                    <button
-                        type="button"
-                        class="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
-                        @click="goBack"
-                    >
-                        <Lucide icon="ArrowLeft" class="h-4 w-4" /> Atrás
-                    </button>
-
-                    <!-- Resumen con la misma estructura que "Tu grupo" en el
-                         wizard grupal: encabezado con chips, renglones con
-                         cantidad + subtítulo, total al pie. -->
-                    <div class="rounded-xl bg-slate-50 p-4 sm:p-5">
+                    <template #footer>
+                        <BackButton
+                            label="Otras habitaciones"
+                            @click="goBack"
+                        />
                         <div
-                            class="flex flex-wrap items-center justify-between gap-2"
+                            class="ml-auto flex flex-1 items-center justify-end gap-3 sm:flex-none"
                         >
-                            <div class="text-sm font-medium text-slate-800">
-                                Tu reserva
-                            </div>
-                            <div class="flex flex-wrap items-center gap-1.5">
+                            <span class="hidden text-right sm:block">
+                                <span class="block text-xs text-slate-500"
+                                    >Total<template v-if="selectedSavings > 0">
+                                        ·
+                                        <span class="line-through">{{
+                                            money(
+                                                selected.total +
+                                                    selectedSavings,
+                                            )
+                                        }}</span></template
+                                    ></span
+                                >
                                 <span
-                                    v-if="selected.duration_label"
-                                    class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600 shadow-sm"
+                                    class="block text-base font-semibold text-slate-800"
+                                    >{{ money(selected.total) }}</span
                                 >
-                                    {{
-                                        humanizeDurationLabel(
-                                            selected.duration_label,
-                                        )
-                                    }}
-                                </span>
-                                <span
-                                    class="rounded-full bg-white px-2.5 py-1 text-xs font-medium text-slate-600 shadow-sm"
-                                >
-                                    {{ adults + children }} persona{{
-                                        adults + children === 1 ? '' : 's'
-                                    }}
-                                </span>
-                            </div>
-                        </div>
-                        <div class="mt-2 divide-y divide-slate-200">
-                            <!-- Envolvente: en celular el precio baja de
-                                 línea en vez de aplastar el nombre y las
-                                 fechas en una columnita ilegible -->
-                            <div
-                                class="flex flex-wrap items-start gap-x-3 gap-y-1 py-2.5"
-                            >
-                                <img
-                                    v-if="selected.photos.length"
-                                    :src="selected.photos[0].thumb_url"
-                                    :alt="selected.name"
-                                    class="h-12 w-16 shrink-0 rounded-lg object-cover"
-                                />
-                                <div class="min-w-0 flex-1 basis-40">
-                                    <div class="text-sm text-slate-700">
-                                        <span class="font-medium text-slate-800"
-                                            >1×</span
-                                        >
-                                        {{ selected.name }}
-                                    </div>
-                                    <div class="mt-0.5 text-xs text-slate-400">
-                                        {{
-                                            stayLabel(
-                                                selected.starts_at,
-                                                selected.ends_at,
-                                            )
-                                        }}
-                                        · {{ occupancyLabel }}
-                                    </div>
-                                </div>
-                                <div
-                                    class="ml-auto shrink-0 text-sm font-medium text-slate-600"
-                                >
-                                    {{ money(selected.total) }}
-                                </div>
-                            </div>
-                            <div
-                                v-for="line in experienceLines"
-                                :key="line.id"
-                                class="flex items-center justify-between gap-3 py-2.5"
-                            >
-                                <div class="min-w-0">
-                                    <div
-                                        class="truncate text-sm text-slate-700"
-                                    >
-                                        <span class="font-medium text-slate-800"
-                                            >{{ line.people }}×</span
-                                        >
-                                        {{ line.name }}
-                                    </div>
-                                    <div class="mt-0.5 text-xs text-slate-400">
-                                        {{
-                                            formatFriendlyDateTime(
-                                                line.starts_at,
-                                            )
-                                        }}
-                                    </div>
-                                </div>
-                                <div
-                                    class="ml-auto flex shrink-0 items-center gap-2"
-                                >
-                                    <span class="text-sm text-slate-600">{{
-                                        money(line.total)
-                                    }}</span>
-                                    <button
-                                        type="button"
-                                        class="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                        @click="
-                                            removeExperiencePick(
-                                                line.session_id,
-                                            )
-                                        "
-                                    >
-                                        <Lucide icon="X" class="h-3.5 w-3.5" />
-                                    </button>
-                                </div>
-                            </div>
-                            <div
-                                v-for="line in selectedProductLines"
-                                :key="line.id"
-                                class="flex items-center justify-between gap-3 py-2.5"
-                            >
-                                <div class="min-w-0">
-                                    <div
-                                        class="truncate text-sm text-slate-700"
-                                    >
-                                        <span class="font-medium text-slate-800"
-                                            >{{ line.qty }}×</span
-                                        >
-                                        {{ line.name }}
-                                    </div>
-                                </div>
-                                <div class="shrink-0 text-sm text-slate-600">
-                                    {{ money(line.total) }}
-                                </div>
-                            </div>
-                        </div>
-                        <div
-                            v-if="appliedCoupon"
-                            class="flex items-center justify-between gap-3 border-t border-slate-200 pt-3 text-sm"
-                        >
-                            <span
-                                class="flex items-center gap-1.5 text-success"
-                            >
-                                <Lucide icon="TicketPercent" class="h-4 w-4" />
-                                Cupón {{ appliedCoupon.code }}
-                                <button
-                                    type="button"
-                                    class="text-xs font-medium text-slate-400 hover:text-danger hover:underline"
-                                    @click="removeCoupon"
-                                >
-                                    Quitar
-                                </button>
                             </span>
-                            <span class="font-medium text-success"
-                                >−{{ money(appliedCoupon.discount) }}</span
-                            >
-                        </div>
-                        <div
-                            class="flex items-center justify-between border-t border-slate-200 pt-3"
-                            :class="appliedCoupon && 'border-t-0 pt-1'"
-                        >
-                            <span class="text-sm text-slate-500">Total</span>
-                            <span
-                                class="text-base font-semibold text-slate-800"
-                                >{{ money(discountedTotal) }}</span
-                            >
-                        </div>
-                    </div>
-
-                    <!-- Cupón (módulo cupones): antes de apartar -->
-                    <div
-                        v-if="hasCoupons && !appliedCoupon"
-                        class="mt-4 rounded-xl border border-dashed border-slate-200 p-4"
-                    >
-                        <div
-                            class="flex items-center gap-1.5 text-sm font-medium text-slate-700"
-                        >
-                            <Lucide
-                                icon="TicketPercent"
-                                class="h-4 w-4 text-primary"
-                            />
-                            ¿Tienes un código?
-                        </div>
-                        <div
-                            class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[1fr_auto]"
-                        >
-                            <FormInput
-                                v-model="couponInput"
-                                type="text"
-                                placeholder="CODIGO"
-                                class="uppercase"
-                                @keyup.enter="applyCoupon"
-                            />
                             <Button
-                                variant="outline-primary"
-                                class="min-h-11 sm:w-auto"
+                                variant="primary"
+                                class="flex-1 sm:flex-none"
+                                :class="primaryBtn"
                                 :disabled="
-                                    couponApplying || !couponInput.trim()
+                                    roomQuoteLoading || !selected.available
                                 "
-                                @click="applyCoupon"
+                                @click="continueFromRoom"
                             >
-                                {{ couponApplying ? 'Validando…' : 'Aplicar' }}
+                                Continuar
+                                <Lucide
+                                    icon="ArrowRight"
+                                    class="ml-2 h-4 w-4"
+                                />
                             </Button>
                         </div>
-                        <p v-if="couponError" class="mt-2 text-xs text-danger">
-                            {{ couponError }}
-                        </p>
-                    </div>
+                    </template>
+                </BookingCard>
 
-                    <!-- Caja con título e instrucción, como el calendario:
-                         cada sección del wizard se explica sola -->
-                    <div
-                        class="mt-5 rounded-xl border border-slate-200 p-4 sm:p-5"
-                    >
-                        <div class="flex items-center gap-3">
-                            <div
-                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                            >
-                                <Lucide icon="UserRound" class="h-4 w-4" />
-                            </div>
-                            <div class="min-w-0">
-                                <div class="text-sm font-medium text-slate-800">
-                                    Tus datos
-                                </div>
-                                <div class="text-xs text-slate-500">
-                                    Para confirmarte la reserva y avisarte
-                                    cualquier cambio.
-                                </div>
-                            </div>
-                        </div>
-                        <div class="mt-4 space-y-5">
-                            <div>
-                                <FormLabel>Nombre completo</FormLabel>
-                                <FormInput
-                                    v-model="guestName"
-                                    type="text"
-                                    placeholder="Como aparece en tu identificación"
-                                />
-                                <p class="mt-1.5 text-xs text-slate-400">
-                                    El día de tu llegada te pediremos una
-                                    identificación oficial en recepción.
-                                </p>
-                            </div>
-                            <div>
-                                <FormLabel>Teléfono</FormLabel>
-                                <div class="flex flex-wrap gap-2">
-                                    <FormSelect
-                                        v-model="phoneCountry"
-                                        class="w-auto shrink-0"
-                                        aria-label="País del teléfono"
-                                    >
-                                        <option value="52">México +52</option>
-                                        <option value="1">
-                                            USA / Canadá +1
-                                        </option>
-                                        <option value="otro">Otro país</option>
-                                    </FormSelect>
-                                    <FormInput
-                                        v-if="phoneCountry === 'otro'"
-                                        v-model="phoneLada"
-                                        type="tel"
-                                        inputmode="numeric"
-                                        class="w-20 shrink-0"
-                                        placeholder="Lada"
-                                        aria-label="Lada internacional"
-                                    />
-                                    <FormInput
-                                        v-model="guestPhone"
-                                        type="tel"
-                                        inputmode="numeric"
-                                        class="min-w-40 flex-1"
-                                        placeholder="10 dígitos"
-                                    />
-                                </div>
-                                <p class="mt-1 text-xs text-slate-400">
-                                    Aquí te confirmamos por WhatsApp.
-                                </p>
-                            </div>
-                            <div>
-                                <FormLabel>Email</FormLabel>
-                                <FormInput
-                                    v-model="guestEmail"
-                                    type="email"
-                                    placeholder="tu@correo.com"
-                                />
-                                <p class="mt-1 text-xs text-slate-400">
-                                    Te mandamos ahí tu confirmación.
-                                </p>
-                            </div>
-                            <div>
-                                <FormLabel>Notas (opcional)</FormLabel>
-                                <FormTextarea
-                                    v-model="notes"
-                                    rows="2"
-                                    placeholder="Hora aproximada de llegada, alguna petición…"
-                                />
-                            </div>
-                            <!-- Campo trampa: invisible para personas, los bots lo rellenan solo -->
-                            <div
-                                class="h-px w-px overflow-hidden opacity-0"
-                                style="clip: rect(0, 0, 0, 0)"
-                                aria-hidden="true"
-                            >
-                                <label for="website">No llenar</label>
-                                <input
-                                    id="website"
-                                    v-model="honeypot"
-                                    type="text"
-                                    tabindex="-1"
-                                    autocomplete="off"
-                                />
-                            </div>
-                        </div>
-                    </div>
-
-                    <p
-                        v-if="submitError"
-                        class="mt-4 rounded-lg bg-danger/10 px-3 py-2 text-sm text-danger"
-                    >
-                        {{ submitError }}
-                    </p>
-
-                    <Button
-                        variant="primary"
-                        class="mt-5 w-full shadow-md shadow-primary/20"
-                        :disabled="
-                            submitting ||
-                            !guestName.trim() ||
-                            !guestPhone.trim()
-                        "
-                        @click="submitHold"
-                    >
-                        <Lucide
-                            :icon="submitting ? 'RefreshCw' : 'ShieldCheck'"
-                            class="mr-2 h-4 w-4"
-                            :class="submitting && 'animate-spin'"
-                        />
-                        {{
-                            submitting
-                                ? 'Apartando…'
-                                : 'Apartar esta habitación'
-                        }}
-                    </Button>
-                    <!-- holdMinutes del servidor: antes se mostraba por error la
-                         duración de la ESTANCIA ("720 minutos" en bloques de 12h). -->
-                    <p class="mt-2.5 text-center text-[11px] text-slate-400">
-                        Tu habitación queda apartada
-                        {{ humanizeMinutes(holdMinutes) }} mientras terminas.
-                        Sin tarjeta y sin compromiso.
-                    </p>
-                    <!-- Depósito en garantía: se cobra AL LLEGAR y es aparte
-                         del total, así que va con su propia caja y no como
-                         una línea del desglose — meterlo al total sería
-                         cobrarle de más a quien lo lee rápido. -->
-                    <div
-                        v-if="guarantee"
-                        class="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500"
-                    >
-                        <div
-                            class="flex items-center gap-1.5 font-medium text-slate-600"
-                        >
-                            <Lucide icon="ShieldCheck" class="h-3.5 w-3.5" />
-                            Depósito en garantía
-                        </div>
-                        <p class="mt-1">{{ guarantee.label }}</p>
-                        <p v-if="guarantee.tiers_label" class="mt-1">
-                            Si apartas varias habitaciones:
-                            {{ guarantee.tiers_label }}.
-                        </p>
-                    </div>
-                    <!-- Política de cancelación del hotel, a la vista antes
-                         de comprometerse (la de la tarifa manda si existe).
-                         El texto libre se muestra AUNQUE no haya política
-                         automática: hay hoteles sin ventana sin costo cuyas
-                         condiciones viven solo en ese texto, y con el v-if
-                         atado a `label` nunca se veían. -->
-                    <div
-                        v-if="
-                            cancellationPolicy.label || cancellationPolicy.text
-                        "
-                        class="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-[11px] leading-relaxed text-slate-500"
-                    >
-                        <div
-                            class="flex items-center gap-1.5 font-medium text-slate-600"
-                        >
-                            <Lucide icon="Undo2" class="h-3.5 w-3.5" />
-                            Política de cancelación
-                        </div>
-                        <p v-if="cancellationPolicy.label" class="mt-1">
-                            {{ cancellationPolicy.label }}
-                        </p>
-                        <p v-if="cancellationPolicy.text" class="mt-1">
-                            {{ cancellationPolicy.text }}
-                        </p>
-                    </div>
-                </div>
-
-                <!-- ═══ PASO: extras (opcional, solo si el hotel lo activó) ═══ -->
-                <div
+                <!-- ═══ PASO: complementos (opcional) ═══ -->
+                <BookingCard
                     v-else-if="step === 'extras' && selected"
-                    class="p-5 sm:p-7"
+                    icon="ConciergeBell"
+                    title="¿Algo más para tu llegada?"
+                    subtitle="Opcional: se prepara para ti y se suma a tu total."
                 >
-                    <button
-                        type="button"
-                        class="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-700"
-                        @click="goBack"
-                    >
-                        <Lucide icon="ArrowLeft" class="h-4 w-4" /> Volver
-                    </button>
-
-                    <h2 class="text-lg font-medium text-slate-800">
-                        ¿Algo más para tu llegada?
-                    </h2>
-                    <p class="mt-1 text-sm text-slate-500">
-                        Opcional — se prepara y te espera, se suma a tu total.
-                    </p>
-
-                    <!-- Experiencias: tours con sesiones durante la estancia,
-                         se agregan como plus con su propio cupo -->
-                    <div v-if="experiencesCatalog?.enabled" class="mt-5">
-                        <div
-                            class="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                    <div class="space-y-6">
+                        <!-- Experiencias durante la estancia -->
+                        <section
+                            v-if="
+                                experiencesCatalog?.enabled &&
+                                experiencesCatalog.experiences.length
+                            "
                         >
-                            Recorridos y experiencias
-                        </div>
-                        <div class="space-y-3">
-                            <div
-                                v-for="exp in experiencesCatalog.experiences"
-                                :key="exp.id"
-                                class="rounded-lg border border-slate-200/70 p-3"
-                            >
-                                <div class="flex items-start gap-3">
-                                    <img
-                                        v-if="exp.photos.length"
-                                        :src="exp.photos[0].thumb_url"
-                                        :alt="exp.name"
-                                        class="h-14 w-20 shrink-0 rounded-lg object-cover"
-                                        loading="lazy"
-                                    />
-                                    <div class="min-w-0 flex-1">
-                                        <div
-                                            class="text-sm font-medium text-slate-800"
-                                        >
-                                            {{ exp.name }}
-                                        </div>
-                                        <div class="text-xs text-slate-500">
-                                            {{ exp.price_label
-                                            }}<template
-                                                v-if="exp.duration_label"
-                                            >
-                                                ·
-                                                {{
-                                                    humanizeDurationLabel(
-                                                        exp.duration_label,
-                                                    )
-                                                }}</template
-                                            >
-                                        </div>
-                                        <p
-                                            v-if="exp.description"
-                                            class="mt-1 line-clamp-2 text-xs text-slate-500"
-                                        >
-                                            {{ exp.description }}
-                                        </p>
-                                    </div>
-                                </div>
+                            <div :class="groupLabel">
+                                Recorridos y experiencias
+                            </div>
+                            <div class="space-y-3">
                                 <div
-                                    class="mt-3 grid grid-cols-12 items-end gap-2"
+                                    v-for="exp in experiencesCatalog.experiences"
+                                    :key="exp.id"
+                                    :class="sectionBox"
+                                    class="p-4"
                                 >
-                                    <div class="col-span-12 sm:col-span-6">
-                                        <FormLabel class="mb-1 text-xs">
-                                            Fecha y horario
-                                        </FormLabel>
-                                        <FormSelect
-                                            v-model="
-                                                expDraft[exp.id].session_id
-                                            "
+                                    <div class="flex items-start gap-3">
+                                        <img
+                                            v-if="exp.photos.length"
+                                            :src="exp.photos[0].thumb_url"
+                                            :alt="exp.name"
+                                            class="h-16 w-20 shrink-0 rounded-lg object-cover"
+                                            loading="lazy"
+                                        />
+                                        <div
+                                            v-else
+                                            class="flex h-16 w-20 shrink-0 items-center justify-center rounded-lg bg-slate-100"
                                         >
-                                            <option value="" disabled>
-                                                Elige una sesión
-                                            </option>
-                                            <option
-                                                v-for="session in exp.sessions.filter(
-                                                    (s) =>
-                                                        !experiencePicks.some(
-                                                            (p) =>
-                                                                p.session_id ===
-                                                                s.id,
-                                                        ),
-                                                )"
-                                                :key="session.id"
-                                                :value="session.id"
+                                            <Lucide
+                                                icon="Compass"
+                                                class="h-6 w-6 text-slate-300"
+                                            />
+                                        </div>
+                                        <div class="min-w-0 flex-1">
+                                            <div
+                                                class="text-sm font-medium text-slate-800"
                                             >
-                                                {{
-                                                    formatFriendlyDateTime(
-                                                        session.starts_at,
-                                                    )
-                                                }}
-                                                ·
-                                                {{
-                                                    session.remaining === 1
-                                                        ? 'queda 1 lugar'
-                                                        : `quedan ${session.remaining} lugares`
-                                                }}
-                                            </option>
-                                        </FormSelect>
-                                    </div>
-                                    <div class="col-span-6 sm:col-span-3">
-                                        <label
-                                            class="mb-1 block text-xs text-slate-500"
-                                            >Personas</label
-                                        >
-                                        <div class="flex items-center gap-2">
-                                            <button
-                                                type="button"
-                                                class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
-                                                :disabled="
-                                                    expDraft[exp.id].people <=
-                                                    exp.min_people
-                                                "
-                                                @click="
-                                                    expDraft[exp.id].people =
-                                                        Math.max(
-                                                            exp.min_people,
-                                                            expDraft[exp.id]
-                                                                .people - 1,
+                                                {{ exp.name }}
+                                            </div>
+                                            <div class="text-sm text-slate-500">
+                                                {{ exp.price_label
+                                                }}<template
+                                                    v-if="exp.duration_label"
+                                                >
+                                                    ·
+                                                    {{
+                                                        humanizeDurationLabel(
+                                                            exp.duration_label,
                                                         )
-                                                "
+                                                    }}</template
+                                                >
+                                            </div>
+                                            <p
+                                                v-if="exp.description"
+                                                class="mt-1 line-clamp-2 text-xs text-slate-500"
                                             >
-                                                <Lucide
-                                                    icon="Minus"
-                                                    class="h-3.5 w-3.5"
-                                                />
-                                            </button>
-                                            <span
-                                                class="w-8 text-center text-base font-medium"
-                                                >{{
-                                                    expDraft[exp.id].people
-                                                }}</span
-                                            >
-                                            <button
-                                                type="button"
-                                                class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300"
-                                                @click="
-                                                    expDraft[exp.id].people =
-                                                        Math.min(
-                                                            exp.max_people ??
-                                                                100,
-                                                            expDraft[exp.id]
-                                                                .people + 1,
-                                                        )
-                                                "
-                                            >
-                                                <Lucide
-                                                    icon="Plus"
-                                                    class="h-3.5 w-3.5"
-                                                />
-                                            </button>
+                                                {{ exp.description }}
+                                            </p>
                                         </div>
                                     </div>
-                                    <div class="col-span-6 sm:col-span-3">
+                                    <div
+                                        class="mt-3 grid grid-cols-1 items-end gap-3 sm:grid-cols-[1fr_auto_auto]"
+                                    >
+                                        <div>
+                                            <FormLabel
+                                                class="text-xs"
+                                                :for="`exp-${exp.id}`"
+                                                >Fecha y horario</FormLabel
+                                            >
+                                            <FormSelect
+                                                :id="`exp-${exp.id}`"
+                                                v-model="
+                                                    expDraft[exp.id].session_id
+                                                "
+                                                class="h-11 text-sm"
+                                            >
+                                                <option value="" disabled>
+                                                    Elige una sesión
+                                                </option>
+                                                <option
+                                                    v-for="session in exp.sessions.filter(
+                                                        (s) =>
+                                                            !experiencePicks.some(
+                                                                (p) =>
+                                                                    p.session_id ===
+                                                                    s.id,
+                                                            ),
+                                                    )"
+                                                    :key="session.id"
+                                                    :value="session.id"
+                                                >
+                                                    {{
+                                                        formatFriendlyDateTime(
+                                                            session.starts_at,
+                                                        )
+                                                    }}
+                                                    ·
+                                                    {{
+                                                        session.remaining === 1
+                                                            ? 'queda 1 lugar'
+                                                            : `quedan ${session.remaining} lugares`
+                                                    }}
+                                                </option>
+                                            </FormSelect>
+                                        </div>
+                                        <div
+                                            class="flex items-center justify-between gap-3 sm:block"
+                                        >
+                                            <div
+                                                class="text-xs text-slate-500 sm:mb-1"
+                                            >
+                                                Personas
+                                            </div>
+                                            <QtyStepper
+                                                v-model="
+                                                    expDraft[exp.id].people
+                                                "
+                                                :min="exp.min_people"
+                                                :max="experienceCap(exp)"
+                                                label="persona"
+                                            />
+                                        </div>
                                         <Button
-                                            type="button"
                                             variant="outline-primary"
-                                            class="w-full"
+                                            class="h-11 rounded-full px-5 text-sm"
                                             :disabled="
                                                 expDraft[exp.id].session_id ===
                                                 ''
                                             "
                                             @click="addExperiencePick(exp)"
                                         >
+                                            <Lucide
+                                                icon="Plus"
+                                                class="mr-1.5 h-4 w-4"
+                                            />
                                             Agregar
                                         </Button>
                                     </div>
                                 </div>
                             </div>
-                        </div>
+                        </section>
 
-                        <!-- Tours ya agregados -->
-                        <div
-                            v-if="experienceLines.length"
-                            class="mt-3 space-y-2"
-                        >
+                        <!-- Add-ons: decoración, desayuno, late checkout -->
+                        <section v-if="extrasCatalog?.addons.length">
+                            <div :class="groupLabel">Para tu estancia</div>
                             <div
-                                v-for="line in experienceLines"
-                                :key="line.id"
-                                class="flex items-center justify-between gap-3 rounded-lg bg-primary/5 px-3 py-2.5 text-sm"
+                                :class="sectionBox"
+                                class="divide-y divide-slate-200"
                             >
-                                <div class="min-w-0">
-                                    <div
-                                        class="truncate font-medium text-slate-800"
-                                    >
-                                        {{ line.people }}× {{ line.name }}
-                                    </div>
-                                    <div class="text-xs text-slate-500">
-                                        {{
-                                            formatFriendlyDateTime(
-                                                line.starts_at,
-                                            )
-                                        }}
-                                    </div>
-                                </div>
                                 <div
-                                    class="ml-auto flex shrink-0 items-center gap-2"
+                                    v-for="addon in extrasCatalog.addons"
+                                    :key="addon.id"
+                                    class="flex flex-wrap items-center gap-3 p-4"
                                 >
                                     <span
-                                        class="text-sm font-medium text-slate-800"
-                                        >{{ money(line.total) }}</span
+                                        :class="sectionIcon"
+                                        class="h-11 w-11"
                                     >
-                                    <button
-                                        type="button"
-                                        class="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                        @click="
-                                            removeExperiencePick(
-                                                line.session_id,
-                                            )
+                                        <Lucide
+                                            icon="Sparkles"
+                                            class="h-5 w-5"
+                                        />
+                                    </span>
+                                    <div class="min-w-0 flex-1 basis-40">
+                                        <div
+                                            class="text-sm font-medium text-slate-800"
+                                        >
+                                            {{ addon.name }}
+                                        </div>
+                                        <div
+                                            v-if="addon.description"
+                                            class="text-xs text-slate-500"
+                                        >
+                                            {{ addon.description }}
+                                        </div>
+                                        <div class="text-sm text-slate-600">
+                                            {{ money(addon.price) }}
+                                        </div>
+                                    </div>
+                                    <QtyStepper
+                                        :model-value="
+                                            selectedAddons[addon.id] ?? 0
                                         "
-                                    >
-                                        <Lucide icon="X" class="h-3.5 w-3.5" />
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Add-ons (módulo extras): decoración, desayuno, late checkout -->
-                    <div v-if="extrasCatalog?.addons.length" class="mt-5">
-                        <div
-                            class="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                        >
-                            Para tu estancia
-                        </div>
-                        <div class="space-y-3">
-                            <div
-                                v-for="addon in extrasCatalog.addons"
-                                :key="addon.id"
-                                class="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200/70 p-3.5"
-                            >
-                                <div
-                                    class="flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-primary/10 bg-primary/10 text-primary"
-                                >
-                                    <Lucide
-                                        icon="ConciergeBell"
-                                        class="h-5 w-5"
+                                        :max="20"
+                                        :label="addon.name"
+                                        class="ml-auto"
+                                        @update:model-value="
+                                            setAddonQty(addon.id, $event)
+                                        "
                                     />
                                 </div>
-                                <div class="min-w-0 flex-1 basis-40">
-                                    <div
-                                        class="truncate text-sm font-medium text-slate-800"
-                                    >
-                                        {{ addon.name }}
-                                    </div>
-                                    <div
-                                        v-if="addon.description"
-                                        class="truncate text-xs text-slate-500"
-                                    >
-                                        {{ addon.description }}
-                                    </div>
-                                    <div class="text-xs text-slate-500">
-                                        {{ money(addon.price) }}
-                                    </div>
-                                </div>
-                                <div
-                                    class="ml-auto flex shrink-0 items-center gap-2"
-                                >
-                                    <button
-                                        type="button"
-                                        class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
-                                        :disabled="!selectedAddons[addon.id]"
-                                        @click="
-                                            setAddonQty(
-                                                addon.id,
-                                                (selectedAddons[addon.id] ??
-                                                    0) - 1,
-                                            )
-                                        "
-                                    >
-                                        <Lucide
-                                            icon="Minus"
-                                            class="h-3.5 w-3.5"
-                                        />
-                                    </button>
-                                    <span
-                                        class="w-8 text-center text-base font-medium"
-                                        >{{
-                                            selectedAddons[addon.id] ?? 0
-                                        }}</span
-                                    >
-                                    <button
-                                        type="button"
-                                        class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300"
-                                        @click="
-                                            setAddonQty(
-                                                addon.id,
-                                                (selectedAddons[addon.id] ??
-                                                    0) + 1,
-                                            )
-                                        "
-                                    >
-                                        <Lucide
-                                            icon="Plus"
-                                            class="h-3.5 w-3.5"
-                                        />
-                                    </button>
-                                </div>
                             </div>
-                        </div>
-                    </div>
+                        </section>
 
-                    <div class="mt-5 space-y-5">
-                        <div
+                        <!-- Productos del POS por categoría -->
+                        <section
                             v-for="[category, items] in extrasByCategory"
                             :key="category"
                         >
+                            <div :class="groupLabel">{{ category }}</div>
                             <div
-                                class="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                                :class="sectionBox"
+                                class="divide-y divide-slate-200"
                             >
-                                {{ category }}
-                            </div>
-                            <div class="space-y-3">
                                 <div
                                     v-for="p in items"
                                     :key="p.id"
-                                    class="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200/70 p-3.5"
+                                    class="flex flex-wrap items-center gap-3 p-4"
                                 >
                                     <img
                                         v-if="p.photo"
                                         :src="p.photo.thumb_url"
                                         :alt="p.name"
-                                        class="h-14 w-20 shrink-0 rounded-lg object-cover"
+                                        class="h-14 w-16 shrink-0 rounded-lg object-cover"
                                         loading="lazy"
                                     />
                                     <div
                                         v-else
-                                        class="flex h-14 w-20 shrink-0 items-center justify-center rounded-lg bg-slate-100"
+                                        class="flex h-14 w-16 shrink-0 items-center justify-center rounded-lg bg-slate-100"
                                     >
                                         <Lucide
                                             icon="ShoppingBag"
@@ -2781,645 +2099,321 @@ async function copyCode() {
                                     </div>
                                     <div class="min-w-0 flex-1 basis-40">
                                         <div
-                                            class="truncate text-sm font-medium text-slate-800"
+                                            class="text-sm font-medium text-slate-800"
                                         >
                                             {{ p.name }}
                                         </div>
-                                        <div class="text-xs text-slate-500">
+                                        <div class="text-sm text-slate-600">
                                             {{ money(p.price) }} / {{ p.unit }}
                                         </div>
                                     </div>
-                                    <div
-                                        class="ml-auto flex shrink-0 items-center gap-2"
-                                    >
-                                        <button
-                                            type="button"
-                                            class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300 disabled:opacity-50"
-                                            :disabled="!selectedProducts[p.id]"
-                                            @click="
-                                                setProductQty(
-                                                    p.id,
-                                                    (selectedProducts[p.id] ??
-                                                        0) - 1,
-                                                )
-                                            "
-                                        >
-                                            <Lucide
-                                                icon="Minus"
-                                                class="h-3.5 w-3.5"
-                                            />
-                                        </button>
-                                        <span
-                                            class="w-8 text-center text-base font-medium"
-                                            >{{
-                                                selectedProducts[p.id] ?? 0
-                                            }}</span
-                                        >
-                                        <button
-                                            type="button"
-                                            class="flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition hover:border-slate-300"
-                                            @click="
-                                                setProductQty(
-                                                    p.id,
-                                                    (selectedProducts[p.id] ??
-                                                        0) + 1,
-                                                )
-                                            "
-                                        >
-                                            <Lucide
-                                                icon="Plus"
-                                                class="h-3.5 w-3.5"
-                                            />
-                                        </button>
-                                    </div>
+                                    <QtyStepper
+                                        :model-value="
+                                            selectedProducts[p.id] ?? 0
+                                        "
+                                        :max="20"
+                                        :label="p.name"
+                                        class="ml-auto"
+                                        @update:model-value="
+                                            setProductQty(p.id, $event)
+                                        "
+                                    />
                                 </div>
                             </div>
-                        </div>
+                        </section>
                     </div>
 
-                    <!-- Resumen vivo: habitación + extras + experiencias + total,
-                         no solo el subtotal de extras suelto (feedback 2026-07-14). -->
-                    <div class="mt-5 rounded-lg bg-slate-50 px-4 py-3 text-sm">
-                        <div
-                            class="flex items-center justify-between text-slate-500"
+                    <template #footer>
+                        <BackButton @click="goBack" />
+                        <Button
+                            variant="primary"
+                            class="ml-auto flex-1 sm:flex-none"
+                            :class="primaryBtn"
+                            @click="step = 'guest'"
                         >
-                            <span>{{ selected.name }}</span>
-                            <span>{{ money(selected.total) }}</span>
-                        </div>
-                        <div
-                            v-for="line in experienceLines"
-                            :key="line.id"
-                            class="mt-1 flex items-center justify-between text-slate-500"
-                        >
-                            <span>{{ line.people }}× {{ line.name }}</span>
-                            <span>{{ money(line.total) }}</span>
-                        </div>
-                        <div
-                            v-for="line in selectedProductLines"
-                            :key="line.id"
-                            class="mt-1 flex items-center justify-between text-slate-500"
-                        >
-                            <span>{{ line.qty }}× {{ line.name }}</span>
-                            <span>{{ money(line.total) }}</span>
-                        </div>
-                        <div
-                            class="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-base font-semibold text-slate-800"
-                        >
-                            <span>Total</span>
-                            <span>{{ money(grandTotal) }}</span>
-                        </div>
-                        <div
-                            v-if="secondaryMoney(grandTotal)"
-                            class="mt-0.5 text-right text-xs text-slate-400"
-                        >
-                            {{ secondaryMoney(grandTotal) }}
-                        </div>
-                    </div>
+                            {{
+                                selectedProductLines.length ||
+                                experienceLines.length
+                                    ? 'Continuar'
+                                    : 'Continuar sin complementos'
+                            }}
+                            <Lucide icon="ArrowRight" class="ml-2 h-4 w-4" />
+                        </Button>
+                    </template>
+                </BookingCard>
 
-                    <Button
-                        variant="primary"
-                        class="mt-5 w-full shadow-md shadow-primary/20"
-                        @click="step = 'guest'"
-                    >
-                        <Lucide icon="ArrowRight" class="mr-2 h-4 w-4" />
-                        Continuar
-                    </Button>
-                </div>
-
-                <!-- ═══ PASO: confirmación / pago ═══ -->
-                <div
-                    v-else-if="step === 'confirm' && hold"
-                    class="p-5 text-center sm:p-7"
+                <!-- ═══ PASO: tus datos ═══ -->
+                <BookingCard
+                    v-else-if="step === 'guest' && selected"
+                    icon="UserRound"
+                    title="Tus datos"
+                    subtitle="Para confirmarte la reserva y avisarte cualquier cambio."
                 >
-                    <!-- Sin prepago (o eligió pagar al llegar): confirmación directa -->
-                    <template v-if="!hold.requires_prepayment || payLater">
-                        <div
-                            class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-success/10 text-success"
-                        >
-                            <Lucide icon="Check" class="h-7 w-7" />
+                    <form
+                        class="space-y-5"
+                        novalidate
+                        @submit.prevent="submitHold"
+                    >
+                        <div>
+                            <FormLabel for="guest-name"
+                                >Nombre completo</FormLabel
+                            >
+                            <FormInput
+                                id="guest-name"
+                                v-model="guestName"
+                                type="text"
+                                autocomplete="name"
+                                class="h-11 text-sm"
+                                :class="
+                                    guestAttempted && nameError
+                                        ? 'border-danger'
+                                        : ''
+                                "
+                                placeholder="Como aparece en tu identificación"
+                            />
+                            <p
+                                v-if="guestAttempted && nameError"
+                                class="mt-1.5 text-xs text-danger"
+                            >
+                                {{ nameError }}
+                            </p>
+                            <p v-else class="mt-1.5 text-xs text-slate-500">
+                                Al llegar te pediremos una identificación
+                                oficial.
+                            </p>
                         </div>
-                        <h2 class="text-lg font-medium text-slate-800">
-                            ¡Tu apartado quedó listo!
-                        </h2>
-                        <p class="mt-1.5 text-sm text-slate-500">
-                            El hotel confirmará directamente. Guarda tu código —
-                            te lo pueden pedir en recepción.
-                        </p>
-                        <p
-                            v-if="payLater && hold.hold_expires_at"
-                            class="mt-1.5 text-xs text-warning"
-                        >
-                            Tienes hasta
-                            {{ formatFriendlyDateTime(hold.hold_expires_at) }}
-                            para pagar en recepción; si no, el apartado se
-                            libera.
-                        </p>
+                        <!-- Un dato por renglón: a dos columnas el teléfono
+                             (país + número) se partía y quedaba desalineado
+                             frente al correo. -->
+                        <div class="grid gap-5">
+                            <div>
+                                <FormLabel for="guest-phone"
+                                    >Teléfono (WhatsApp)</FormLabel
+                                >
+                                <PhoneField
+                                    id="guest-phone"
+                                    v-model:country="phoneCountry"
+                                    v-model:number="guestPhone"
+                                    v-model:lada="phoneLada"
+                                    :show-errors="guestAttempted"
+                                    hint="Aquí te confirmamos por WhatsApp."
+                                />
+                            </div>
+                            <div>
+                                <FormLabel for="guest-email">Correo</FormLabel>
+                                <FormInput
+                                    id="guest-email"
+                                    v-model="guestEmail"
+                                    type="email"
+                                    autocomplete="email"
+                                    class="h-11 text-sm"
+                                    :class="
+                                        guestAttempted && guestEmailError
+                                            ? 'border-danger'
+                                            : ''
+                                    "
+                                    placeholder="tu@correo.com"
+                                />
+                                <p
+                                    v-if="guestAttempted && guestEmailError"
+                                    class="mt-1.5 text-xs text-danger"
+                                >
+                                    {{ guestEmailError }}
+                                </p>
+                                <p v-else class="mt-1.5 text-xs text-slate-500">
+                                    Te mandamos ahí tu confirmación.
+                                </p>
+                            </div>
+                        </div>
+                        <div>
+                            <FormLabel for="guest-notes"
+                                >Algo que debamos saber</FormLabel
+                            >
+                            <FormTextarea
+                                id="guest-notes"
+                                v-model="notes"
+                                rows="2"
+                                class="text-sm"
+                                placeholder="Hora aproximada de llegada, alguna petición…"
+                            />
+                        </div>
+
+                        <!-- Cupón -->
                         <div
-                            class="mx-auto mt-4 max-w-xs rounded-xl bg-slate-50 p-4 text-left"
+                            v-if="hasCoupons"
+                            class="rounded-xl bg-slate-50 p-4"
                         >
                             <div
-                                class="flex items-center justify-between gap-2"
+                                v-if="appliedCoupon"
+                                class="flex items-center gap-2 text-sm text-success"
                             >
-                                <div
-                                    class="text-2xl font-semibold tracking-wide text-slate-800"
-                                >
-                                    {{ hold.code }}
-                                </div>
+                                <Lucide icon="TicketPercent" class="h-4 w-4" />
+                                Cupón {{ appliedCoupon.code }} aplicado: −{{
+                                    money(appliedCoupon.discount)
+                                }}
                                 <button
                                     type="button"
-                                    class="flex shrink-0 items-center gap-1 rounded-md border border-slate-200 px-2 py-1 text-[11px] font-medium text-slate-500 transition hover:bg-slate-100"
-                                    @click="copyCode"
+                                    class="ml-auto text-xs font-medium text-slate-500 hover:text-danger"
+                                    @click="removeCoupon"
                                 >
-                                    <Lucide
-                                        :icon="codeCopied ? 'Check' : 'Copy'"
-                                        class="h-3 w-3"
-                                    />
-                                    {{ codeCopied ? 'Copiado' : 'Copiar' }}
+                                    Quitar
                                 </button>
                             </div>
-                            <div class="mt-2 flex items-center gap-2.5">
-                                <img
-                                    v-if="selected?.photos.length"
-                                    :src="selected.photos[0].thumb_url"
-                                    :alt="hold.room_type"
-                                    class="h-10 w-14 shrink-0 rounded-lg object-cover"
-                                />
-                                <div class="min-w-0">
-                                    <div
-                                        class="truncate text-sm font-medium text-slate-700"
+                            <template v-else>
+                                <button
+                                    v-if="!couponOpen"
+                                    type="button"
+                                    class="flex items-center gap-2 text-sm font-medium text-primary"
+                                    @click="couponOpen = true"
+                                >
+                                    <Lucide
+                                        icon="TicketPercent"
+                                        class="h-4 w-4"
+                                    />
+                                    ¿Tienes un código de descuento?
+                                </button>
+                                <div v-else>
+                                    <FormLabel for="coupon"
+                                        >Código de descuento</FormLabel
                                     >
-                                        {{ hold.room_type }}
+                                    <div class="flex gap-2">
+                                        <FormInput
+                                            id="coupon"
+                                            v-model="couponInput"
+                                            type="text"
+                                            autocapitalize="characters"
+                                            class="h-11 flex-1 text-sm uppercase"
+                                            placeholder="CODIGO"
+                                            @keydown.enter.prevent="applyCoupon"
+                                        />
+                                        <Button
+                                            variant="outline-primary"
+                                            class="h-11 rounded-full px-5 text-sm"
+                                            :disabled="
+                                                couponApplying ||
+                                                !couponInput.trim()
+                                            "
+                                            @click="applyCoupon"
+                                        >
+                                            {{
+                                                couponApplying
+                                                    ? 'Validando…'
+                                                    : 'Aplicar'
+                                            }}
+                                        </Button>
                                     </div>
-                                    <div class="text-xs text-slate-500">
-                                        {{
-                                            stayLabel(
-                                                hold.starts_at,
-                                                hold.ends_at,
-                                            )
-                                        }}
-                                    </div>
-                                </div>
-                            </div>
-                            <div
-                                class="mt-3 space-y-1 border-t border-slate-200 pt-3 text-xs text-slate-500"
-                            >
-                                <template v-if="hold.price_breakdown.length">
-                                    <div
-                                        v-for="line in hold.price_breakdown"
-                                        :key="line.concept"
-                                        class="flex justify-between"
+                                    <p
+                                        v-if="couponError"
+                                        class="mt-1.5 text-xs text-danger"
                                     >
-                                        <span>{{ line.concept }}</span
-                                        ><span>{{ money(line.amount) }}</span>
-                                    </div>
-                                </template>
-                                <div v-else class="flex justify-between">
-                                    <span>Habitación</span
-                                    ><span>{{ money(hold.room_total) }}</span>
+                                        {{ couponError }}
+                                    </p>
                                 </div>
-                                <div
-                                    v-for="line in hold.experiences ?? []"
-                                    :key="`e-${line.experience_booking_id}`"
-                                    class="flex justify-between"
-                                >
-                                    <span
-                                        >{{ line.people }}×
-                                        {{ line.name }}</span
-                                    ><span>{{ money(line.total) }}</span>
-                                </div>
-                                <div
-                                    v-for="line in hold.extras"
-                                    :key="`a-${line.extra_id}`"
-                                    class="flex justify-between"
-                                >
-                                    <span>{{ line.qty }}× {{ line.name }}</span
-                                    ><span>{{ money(line.total) }}</span>
-                                </div>
-                                <div
-                                    v-for="line in hold.products"
-                                    :key="line.product_id"
-                                    class="flex justify-between"
-                                >
-                                    <span>{{ line.qty }}× {{ line.name }}</span
-                                    ><span>{{ money(line.total) }}</span>
-                                </div>
-                                <div
-                                    v-if="hold.discount > 0"
-                                    class="flex justify-between font-medium text-success"
-                                >
-                                    <span>Cupón {{ hold.coupon_code }}</span
-                                    ><span>−{{ money(hold.discount) }}</span>
-                                </div>
-                            </div>
-                            <div
-                                class="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-base font-medium text-slate-800"
-                            >
-                                <span>Total</span
-                                ><span>{{ money(hold.total) }}</span>
-                            </div>
-                            <div
-                                v-if="secondaryMoney(hold.total)"
-                                class="mt-0.5 text-right text-xs text-slate-400"
-                            >
-                                {{ secondaryMoney(hold.total) }}
-                            </div>
-                            <!-- Fuera del total a propósito: el depósito no
-                                 es parte de la cuenta, se cobra al llegar y
-                                 regresa al salir. -->
-                            <div
-                                v-if="guarantee"
-                                class="mt-2 flex items-start gap-1.5 border-t border-slate-200 pt-2 text-[11px] leading-relaxed text-slate-500"
+                            </template>
+                        </div>
+
+                        <!-- Campo trampa: invisible para personas -->
+                        <div
+                            class="h-px w-px overflow-hidden opacity-0"
+                            style="clip: rect(0, 0, 0, 0)"
+                            aria-hidden="true"
+                        >
+                            <label for="website">No llenar</label>
+                            <input
+                                id="website"
+                                v-model="honeypot"
+                                type="text"
+                                tabindex="-1"
+                                autocomplete="off"
+                            />
+                        </div>
+
+                        <p
+                            v-if="submitError"
+                            class="flex items-start gap-2 rounded-lg bg-danger/10 px-3 py-2.5 text-sm text-danger"
+                        >
+                            <Lucide
+                                icon="CircleAlert"
+                                class="mt-0.5 h-4 w-4 shrink-0"
+                            />
+                            {{ submitError }}
+                        </p>
+                        <p
+                            v-else-if="guestAttempted && !guestValid"
+                            class="flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-sm text-slate-700"
+                        >
+                            <Lucide
+                                icon="CircleAlert"
+                                class="mt-0.5 h-4 w-4 shrink-0 text-warning"
+                            />
+                            Revisa los campos marcados para continuar.
+                        </p>
+                    </form>
+
+                    <template #footer>
+                        <BackButton @click="goBack" />
+                        <div
+                            class="ml-auto flex flex-1 justify-end sm:flex-none"
+                        >
+                            <Button
+                                variant="primary"
+                                class="flex-1 sm:flex-none"
+                                :class="primaryBtn"
+                                :disabled="submitting"
+                                @click="submitHold"
                             >
                                 <Lucide
-                                    icon="ShieldCheck"
-                                    class="mt-0.5 h-3.5 w-3.5 shrink-0"
+                                    :icon="
+                                        submitting
+                                            ? 'LoaderCircle'
+                                            : 'ShieldCheck'
+                                    "
+                                    class="mr-2 h-4 w-4"
+                                    :class="submitting && 'animate-spin'"
                                 />
-                                <span>
-                                    Aparte del total, al llegar se cobra un
-                                    depósito en garantía de
-                                    {{ money(guarantee.amount) }} por
-                                    habitación, que se te devuelve al registrar
-                                    tu salida.
-                                </span>
-                            </div>
+                                {{
+                                    submitting
+                                        ? 'Apartando…'
+                                        : 'Apartar mi habitación'
+                                }}
+                            </Button>
                         </div>
                         <p
-                            v-if="holdCountdown && !payLater"
-                            class="mt-3 text-xs text-warning"
+                            class="w-full text-center text-xs text-slate-500 sm:text-right"
                         >
-                            Se libera sola en {{ holdCountdown }} si el hotel no
-                            confirma antes.
-                        </p>
-                        <p
-                            class="mx-auto mt-3 flex max-w-xs items-center justify-center gap-1.5 text-xs text-slate-500"
-                        >
-                            <Lucide
-                                icon="IdCard"
-                                class="h-3.5 w-3.5 shrink-0"
-                            />
-                            A tu llegada, presenta este código y una
-                            identificación oficial.
+                            Queda apartada {{ humanizeMinutes(holdMinutes) }}
+                            mientras terminas. Sin tarjeta y sin compromiso.
                         </p>
                     </template>
+                </BookingCard>
 
-                    <!-- Con prepago: elegir método, pasarela o transferencia -->
-                    <template v-else>
-                        <div v-if="paymentLoading" class="py-6">
-                            <Lucide
-                                icon="RefreshCw"
-                                class="mx-auto h-8 w-8 animate-spin text-primary"
-                            />
-                            <p class="mt-3 text-sm text-slate-500">
-                                Preparando tu cobro…
-                            </p>
-                        </div>
-
-                        <!-- Ambos métodos disponibles: se le pregunta al huésped, ya no se decide en silencio -->
-                        <template v-else-if="paymentChoice && !payment">
+                <!-- ═══ PASO: listo (confirmación o pago) ═══ -->
+                <template v-else-if="step === 'confirm' && hold">
+                    <!-- Sin prepago o eligió pagar en el hotel -->
+                    <BookingCard
+                        v-if="!hold.requires_prepayment || payLater"
+                        icon="CircleCheck"
+                        tone="success"
+                        title="¡Tu apartado quedó listo!"
+                        subtitle="El hotel lo confirma directamente. Guarda tu código: te lo pueden pedir en recepción."
+                    >
+                        <div
+                            class="flex flex-col gap-4 sm:flex-row sm:items-center"
+                        >
                             <div
-                                class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-primary/10 text-primary"
+                                class="flex-1 rounded-xl bg-slate-50 px-4 py-3.5"
                             >
-                                <Lucide icon="Wallet" class="h-7 w-7" />
-                            </div>
-                            <h2 class="text-lg font-medium text-slate-800">
-                                ¿Cómo prefieres pagar?
-                            </h2>
-                            <p class="mt-1.5 text-sm text-slate-500">
-                                Código
-                                <span class="font-medium">{{ hold.code }}</span>
-                            </p>
-                            <!-- Desglose y métodos lado a lado: centrado en
-                                 una columnita, la tarjeta quedaba llena de
-                                 aire muerto en desktop. -->
-                            <div
-                                class="mx-auto mt-5 grid max-w-2xl items-start gap-4 text-left sm:grid-cols-2"
-                            >
-                                <div class="rounded-xl bg-slate-50 p-4">
-                                    <div class="flex items-center gap-2.5">
-                                        <img
-                                            v-if="selected?.photos.length"
-                                            :src="selected.photos[0].thumb_url"
-                                            :alt="hold.room_type"
-                                            class="h-10 w-14 shrink-0 rounded-lg object-cover"
-                                        />
-                                        <div class="min-w-0">
-                                            <div
-                                                class="truncate text-sm font-medium text-slate-700"
-                                            >
-                                                {{ hold.room_type }}
-                                            </div>
-                                            <div class="text-xs text-slate-500">
-                                                {{
-                                                    stayLabel(
-                                                        hold.starts_at,
-                                                        hold.ends_at,
-                                                    )
-                                                }}
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div
-                                        class="mt-3 space-y-1 border-t border-slate-200 pt-3 text-xs text-slate-500"
-                                    >
-                                        <template
-                                            v-if="hold.price_breakdown.length"
-                                        >
-                                            <div
-                                                v-for="line in hold.price_breakdown"
-                                                :key="line.concept"
-                                                class="flex justify-between"
-                                            >
-                                                <span>{{ line.concept }}</span
-                                                ><span>{{
-                                                    money(line.amount)
-                                                }}</span>
-                                            </div>
-                                        </template>
-                                        <div
-                                            v-else
-                                            class="flex justify-between"
-                                        >
-                                            <span>Habitación</span
-                                            ><span>{{
-                                                money(hold.room_total)
-                                            }}</span>
-                                        </div>
-                                        <div
-                                            v-for="line in hold.experiences ??
-                                            []"
-                                            :key="`e-${line.experience_booking_id}`"
-                                            class="flex justify-between"
-                                        >
-                                            <span
-                                                >{{ line.people }}×
-                                                {{ line.name }}</span
-                                            ><span>{{
-                                                money(line.total)
-                                            }}</span>
-                                        </div>
-                                        <div
-                                            v-for="line in hold.extras"
-                                            :key="`a-${line.extra_id}`"
-                                            class="flex justify-between"
-                                        >
-                                            <span
-                                                >{{ line.qty }}×
-                                                {{ line.name }}</span
-                                            ><span>{{
-                                                money(line.total)
-                                            }}</span>
-                                        </div>
-                                        <div
-                                            v-for="line in hold.products"
-                                            :key="line.product_id"
-                                            class="flex justify-between"
-                                        >
-                                            <span
-                                                >{{ line.qty }}×
-                                                {{ line.name }}</span
-                                            ><span>{{
-                                                money(line.total)
-                                            }}</span>
-                                        </div>
-                                        <div
-                                            v-if="hold.discount > 0"
-                                            class="flex justify-between font-medium text-success"
-                                        >
-                                            <span
-                                                >Cupón
-                                                {{ hold.coupon_code }}</span
-                                            ><span
-                                                >−{{
-                                                    money(hold.discount)
-                                                }}</span
-                                            >
-                                        </div>
-                                    </div>
-                                    <div
-                                        class="mt-2 flex items-center justify-between border-t border-slate-200 pt-2 text-base font-medium text-slate-800"
-                                    >
-                                        <span>Total</span
-                                        ><span>{{ money(hold.total) }}</span>
-                                    </div>
+                                <div class="text-xs text-slate-500">
+                                    Tu código
                                 </div>
-
-                                <div class="space-y-4">
-                                    <!-- Con anticipo: cuánto pagar hoy es decisión
-                                 del huésped, no del sistema -->
-                                    <div v-if="depositApplies">
-                                        <div
-                                            class="mb-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                                        >
-                                            ¿Cuánto pagas hoy?
-                                        </div>
-                                        <!-- Apiladas siempre: en media columna, lado a
-                                     lado quedan angostas y amontonadas -->
-                                        <div class="grid grid-cols-1 gap-2.5">
-                                            <button
-                                                type="button"
-                                                class="rounded-xl border p-3.5 text-left transition"
-                                                :class="
-                                                    payAmountChoice ===
-                                                    'deposit'
-                                                        ? 'border-primary bg-primary/5'
-                                                        : 'border-slate-200 hover:border-primary/40'
-                                                "
-                                                @click="
-                                                    payAmountChoice = 'deposit'
-                                                "
-                                            >
-                                                <div
-                                                    class="text-sm font-medium text-slate-800"
-                                                >
-                                                    Solo el anticipo
-                                                </div>
-                                                <div
-                                                    class="mt-0.5 text-base font-semibold text-slate-800"
-                                                >
-                                                    {{ money(hold.deposit) }}
-                                                </div>
-                                                <div
-                                                    class="mt-1 text-xs text-slate-500"
-                                                >
-                                                    {{
-                                                        hold.balance_notice ??
-                                                        'El resto lo pagas después, por link o transferencia.'
-                                                    }}
-                                                </div>
-                                            </button>
-                                            <button
-                                                type="button"
-                                                class="rounded-xl border p-3.5 text-left transition"
-                                                :class="
-                                                    payAmountChoice === 'full'
-                                                        ? 'border-primary bg-primary/5'
-                                                        : 'border-slate-200 hover:border-primary/40'
-                                                "
-                                                @click="
-                                                    payAmountChoice = 'full'
-                                                "
-                                            >
-                                                <div
-                                                    class="text-sm font-medium text-slate-800"
-                                                >
-                                                    Todo de una vez
-                                                </div>
-                                                <div
-                                                    class="mt-0.5 text-base font-semibold text-slate-800"
-                                                >
-                                                    {{ money(hold.total) }}
-                                                </div>
-                                                <div
-                                                    class="mt-1 text-xs text-slate-500"
-                                                >
-                                                    Liquidas hoy y te olvidas de
-                                                    saldos.
-                                                </div>
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <div class="space-y-2.5">
-                                        <button
-                                            v-for="gw in paymentChoice.gateways"
-                                            :key="gw.provider"
-                                            type="button"
-                                            class="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
-                                            @click="
-                                                requestPayment(
-                                                    'gateway',
-                                                    gw.provider,
-                                                )
-                                            "
-                                        >
-                                            <div
-                                                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary"
-                                            >
-                                                <Lucide
-                                                    icon="CreditCard"
-                                                    class="h-5 w-5"
-                                                />
-                                            </div>
-                                            <div class="min-w-0">
-                                                <div
-                                                    class="text-sm font-medium text-slate-800"
-                                                >
-                                                    Pagar con {{ gw.label }}
-                                                </div>
-                                                <div
-                                                    class="text-xs text-slate-500"
-                                                >
-                                                    Confirmación inmediata
-                                                </div>
-                                            </div>
-                                        </button>
-                                        <button
-                                            v-if="
-                                                paymentChoice.transfer.available
-                                            "
-                                            type="button"
-                                            class="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
-                                            @click="requestPayment('transfer')"
-                                        >
-                                            <div
-                                                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-info/10 text-info"
-                                            >
-                                                <Lucide
-                                                    icon="Landmark"
-                                                    class="h-5 w-5"
-                                                />
-                                            </div>
-                                            <div class="min-w-0">
-                                                <div
-                                                    class="text-sm font-medium text-slate-800"
-                                                >
-                                                    Transferencia bancaria
-                                                </div>
-                                                <div
-                                                    class="text-xs text-slate-500"
-                                                >
-                                                    {{
-                                                        paymentChoice.transfer
-                                                            .accounts_count
-                                                    }}
-                                                    cuenta{{
-                                                        paymentChoice.transfer
-                                                            .accounts_count ===
-                                                        1
-                                                            ? ''
-                                                            : 's'
-                                                    }}
-                                                    disponible{{
-                                                        paymentChoice.transfer
-                                                            .accounts_count ===
-                                                        1
-                                                            ? ''
-                                                            : 's'
-                                                    }}
-                                                </div>
-                                            </div>
-                                        </button>
-                                    </div>
-                                    <!-- Efectivo activo: pagar en el hotel también es opción -->
-                                    <div v-if="hold.payment_optional">
-                                        <button
-                                            type="button"
-                                            class="flex w-full items-center gap-3 rounded-xl border border-slate-200 p-4 text-left transition hover:border-primary/40 hover:bg-primary/5"
-                                            @click="choosePayLater()"
-                                        >
-                                            <div
-                                                class="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500"
-                                            >
-                                                <Lucide
-                                                    icon="Banknote"
-                                                    class="h-5 w-5"
-                                                />
-                                            </div>
-                                            <div class="min-w-0">
-                                                <div
-                                                    class="text-sm font-medium text-slate-800"
-                                                >
-                                                    Prefiero pagar en el hotel
-                                                </div>
-                                                <div
-                                                    class="text-xs text-slate-500"
-                                                >
-                                                    Pagas al llegar, en
-                                                    recepción; el hotel confirma
-                                                    tu apartado.
-                                                </div>
-                                            </div>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                            <p
-                                v-if="holdCountdown"
-                                class="mt-4 text-xs text-warning"
-                            >
-                                Tu apartado se libera solo en
-                                {{ holdCountdown }} si no se completa el pago.
-                            </p>
-                        </template>
-
-                        <template v-else-if="payment?.method === 'transfer'">
-                            <div
-                                class="mx-auto mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-info/10 text-info"
-                            >
-                                <Lucide icon="Landmark" class="h-7 w-7" />
-                            </div>
-                            <h2 class="text-lg font-medium text-slate-800">
-                                Completa tu apartado por transferencia
-                            </h2>
-                            <p class="mt-1.5 text-sm text-slate-500">
-                                Código
-                                <span
-                                    class="inline-flex items-center gap-1 font-medium"
-                                >
-                                    {{ hold.code }}
+                                <div class="flex items-center gap-2">
+                                    <span
+                                        class="font-mono text-2xl font-semibold tracking-wide text-slate-800"
+                                        >{{ hold.code }}</span
+                                    >
                                     <button
                                         type="button"
-                                        class="text-slate-400 transition hover:text-slate-600"
+                                        class="inline-flex h-9 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 text-xs font-medium text-slate-600 transition hover:border-primary/40 hover:text-primary"
                                         @click="copyCode"
                                     >
                                         <Lucide
@@ -3428,330 +2422,451 @@ async function copyCode() {
                                             "
                                             class="h-3.5 w-3.5"
                                         />
+                                        {{ codeCopied ? 'Copiado' : 'Copiar' }}
                                     </button>
-                                </span>
-                            </p>
-                            <!-- Pasos claros: transferir, comprobante por
-                                 WhatsApp, confirmación -->
-                            <div
-                                class="mx-auto mt-4 max-w-sm space-y-3 text-left"
-                            >
-                                <div class="flex items-start gap-3">
-                                    <span
-                                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
-                                        >1</span
-                                    >
-                                    <div class="min-w-0 flex-1">
-                                        <p class="text-sm text-slate-700">
-                                            Transfiere
-                                            <span class="font-medium">{{
-                                                payment.amount_label
-                                            }}</span>
-                                            a una de estas cuentas:
-                                        </p>
-                                        <div class="mt-2 space-y-2">
-                                            <div
-                                                v-for="acc in payment.bank_accounts"
-                                                :key="acc.cuenta"
-                                                class="rounded-xl border border-slate-200 p-3.5 text-sm"
-                                            >
-                                                <div
-                                                    class="font-medium text-slate-700"
-                                                >
-                                                    {{ acc.banco }}
-                                                </div>
-                                                <div class="text-slate-500">
-                                                    {{ acc.titular }}
-                                                </div>
-                                                <!-- Qué es el número: una tarjeta capturada como cuenta no pasa. -->
-                                                <div
-                                                    v-if="acc.tipo"
-                                                    class="mt-1 text-xs text-slate-500"
-                                                >
-                                                    {{ acc.tipo }}
-                                                </div>
-                                                <div
-                                                    class="font-mono text-slate-700"
-                                                    :class="
-                                                        acc.tipo ? '' : 'mt-1'
-                                                    "
-                                                >
-                                                    {{ acc.cuenta }}
-                                                </div>
-                                                <div
-                                                    v-if="acc.aviso"
-                                                    class="mt-1.5 text-xs text-pending"
-                                                >
-                                                    {{ acc.aviso }}
-                                                </div>
-                                                <!-- Muchos bancos solo dejan
-                                                     transferir a tarjeta desde
-                                                     la app: ahí va la otra. -->
-                                                <div
-                                                    v-if="acc.alternativa"
-                                                    class="mt-2 border-t border-slate-200 pt-2"
-                                                >
-                                                    <div
-                                                        class="text-xs text-slate-500"
-                                                    >
-                                                        Si tu app solo permite
-                                                        transferir a tarjeta:
-                                                    </div>
-                                                    <div
-                                                        class="text-xs text-slate-500"
-                                                    >
-                                                        {{
-                                                            acc.alternativa.tipo
-                                                        }}
-                                                    </div>
-                                                    <div
-                                                        class="font-mono text-slate-700"
-                                                    >
-                                                        {{
-                                                            acc.alternativa
-                                                                .cuenta
-                                                        }}
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="flex items-start gap-3">
-                                    <span
-                                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
-                                        >2</span
-                                    >
-                                    <div class="min-w-0 flex-1">
-                                        <p class="text-sm text-slate-700">
-                                            Manda tu comprobante con tu código
-                                            <span class="font-medium">{{
-                                                hold.code
-                                            }}</span
-                                            >:
-                                        </p>
-                                        <template
-                                            v-if="payment.whatsapps?.length"
-                                        >
-                                            <a
-                                                v-for="wa in payment.whatsapps"
-                                                :key="wa"
-                                                :href="`https://wa.me/${wa}?text=${encodeURIComponent(`Hola, envío el comprobante de mi reserva ${hold.code}`)}`"
-                                                target="_blank"
-                                                class="mt-2 flex items-center gap-3 rounded-xl border border-success/30 bg-success/5 p-3.5 text-left transition hover:bg-success/10"
-                                            >
-                                                <div
-                                                    class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
-                                                >
-                                                    <Lucide
-                                                        icon="MessageCircle"
-                                                        class="h-5 w-5"
-                                                    />
-                                                </div>
-                                                <div class="min-w-0">
-                                                    <div
-                                                        class="text-sm font-medium text-slate-800"
-                                                    >
-                                                        Enviar por WhatsApp
-                                                    </div>
-                                                    <div
-                                                        class="text-xs text-slate-500"
-                                                    >
-                                                        +{{ wa }}
-                                                    </div>
-                                                </div>
-                                            </a>
-                                        </template>
-                                        <p
-                                            v-else
-                                            class="mt-1 text-xs text-slate-500"
-                                        >
-                                            El hotel te contactará para recibir
-                                            tu comprobante.
-                                        </p>
-                                    </div>
-                                </div>
-                                <div class="flex items-start gap-3">
-                                    <span
-                                        class="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
-                                        >3</span
-                                    >
-                                    <p class="text-sm text-slate-700">
-                                        En cuanto el hotel verifique tu pago, tu
-                                        reserva queda confirmada y te avisamos.
-                                    </p>
                                 </div>
                             </div>
-                            <p class="mt-3 text-xs text-slate-400">
-                                Vigente por
-                                {{
-                                    payment.valid_label ??
-                                    `${payment.valid_hours} horas`
-                                }}.
-                            </p>
-                            <a
-                                :href="payment.return_url"
-                                class="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
+                        </div>
+
+                        <div
+                            v-if="holdExpired"
+                            class="mt-4 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-sm text-slate-700"
+                        >
+                            <Lucide
+                                icon="TimerOff"
+                                class="mt-0.5 h-4 w-4 shrink-0 text-warning"
+                            />
+                            El plazo de tu apartado terminó. Si el hotel aún no
+                            te confirmó, escríbele con tu código.
+                        </div>
+                        <div
+                            v-else-if="payLater && hold.hold_expires_at"
+                            class="mt-4 flex items-start gap-2 rounded-lg bg-warning/10 px-3 py-2.5 text-sm text-slate-700"
+                        >
+                            <Lucide
+                                icon="Clock"
+                                class="mt-0.5 h-4 w-4 shrink-0 text-warning"
+                            />
+                            Tienes hasta
+                            {{ formatFriendlyDateTime(hold.hold_expires_at) }}
+                            para pagar en recepción; si no, el apartado se
+                            libera.
+                        </div>
+                        <div
+                            v-else-if="holdCountdown"
+                            class="mt-4 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-sm text-slate-600"
+                        >
+                            <Lucide
+                                icon="Clock"
+                                class="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                            />
+                            Si el hotel no lo confirma antes, se libera solo en
+                            {{ holdCountdown }}.
+                        </div>
+
+                        <!-- Qué sigue -->
+                        <ol class="mt-5 space-y-3">
+                            <li class="flex items-start gap-3">
+                                <span
+                                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-success/10 text-success"
+                                >
+                                    <Lucide icon="Check" class="h-4 w-4" />
+                                </span>
+                                <p class="pt-1 text-sm text-slate-700">
+                                    Apartaste tu habitación.
+                                </p>
+                            </li>
+                            <li class="flex items-start gap-3">
+                                <span
+                                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+                                    >2</span
+                                >
+                                <p class="pt-1 text-sm text-slate-700">
+                                    El hotel la confirma y te avisa por WhatsApp
+                                    {{ guestEmail ? 'y por correo' : '' }}.
+                                </p>
+                            </li>
+                            <li class="flex items-start gap-3">
+                                <span
+                                    class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary"
+                                    >3</span
+                                >
+                                <p class="pt-1 text-sm text-slate-700">
+                                    Al llegar, presenta tu código y una
+                                    identificación oficial.
+                                </p>
+                            </li>
+                        </ol>
+
+                        <div
+                            v-if="guarantee"
+                            class="mt-5 flex items-start gap-2 rounded-lg bg-slate-50 px-3 py-2.5 text-xs leading-relaxed text-slate-600"
+                        >
+                            <Lucide
+                                icon="ShieldCheck"
+                                class="mt-0.5 h-4 w-4 shrink-0 text-primary"
+                            />
+                            Aparte del total, al llegar se cobra un depósito en
+                            garantía de {{ money(guarantee.amount) }} por
+                            habitación, que se te devuelve al registrar tu
+                            salida.
+                        </div>
+
+                        <template #footer>
+                            <button
+                                type="button"
+                                class="inline-flex h-11 items-center gap-1.5 rounded-full border border-slate-200 bg-white px-4 text-sm font-medium text-slate-600 shadow-sm transition hover:border-slate-300"
+                                @click="addToCalendar"
                             >
-                                Ver estado de tu reserva
+                                <Lucide icon="CalendarPlus" class="h-4 w-4" />
+                                Agregar a mi calendario
+                            </button>
+                            <a
+                                :href="`/reserva?codigo=${encodeURIComponent(hold.code)}`"
+                                class="ml-auto inline-flex h-11 items-center gap-1.5 rounded-full bg-primary/10 px-5 text-sm font-medium text-primary transition hover:bg-primary/15"
+                            >
+                                Ver el estado de mi reserva
                                 <Lucide icon="ArrowRight" class="h-4 w-4" />
                             </a>
                         </template>
+                    </BookingCard>
 
-                        <template v-else-if="paymentError">
-                            <Lucide
-                                icon="CircleAlert"
-                                class="mx-auto h-10 w-10 text-warning"
-                            />
-                            <h2 class="mt-3 text-lg font-medium text-slate-800">
-                                Tu apartado quedó guardado
-                            </h2>
-                            <p class="mt-1.5 text-sm text-slate-500">
-                                {{ paymentError }}
-                            </p>
-                            <div
-                                class="mx-auto mt-4 max-w-xs rounded-xl bg-slate-50 p-4"
+                    <!-- Con prepago: cuánto y cómo pagar -->
+                    <BookingCard
+                        v-else
+                        icon="Wallet"
+                        title="Completa tu pago"
+                        :subtitle="
+                            holdExpired
+                                ? `Código ${hold.code}`
+                                : holdCountdown
+                                  ? `Código ${hold.code} · tu apartado se libera en ${holdCountdown} si no se paga`
+                                  : `Código ${hold.code}`
+                        "
+                    >
+                        <PaymentPanel
+                            ref="paymentPanel"
+                            :code="hold.code"
+                            :total="hold.total"
+                            :deposit="hold.deposit"
+                            :currency="property.currency"
+                            :payment-optional="hold.payment_optional"
+                            :balance-notice="hold.balance_notice"
+                            :expired="holdExpired"
+                            :phone="property.phone"
+                            :urls="{
+                                options: '/api/booking/payment-options',
+                                payment: `/api/booking/holds/${hold.code}/payment`,
+                                payLater: `/api/booking/holds/${hold.code}/pay-later`,
+                            }"
+                            @pay-later="onPayLater"
+                        />
+                        <template v-if="holdExpired" #footer>
+                            <Button
+                                variant="primary"
+                                class="ml-auto"
+                                :class="primaryBtn"
+                                @click="startOver"
                             >
-                                <div
-                                    class="text-2xl font-semibold tracking-wide text-slate-800"
-                                >
-                                    {{ hold.code }}
-                                </div>
-                                <div
-                                    class="mt-1 text-base font-medium text-slate-800"
-                                >
-                                    {{ money(hold.total) }}
-                                </div>
-                            </div>
-                            <!-- Honestidad sobre el estado: sin pago, el apartado se
-                                 libera solo — no queda "reservado" en silencio. -->
-                            <p
-                                v-if="holdCountdown"
-                                class="mt-3 text-xs text-warning"
-                            >
-                                Sin el pago, el apartado se libera solo en
-                                {{ holdCountdown }}.
-                            </p>
-                            <!-- El apartado sigue vivo: reintentar vuelve a consultar los
-                                 métodos (por si el hotel corrigió algo) en vez de dejar
-                                 al huésped sin salida. -->
-                            <div class="mt-4 flex flex-col items-center gap-2">
-                                <Button
-                                    variant="primary"
-                                    class="shadow-md shadow-primary/20"
-                                    @click="preparePayment"
-                                >
-                                    <Lucide
-                                        icon="RefreshCw"
-                                        class="mr-2 h-4 w-4"
-                                    />
-                                    Intentar el pago de nuevo
-                                </Button>
-                                <a
-                                    v-if="property.phone"
-                                    :href="`tel:${property.phone}`"
-                                    class="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-                                >
-                                    <Lucide icon="Phone" class="h-4 w-4" />
-                                    Llamar al hotel
-                                </a>
-                            </div>
+                                Hacer una reserva nueva
+                            </Button>
                         </template>
+                    </BookingCard>
+                </template>
+            </div>
 
-                        <!-- method === 'gateway': la página ya está redirigiendo -->
-                        <template v-else>
+            <!-- "Tu reserva" fijo al costado (escritorio) -->
+            <aside v-if="summary" class="hidden lg:sticky lg:top-6 lg:block">
+                <BookingCard icon="ReceiptText" title="Tu reserva">
+                    <StaySummary
+                        v-bind="summary"
+                        :currency="property.currency"
+                        :secondary-currency="property.currency_secondary"
+                        :exchange-rate="property.exchange_rate"
+                        :removable-coupon="!hold && step === 'guest'"
+                        @remove="removeSummaryLine"
+                        @remove-coupon="removeCoupon"
+                    />
+                </BookingCard>
+                <div
+                    v-if="
+                        cancellationPolicy.label ||
+                        cancellationPolicy.text ||
+                        (guarantee && step !== 'confirm')
+                    "
+                    class="mt-4 space-y-3 rounded-2xl bg-white p-5 text-xs leading-relaxed text-slate-500 shadow-xl shadow-black/10"
+                >
+                    <div v-if="guarantee && step !== 'confirm'">
+                        <div
+                            class="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700"
+                        >
                             <Lucide
-                                icon="RefreshCw"
-                                class="mx-auto h-8 w-8 animate-spin text-primary"
+                                icon="ShieldCheck"
+                                class="h-4 w-4 text-primary"
                             />
-                            <p class="mt-3 text-sm text-slate-500">
-                                Te estamos llevando a la página de pago segura…
-                            </p>
-                        </template>
-                    </template>
+                            Depósito en garantía
+                        </div>
+                        {{ guarantee.label }}
+                        <template v-if="guarantee.tiers_label">
+                            Si apartas varias habitaciones:
+                            {{ guarantee.tiers_label }}.</template
+                        >
+                    </div>
+                    <div
+                        v-if="
+                            cancellationPolicy.label || cancellationPolicy.text
+                        "
+                    >
+                        <div
+                            class="mb-1 flex items-center gap-1.5 text-sm font-medium text-slate-700"
+                        >
+                            <Lucide icon="Undo2" class="h-4 w-4 text-primary" />
+                            Política de cancelación
+                        </div>
+                        <p v-if="cancellationPolicy.label">
+                            {{ cancellationPolicy.label }}
+                        </p>
+                        <p v-if="cancellationPolicy.text" class="mt-1">
+                            {{ cancellationPolicy.text }}
+                        </p>
+                    </div>
                 </div>
-            </div>
+            </aside>
 
-            <!-- Accesos relacionados: legibles sobre el fondo oscuro -->
-            <div
-                class="mt-5 flex flex-wrap items-center justify-center gap-2.5"
-            >
-                <a
-                    href="/reserva"
-                    class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
-                >
-                    <Lucide icon="TicketCheck" class="h-4 w-4" /> ¿Ya tienes una
-                    reserva? Consulta su estado
-                </a>
-                <a
-                    v-if="hasGroups"
-                    href="/reservar/grupos"
-                    class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
-                >
-                    <Lucide icon="Users" class="h-4 w-4" /> ¿Vienen en grupo?
-                    Aparta varias habitaciones
-                </a>
-                <a
-                    v-if="hasExperiences"
-                    href="/reservar/experiencias"
-                    class="inline-flex items-center gap-2 rounded-full border border-white/25 bg-white/10 px-4 py-2 text-sm font-medium text-white transition hover:bg-white/20"
-                >
-                    <Lucide icon="Compass" class="h-4 w-4" /> Conoce nuestras
-                    experiencias
-                </a>
+            <!-- Celular: el resumen del paso de pago/listo va debajo, a la vista -->
+            <div v-if="summary && step === 'confirm'" class="lg:hidden">
+                <BookingCard icon="ReceiptText" title="Tu reserva">
+                    <StaySummary
+                        v-bind="summary"
+                        :currency="property.currency"
+                        :secondary-currency="property.currency_secondary"
+                        :exchange-rate="property.exchange_rate"
+                    />
+                </BookingCard>
             </div>
-            <!-- Que la página se sienta DEL hotel: sus redes y cómo llegar -->
-            <div
-                v-if="
-                    contact.socials.length ||
-                    contact.maps_url ||
-                    contact.website
-                "
-                class="mt-6 text-center"
-            >
-                <p class="text-xs font-medium text-white/70">
-                    Síguenos y encuéntranos
+        </div>
+
+        <!-- Detalle de una habitación -->
+        <BookingModal
+            :open="detailsOption !== null"
+            :title="detailsOption?.name ?? ''"
+            :subtitle="
+                detailsOption
+                    ? stayLabel(detailsOption.starts_at, detailsOption.ends_at)
+                    : undefined
+            "
+            icon="BedDouble"
+            width="lg"
+            @close="detailsOption = null"
+        >
+            <div v-if="detailsOption" class="space-y-4">
+                <PhotoGallery
+                    :photos="detailsOption.photos"
+                    :alt="detailsOption.name"
+                    height="md"
+                />
+                <p
+                    v-if="detailsOption.description"
+                    class="text-sm leading-relaxed text-slate-600"
+                >
+                    {{ detailsOption.description }}
                 </p>
                 <div
-                    class="mt-2.5 flex flex-wrap items-center justify-center gap-2.5"
+                    class="flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600"
                 >
-                    <a
-                        v-for="social in contact.socials"
-                        :key="social.url"
-                        :href="social.url"
-                        target="_blank"
-                        rel="noopener"
-                        :title="social.type"
-                        class="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white transition hover:bg-white/20"
+                    <span class="inline-flex items-center gap-1.5">
+                        <Lucide icon="Users" class="h-4 w-4 text-primary" />
+                        Hasta {{ detailsOption.effective_capacity }} personas
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <Lucide icon="Clock" class="h-4 w-4 text-primary" />
+                        {{
+                            humanizeDurationLabel(detailsOption.duration_label)
+                        }}
+                    </span>
+                </div>
+                <div v-if="detailsOption.amenities.length">
+                    <div :class="groupLabel">Incluye</div>
+                    <ul
+                        class="grid grid-cols-1 gap-x-4 gap-y-1.5 sm:grid-cols-2"
                     >
-                        <Lucide :icon="social.icon" class="h-4 w-4" />
-                    </a>
-                    <a
-                        v-if="contact.maps_url"
-                        :href="contact.maps_url"
-                        target="_blank"
-                        rel="noopener"
-                        title="Cómo llegar"
-                        class="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white transition hover:bg-white/20"
+                        <li
+                            v-for="a in detailsOption.amenities"
+                            :key="a"
+                            class="flex items-center gap-2 text-sm text-slate-600"
+                        >
+                            <Lucide
+                                icon="Check"
+                                class="h-4 w-4 shrink-0 text-success"
+                            />
+                            {{ a }}
+                        </li>
+                    </ul>
+                </div>
+                <div
+                    v-if="nightlyVaries(detailsOption)"
+                    :class="sectionBox"
+                    class="p-4"
+                >
+                    <NightlyBars
+                        :nights="detailsOption.nightly ?? []"
+                        :currency="property.currency"
+                    />
+                </div>
+                <div
+                    v-if="detailsOption.price_breakdown.length"
+                    class="rounded-xl bg-slate-50 p-4"
+                >
+                    <div :class="groupLabel">Precio de tu estancia</div>
+                    <div class="space-y-1.5 text-sm text-slate-600">
+                        <div
+                            v-for="line in detailsOption.price_breakdown"
+                            :key="line.concept"
+                            class="flex justify-between gap-3"
+                        >
+                            <span class="min-w-0">
+                                {{ breakdownLabel(line) }}
+                                <span
+                                    v-if="
+                                        breakdownDetail(line, property.currency)
+                                    "
+                                    class="block text-xs text-slate-500"
+                                    >{{
+                                        breakdownDetail(line, property.currency)
+                                    }}</span
+                                >
+                            </span>
+                            <span class="shrink-0 text-right">
+                                <span
+                                    v-if="
+                                        line.regular_amount &&
+                                        line.regular_amount > line.amount
+                                    "
+                                    class="block text-xs text-slate-400 line-through"
+                                    >{{ money(line.regular_amount) }}</span
+                                >
+                                {{ money(line.amount) }}
+                            </span>
+                        </div>
+                    </div>
+                    <div
+                        class="mt-2 flex justify-between border-t border-slate-200 pt-2 text-base font-semibold text-slate-800"
                     >
-                        <Lucide icon="MapPin" class="h-4 w-4" />
-                    </a>
-                    <a
-                        v-if="contact.website"
-                        :href="contact.website"
-                        target="_blank"
-                        rel="noopener"
-                        title="Sitio web"
-                        class="flex h-11 w-11 items-center justify-center rounded-full border border-white/25 bg-white/10 text-white transition hover:bg-white/20"
+                        <span>Total</span>
+                        <span>{{ money(detailsOption.total) }}</span>
+                    </div>
+                    <p class="mt-1 text-xs text-slate-500">
+                        Para 1 persona; si son más se recalcula al elegir.
+                    </p>
+                    <p
+                        v-if="
+                            longStayHint(
+                                detailsOption.long_stay_offers,
+                                property.currency,
+                            )
+                        "
+                        class="mt-2 flex items-start gap-1.5 text-xs text-success"
                     >
-                        <Lucide icon="Globe" class="h-4 w-4" />
-                    </a>
+                        <Lucide
+                            icon="BadgePercent"
+                            class="mt-px h-3.5 w-3.5 shrink-0"
+                        />
+                        {{
+                            longStayHint(
+                                detailsOption.long_stay_offers,
+                                property.currency,
+                            )
+                        }}
+                    </p>
                 </div>
             </div>
-            <p class="mt-4 text-center text-xs text-white/70">
-                Impulsado por KuiraWebReserve · tus datos de pago nunca pasan
-                por este sitio
-            </p>
-        </div>
-    </div>
+            <template #footer>
+                <button
+                    type="button"
+                    class="inline-flex h-11 items-center rounded-full border border-slate-200 px-5 text-sm font-medium text-slate-600"
+                    @click="detailsOption = null"
+                >
+                    Cerrar
+                </button>
+                <Button
+                    v-if="detailsOption?.available"
+                    variant="primary"
+                    :class="primaryBtn"
+                    @click="detailsOption && chooseOption(detailsOption)"
+                >
+                    Elegir esta habitación
+                </Button>
+            </template>
+        </BookingModal>
+
+        <!-- Celular: "Tu reserva" en una ventana -->
+        <BookingModal
+            :open="summaryOpen"
+            title="Tu reserva"
+            icon="ReceiptText"
+            width="md"
+            @close="summaryOpen = false"
+        >
+            <StaySummary
+                v-if="summary"
+                v-bind="summary"
+                :currency="property.currency"
+                :secondary-currency="property.currency_secondary"
+                :exchange-rate="property.exchange_rate"
+                :removable-coupon="!hold && step === 'guest'"
+                @remove="removeSummaryLine"
+                @remove-coupon="removeCoupon"
+            >
+                <div
+                    v-if="cancellationPolicy.label || cancellationPolicy.text"
+                    class="mt-4 rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-500"
+                >
+                    <div class="mb-1 font-medium text-slate-700">
+                        Política de cancelación
+                    </div>
+                    <p v-if="cancellationPolicy.label">
+                        {{ cancellationPolicy.label }}
+                    </p>
+                    <p v-if="cancellationPolicy.text" class="mt-1">
+                        {{ cancellationPolicy.text }}
+                    </p>
+                </div>
+                <div
+                    v-if="guarantee"
+                    class="mt-3 rounded-lg bg-slate-50 p-3 text-xs leading-relaxed text-slate-500"
+                >
+                    <div class="mb-1 font-medium text-slate-700">
+                        Depósito en garantía
+                    </div>
+                    {{ guarantee.label }}
+                </div>
+            </StaySummary>
+        </BookingModal>
+
+        <template #links>
+            <a
+                href="/reserva"
+                class="inline-flex h-10 items-center gap-2 rounded-full border border-current/25 bg-current/10 px-4 text-sm font-medium transition hover:bg-current/20"
+            >
+                <Lucide icon="TicketCheck" class="h-4 w-4" />
+                ¿Ya tienes una reserva? Consulta su estado
+            </a>
+            <a
+                v-if="hasGroups"
+                href="/reservar/grupos"
+                class="inline-flex h-10 items-center gap-2 rounded-full border border-current/25 bg-current/10 px-4 text-sm font-medium transition hover:bg-current/20"
+            >
+                <Lucide icon="Users" class="h-4 w-4" />
+                ¿Vienen en grupo?
+            </a>
+            <a
+                v-if="hasExperiences"
+                href="/reservar/experiencias"
+                class="inline-flex h-10 items-center gap-2 rounded-full border border-current/25 bg-current/10 px-4 text-sm font-medium transition hover:bg-current/20"
+            >
+                <Lucide icon="Compass" class="h-4 w-4" />
+                Experiencias
+            </a>
+        </template>
+    </PublicShell>
 </template>

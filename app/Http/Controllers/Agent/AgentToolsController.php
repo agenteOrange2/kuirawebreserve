@@ -744,55 +744,41 @@ class AgentToolsController extends Controller
         // 10 personas el panorama proponía 3 cabañas de 4 ($9,000) cuando
         // caben en 2 de máximo 5 con dos personas extra ($6,500). El huésped
         // tuvo que pelearlo (cabañas 2026-09-14: "no, dos sencillas").
+        //
+        // Y la cuenta de extras sale del grupo, no de llenar cada cabaña a
+        // tope: llenando la Real a 8 y la Escondida a 5, a 15 personas en
+        // Real + Escondida + Sencilla (14 incluidas) se le cobraban 3 extras
+        // ($11,250) cuando solo sobra 1 ($10,750) — y el apartado, que sí
+        // reparte bien, habría cobrado otra cifra (cabañas 2026-10-11).
         $withExtras = [];
         $extrasTotal = 0.0;
-        $remaining = $guests ?? 0;
+        $extrasCovered = 0;
+        $extrasGuests = 0;
+        $extrasIncluded = 0;
+        $extrasMax = 0;
 
         if ($guests !== null) {
-            // Primero las que más gente admiten y, a igualdad, la más barata.
-            $pool = $availableOptions->sortBy(fn (array $option) => [-$option['max_guests'], $option['total']])->values();
+            $best = $this->bestCombinations($availableOptions->all(), $guests);
 
-            foreach ($pool as $option) {
-                if ($remaining <= 0) {
-                    break;
-                }
+            // Sin personas extra: la más barata en la que todos van incluidos
+            // (puede mejorar a la de "mayor capacidad primero").
+            if ($best['standard'] !== null && $best['standard']['total'] + 0.01 < $combinationTotal) {
+                $combination = $best['standard']['lines'];
+                $covered = $best['standard']['included'];
+                $combinationTotal = $best['standard']['total'];
+            }
 
-                $fee = (float) ($option['extra_guest_fee'] ?? 0);
-                $nights = max(1, (int) $option['nights']);
-                $units = 0;
-                $subtotal = 0.0;
-                $extraGuests = 0;
-
-                while ($units < $option['units_available'] && $remaining > 0) {
-                    $inRoom = min($option['max_guests'], $remaining);
-                    $extra = max(0, $inRoom - $option['included_guests']);
-
-                    $subtotal += (float) $option['total'] + $extra * $fee * $nights;
-                    $extraGuests += $extra;
-                    $remaining -= $inRoom;
-                    $units++;
-                }
-
-                if ($units < 1) {
-                    continue;
-                }
-
-                $withExtras[] = [
-                    'room_type' => $option['room_type'],
-                    'room_type_id' => $option['room_type_id'],
-                    'rate_plan_id' => $option['rate_plan_id'],
-                    'units' => $units,
-                    'extra_guests' => $extraGuests,
-                    'subtotal' => round($subtotal, 2),
-                    'subtotal_label' => '$'.number_format($subtotal, 2),
-                ];
-
-                $extrasTotal += $subtotal;
+            if ($best['extras'] !== null) {
+                $withExtras = $best['extras']['lines'];
+                $extrasTotal = $best['extras']['total'];
+                $extrasCovered = $guests;
+                $extrasGuests = $best['extras']['extra_guests'];
+                $extrasIncluded = $best['extras']['included'];
+                $extrasMax = $best['extras']['max'];
             }
         }
 
         $extrasTotal = round($extrasTotal, 2);
-        $extrasCovered = $guests !== null ? $guests - max(0, $remaining) : 0;
         $standardRooms = (int) array_sum(array_column($combination, 'units'));
         $extrasRooms = (int) array_sum(array_column($withExtras, 'units'));
 
@@ -806,13 +792,36 @@ class AgentToolsController extends Controller
 
         $notes = ['Ofrece SOLO tipos con units_available mayor a 0, y nunca más unidades de las que dice units_available (units es cuántas existen en total).'];
 
+        // Las dos opciones ya redactadas, con cuántas personas cubre cada una:
+        // el modelo sumaba solo ("18 personas cubiertas" en una de 17) y
+        // reciclaba el total viejo cuando cambiaba el grupo.
+        $standardText = null;
+        $extrasText = null;
+
+        if ($guests !== null && $combination !== [] && $covered >= $guests) {
+            $standardText = 'Sin personas extra: '.collect($combination)
+                ->map(fn (array $line) => $line['units'].' '.$line['room_type'].' ('.$line['total_each_label'].($line['units'] > 1 ? ' c/u' : '').')')
+                ->implode(' + ')
+                ." = $".number_format($combinationTotal, 2)." para {$guests} personas ("
+                .$standardRooms.' '.($standardRooms === 1 ? 'habitación' : 'habitaciones').", caben {$covered} sin cobrar extra).";
+        }
+
         if ($offerExtras) {
             $detail = collect($withExtras)
-                ->map(fn (array $line) => $line['units'].' '.$line['room_type'].($line['extra_guests'] > 0 ? ' (+'.$line['extra_guests'].' persona extra)' : ''))
+                ->map(fn (array $line) => $line['units'].' '.$line['room_type'].($line['extra_guests'] > 0 ? ' (+'.$line['extra_guests'].($line['extra_guests'] === 1 ? ' persona extra)' : ' personas extra)') : ''))
                 ->implode(' + ');
+
+            $extrasText = "Con persona extra: {$detail} = $".number_format($extrasTotal, 2)." para {$guests} personas ("
+                .$extrasRooms.' '.($extrasRooms === 1 ? 'habitación' : 'habitaciones').": {$extrasIncluded} incluidas + {$extrasGuests} "
+                .($extrasGuests === 1 ? 'persona extra' : 'personas extra').", caben hasta {$extrasMax}).";
 
             $notes[] = "Cabe en menos habitaciones con persona extra: {$detail} = $".number_format($extrasTotal, 2)
                 .' (combination_with_extras). Ofrécele las dos opciones con su total y deja que elija; al apartar manda el total de personas en el campo personas.';
+        }
+
+        if ($guests !== null && ($standardText || $extrasText)) {
+            $notes[] = 'Cotiza con quote_options TAL CUAL (montos y personas ya calculados para '.$guests.' personas; no los sumes tú). '
+                .'Si el huésped cambia el número de personas o las fechas —aunque solo pregunte "¿y si somos X?"—, vuelve a llamar esta herramienta con el dato nuevo: el total cambia y el anterior ya no sirve.';
         }
 
         // Lo primero que tiene que leer el modelo: parte de lo "ocupado" es
@@ -883,6 +892,10 @@ class AgentToolsController extends Controller
             'combination_with_extras_rooms' => $offerExtras ? $extrasRooms : null,
             'combination_with_extras_total' => $offerExtras ? $extrasTotal : null,
             'combination_with_extras_total_label' => $offerExtras ? '$'.number_format($extrasTotal, 2) : null,
+            'combination_with_extras_extra_guests' => $offerExtras ? $extrasGuests : null,
+            'combination_with_extras_max_guests' => $offerExtras ? $extrasMax : null,
+            // Las opciones para el huésped, ya redactadas (ver nota).
+            'quote_options' => array_values(array_filter([$standardText, $extrasText])),
             'alternative_dates' => $alternatives,
             // Plazo de liquidación y teléfono del hotel: van también aquí
             // porque muchas conversaciones cotizan por el panorama y nunca
@@ -892,6 +905,153 @@ class AgentToolsController extends Controller
             'note' => implode(' ', $notes),
             'date_notice' => $dateNotice,
         ]);
+    }
+
+    /**
+     * Las dos combinaciones que armaría recepción para un grupo, buscadas
+     * entre TODAS las mezclas posibles de tipos libres (no llenando a tope
+     * la primera habitación):
+     *
+     * - standard: la más barata en la que todos van incluidos, sin extra.
+     * - extras: la de menos habitaciones que los acomoda usando la persona
+     *   extra y, a igualdad, la más barata. Las extras son solo las que
+     *   sobran del grupo (personas − incluidas) y se cargan donde la persona
+     *   extra cuesta menos; así cuadra con lo que cobra el apartado
+     *   (spreadGuests reparte igual).
+     *
+     * Con un inventario enorme la búsqueda se acota y vuelve null (el
+     * llamador se queda con la combinación de siempre).
+     *
+     * @param  array<int, array<string, mixed>>  $options  opciones con unidades libres
+     * @return array{standard: ?array, extras: ?array}
+     */
+    protected function bestCombinations(array $options, int $guests): array
+    {
+        $types = array_values(array_filter($options, fn (array $o) => (int) $o['units_available'] > 0));
+        $none = ['standard' => null, 'extras' => null];
+
+        if ($types === [] || $guests < 1) {
+            return $none;
+        }
+
+        // Más unidades de un tipo que las que llena el grupo solo encarecen.
+        $bounds = array_map(
+            fn (array $o) => min((int) $o['units_available'], (int) ceil($guests / max(1, (int) $o['included_guests'])), $guests),
+            $types,
+        );
+
+        $space = array_product(array_map(fn (int $b) => $b + 1, $bounds));
+        if ($space > 200000) {
+            return $none;
+        }
+
+        $standard = null;
+        $extras = null;
+        $counts = array_fill(0, count($types), 0);
+
+        $evaluate = function () use (&$standard, &$extras, &$counts, $types, $guests): void {
+            $rooms = array_sum($counts);
+            if ($rooms < 1 || $rooms > $guests) {
+                return;
+            }
+
+            $included = 0;
+            $max = 0;
+            $base = 0.0;
+            foreach ($types as $i => $type) {
+                $included += $counts[$i] * (int) $type['included_guests'];
+                $max += $counts[$i] * max((int) $type['max_guests'], (int) $type['included_guests']);
+                $base += $counts[$i] * (float) $type['total'];
+            }
+
+            if ($max < $guests) {
+                return;
+            }
+
+            // Las extras que sobran, primero donde salen más baratas.
+            $extraGuests = max(0, $guests - $included);
+            $perType = array_fill(0, count($types), 0);
+            $order = array_keys($types);
+            usort($order, fn (int $a, int $b) => ((float) ($types[$a]['extra_guest_fee'] ?? 0) * max(1, (int) $types[$a]['nights']))
+                <=> ((float) ($types[$b]['extra_guest_fee'] ?? 0) * max(1, (int) $types[$b]['nights'])));
+
+            $left = $extraGuests;
+            $extraCost = 0.0;
+            foreach ($order as $i) {
+                if ($left <= 0) {
+                    break;
+                }
+                $spare = $counts[$i] * max(0, (int) $types[$i]['max_guests'] - (int) $types[$i]['included_guests']);
+                $take = min($spare, $left);
+                $perType[$i] = $take;
+                $extraCost += $take * (float) ($types[$i]['extra_guest_fee'] ?? 0) * max(1, (int) $types[$i]['nights']);
+                $left -= $take;
+            }
+
+            $total = round($base + $extraCost, 2);
+            $candidate = compact('rooms', 'included', 'max', 'total', 'extraGuests') + ['counts' => $counts, 'perType' => $perType];
+
+            if ($extraGuests === 0) {
+                if ($standard === null || [$total, $rooms] < [$standard['total'], $standard['rooms']]) {
+                    $standard = $candidate;
+                }
+            } elseif ($extras === null || [$rooms, $total] < [$extras['rooms'], $extras['total']]) {
+                $extras = $candidate;
+            }
+        };
+
+        $walk = function (int $i) use (&$walk, &$counts, $bounds, $evaluate): void {
+            if ($i === count($bounds)) {
+                $evaluate();
+
+                return;
+            }
+            for ($n = 0; $n <= $bounds[$i]; $n++) {
+                $counts[$i] = $n;
+                $walk($i + 1);
+            }
+            $counts[$i] = 0;
+        };
+        $walk(0);
+
+        $shape = function (?array $best) use ($types): ?array {
+            if ($best === null) {
+                return null;
+            }
+
+            $lines = [];
+            foreach ($types as $i => $type) {
+                if ($best['counts'][$i] < 1) {
+                    continue;
+                }
+                $units = $best['counts'][$i];
+                $extra = $best['perType'][$i];
+                $subtotal = round($units * (float) $type['total'] + $extra * (float) ($type['extra_guest_fee'] ?? 0) * max(1, (int) $type['nights']), 2);
+
+                $lines[] = [
+                    'room_type' => $type['room_type'],
+                    'room_type_id' => $type['room_type_id'],
+                    'rate_plan_id' => $type['rate_plan_id'],
+                    'units' => $units,
+                    'guests_covered' => $units * (int) $type['included_guests'],
+                    'extra_guests' => $extra,
+                    'total_each_label' => $type['total_label'],
+                    'subtotal' => $subtotal,
+                    'subtotal_label' => '$'.number_format($subtotal, 2),
+                ];
+            }
+
+            return [
+                'lines' => $lines,
+                'rooms' => $best['rooms'],
+                'included' => $best['included'],
+                'max' => $best['max'],
+                'extra_guests' => $best['extraGuests'],
+                'total' => $best['total'],
+            ];
+        };
+
+        return ['standard' => $shape($standard), 'extras' => $shape($extras)];
     }
 
     /**
@@ -1104,7 +1264,10 @@ class AgentToolsController extends Controller
         // (Messenger, conv. 1631): "¿tiene disponible 24 y 25?", el modelo
         // mandó 24 de septiembre y el candado lo llevó a septiembre de 2027
         // en vez del 24 de octubre.
-        if ($start->month === $today->month) {
+        // Solo del MISMO año: "2025-10-31" en octubre de 2026 es el año viejo
+        // (va al 31 de octubre de 2026), no un día sin mes — tomarlo así lo
+        // mandaba al 31 de diciembre.
+        if ($start->year === $today->year && $start->month === $today->month) {
             $moved = $start->copy()->setDate($today->year, $today->month, 1);
             do {
                 $moved->addMonthNoOverflow();

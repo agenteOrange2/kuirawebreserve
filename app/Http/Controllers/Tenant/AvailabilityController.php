@@ -24,7 +24,9 @@ class AvailabilityController extends Controller
             'ignore_reservation_id' => ['nullable', 'exists:reservations,id'],
         ]);
 
-        $ratePlan = RatePlan::findOrFail($data['rate_plan_id']);
+        // Temporadas cargadas una vez: priceFor las consulta noche por noche
+        // y aquí se llama una vez por cada cuarto libre.
+        $ratePlan = RatePlan::with('seasons')->findOrFail($data['rate_plan_id']);
         $start = Carbon::parse($data['starts_at']);
         $end = ! empty($data['ends_at']) ? Carbon::parse($data['ends_at']) : $ratePlan->suggestedEnd($start);
 
@@ -46,11 +48,19 @@ class AvailabilityController extends Controller
             'ends_at' => $end->toIso8601String(),
             'units' => $ratePlan->unitsFor($start, $end),
             'duration_label' => $ratePlan->durationLabel(),
+            // Con temporadas y descuentos por semana/mes (priceFor): el panel
+            // estimaba con precio base × unidades y enseñaba $22,500 donde
+            // el sistema cobra $18,000.
             'total' => $ratePlan->priceFor($start, $end),
+            'regular_total' => round($ratePlan->unitsFor($start, $end) * (float) $ratePlan->price, 2),
+            'price_breakdown' => $ratePlan->priceBreakdown($start, $end, null),
             'advance_error' => $advanceError,
             'rooms' => $rooms->map(fn ($room) => [
                 'id' => $room->id,
                 'number' => $room->number,
+                // Lo que cobra ESTE cuarto por la estancia (temporada +
+                // su ajuste de precio), antes de personas extra y cargos.
+                'base_total' => $ratePlan->priceFor($start, $end, $room),
                 'status' => $room->status->getMorphClass(),
                 // Ficha de cobros del cuarto: el panel estima personas extra
                 // y ofrece los cargos opcionales antes de crear la reserva.

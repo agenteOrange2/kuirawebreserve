@@ -57,11 +57,20 @@ class GroupWizardController extends Controller
                 'currency_secondary' => $settings['currency_secondary'] ?? null,
                 'exchange_rate' => $settings['exchange_rate'] ?? null,
                 'guest_policy' => $settings['guest_policy'] ?? 'family',
+                'check_in_time' => $settings['check_in_time'] ?? '15:00',
+                'check_out_time' => $settings['check_out_time'] ?? '12:00',
                 'block_mode_label' => $settings['block_mode_label'] ?? 'Por rato/periodo',
             ],
             'hasNightRates' => (clone $activeRatePlans)->where('type', 'night')->exists(),
             'hasBlockRates' => (clone $activeRatePlans)->where('type', 'block')->exists(),
             'holdMinutes' => app(\App\Services\ReservationPolicy::class)->holdMinutes(),
+            // Lo mismo que ve quien reserva una sola habitación: en un grupo
+            // pesan más (la fianza escalonada es justamente por volumen).
+            'cancellationPolicy' => [
+                'label' => app(\App\Services\ReservationPolicy::class)->cancellationPolicyLabel(),
+                'text' => app(\App\Services\ReservationPolicy::class)->cancellationPolicyText(),
+            ],
+            'guarantee' => app(\App\Services\ReservationPolicy::class)->guaranteePublic(),
             // Accesos cruzados (misma botonera que /reservar): solo a páginas
             // que existen de verdad para este hotel — módulo activo y, en las
             // que tienen toggle de widget, con la página pública prendida.

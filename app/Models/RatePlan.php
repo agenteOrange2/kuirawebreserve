@@ -25,6 +25,8 @@ class RatePlan extends Model
         'duration_unit',
         'duration_value',
         'price',
+        'included_people',
+        'max_people',
         'deposit_percent',
         'deposit_amount',
         'min_advance_unit',
@@ -55,6 +57,9 @@ class RatePlan extends Model
             'cancel_free_value' => 'integer',
             'cancel_penalty_percent' => 'decimal:2',
             'price' => 'decimal:2',
+            // Personas de esta tarifa; null = las de la habitación.
+            'included_people' => 'integer',
+            'max_people' => 'integer',
             'deposit_percent' => 'decimal:2',
             'deposit_amount' => 'decimal:2',
             'active' => 'boolean',
@@ -164,6 +169,38 @@ class RatePlan extends Model
     }
 
     /**
+     * Precio de cada noche de la estancia, con el mismo cálculo que
+     * `priceFor()` (temporada o día de la semana + ajuste del cuarto): la
+     * gráfica "Precio por noche" del wizard suma exactamente lo que se cobra
+     * por la habitación antes de cargos por persona extra. Vacío por bloque.
+     *
+     * @return list<array{date: string, price: float, season: ?string}>
+     */
+    public function nightlyPrices(CarbonInterface $start, CarbonInterface $end, ?Room $room = null): array
+    {
+        if ($this->type !== RatePlanType::Night) {
+            return [];
+        }
+
+        $modifier = (float) ($room?->price_modifier ?? 0);
+        $nights = $this->unitsFor($start, $end);
+        $cursor = $start->copy()->startOfDay();
+        $list = [];
+
+        for ($i = 0; $i < $nights; $i++) {
+            $season = $this->activeSeasonFor($cursor, $nights);
+            $list[] = [
+                'date' => $cursor->toDateString(),
+                'price' => round((float) ($season?->price ?? $this->price) + $modifier, 2),
+                'season' => $season?->name,
+            ];
+            $cursor = $cursor->addDay();
+        }
+
+        return $list;
+    }
+
+    /**
      * Desglose de `priceFor()` en líneas explicables (spec-wizard-precios-y-
      * pasos §3): tarifa base o de temporada (agrupando noches consecutivas
      * de la misma temporada en una sola línea), ajuste del cuarto, y lo que
@@ -201,7 +238,7 @@ class RatePlan extends Model
                 $lines[] = [
                     'concept' => $label.' ('.$nights.' '.($nights === 1 ? 'noche' : 'noches').')',
                     'amount' => round($nights * $unitPrice, 2),
-                ];
+                ] + $this->regularPriceFields($nights, $unitPrice);
             }
         } else {
             $season = $this->activeSeasonFor($start, $units);
@@ -210,7 +247,7 @@ class RatePlan extends Model
             $lines[] = [
                 'concept' => $label.' ('.$this->durationLabel().($units > 1 ? " × {$units}" : '').')',
                 'amount' => round($units * $unitPrice, 2),
-            ];
+            ] + $this->regularPriceFields($units, $unitPrice);
         }
 
         $modifier = (float) ($room?->price_modifier ?? 0);
@@ -226,6 +263,71 @@ class RatePlan extends Model
         }
 
         return $lines;
+    }
+
+    /**
+     * Cuando la temporada deja la unidad MÁS BARATA que el precio base
+     * (descuento por semana/mes, promo), la línea lleva también lo que
+     * costaría sin ella: el wizard tacha el precio normal y dice cuánto se
+     * ahorra. Sin esto "$18,000" no se distinguía de un precio sin
+     * descuento y el hotel creía que la promo no se aplicaba. Campos
+     * opcionales: el bot y los totales solo leen concept/amount.
+     *
+     * @return array{units?: int, unit_price?: float, regular_unit_price?: float, regular_amount?: float}
+     */
+    protected function regularPriceFields(int $units, float $unitPrice): array
+    {
+        $regular = (float) $this->price;
+
+        if ($unitPrice >= $regular) {
+            return [];
+        }
+
+        return [
+            'units' => $units,
+            'unit_price' => round($unitPrice, 2),
+            'regular_unit_price' => round($regular, 2),
+            'regular_amount' => round($units * $regular, 2),
+        ];
+    }
+
+    /**
+     * Descuentos por estancia larga que esta estancia AÚN no alcanza
+     * ("quédate 7 noches y la noche baja a $637.50"): temporadas activas con
+     * `min_nights` mayor a las unidades pedidas, que cubren el día de llegada
+     * y bajan el precio base. Una por umbral (la más barata), ordenadas.
+     *
+     * @return list<array{min_nights: int, unit_price: float, percent: int, name: string}>
+     */
+    public function longStayOffers(CarbonInterface $start, int $units): array
+    {
+        $base = (float) $this->price;
+
+        if ($base <= 0) {
+            return [];
+        }
+
+        $seasons = $this->relationLoaded('seasons')
+            ? $this->seasons
+            : $this->seasons()->where('active', true)->get();
+
+        return $seasons
+            ->filter(fn (RatePlanSeason $s) => $s->active
+                && $s->min_nights !== null
+                && $s->min_nights > $units
+                && (float) $s->price < $base
+                && $s->coversDate($start->copy()->startOfDay()))
+            ->groupBy('min_nights')
+            ->map(fn ($group) => $group->sortBy(fn (RatePlanSeason $s) => (float) $s->price)->first())
+            ->sortBy('min_nights')
+            ->map(fn (RatePlanSeason $s) => [
+                'min_nights' => (int) $s->min_nights,
+                'unit_price' => round((float) $s->price, 2),
+                'percent' => (int) round((1 - (float) $s->price / $base) * 100),
+                'name' => (string) $s->name,
+            ])
+            ->values()
+            ->all();
     }
 
     public function unitsFor(CarbonInterface $start, CarbonInterface $end): int
@@ -254,6 +356,29 @@ class RatePlan extends Model
         $periodMinutes = $unit->minutes() * $value;
 
         return max(1, (int) ceil($start->diffInMinutes($end) / $periodMinutes));
+    }
+
+    /**
+     * Minutos de un bloque de duración fija (1 hora, 3 horas, 12 horas).
+     * Null para la noche y para semanas o meses: esos no son un escalón de
+     * la escalera de extensión (ExtendStay).
+     */
+    public function blockMinutes(): ?int
+    {
+        if ($this->type === RatePlanType::Night) {
+            return null;
+        }
+
+        $minutes = $this->durationUnit()->minutes();
+
+        if ($minutes === null) {
+            return null;
+        }
+
+        $total = $minutes * max(1, $this->duration_value ?? $this->duration_minutes ?? 60);
+
+        // Un bloque de un día o más ya no es "por horas".
+        return $total < 24 * 60 ? $total : null;
     }
 
     /**

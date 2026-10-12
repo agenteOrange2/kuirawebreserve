@@ -38,6 +38,7 @@ class ActivityLogPageController extends ReservationsPageController
         'room' => ['label' => 'Habitaciones y semáforo', 'logs' => ['room']],
         'incident' => ['label' => 'Incidencias', 'logs' => ['incident']],
         'payment' => ['label' => 'Pagos y reembolsos', 'logs' => ['payment']],
+        'courtesy' => ['label' => 'Cortesías', 'logs' => ['courtesy']],
     ];
 
     public function __invoke(Request $request): Response

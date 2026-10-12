@@ -77,6 +77,9 @@ class PropertyController extends Controller
             // Corte de madrugada (opcional): llegar antes de esta hora cuenta
             // como la noche anterior y se sale ese mismo día.
             'settings.night_cutoff_time' => ['sometimes', 'nullable', 'date_format:H:i'],
+            // Extender por escalera de tarifas por horas (1 → 2 → 3 h →
+            // noche), opt-in: ver ReservationPolicy::extensionRateLadder.
+            'settings.extension_rate_ladder' => ['sometimes', 'boolean'],
             'settings.currency' => ['nullable', 'string', 'size:3'],
             // Doble moneda opcional (Datos generales → Horarios y moneda): una
             // segunda moneda + tipo de cambio para mostrar el "aprox" al
@@ -122,6 +125,17 @@ class PropertyController extends Controller
             'settings.wizard_bg_from' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
             'settings.wizard_bg_to' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
             'settings.wizard_accent' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            // Colores de texto del wizard: sobre el degradado, títulos (modo
+            // claro; null = el del theme) y botones ('auto' = según acento).
+            'settings.wizard_header_text' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'settings.wizard_title_color' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
+            'settings.wizard_button_text' => ['sometimes', 'nullable', 'string', 'regex:/^(auto|#[0-9a-fA-F]{6})$/'],
+            'settings.wizard_title_font' => ['sometimes', 'nullable', \Illuminate\Validation\Rule::in(\App\Models\Property::WIZARD_TITLE_FONTS)],
+            // Textos propios del wizard; vacío = el texto de fábrica.
+            'settings.wizard_text_tagline' => ['sometimes', 'nullable', 'string', 'max:90'],
+            'settings.wizard_text_title' => ['sometimes', 'nullable', 'string', 'max:70'],
+            'settings.wizard_text_subtitle' => ['sometimes', 'nullable', 'string', 'max:160'],
+            'settings.wizard_text_search_button' => ['sometimes', 'nullable', 'string', 'max:40'],
             // Tema del PANEL por hotel (/ajustes/general/apariencia): acento
             // de botones y degradado del menú lateral; null = tema Kuira.
             'settings.panel_primary' => ['sometimes', 'nullable', 'string', 'regex:/^#[0-9a-fA-F]{6}$/'],
@@ -293,6 +307,9 @@ class PropertyController extends Controller
             'settings.hk_dirty_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['minute', 'hour'])],
             'settings.hk_cleaning_value' => ['sometimes', 'integer', 'min:1', 'max:999'],
             'settings.hk_cleaning_unit' => ['sometimes', \Illuminate\Validation\Rule::in(['minute', 'hour'])],
+            // En modo manual: la camarista inicia a mano y el reloj libera la
+            // habitación al cumplirse el tiempo asignado.
+            'settings.hk_cleaning_auto_release' => ['sometimes', 'boolean'],
             'settings.day_close_no_checkin' => ['sometimes', \Illuminate\Validation\Rule::in(['dirty', 'available', 'none'])],
             // Ventana de llegada: el cierre de día mira la SALIDA, así que
             // una reserva de tres noches que nadie ocupó tenía el cuarto

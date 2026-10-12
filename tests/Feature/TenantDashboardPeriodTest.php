@@ -243,3 +243,64 @@ it('el bloque de motel que entra y sale el mismo día sí ocupa', function () {
 
     expect(metric($props, 'Noches vendidas')['value'])->toBe('2');
 });
+
+it('la estancia de mostrador sin reserva cuenta en casa y en las salidas de hoy', function () {
+    $ratePlan = \App\Models\RatePlan::factory()->create([
+        'property_id' => test()->property->id,
+        'room_type_id' => test()->roomType->id,
+    ]);
+
+    // En un motel casi todo entra así. Con las reservas como fuente, el
+    // tablero decía "nadie en casa, nadie sale" con los cuartos ocupados.
+    $late = Stay::create([
+        'room_id' => test()->rooms[0]->id,
+        'rate_plan_id' => $ratePlan->id,
+        'guest_name' => 'Ya se pasó',
+        'num_people' => 2,
+        'check_in_at' => now()->subHours(4),
+        'planned_end_at' => now()->subHour(),
+        'status' => Stay::STATUS_ACTIVE,
+        'amount' => 450,
+        'channel' => 'walk_in',
+    ]);
+    Stay::create([
+        'room_id' => test()->rooms[1]->id,
+        'rate_plan_id' => $ratePlan->id,
+        'guest_name' => 'Sale mañana',
+        'num_people' => 1,
+        'check_in_at' => now()->subHour(),
+        'planned_end_at' => now()->addDay(),
+        'status' => Stay::STATUS_ACTIVE,
+        'amount' => 900,
+        'channel' => 'walk_in',
+    ]);
+
+    $props = dashboardProps();
+
+    expect($props['guestStatus']['in_house'])->toBe(2)
+        ->and($props['today']['departures'])->toBe(1)
+        ->and($props['today']['overdue'])->toBe(1)
+        ->and($props['departures'])->toHaveCount(1)
+        ->and($props['departures'][0]['id'])->toBe($late->id)
+        ->and($props['departures'][0]['reservation_id'])->toBeNull()
+        ->and($props['departures'][0]['overdue'])->toBeTrue()
+        ->and($props['departures'][0]['balance'])->toEqual(450);
+
+    // Por dónde llegaron: las dos entradas de mostrador del día.
+    expect(collect($props['channels'])->firstWhere('channel', 'walk_in')['count'])->toBe(2);
+});
+
+it('la gráfica parte el ingreso del día en hospedaje y consumo', function () {
+    Payment::create(['amount' => 500, 'method' => 'cash', 'paid_at' => now()]);
+    Payment::create(['amount' => 200, 'method' => 'cash', 'kind' => Payment::KIND_GUARANTEE, 'paid_at' => now()]);
+    Payment::create(['amount' => 100, 'method' => 'card', 'kind' => Payment::KIND_CONSUMPTION, 'paid_at' => now()]);
+    Order::create(['property_id' => test()->property->id, 'status' => Order::STATUS_COMPLETED, 'payment_method' => 'cash', 'subtotal' => 150, 'total' => 150]);
+
+    $props = dashboardProps();
+    $todayPoint = collect($props['series']['revenue'])->last();
+
+    expect($todayPoint['lodging'])->toEqual(500)
+        ->and($todayPoint['pos'])->toEqual(250)
+        ->and($todayPoint['value'])->toEqual(750)
+        ->and(collect($props['byMethod'])->firstWhere('method', 'cash')['amount'])->toEqual(500);
+});

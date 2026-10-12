@@ -38,6 +38,34 @@ class RoomCleaning extends Model
     /** Capturada después, con las horas escritas a mano. */
     public const SOURCE_MANUAL = 'manual';
 
+    /** La cerró la camarista (o quien capturó) con el formulario. */
+    public const CLOSED_BY_STAFF = 'staff';
+
+    /** Se cumplió el tiempo asignado y el reloj liberó la habitación. */
+    public const CLOSED_BY_CLOCK = 'clock';
+
+    /**
+     * El semáforo la sacó de "en limpieza" por otro camino (mantenimiento,
+     * otra persona desde el plano) sin que nadie la terminara.
+     */
+    public const CLOSED_BY_STATUS = 'status';
+
+    /** Cómo se lee cada cierre en la bitácora. */
+    public const OUTCOME_ON_TIME = 'a_tiempo';
+
+    public const OUTCOME_LATE = 'tarde';
+
+    public const OUTCOME_CLOCK = 'reloj';
+
+    public const OUTCOME_INTERRUPTED = 'interrumpida';
+
+    public const OUTCOMES = [
+        self::OUTCOME_ON_TIME => 'A tiempo',
+        self::OUTCOME_LATE => 'Fuera de tiempo',
+        self::OUTCOME_CLOCK => 'La cerró el reloj',
+        self::OUTCOME_INTERRUPTED => 'Interrumpida',
+    ];
+
     protected $fillable = [
         'room_id',
         'housekeeper_id',
@@ -46,6 +74,8 @@ class RoomCleaning extends Model
         'started_at',
         'ended_at',
         'minutes',
+        'closed_by',
+        'target_minutes',
         'checklist',
         'linens',
         'notes',
@@ -59,6 +89,7 @@ class RoomCleaning extends Model
         return [
             'started_at' => 'datetime',
             'ended_at' => 'datetime',
+            'target_minutes' => 'integer',
             'checklist' => 'array',
             'linens' => 'array',
         ];
@@ -115,10 +146,12 @@ class RoomCleaning extends Model
     /**
      * Cierra la limpieza sellando la duración. Se pasa `endedAt` cuando la
      * hora la escribió una persona (captura manual); si no, es ahora.
+     * `closedBy` dice quién la dio por terminada: el reporte no mide igual
+     * el trabajo de una camarista que el tiempo que esperó el reloj.
      *
      * @param  array<string, mixed>  $attributes
      */
-    public function close(array $attributes = [], ?\DateTimeInterface $endedAt = null): self
+    public function close(array $attributes = [], ?\DateTimeInterface $endedAt = null, string $closedBy = self::CLOSED_BY_STAFF): self
     {
         $ended = $endedAt ? \Illuminate\Support\Carbon::parse($endedAt) : now();
 
@@ -129,9 +162,78 @@ class RoomCleaning extends Model
             // (dedazo al capturar) se guarda como 0 en vez de ensuciar los
             // promedios del reporte.
             'minutes' => max(0, (int) $this->started_at->diffInMinutes($ended)),
+            'closed_by' => $closedBy,
         ]);
 
         return $this;
+    }
+
+    /**
+     * Cómo terminó: a tiempo o fuera de tiempo (la cerró una persona), la
+     * cerró el reloj, o la interrumpió otro cambio del semáforo. Null si
+     * sigue abierta o si es de antes de que existiera el tiempo asignado.
+     */
+    public function outcome(): ?string
+    {
+        return match (true) {
+            $this->isOpen() => null,
+            $this->closed_by === self::CLOSED_BY_CLOCK => self::OUTCOME_CLOCK,
+            $this->closed_by === self::CLOSED_BY_STATUS => self::OUTCOME_INTERRUPTED,
+            $this->target_minutes === null => null,
+            $this->minutes <= $this->target_minutes => self::OUTCOME_ON_TIME,
+            default => self::OUTCOME_LATE,
+        };
+    }
+
+    /** ¿Ya se pasó del tiempo asignado mientras sigue abierta? */
+    public function isOverdue(): bool
+    {
+        return $this->isOpen()
+            && $this->target_minutes !== null
+            && $this->elapsedMinutes() > $this->target_minutes;
+    }
+
+    /** Hora a la que vence el tiempo asignado. */
+    public function dueAt(): ?\Carbon\CarbonInterface
+    {
+        return $this->target_minutes !== null && $this->started_at
+            ? $this->started_at->addMinutes($this->target_minutes)
+            : null;
+    }
+
+    /**
+     * Filtra por resultado del cierre; mismo criterio que outcome() pero en
+     * SQL, para que la bitácora pagine sobre el filtro y no sobre la página.
+     */
+    public function scopeOutcome(Builder $query, string $outcome): Builder
+    {
+        return match ($outcome) {
+            self::OUTCOME_CLOCK => $query->where('closed_by', self::CLOSED_BY_CLOCK),
+            self::OUTCOME_INTERRUPTED => $query->where('closed_by', self::CLOSED_BY_STATUS),
+            self::OUTCOME_ON_TIME => $query->where('closed_by', self::CLOSED_BY_STAFF)
+                ->whereNotNull('target_minutes')
+                ->whereColumn('minutes', '<=', 'target_minutes'),
+            self::OUTCOME_LATE => $query->where('closed_by', self::CLOSED_BY_STAFF)
+                ->whereNotNull('target_minutes')
+                ->whereColumn('minutes', '>', 'target_minutes'),
+            default => $query,
+        };
+    }
+
+    /**
+     * Cierra lo que quedó abierto en una habitación que salió de "en
+     * limpieza" sin pasar por el formulario. Sin esto el cronómetro corría
+     * para siempre y la siguiente limpieza del cuarto se rechazaba.
+     */
+    public static function closeOpenFor(Room $room, string $closedBy): int
+    {
+        $open = static::query()->where('room_id', $room->id)->open()->get();
+
+        foreach ($open as $cleaning) {
+            $cleaning->close([], null, $closedBy);
+        }
+
+        return $open->count();
     }
 
     public function scopeOpen(Builder $query): Builder

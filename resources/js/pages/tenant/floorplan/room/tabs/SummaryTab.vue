@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, inject } from 'vue';
+import { computed, inject, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import Lucide from '@/components/Base/Lucide';
+import CourtesyStrip from '@/components/courtesies/CourtesyStrip.vue';
+import SettleDialog from '../SettleDialog.vue';
 import { FloorPlanKey } from '../../context';
 import {
     countdownLabel,
@@ -32,6 +34,10 @@ const documentTypeLabels: Record<string, string> = {
 };
 
 const ctx = inject(FloorPlanKey)!;
+
+// Cobrar el saldo sin registrar la salida (lo extendido, la persona extra,
+// los consumos). Antes solo se cobraba en el diálogo de salida.
+const settleOpen = ref(false);
 
 const room = computed(() => ctx.room.value!);
 
@@ -283,6 +289,30 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 </div>
             </dl>
 
+            <!-- Cortesía (módulo cortesias): con reserva va sobre ella; un
+                 walk-in la lleva en la estancia. -->
+            <div
+                v-if="ctx.courtesyAccess.enabled"
+                class="border-b border-slate-200/60 dark:border-darkmode-400"
+            >
+                <CourtesyStrip
+                    bare
+                    :courtesy="room.active_stay.courtesy ?? null"
+                    :access="ctx.courtesyAccess"
+                    :target="
+                        room.active_stay.reservation_id
+                            ? {
+                                  reservation_id:
+                                      room.active_stay.reservation_id,
+                              }
+                            : { stay_id: room.active_stay.id }
+                    "
+                    :live="true"
+                    :subtitle="`Habitación ${room.number} · ${room.active_stay.guest_name}`"
+                    @changed="ctx.onCourtesyChanged()"
+                />
+            </div>
+
             <!-- Datos de la visita: personas, vehículo e identificación. -->
             <div
                 v-if="
@@ -451,9 +481,24 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                     Cambiar de cuarto
                 </Button>
                 <Button
+                    v-if="
+                        canManageReservations &&
+                        room.active_stay.balance_due > 0
+                    "
+                    variant="outline-success"
+                    class="col-span-2 h-9 justify-center rounded-[0.5rem] px-2.5 text-xs whitespace-nowrap sm:ml-auto"
+                    @click="settleOpen = true"
+                >
+                    <Lucide icon="Banknote" class="mr-1.5 h-3.5 w-3.5" />
+                    Cobrar {{ formatMoney(room.active_stay.balance_due) }}
+                </Button>
+                <Button
                     v-if="canManageReservations"
                     variant="primary"
-                    class="col-span-2 h-9 justify-center rounded-[0.5rem] text-xs whitespace-nowrap sm:ml-auto"
+                    class="col-span-2 h-9 justify-center rounded-[0.5rem] text-xs whitespace-nowrap"
+                    :class="
+                        room.active_stay.balance_due > 0 ? '' : 'sm:ml-auto'
+                    "
                     :disabled="busyAction === `stay:${room.active_stay.id}`"
                     @click="requestCheckout(room)"
                 >
@@ -466,6 +511,8 @@ const tone = (iso: string | null | undefined) => stayTone(iso, ctx.nowMs.value);
                 </Button>
             </div>
         </section>
+
+        <SettleDialog :open="settleOpen" @close="settleOpen = false" />
 
         <!-- La próxima reserva: quién llega, cuándo y con qué. -->
         <section v-if="room.upcoming_reservation" :class="card">

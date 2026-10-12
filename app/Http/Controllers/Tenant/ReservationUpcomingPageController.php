@@ -22,10 +22,12 @@ class ReservationUpcomingPageController extends ReservationsPageController
     /** Diez por página: el tablero manda aquí a revisar, no a leer un archivo. */
     protected const PER_PAGE = 10;
 
-    protected const UPCOMING_STATUSES = [
-        ReservationStatus::Pending,
-        ReservationStatus::Confirmed,
-    ];
+    /** Atajos de llegada: los chips de la franja de filtros. */
+    protected const WHEN_FILTERS = ['hoy', 'manana', 'semana'];
+
+    protected const PAYMENT_FILTERS = \App\Services\Reservations\BoardMetrics::PAYMENTS;
+
+    protected const UPCOMING_STATUSES = \App\Services\Reservations\BoardMetrics::UPCOMING_STATUSES;
 
     public function __invoke(Request $request): Response
     {
@@ -44,6 +46,16 @@ class ReservationUpcomingPageController extends ReservationsPageController
             $status = null;
         }
 
+        $when = $request->string('cuando')->toString();
+        if (! in_array($when, self::WHEN_FILTERS, true) || $date) {
+            $when = '';
+        }
+        $payment = $request->string('pago')->toString();
+        if (! in_array($payment, self::PAYMENT_FILTERS, true)) {
+            $payment = '';
+        }
+        $now = now();
+
         $paginator = Reservation::query()
             ->with([
                 'room:id,number',
@@ -52,6 +64,11 @@ class ReservationUpcomingPageController extends ReservationsPageController
                 'guest:id,first_name,last_name,phone,email',
             ])
             ->withSum('payments', 'amount')
+            // Confirmar a mano con una transferencia esperando verificación
+            // deja el dinero en el aire: el modal de confirmar lo avisa.
+            ->withExists(['paymentRequests as pending_transfer_request' => fn ($q) => $q
+                ->where('method', \App\Models\PaymentRequest::METHOD_TRANSFER)
+                ->where('status', \App\Models\PaymentRequest::STATUS_PENDING)])
             ->whereIn('status', $status ? [$status] : self::UPCOMING_STATUSES)
             // Mismo corte que la lista de /reservas: sigue viva mientras no
             // termine, aunque la llegada ya haya pasado.
@@ -60,12 +77,19 @@ class ReservationUpcomingPageController extends ReservationsPageController
                 $date->copy()->startOfDay(),
                 $date->copy()->endOfDay(),
             ]))
+            ->when($when !== '', fn ($query) => $query->whereBetween('starts_at', match ($when) {
+                'hoy' => [$now->copy()->startOfDay(), $now->copy()->endOfDay()],
+                'manana' => [$now->copy()->addDay()->startOfDay(), $now->copy()->addDay()->endOfDay()],
+                default => [$now->copy()->startOfDay(), $now->copy()->addDays(6)->endOfDay()],
+            }))
+            ->when($payment !== '', fn ($query) => $this->wherePayment($query, $payment))
             ->when($search !== '', function ($query) use ($search) {
                 $query->where(function ($q) use ($search) {
                     $q->where('guest_name', 'like', "%{$search}%")
                         ->orWhere('code', 'like', "%{$search}%")
                         ->orWhereHas('room', fn ($r) => $r->where('number', 'like', "%{$search}%"))
-                        ->orWhereHas('guest', fn ($g) => $g->where('phone', 'like', "%{$search}%"));
+                        // Teléfono, correo o nombre en la ficha del CRM.
+                        ->orWhereHas('guest', fn ($g) => $g->search($search));
 
                     // "RES-2026-0042" o "42" a secas: también busca por id.
                     if (preg_match('/(\d+)\s*$/', $search, $m)) {
@@ -99,44 +123,33 @@ class ReservationUpcomingPageController extends ReservationsPageController
                 'status' => $status?->value ?? '',
                 'date' => $date?->format('Y-m-d') ?? '',
                 'date_label' => $date?->format('d/m/Y') ?? '',
+                'cuando' => $when,
+                'pago' => $payment,
             ],
             'statusOptions' => collect(self::UPCOMING_STATUSES)
                 ->map(fn (ReservationStatus $s) => ['value' => $s->value, 'label' => $s->label()])
                 ->values(),
             'canManage' => $request->user()->can('reservations.manage'),
+            // Con check-in automático puro el botón "Recibir" no existe.
+            'manualCheckinAllowed' => app(\App\Services\HousekeepingPolicy::class)->manualCheckInAllowed(),
+            'holdMinutes' => $this->policy()->holdMinutes(),
         ]);
     }
 
+    /** Cómo viene pagada (mismo corte que la dona del reporte). */
+    protected function wherePayment(\Illuminate\Database\Eloquent\Builder $query, string $payment): \Illuminate\Database\Eloquent\Builder
+    {
+        return app(\App\Services\Reservations\BoardMetrics::class)->wherePayment($query, $payment);
+    }
+
     /**
-     * Cifras de la cabecera: cuántas vienen, cuántas llegan hoy, cuántas
-     * siguen sin confirmar y cuánto dinero falta por cobrar de todas ellas.
+     * La franja de cifras (BoardMetrics::upcoming). Con $charts trae también
+     * lo que grafica /reservas/proximas/reporte.
      *
      * @return array<string, mixed>
      */
-    protected function summary(): array
+    protected function summary(bool $charts = false): array
     {
-        $now = now();
-        $base = fn () => Reservation::query()
-            ->whereIn('status', self::UPCOMING_STATUSES)
-            ->where('ends_at', '>=', $now);
-
-        $total = (float) $base()->sum('total_amount');
-        // La fianza no es del hospedaje: si se cuenta, el saldo sale corto.
-        $paid = (float) \App\Models\Payment::query()
-            ->whereIn('reservation_id', $base()->select('reservations.id'))
-            ->where(fn ($q) => $q->whereNull('kind')->orWhere('kind', '<>', 'guarantee'))
-            ->sum('amount');
-
-        $balance = round(max(0, $total - $paid), 2);
-
-        return [
-            'total' => $base()->count(),
-            'today' => $base()
-                ->whereBetween('starts_at', [$now->copy()->startOfDay(), $now->copy()->endOfDay()])
-                ->count(),
-            'pending' => $base()->where('status', ReservationStatus::Pending)->count(),
-            'balance' => $balance,
-            'balance_label' => '$'.number_format($balance, 2),
-        ];
+        return app(\App\Services\Reservations\BoardMetrics::class)->upcoming($charts);
     }
 }

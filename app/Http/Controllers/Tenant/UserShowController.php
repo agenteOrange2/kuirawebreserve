@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Tenant;
 
 use App\Models\Shift;
 use App\Models\User;
+use App\Services\StaffAccess;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -47,6 +48,8 @@ class UserShowController extends ActivityLogPageController
 
         $activities->through(fn (Activity $activity) => $this->serializeActivity($activity));
 
+        $roleMeta = StaffAccess::roleMeta();
+
         return Inertia::render('tenant/users/Show', [
             'user' => [
                 'id' => $user->id,
@@ -55,10 +58,10 @@ class UserShowController extends ActivityLogPageController
                 'phone' => $user->phone,
                 'roles' => $user->roles->pluck('name')->values(),
                 'role_labels' => $user->roles
-                    ->map(fn ($role) => UsersPageController::ROLE_META[$role->name]['label'] ?? $role->name)
+                    ->map(fn ($role) => $roleMeta[$role->name]['label'] ?? $role->name)
                     ->values(),
                 'role_descriptions' => $user->roles
-                    ->map(fn ($role) => UsersPageController::ROLE_META[$role->name]['description'] ?? '')
+                    ->map(fn ($role) => $roleMeta[$role->name]['description'] ?? '')
                     ->values(),
                 'is_self' => $user->id === $request->user()?->id,
                 'created_at' => $user->created_at?->format('d/m/Y'),

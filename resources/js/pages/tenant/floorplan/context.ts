@@ -126,6 +126,15 @@ export interface FloorPlanContext {
     deleteBlock: (blockId: number) => Promise<boolean>;
     /** Contador de usos a cero y candado de rotación fuera (motel). */
     resetUsage: () => Promise<boolean>;
+    /** Cobrar el saldo sin registrar la salida; true = se cobró. */
+    settleStay: (payload: {
+        payment_method: string;
+        reference: string | null;
+    }) => Promise<boolean>;
+    /** Cortesías (módulo cortesias): quién puede darlas o pedirlas. */
+    courtesyAccess: import('@/components/courtesies/types').CourtesyAccess;
+    /** Se dio, aprobó o retiró una cortesía: refrescar cuartos y cuenta. */
+    onCourtesyChanged: () => void;
     onError: (message: string) => void;
     close: () => void;
 }

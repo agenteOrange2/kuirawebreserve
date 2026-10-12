@@ -75,6 +75,16 @@ class RatePlanController extends Controller
             'duration_unit' => ['required_if:type,block', 'nullable', Rule::enum(RateDurationUnit::class)],
             'duration_value' => ['required_if:type,block', 'nullable', 'integer', 'min:1', 'max:1440'],
             'price' => [$ratePlan ? 'sometimes' : 'required', 'numeric', 'min:0'],
+            // Personas de ESTA tarifa (vacío = las de la habitación): la
+            // misma habitación puede incluir y admitir distinta gente por
+            // horas que de noche.
+            'included_people' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:50'],
+            'max_people' => ['sometimes', 'nullable', 'integer', 'min:1', 'max:50', function (string $attribute, mixed $value, \Closure $fail) use ($request) {
+                $included = $request->input('included_people');
+                if ($value !== null && $included !== null && $included !== '' && (int) $value < (int) $included) {
+                    $fail('El máximo de personas no puede ser menor que las incluidas.');
+                }
+            }],
             'min_advance_unit' => [
                 'nullable',
                 'required_with:min_advance_value',
@@ -170,6 +180,8 @@ class RatePlanController extends Controller
             'duration_minutes' => $plan->duration_minutes,
             'duration_label' => $plan->durationLabel(),
             'price' => $plan->price,
+            'included_people' => $plan->included_people,
+            'max_people' => $plan->max_people,
             'min_advance_unit' => $plan->min_advance_unit?->value,
             'min_advance_value' => $plan->min_advance_value,
             'min_advance_weekdays' => $plan->minAdvanceWeekdays(),

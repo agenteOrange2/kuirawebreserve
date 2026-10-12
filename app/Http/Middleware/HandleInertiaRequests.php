@@ -88,6 +88,19 @@ class HandleInertiaRequests extends Middleware
                 // menú lateral esconde lo que respondería 403. Vacío en
                 // páginas públicas sin sesión.
                 'permissions' => $request->user()?->getAllPermissions()->pluck('name')->values()->all() ?? [],
+                // Áreas que el rol del usuario tiene ocultas (/usuarios/roles):
+                // el menú las quita igual que a lo que no tiene permiso.
+                'hidden_areas' => \App\Services\StaffAccess::hiddenAreasFor($request->user()),
+                'is_owner' => (bool) $request->user()?->hasRole(\App\Services\StaffAccess::OWNER),
+                // Cortesías esperando al propietario (módulo cortesias): la
+                // pestaña de reservas y el tablero las cuentan sin pedirlas.
+                // Categorías para el bloque de cortesía de las altas (plano y
+                // reservas); null = el hotel no tiene el módulo.
+                'courtesy_categories' => tenant()->hasModule('cortesias') ? config('courtesies.categories') : null,
+                'courtesies_pending' => tenant()->hasModule('cortesias')
+                    && $request->user()?->hasRole(\App\Services\StaffAccess::OWNER)
+                    ? \App\Models\Courtesy::query()->pending()->count()
+                    : 0,
             ] : null,
             // Branding de plataforma (login universal, layout). Cacheado.
             'branding' => [

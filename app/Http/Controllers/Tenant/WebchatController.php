@@ -100,6 +100,9 @@ class WebchatController extends Controller
 
         if ($channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
             $reply = $brain->reply($conversation);
+        } elseif ($channel->mode === 'auto' && $brain->coversHandoff($conversation) && $brain->isConfigured()) {
+            // De guardia: nadie del hotel tomó el traspaso todavía.
+            $reply = $brain->reply($conversation, covering: true);
         } elseif ($conversation->status !== Conversation::STATUS_PENDING) {
             // Sin bot: la conversación queda esperando a un humano.
             $conversation->update(['status' => Conversation::STATUS_PENDING]);

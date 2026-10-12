@@ -84,6 +84,12 @@ Schedule::command('tenants:run conversations:escalate-handoffs')
     ->everyFiveMinutes()
     ->withoutOverlapping();
 
+// La ventana de 24 h de WhatsApp/Messenger por cerrarse con un huésped
+// esperando al personal: campana 4 h antes (WarnClosingWindows).
+Schedule::command('tenants:run conversations:warn-closing-windows')
+    ->everyTenMinutes()
+    ->withoutOverlapping();
+
 Schedule::command('tenants:run conversations:summarize')
     ->everyFifteenMinutes()
     ->withoutOverlapping();

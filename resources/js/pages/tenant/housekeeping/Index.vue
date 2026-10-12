@@ -38,6 +38,12 @@ interface Cleaning {
     open: boolean;
     notes: string | null;
     source: string;
+    target_minutes: number | null;
+    due_label: string | null;
+    overdue: boolean;
+    closed_by: string | null;
+    outcome: string | null;
+    outcome_label: string | null;
 }
 
 interface RoomRow {
@@ -100,6 +106,8 @@ const props = defineProps<{
         unregistered: number;
         housekeepers: number;
     };
+    outcomes: Record<string, number>;
+    cleaningPolicy: { minutes: number; auto_release: boolean };
     canManage: boolean;
     canViewReports: boolean;
 }>();
@@ -108,9 +116,25 @@ const toast = useToasts();
 const busy = ref(false);
 
 const statusTone: Record<string, string> = {
-    dirty: 'bg-pending/10 text-pending',
+    dirty: 'bg-dirty/10 text-dirty dark:bg-dirty/30 dark:text-slate-200',
     cleaning: 'bg-warning/10 text-warning',
 };
+
+// Cómo se cerró cada limpieza: es el historial de quién entregó a tiempo.
+const outcomeMeta: Record<string, { label: string; tone: string }> = {
+    a_tiempo: { label: 'A tiempo', tone: 'bg-success/10 text-success' },
+    tarde: { label: 'Fuera de tiempo', tone: 'bg-pending/10 text-pending' },
+    reloj: { label: 'La cerró el reloj', tone: 'bg-info/10 text-info' },
+    interrumpida: {
+        label: 'Interrumpida',
+        tone: 'bg-slate-100 text-slate-500 dark:bg-darkmode-400 dark:text-slate-300',
+    },
+};
+
+/** Un clic en el resumen filtra la bitácora; otro clic lo quita. */
+function toggleOutcome(key: string): void {
+    log.situacion = log.situacion === key ? '' : key;
+}
 
 const sourceLabels: Record<string, string> = {
     plano: 'Cronómetro',
@@ -327,6 +351,12 @@ async function finishCleaning() {
             'No se pudo cerrar',
             e.response?.data?.message ?? 'Intenta de nuevo.',
         );
+        // Si el reloj la cerró mientras el modal estaba abierto, la tabla
+        // tiene que dejar de ofrecer "Terminar".
+        if (e.response?.status === 422) {
+            closeModal.value = false;
+            refreshLists();
+        }
     } finally {
         busy.value = false;
     }
@@ -472,7 +502,7 @@ async function saveManual() {
                     class="box box--stacked col-span-12 flex items-center gap-2.5 p-3 sm:col-span-6 xl:col-span-3"
                 >
                     <div
-                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-dirty/10 bg-dirty/10 text-dirty dark:bg-dirty/30 dark:text-slate-200"
                     >
                         <Lucide icon="Brush" class="h-4 w-4" />
                     </div>
@@ -544,12 +574,11 @@ async function saveManual() {
 
             <!-- Rol del día: el turno de las camaristas se arma en Turnos,
                  aquí solo se lee para saber a quién buscar. -->
-            <div class="box box--stacked mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+            <div
+                class="box box--stacked mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3"
+            >
                 <div class="flex items-center gap-2">
-                    <Lucide
-                        icon="CalendarClock"
-                        class="h-4 w-4 text-primary"
-                    />
+                    <Lucide icon="CalendarClock" class="h-4 w-4 text-primary" />
                     <span class="text-sm font-medium">Turno de hoy</span>
                 </div>
                 <template v-if="onDuty.length">
@@ -626,7 +655,14 @@ async function saveManual() {
                             </div>
                             <div class="text-xs text-slate-500">
                                 Sucias y en limpieza en una sola lista, con la
-                                que lleva más tiempo esperando arriba.
+                                que lleva más tiempo esperando arriba. Tiempo
+                                asignado:
+                                {{ waitLabel(cleaningPolicy.minutes)
+                                }}{{
+                                    cleaningPolicy.auto_release
+                                        ? '; al cumplirse, la habitación se libera sola.'
+                                        : '.'
+                                }}
                             </div>
                         </div>
                     </div>
@@ -730,7 +766,7 @@ async function saveManual() {
                                             :class="
                                                 room.status === 'cleaning'
                                                     ? 'bg-warning/10 text-warning'
-                                                    : 'bg-pending/10 text-pending'
+                                                    : 'bg-dirty/10 text-dirty dark:bg-dirty/30 dark:text-slate-200'
                                             "
                                         >
                                             <Lucide
@@ -788,6 +824,20 @@ async function saveManual() {
                                             {{ room.cleaning.kind_label }} ·
                                             {{ room.cleaning.minutes }} min
                                         </div>
+                                        <span
+                                            v-if="room.cleaning.overdue"
+                                            class="mt-1 inline-block rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
+                                        >
+                                            Pasó su tiempo ({{
+                                                room.cleaning.due_label
+                                            }})
+                                        </span>
+                                        <span
+                                            v-else-if="room.cleaning.due_label"
+                                            class="mt-1 inline-block rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-400 dark:text-slate-300"
+                                        >
+                                            Vence {{ room.cleaning.due_label }}
+                                        </span>
                                     </template>
                                     <span
                                         v-else-if="room.status === 'cleaning'"
@@ -1045,6 +1095,13 @@ async function saveManual() {
                                 <option value="">Abiertas y cerradas</option>
                                 <option value="abiertas">En curso</option>
                                 <option value="cerradas">Terminadas</option>
+                                <option
+                                    v-for="(meta, key) in outcomeMeta"
+                                    :key="key"
+                                    :value="key"
+                                >
+                                    {{ meta.label }}
+                                </option>
                             </FormSelect>
                         </div>
                         <div>
@@ -1061,6 +1118,39 @@ async function saveManual() {
                             </FormSelect>
                         </div>
                     </div>
+                </div>
+
+                <!-- Cómo se cerraron: a tiempo, fuera de tiempo, por el reloj o
+                     interrumpidas. Cada chip filtra la tabla. -->
+                <div
+                    class="flex flex-wrap items-center gap-2 border-b border-slate-200/60 px-4 py-2.5 dark:border-darkmode-400"
+                >
+                    <span class="text-xs text-slate-500">
+                        Cierre {{ rangeLabels[log.rango] }}:
+                    </span>
+                    <button
+                        v-for="(meta, key) in outcomeMeta"
+                        :key="key"
+                        type="button"
+                        class="inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-medium transition"
+                        :class="[
+                            meta.tone,
+                            log.situacion === key
+                                ? 'ring-1 ring-current'
+                                : 'opacity-90 hover:opacity-100',
+                        ]"
+                        :title="
+                            log.situacion === key
+                                ? 'Quitar filtro'
+                                : `Ver solo: ${meta.label}`
+                        "
+                        @click="toggleOutcome(key)"
+                    >
+                        {{ meta.label }}
+                        <span class="font-semibold">{{
+                            outcomes[key] ?? 0
+                        }}</span>
+                    </button>
                 </div>
 
                 <div v-if="cleanings.data.length" class="overflow-auto">
@@ -1081,6 +1171,9 @@ async function saveManual() {
                                 </Table.Th>
                                 <Table.Th class="whitespace-nowrap">
                                     Origen
+                                </Table.Th>
+                                <Table.Th class="whitespace-nowrap">
+                                    Cierre
                                 </Table.Th>
                                 <Table.Th class="text-right whitespace-nowrap">
                                     Duración
@@ -1152,6 +1245,47 @@ async function saveManual() {
                                         sourceLabels[cleaning.source] ??
                                         cleaning.source
                                     }}
+                                </Table.Td>
+                                <Table.Td class="whitespace-nowrap">
+                                    <span
+                                        v-if="
+                                            cleaning.outcome &&
+                                            outcomeMeta[cleaning.outcome]
+                                        "
+                                        class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                        :class="
+                                            outcomeMeta[cleaning.outcome].tone
+                                        "
+                                    >
+                                        {{
+                                            outcomeMeta[cleaning.outcome].label
+                                        }}
+                                    </span>
+                                    <span
+                                        v-else-if="cleaning.overdue"
+                                        class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
+                                    >
+                                        Pasó su tiempo
+                                    </span>
+                                    <span
+                                        v-else-if="cleaning.open"
+                                        class="text-slate-400"
+                                    >
+                                        {{
+                                            cleaning.due_label
+                                                ? `Vence ${cleaning.due_label}`
+                                                : 'En curso'
+                                        }}
+                                    </span>
+                                    <span v-else class="text-slate-400">
+                                        Sin calificar
+                                    </span>
+                                    <div
+                                        v-if="cleaning.target_minutes"
+                                        class="mt-0.5 text-slate-400"
+                                    >
+                                        de {{ cleaning.target_minutes }} min
+                                    </div>
                                 </Table.Td>
                                 <Table.Td class="text-right whitespace-nowrap">
                                     <span class="font-medium">

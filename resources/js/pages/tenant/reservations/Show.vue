@@ -3,6 +3,8 @@ import { Link, router } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, onMounted, ref } from 'vue';
 import Button from '@/components/Base/Button';
+import CourtesyStrip from '@/components/courtesies/CourtesyStrip.vue';
+import type { CourtesyAccess } from '@/components/courtesies/types';
 import { FormInput } from '@/components/Base/Form';
 import { Dialog } from '@/components/Base/Headless';
 import Lucide from '@/components/Base/Lucide';
@@ -46,6 +48,8 @@ const props = defineProps<{
         sent_at: string | null;
         sent_by: string | null;
     };
+    /** Cortesías (módulo cortesias): quién puede darlas o pedirlas. */
+    courtesyAccess?: CourtesyAccess;
     /** Comprobantes que el huésped mandó por el chat de esta reserva. */
     chatReceipts?: {
         media_id: number;
@@ -256,8 +260,13 @@ const discount = computed(() => Number(r.value.discount_amount ?? 0));
 const listPrice = computed(
     () => Number(r.value.total_amount ?? 0) + discount.value,
 );
+// Cupón y cortesía no se acumulan: con una cortesía viva no se ofrece.
 const canCoupon = computed(
-    () => props.canManage && live.value && hasModule('cupones'),
+    () =>
+        props.canManage &&
+        live.value &&
+        hasModule('cupones') &&
+        !r.value.courtesy,
 );
 const couponInput = ref('');
 const couponOpen = ref(false);
@@ -328,6 +337,16 @@ onMounted(() => {
         props.manualCheckinAllowed
     ) {
         openCheckIn();
+    }
+    // ?pagar=1: el botón "Cobrar" de Próximas, Pendientes y Operación abre
+    // aquí el cobro, donde están los pagos hechos y los comprobantes del chat.
+    if (
+        new URLSearchParams(window.location.search).get('pagar') &&
+        props.canManage &&
+        live.value &&
+        pending.value > 0
+    ) {
+        openPayment();
     }
 });
 
@@ -989,6 +1008,45 @@ const cardHeader =
                             </template>
                         </div>
 
+                        <!-- Cortesía (módulo cortesias): lo regalado, lo que
+                             espera al propietario, o el botón para darla -->
+                        <CourtesyStrip
+                            v-if="courtesyAccess?.enabled"
+                            :courtesy="reservation.courtesy ?? null"
+                            :access="courtesyAccess"
+                            :target="{ reservation_id: reservation.id }"
+                            :live="live"
+                            :subtitle="`${reservation.code} · ${reservation.guest_name ?? 'Sin nombre'}`"
+                            @changed="reload"
+                        />
+                        <div
+                            v-if="
+                                courtesyAccess?.enabled &&
+                                reservation.courtesy?.status === 'approved' &&
+                                Number(reservation.paid_total ?? 0) >
+                                    Number(reservation.total_amount ?? 0)
+                            "
+                            class="mx-4 mb-3 flex items-start gap-2 rounded-lg border border-warning/20 bg-warning/5 px-3.5 py-2.5 text-xs"
+                        >
+                            <Lucide
+                                icon="Undo2"
+                                class="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning"
+                            />
+                            <span>
+                                Saldo a favor del huésped:
+                                <span class="font-medium">{{
+                                    money(
+                                        Number(reservation.paid_total ?? 0) -
+                                            Number(
+                                                reservation.total_amount ?? 0,
+                                            ),
+                                    )
+                                }}</span>
+                                (ya pagó más de lo que cuesta con la cortesía).
+                                Devuélvelo desde "Ver o reembolsar".
+                            </span>
+                        </div>
+
                         <!-- Cobro en curso (link o transferencia por verificar) -->
                         <div
                             v-if="reservation.payment_request"
@@ -1214,9 +1272,7 @@ const cardHeader =
                                         : 'bg-pending/10 text-pending'
                                 "
                                 >{{
-                                    contract.sent_at
-                                        ? 'Enviado'
-                                        : 'Sin enviar'
+                                    contract.sent_at ? 'Enviado' : 'Sin enviar'
                                 }}</span
                             >
                         </div>

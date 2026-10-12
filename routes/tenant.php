@@ -168,7 +168,9 @@ Route::middleware([
     Route::get('/impersonate/{token}', fn (string $token) => \Stancl\Tenancy\Features\UserImpersonation::makeResponse($token))
         ->name('impersonate');
 
-    Route::middleware('auth')->group(function () {
+    // EnsurePanelArea: las áreas que el rol del usuario tiene ocultas
+    // (/usuarios/roles) responden 403 aunque se teclee la URL.
+    Route::middleware(['auth', \App\Http\Middleware\EnsurePanelArea::class])->group(function () {
         // Fortify aterriza aquí tras el login (config fortify.home).
         Route::get('/dashboard', DashboardController::class)->name('dashboard');
 
@@ -225,10 +227,24 @@ Route::middleware([
             ->middleware('can:reservations.view')
             ->name('reservations.operation');
 
+        // Reporte de la pantalla: las gráficas salieron de la lista (pedido
+        // del dueño, 2026-10-09). "/report" también, porque así lo escribió.
+        Route::get('/reservas/operacion/reporte', [\App\Http\Controllers\Tenant\ReservationBoardReportController::class, 'operation'])
+            ->middleware('can:reservations.view')
+            ->name('reservations.operation.report');
+        Route::redirect('/reservas/operacion/report', '/reservas/operacion/reporte');
+
         // Pendientes: lo que espera confirmación y lo que quedó sin cobrar.
         Route::get('/reservas/pendientes', \App\Http\Controllers\Tenant\PendingReservationsPageController::class)
             ->middleware('can:reservations.view')
             ->name('reservations.pending');
+
+        // Reporte de la pantalla: las gráficas salieron de la lista (pedido
+        // del dueño, 2026-10-09). "/report" también, porque así lo escribió.
+        Route::get('/reservas/pendientes/reporte', [\App\Http\Controllers\Tenant\ReservationBoardReportController::class, 'pending'])
+            ->middleware('can:reservations.view')
+            ->name('reservations.pending.report');
+        Route::redirect('/reservas/pendientes/report', '/reservas/pendientes/reporte');
 
         // Calendario de ocupación (rack) como vista propia.
         Route::get('/reservas/calendario', ReservationsPageController::class)
@@ -248,10 +264,24 @@ Route::middleware([
             ->middleware('can:reservations.view')
             ->name('reservations.upcoming');
 
+        // Reporte de la pantalla: las gráficas salieron de la lista (pedido
+        // del dueño, 2026-10-09). "/report" también, porque así lo escribió.
+        Route::get('/reservas/proximas/reporte', [\App\Http\Controllers\Tenant\ReservationBoardReportController::class, 'upcoming'])
+            ->middleware('can:reservations.view')
+            ->name('reservations.upcoming.report');
+        Route::redirect('/reservas/proximas/report', '/reservas/proximas/reporte');
+
         // Huéspedes alojados ahora, completo y paginado.
         Route::get('/reservas/alojados', \App\Http\Controllers\Tenant\InHouseStaysPageController::class)
             ->middleware('can:reservations.view')
             ->name('reservations.in-house');
+
+        // Reporte de la pantalla: las gráficas salieron de la lista (pedido
+        // del dueño, 2026-10-09). "/report" también, porque así lo escribió.
+        Route::get('/reservas/alojados/reporte', [\App\Http\Controllers\Tenant\ReservationBoardReportController::class, 'inHouse'])
+            ->middleware('can:reservations.view')
+            ->name('reservations.in-house.report');
+        Route::redirect('/reservas/alojados/report', '/reservas/alojados/reporte');
 
         // Ficha propia de una reserva: cobrar, registrar pago, confirmar y
         // reabrir. Solo números: /reservas/historial, /proximas... ganan.
@@ -280,6 +310,20 @@ Route::middleware([
         Route::get('/reservas/cuentas', [\App\Http\Controllers\Tenant\StaySettlementController::class, 'index'])
             ->middleware('can:reservations.view')
             ->name('reservations.settlements');
+
+        // Cortesías (módulo cortesias): solicitudes por aprobar, historial
+        // y reporte. El propietario ve todas; el resto, las que pidió.
+        Route::middleware(['can:courtesies.request', 'module:cortesias'])->group(function () {
+            Route::get('/reservas/cortesias', \App\Http\Controllers\Tenant\CourtesiesPageController::class)
+                ->name('reservations.courtesies');
+            Route::get('/reservas/cortesias/exportar', [\App\Http\Controllers\Tenant\CourtesiesPageController::class, 'export'])
+                ->name('reservations.courtesies.export');
+        });
+
+        // Tope mensual de cortesías: superficie propia, solo propietario.
+        Route::get('/ajustes/cortesias', [\App\Http\Controllers\Tenant\CourtesiesPageController::class, 'settings'])
+            ->middleware(['role:owner', 'module:cortesias'])
+            ->name('courtesy-settings');
 
         // Apariencia del wizard público (logo, colores, modo oscuro de
         // /reservar) — se entra desde /ajustes/wizard (botón Apariencia);
@@ -457,6 +501,13 @@ Route::middleware([
         Route::get('/usuarios', UsersPageController::class)
             ->middleware('can:users.manage')
             ->name('users');
+
+        // Roles y accesos: qué ve y qué puede hacer cada rol. Solo el
+        // propietario, por ROL y no por permiso: si fuera users.manage, quien
+        // lo recibiera podría darse a sí mismo todo lo demás.
+        Route::get('/usuarios/roles', \App\Http\Controllers\Tenant\RolesPageController::class)
+            ->middleware('role:owner')
+            ->name('roles');
 
         // Ficha de un usuario: sus datos, sus turnos y todo lo que ha hecho
         // (la bitácora global vive en /actividad; esta es por persona).
@@ -693,7 +744,7 @@ Route::middleware([
             ->name('online-payments');
     });
 
-    Route::middleware('auth')->prefix('api')->group(function () {
+    Route::middleware(['auth', \App\Http\Middleware\EnsurePanelArea::class])->prefix('api')->group(function () {
         // Campana del panel: sin gate de permiso, todo el staff la ve (el
         // contenido ya viene acotado a lo que le toca a cada quien).
         // Búsqueda rápida del header (⌘K): reservas, huéspedes y
@@ -1009,6 +1060,21 @@ Route::middleware([
             Route::delete('reservations/{reservation}/coupon', [ReservationController::class, 'removeCoupon'])
                 ->name('reservations.coupon.remove');
             Route::post('stays', [StayController::class, 'store'])->name('stays.store');
+            // Cortesías (módulo cortesias): dar (propietario) o solicitar.
+            // Aprobar, rechazar y retirar son del propietario.
+            Route::middleware(['can:courtesies.request', 'module:cortesias'])->group(function () {
+                Route::get('courtesies/preview', [\App\Http\Controllers\Tenant\CourtesyController::class, 'preview'])->name('courtesies.preview');
+                Route::post('reservations/{reservation}/courtesy', [\App\Http\Controllers\Tenant\CourtesyController::class, 'storeForReservation'])->name('reservations.courtesy');
+                Route::post('stays/{stay}/courtesy', [\App\Http\Controllers\Tenant\CourtesyController::class, 'storeForStay'])->name('stays.courtesy');
+                Route::delete('courtesies/{courtesy}', [\App\Http\Controllers\Tenant\CourtesyController::class, 'destroy'])->name('courtesies.destroy');
+
+                Route::middleware('role:owner')->group(function () {
+                    Route::post('courtesies/{courtesy}/approve', [\App\Http\Controllers\Tenant\CourtesyController::class, 'approve'])->name('courtesies.approve');
+                    Route::post('courtesies/{courtesy}/reject', [\App\Http\Controllers\Tenant\CourtesyController::class, 'reject'])->name('courtesies.reject');
+                    Route::post('courtesies/{courtesy}/revoke', [\App\Http\Controllers\Tenant\CourtesyController::class, 'revoke'])->name('courtesies.revoke');
+                    Route::patch('courtesies/settings', [\App\Http\Controllers\Tenant\CourtesyController::class, 'updateSettings'])->name('courtesies.settings');
+                });
+            });
             // Foto del documento del huésped a pie (registro exprés motel):
             // se sube tras crear la estancia, con el id devuelto.
             Route::post('stays/{stay}/id-document', [StayController::class, 'storeDocument'])->name('stays.document.store');
@@ -1023,6 +1089,9 @@ Route::middleware([
             // botón "Agregar" era de ida y el daño se quedaba en la cuenta.
             Route::delete('stays/{stay}/charges/{charge}', [StayController::class, 'destroyCharge'])->name('stays.charges.destroy');
             Route::patch('stays/{stay}/extend', [StayController::class, 'extend'])->name('stays.extend');
+            Route::get('stays/{stay}/extend-options', [StayController::class, 'extendOptions'])->name('stays.extend-options');
+            // Cobrar el saldo sin registrar la salida (extensión, consumos).
+            Route::post('stays/{stay}/settle', [StayController::class, 'settle'])->name('stays.settle');
             Route::patch('stays/{stay}/room', [StayController::class, 'changeRoom'])->name('stays.change-room');
             Route::patch('stays/{stay}/check-out', [StayController::class, 'checkOut'])->name('stays.check-out');
 
@@ -1109,6 +1178,12 @@ Route::middleware([
             Route::post('shift-assignments/copy-week', [ShiftAssignmentController::class, 'copyWeek'])->name('shift-assignments.copy-week');
         });
 
+        Route::middleware('role:owner')->group(function () {
+            Route::post('roles', [\App\Http\Controllers\Tenant\RoleController::class, 'store'])->name('roles.store');
+            Route::put('roles/{role}', [\App\Http\Controllers\Tenant\RoleController::class, 'update'])->name('roles.update');
+            Route::delete('roles/{role}', [\App\Http\Controllers\Tenant\RoleController::class, 'destroy'])->name('roles.destroy');
+        });
+
         Route::middleware('can:users.manage')->group(function () {
             Route::post('users', [TenantUserController::class, 'store'])->name('users.store');
             Route::delete('users', [TenantUserController::class, 'destroyBulk'])->name('users.destroy-bulk');
@@ -1188,6 +1263,9 @@ Route::middleware([
             Route::delete('inbox/archived', [InboxController::class, 'destroyArchived'])->name('inbox.archived.destroy');
             Route::post('inbox/{conversation}/reply', [InboxController::class, 'reply'])->name('inbox.reply');
             Route::post('inbox/{conversation}/suggest', [InboxController::class, 'suggest'])->name('inbox.suggest');
+            // Ventana de 24 h cerrada: retomar con una plantilla aprobada.
+            Route::get('inbox/{conversation}/templates', [InboxController::class, 'templates'])->name('inbox.templates');
+            Route::post('inbox/{conversation}/template', [InboxController::class, 'sendTemplate'])->name('inbox.template');
             Route::patch('inbox/{conversation}', [InboxController::class, 'update'])->name('inbox.update');
             Route::delete('inbox/{conversation}', [InboxController::class, 'destroy'])->name('inbox.destroy');
             Route::patch('channels/{channel}', [InboxController::class, 'updateChannel'])->name('channels.update');
@@ -1402,6 +1480,11 @@ Route::middleware([
     Route::post('reservation/pre-register', [\App\Http\Controllers\Tenant\BookingLookupController::class, 'preRegister'])
         ->middleware('throttle:10,1')
         ->name('reservation.pre-register');
+    // Comprobante de transferencia subido por el huésped (las reservas del
+    // wizard web no tienen chat a dónde mandarlo) — mismas llaves.
+    Route::post('reservation/proof', [\App\Http\Controllers\Tenant\BookingLookupController::class, 'proof'])
+        ->middleware('throttle:6,1')
+        ->name('reservation.proof');
 });
 
 // API pública del wizard de experiencias — módulo propio, independiente

@@ -98,9 +98,14 @@ class Room extends Model
     /**
      * Ocupación máxima efectiva: override propio o capacidad del tipo.
      */
-    public function effectiveMaxOccupancy(): ?int
+    /**
+     * Cuántas personas caben. Con tarifa, la suya manda si la tiene: la
+     * misma habitación puede admitir más (o menos) gente por horas que de
+     * noche (RatePlan::max_people).
+     */
+    public function effectiveMaxOccupancy(?RatePlan $ratePlan = null): ?int
     {
-        return $this->max_occupancy ?? $this->roomType?->capacity;
+        return $ratePlan?->max_people ?? $this->max_occupancy ?? $this->roomType?->capacity;
     }
 
     /**
@@ -126,11 +131,13 @@ class Room extends Model
      * @param  array<int, string>  $selectedConcepts
      * @return array<int, array{concept: string, amount: float, kind: string}>
      */
-    public function extraChargeLines(int $people, int $units, array $selectedConcepts = []): array
+    public function extraChargeLines(int $people, int $units, array $selectedConcepts = [], ?RatePlan $ratePlan = null): array
     {
         $lines = [];
 
-        $included = $this->included_occupancy;
+        // La tarifa puede traer sus propias personas incluidas (la Sencilla
+        // por horas incluye 2 aunque de noche incluya 1).
+        $included = $ratePlan?->included_people ?? $this->included_occupancy;
         $fee = (float) ($this->extra_guest_fee ?? 0);
 
         if ($included !== null && $included > 0 && $fee > 0 && $people > $included) {
@@ -227,10 +234,15 @@ class Room extends Model
     /**
      * Limpieza en curso: la que se abrió al marcar "en limpieza" y todavía no
      * se cierra. El panel la usa para mostrar el cronómetro y quién la hace.
+     *
+     * La condición va DENTRO del closure de ofMany: encadenada afuera no
+     * entra al subquery del MAX, y una limpieza cerrada más nueva escondía
+     * la abierta.
      */
     public function openCleaning(): HasOne
     {
-        return $this->hasOne(RoomCleaning::class)->whereNull('ended_at')->latestOfMany('id');
+        return $this->hasOne(RoomCleaning::class)
+            ->ofMany(['id' => 'max'], fn ($query) => $query->whereNull('ended_at'));
     }
 
     public function reservations(): HasMany
@@ -476,7 +488,12 @@ class Room extends Model
                 ->values()
                 ->all(),
             'check_in_time' => $this->roomType?->check_in_time ? substr($this->roomType->check_in_time, 0, 5) : null,
-            'check_out_time' => $this->roomType?->check_out_time ? substr($this->roomType->check_out_time, 0, 5) : null,
+            // La salida que de verdad opera el hotel (la del tipo o, si no
+            // tiene, la de Ajustes → Horarios): el walk-in la usa para la
+            // noche, y con null caía en un 12:00 fijo.
+            'check_out_time' => $this->roomType
+                ? sprintf('%02d:%02d', ...$this->roomType->effectiveScheduleTimes()[1])
+                : null,
             'status' => $this->status->getMorphClass(),
             'color' => $this->status->color(),
             'label' => $this->status->label(),
@@ -530,6 +547,10 @@ class Room extends Model
                         // calendario y duration_minutes ahí es null).
                         'duration_unit' => $plan->duration_unit?->value,
                         'duration_value' => $plan->duration_value,
+                        // Personas de esta tarifa (null = las del cuarto):
+                        // la Sencilla por horas incluye 2 y admite 3.
+                        'included_people' => $plan->included_people,
+                        'max_people' => $plan->max_people,
                     ])
                     ->all()
                 : [],
@@ -552,6 +573,11 @@ class Room extends Model
                     + (float) ($activeStay->room_pending_total ?? 0),
                     2,
                 ),
+                // Cortesía (módulo cortesias): la aprobada ya está restada
+                // del hospedaje; la pendiente avisa que no se cobre esa parte.
+                'courtesy' => ($activeStay->reservation !== null
+                    ? ($activeStay->reservation->relationLoaded('liveCourtesy') ? $activeStay->reservation->liveCourtesy : null)
+                    : ($activeStay->relationLoaded('liveCourtesy') ? $activeStay->liveCourtesy : null))?->toPayload(),
                 'check_in_at' => $activeStay->check_in_at?->format('d/m/Y H:i'),
                 'check_in_at_iso' => $activeStay->check_in_at?->toIso8601String(),
                 'planned_end_at' => $activeStay->planned_end_at?->format('d/m/Y H:i'),

@@ -47,6 +47,18 @@ class HousekeepingPolicy
         return $this->mode() !== self::MODE_MANUAL;
     }
 
+    /**
+     * ¿El reloj libera una habitación "en limpieza" al cumplirse el tiempo
+     * asignado? Siempre en automático y ambos; en manual solo si el hotel
+     * prendió el switch. Así la camarista sigue iniciando la limpieza a mano
+     * (con su nombre) sin que el cuarto se quede en limpieza para siempre
+     * cuando nadie la termina.
+     */
+    public function releasesCleaningByClock(): bool
+    {
+        return $this->autoAdvances() || (bool) ($this->settings()['hk_cleaning_auto_release'] ?? false);
+    }
+
     /** ¿El plano ofrece los botones manuales de limpieza? */
     public function manualAllowed(): bool
     {
@@ -85,7 +97,10 @@ class HousekeepingPolicy
         return $this->minutesFrom('hk_dirty_value', 'hk_dirty_unit') ?? 30;
     }
 
-    /** Minutos en "en limpieza" antes de liberarse sola a "disponible". */
+    /**
+     * Tiempo asignado a una limpieza: con él se califica si se entregó a
+     * tiempo y, si el reloj libera, cuándo pasa sola a "disponible".
+     */
     public function cleaningMinutes(): int
     {
         return $this->minutesFrom('hk_cleaning_value', 'hk_cleaning_unit') ?? 45;

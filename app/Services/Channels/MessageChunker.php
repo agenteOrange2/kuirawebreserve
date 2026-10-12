@@ -40,7 +40,10 @@ class MessageChunker
      */
     public static function split(string $text, int $limit): array
     {
-        $text = trim($text);
+        // Todo lo que sale a un canal pasa por aquí: es el lugar para que
+        // ninguna liga quede pegada a un punto o dos puntos (el canal los
+        // toma como parte de la liga y no abre).
+        $text = trim(\App\Support\UrlSpacing::separate($text));
 
         if ($text === '') {
             return [];

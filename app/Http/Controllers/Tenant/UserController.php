@@ -8,21 +8,35 @@ use App\Models\Order;
 use App\Models\Payment;
 use App\Models\Shift;
 use App\Models\User;
+use App\Services\StaffAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
-use Spatie\Permission\Models\Role;
 
 class UserController extends Controller
 {
     /** Roles asignables desde el panel (agent es identidad de bots). */
     public static function assignableRoles(): array
     {
-        return Role::query()
-            ->where('name', '!=', 'agent')
-            ->orderBy('name')
-            ->pluck('name')
-            ->all();
+        return StaffAccess::assignableRoles();
+    }
+
+    /**
+     * Solo un propietario nombra (o degrada) propietarios: el permiso de
+     * administrar usuarios se le puede dar a un gerente desde
+     * /usuarios/roles, y sin esto bastaría para hacerse dueño del hotel.
+     */
+    protected function guardOwnerRole(Request $request, ?string $newRole, ?User $target = null): ?JsonResponse
+    {
+        $touchesOwner = $newRole === StaffAccess::OWNER || ($target?->hasRole(StaffAccess::OWNER) ?? false);
+
+        if ($touchesOwner && ! $request->user()?->hasRole(StaffAccess::OWNER)) {
+            return response()->json([
+                'message' => 'Solo un propietario puede nombrar o cambiar a otro propietario.',
+            ], 403);
+        }
+
+        return null;
     }
 
     public function store(Request $request): JsonResponse
@@ -34,6 +48,10 @@ class UserController extends Controller
             'password' => ['required', 'string', 'min:8'],
             'role' => ['required', Rule::in(self::assignableRoles())],
         ]);
+
+        if ($denied = $this->guardOwnerRole($request, $data['role'])) {
+            return $denied;
+        }
 
         // Límite de usuarios del plan del hotel.
         $maxUsers = tenant()->planLimit('max_users');
@@ -63,6 +81,10 @@ class UserController extends Controller
             'password' => ['nullable', 'string', 'min:8'],
             'role' => ['sometimes', 'required', Rule::in(self::assignableRoles())],
         ]);
+
+        if ($denied = $this->guardOwnerRole($request, $data['role'] ?? null, $user)) {
+            return $denied;
+        }
 
         // No dejar al hotel sin dueño: el último owner no puede perder el rol.
         if (isset($data['role']) && $data['role'] !== 'owner' && $this->isLastOwner($user)) {
@@ -94,6 +116,10 @@ class UserController extends Controller
             return response()->json([
                 'message' => 'Es el único propietario; asigna otro dueño antes de eliminarlo.',
             ], 422);
+        }
+
+        if ($denied = $this->guardOwnerRole($request, null, $user)) {
+            return $denied;
         }
 
         // Con actividad registrada (ventas, cobros, turnos, cortes) se
@@ -135,7 +161,9 @@ class UserController extends Controller
                 || Shift::query()->where('user_id', $user->id)->exists()
                 || CashCut::query()->where('user_id', $user->id)->exists();
 
-            if ($user->id === $request->user()?->id || $this->isLastOwner($user) || $hasActivity) {
+            $ownerByNonOwner = $user->hasRole(StaffAccess::OWNER) && ! $request->user()?->hasRole(StaffAccess::OWNER);
+
+            if ($user->id === $request->user()?->id || $this->isLastOwner($user) || $ownerByNonOwner || $hasActivity) {
                 $skipped++;
 
                 continue;

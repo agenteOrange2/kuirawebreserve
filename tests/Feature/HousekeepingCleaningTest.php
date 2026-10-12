@@ -270,3 +270,136 @@ it('dar de baja a una camarista con historial la archiva en vez de borrarla', fu
     expect(Housekeeper::count())->toBe(1)
         ->and($this->marta->fresh()->active)->toBeFalse();
 });
+
+/** Inicia una limpieza con Marta y la "envejece" N minutos (registro y semáforo). */
+function startedCleaningMinutesAgo(int $minutes): RoomCleaning
+{
+    app(RoomCleaningController::class)->store(
+        cleaningRequest(['housekeeper_id' => test()->marta->id]),
+        test()->room->fresh(),
+        app(\App\Actions\Rooms\ChangeRoomStatus::class),
+    );
+
+    $cleaning = RoomCleaning::latest('id')->first();
+    $cleaning->forceFill(['started_at' => now()->subMinutes($minutes)])->saveQuietly();
+    test()->room->statusLogs()->latest('id')->first()
+        ->forceFill(['created_at' => now()->subMinutes($minutes)])->saveQuietly();
+
+    return $cleaning->refresh();
+}
+
+function cleaningSettings(array $settings): void
+{
+    $property = Property::firstOrFail();
+    $property->update(['settings' => array_merge($property->settings ?? [], $settings)]);
+}
+
+it('iniciar guarda el tiempo asignado del ajuste', function () {
+    bindCleaningTenant();
+    cleaningSettings(['hk_cleaning_value' => 1, 'hk_cleaning_unit' => 'hour']);
+
+    $cleaning = startedCleaningMinutesAgo(0);
+
+    expect($cleaning->target_minutes)->toBe(60)
+        ->and($cleaning->dueAt()->format('H:i'))->toBe($cleaning->started_at->addHour()->format('H:i'));
+});
+
+it('en modo manual con el switch prendido, el reloj libera la habitación y cierra el registro', function () {
+    bindCleaningTenant();
+    cleaningSettings(['hk_mode' => 'manual', 'hk_cleaning_value' => 45, 'hk_cleaning_unit' => 'minute', 'hk_cleaning_auto_release' => true]);
+
+    $cleaning = startedCleaningMinutesAgo(50);
+
+    $this->artisan('rooms:advance-housekeeping')->assertSuccessful();
+
+    $cleaning->refresh();
+
+    expect($this->room->fresh()->status->getMorphClass())->toBe(RoomStatus::Available->value)
+        ->and($cleaning->isOpen())->toBeFalse()
+        ->and($cleaning->closed_by)->toBe(RoomCleaning::CLOSED_BY_CLOCK)
+        ->and($cleaning->outcome())->toBe(RoomCleaning::OUTCOME_CLOCK)
+        // Queda con el nombre de quien la inició: el trabajo tiene dueño.
+        ->and($cleaning->housekeeper_id)->toBe($this->marta->id);
+});
+
+it('el reloj no toca la limpieza antes de su tiempo ni con el switch apagado', function () {
+    bindCleaningTenant();
+    cleaningSettings(['hk_mode' => 'manual', 'hk_cleaning_value' => 45, 'hk_cleaning_unit' => 'minute', 'hk_cleaning_auto_release' => true]);
+
+    $cleaning = startedCleaningMinutesAgo(20);
+    $this->artisan('rooms:advance-housekeeping')->assertSuccessful();
+    expect($cleaning->fresh()->isOpen())->toBeTrue();
+
+    cleaningSettings(['hk_cleaning_auto_release' => false]);
+    $cleaning->forceFill(['started_at' => now()->subMinutes(90)])->saveQuietly();
+    $this->room->statusLogs()->latest('id')->first()
+        ->forceFill(['created_at' => now()->subMinutes(90)])->saveQuietly();
+    $this->artisan('rooms:advance-housekeeping')->assertSuccessful();
+
+    expect($cleaning->fresh()->isOpen())->toBeTrue()
+        ->and($cleaning->fresh()->isOverdue())->toBeTrue()
+        ->and($this->room->fresh()->status->getMorphClass())->toBe(RoomStatus::Cleaning->value);
+});
+
+it('tras el cierre del reloj se puede volver a iniciar una limpieza en ese cuarto', function () {
+    bindCleaningTenant();
+    cleaningSettings(['hk_cleaning_value' => 45, 'hk_cleaning_unit' => 'minute', 'hk_cleaning_auto_release' => true]);
+
+    startedCleaningMinutesAgo(50);
+    $this->artisan('rooms:advance-housekeeping')->assertSuccessful();
+
+    // El ciclo siguiente: alguien se hospeda y la deja por limpiar otra vez.
+    $this->room->fresh()->forceFill(['status' => RoomStatus::Dirty->value])->saveQuietly();
+
+    $response = app(RoomCleaningController::class)->store(
+        cleaningRequest(['housekeeper_id' => $this->marta->id]),
+        $this->room->fresh(),
+        app(\App\Actions\Rooms\ChangeRoomStatus::class),
+    );
+
+    expect($response->getStatusCode())->toBe(201)
+        ->and(RoomCleaning::open()->count())->toBe(1);
+});
+
+it('terminada por la camarista se califica a tiempo o fuera de tiempo', function () {
+    bindCleaningTenant();
+    cleaningSettings(['hk_cleaning_value' => 45, 'hk_cleaning_unit' => 'minute']);
+
+    $onTime = startedCleaningMinutesAgo(30);
+    app(RoomCleaningController::class)->update(cleaningRequest([]), $onTime, app(\App\Actions\Rooms\ChangeRoomStatus::class));
+
+    $this->room->fresh()->forceFill(['status' => RoomStatus::Dirty->value])->saveQuietly();
+    $late = startedCleaningMinutesAgo(70);
+    app(RoomCleaningController::class)->update(cleaningRequest([]), $late, app(\App\Actions\Rooms\ChangeRoomStatus::class));
+
+    expect($onTime->fresh()->outcome())->toBe(RoomCleaning::OUTCOME_ON_TIME)
+        ->and($late->fresh()->outcome())->toBe(RoomCleaning::OUTCOME_LATE)
+        ->and(RoomCleaning::query()->outcome(RoomCleaning::OUTCOME_ON_TIME)->pluck('id')->all())->toBe([$onTime->id])
+        ->and(RoomCleaning::query()->outcome(RoomCleaning::OUTCOME_LATE)->pluck('id')->all())->toBe([$late->id]);
+});
+
+it('si el semáforo la saca de limpieza por otro camino, el registro queda como interrumpido', function () {
+    bindCleaningTenant();
+
+    $cleaning = startedCleaningMinutesAgo(10);
+
+    app(\App\Actions\Rooms\ChangeRoomStatus::class)->handle($this->room->fresh(), RoomStatus::Maintenance->value, $this->user);
+
+    expect($cleaning->fresh()->closed_by)->toBe(RoomCleaning::CLOSED_BY_STATUS)
+        ->and($cleaning->fresh()->outcome())->toBe(RoomCleaning::OUTCOME_INTERRUPTED);
+});
+
+it('un desperfecto que manda a mantenimiento no marca la limpieza como interrumpida', function () {
+    bindCleaningTenant();
+
+    $cleaning = startedCleaningMinutesAgo(10);
+
+    app(RoomCleaningController::class)->update(
+        cleaningRequest(['incident_title' => 'Fuga en el lavabo', 'set_maintenance' => true]),
+        $cleaning,
+        app(\App\Actions\Rooms\ChangeRoomStatus::class),
+    );
+
+    expect($cleaning->fresh()->closed_by)->toBe(RoomCleaning::CLOSED_BY_STAFF)
+        ->and($this->room->fresh()->status->getMorphClass())->toBe(RoomStatus::Maintenance->value);
+});

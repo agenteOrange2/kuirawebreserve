@@ -71,6 +71,7 @@ const props = defineProps<{
         id: number;
         name: string;
         capacity: number;
+        amenities: string[];
         price_from: number | null;
         has_active_rate: boolean;
     }[];
@@ -259,6 +260,17 @@ function clearFilters() {
 const selectedFormType = computed(
     () =>
         props.roomTypes.find((t) => t.id === Number(form.room_type_id)) ?? null,
+);
+
+// Amenidades que ya trae el tipo, sin importar mayúsculas: no se sugieren
+// otra vez como extra del cuarto.
+const typeAmenityKeys = computed(
+    () =>
+        new Set(
+            (selectedFormType.value?.amenities ?? []).map((a) =>
+                a.toLowerCase(),
+            ),
+        ),
 );
 
 // spec-reservas-avanzado §2.4: "personas incluidas" + "cobro por persona
@@ -624,8 +636,8 @@ function formatBlockDate(date: string): string {
 const dotColor: Record<string, string> = {
     green: 'bg-success',
     cyan: 'bg-info',
-    red: 'bg-primary',
-    orange: 'bg-pending',
+    red: 'bg-danger',
+    brown: 'bg-dirty',
     blue: 'bg-warning',
     gray: 'bg-dark',
 };
@@ -2072,351 +2084,19 @@ async function submitDelete() {
                                             selectedFormType.price_from !== null
                                                 ? `desde $${selectedFormType.price_from}`
                                                 : 'sin tarifa (no reservable)'
-                                        }}
-                                        · horarios y amenidades base — se editan
-                                        en
+                                        }}. La descripción, las fotos, las
+                                        amenidades y los horarios que ven el
+                                        huésped, el wizard y el bot salen del
+                                        tipo y se editan en
                                         <Link
                                             :href="route('tenant.catalog')"
                                             class="font-medium text-primary hover:underline"
                                             >Zonas y tipos</Link
-                                        >. Abajo capturas solo lo propio de ESTA
-                                        habitación.
+                                        >. Aquí solo va lo que cambia en ESTA
+                                        habitación: cupo y precio, y abajo una
+                                        ficha interna para el personal.
                                     </span>
                                 </div>
-                            </div>
-                        </div>
-
-                        <!-- De esta habitación -->
-                        <div
-                            class="space-y-5 border-t border-slate-200/60 pt-6 dark:border-darkmode-400"
-                        >
-                            <div
-                                class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                            >
-                                <Lucide
-                                    icon="ClipboardList"
-                                    class="h-3.5 w-3.5"
-                                />
-                                De esta habitación
-                            </div>
-                            <div>
-                                <FormLabel htmlFor="room-description"
-                                    >Descripción</FormLabel
-                                >
-                                <FormTextarea
-                                    id="room-description"
-                                    v-model="form.description"
-                                    rows="2"
-                                    placeholder="Habitación amplia con balcón privado…"
-                                />
-                                <FormHelp
-                                    v-if="errors.description"
-                                    class="text-danger"
-                                    >{{ errors.description }}</FormHelp
-                                >
-                            </div>
-
-                            <!-- Camas (grupo propio) -->
-                            <div>
-                                <div
-                                    class="mb-2 flex items-center justify-between"
-                                >
-                                    <FormLabel class="mb-0">Camas</FormLabel>
-                                    <Button
-                                        type="button"
-                                        variant="outline-secondary"
-                                        size="sm"
-                                        class="min-h-11 rounded-[0.5rem] sm:min-h-0"
-                                        @click="addBed"
-                                    >
-                                        <Lucide
-                                            icon="Plus"
-                                            class="mr-1 h-4 w-4"
-                                        />
-                                        Agregar cama
-                                    </Button>
-                                </div>
-                                <div
-                                    class="rounded-lg border border-dashed border-slate-300/70 p-3 dark:border-darkmode-400"
-                                >
-                                    <div
-                                        v-if="form.beds.length"
-                                        class="space-y-2.5"
-                                    >
-                                        <div
-                                            v-for="(bed, index) in form.beds"
-                                            :key="index"
-                                            class="flex items-center gap-2.5"
-                                        >
-                                            <div
-                                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 dark:bg-darkmode-400"
-                                            >
-                                                <Lucide
-                                                    icon="BedDouble"
-                                                    class="h-4 w-4"
-                                                />
-                                            </div>
-                                            <FormSelect
-                                                v-model="bed.type"
-                                                class="flex-1"
-                                            >
-                                                <option
-                                                    v-for="(
-                                                        label, value
-                                                    ) in bedTypes"
-                                                    :key="value"
-                                                    :value="value"
-                                                >
-                                                    {{ label }}
-                                                </option>
-                                            </FormSelect>
-                                            <FormInput
-                                                v-model.number="bed.qty"
-                                                type="number"
-                                                min="1"
-                                                class="w-20 text-center"
-                                            />
-                                            <button
-                                                type="button"
-                                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-danger/10 hover:text-danger"
-                                                title="Quitar cama"
-                                                @click="removeBed(index)"
-                                            >
-                                                <Lucide
-                                                    icon="Trash2"
-                                                    class="h-4 w-4"
-                                                />
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <div
-                                        v-else
-                                        class="flex items-center justify-center gap-2 py-2 text-xs text-slate-400"
-                                    >
-                                        <Lucide
-                                            icon="BedDouble"
-                                            class="h-4 w-4"
-                                        />
-                                        Sin camas configuradas — se hereda la
-                                        capacidad del tipo.
-                                    </div>
-                                </div>
-                                <FormHelp
-                                    v-if="errors.beds"
-                                    class="text-danger"
-                                    >{{ errors.beds }}</FormHelp
-                                >
-                            </div>
-
-                            <!-- Superficie / vista (la ocupación vive junto al recargo por persona extra, más abajo — son el mismo concepto) -->
-                            <div class="grid grid-cols-12 gap-x-5 gap-y-4">
-                                <div class="col-span-12 sm:col-span-6">
-                                    <FormLabel htmlFor="room-size"
-                                        >Superficie (m²)</FormLabel
-                                    >
-                                    <div class="relative">
-                                        <Lucide
-                                            icon="Ruler"
-                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                        />
-                                        <FormInput
-                                            id="room-size"
-                                            v-model="form.size_m2"
-                                            type="number"
-                                            step="0.1"
-                                            min="0"
-                                            class="pl-9"
-                                            placeholder="24"
-                                        />
-                                    </div>
-                                    <FormHelp
-                                        v-if="errors.size_m2"
-                                        class="text-danger"
-                                        >{{ errors.size_m2 }}</FormHelp
-                                    >
-                                </div>
-                                <div class="col-span-12 sm:col-span-6">
-                                    <FormLabel htmlFor="room-view"
-                                        >Vista</FormLabel
-                                    >
-                                    <div class="relative">
-                                        <Lucide
-                                            icon="Eye"
-                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                        />
-                                        <FormInput
-                                            id="room-view"
-                                            v-model="form.view"
-                                            type="text"
-                                            list="room-view-options"
-                                            class="pl-9"
-                                            placeholder="mar"
-                                        />
-                                    </div>
-                                    <datalist id="room-view-options">
-                                        <option value="mar" />
-                                        <option value="jardín" />
-                                        <option value="ciudad" />
-                                        <option value="interior" />
-                                    </datalist>
-                                    <FormHelp
-                                        v-if="errors.view"
-                                        class="text-danger"
-                                        >{{ errors.view }}</FormHelp
-                                    >
-                                </div>
-                            </div>
-
-                            <!-- Amenidades -->
-                            <div>
-                                <FormLabel htmlFor="room-amenities"
-                                    >Amenidades</FormLabel
-                                >
-                                <div class="relative">
-                                    <Lucide
-                                        icon="Sparkles"
-                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                    />
-                                    <FormInput
-                                        id="room-amenities"
-                                        v-model="amenityInput"
-                                        type="text"
-                                        maxlength="100"
-                                        class="pl-9"
-                                        placeholder="Escribe y presiona Enter (TV, minibar, jacuzzi…)"
-                                        @keydown.enter.prevent="addAmenity"
-                                    />
-                                </div>
-                                <div
-                                    v-if="form.amenities.length"
-                                    class="mt-2.5 flex flex-wrap gap-2 sm:gap-1.5"
-                                >
-                                    <span
-                                        v-for="(
-                                            amenity, index
-                                        ) in form.amenities"
-                                        :key="amenity"
-                                        class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
-                                    >
-                                        {{ amenity }}
-                                        <button
-                                            type="button"
-                                            class="text-primary/50 hover:text-danger"
-                                            title="Quitar"
-                                            @click="removeAmenity(index)"
-                                        >
-                                            <Lucide icon="X" class="h-3 w-3" />
-                                        </button>
-                                    </span>
-                                </div>
-                                <!-- Sugerencias comunes: un clic agrega (extras propios de ESTA habitación) -->
-                                <div
-                                    class="mt-2.5 flex flex-wrap gap-2 sm:gap-1.5"
-                                >
-                                    <button
-                                        v-for="suggestion in AMENITY_SUGGESTIONS.filter(
-                                            (a) => !form.amenities.includes(a),
-                                        )"
-                                        :key="suggestion"
-                                        type="button"
-                                        class="rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:border-primary hover:text-primary sm:px-2 sm:py-0.5 sm:text-xs sm:text-slate-500 dark:border-darkmode-400 dark:text-slate-300"
-                                        @click="form.amenities.push(suggestion)"
-                                    >
-                                        + {{ suggestion }}
-                                    </button>
-                                </div>
-                                <FormHelp
-                                    v-if="errors.amenities"
-                                    class="text-danger"
-                                    >{{ errors.amenities }}</FormHelp
-                                >
-                            </div>
-
-                            <!-- Características (switches en tarjetas) -->
-                            <div class="grid gap-3 sm:grid-cols-2">
-                                <div
-                                    class="flex items-center justify-between gap-3 rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
-                                >
-                                    <span
-                                        class="flex items-center gap-2 text-sm"
-                                    >
-                                        <Lucide
-                                            icon="Cigarette"
-                                            class="h-4 w-4 text-slate-400"
-                                        />
-                                        Se permite fumar
-                                    </span>
-                                    <FormSwitch>
-                                        <FormSwitch.Input
-                                            id="room-smoking"
-                                            v-model="form.smoking"
-                                            type="checkbox"
-                                        />
-                                    </FormSwitch>
-                                </div>
-                                <div
-                                    class="flex items-center justify-between gap-3 rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
-                                >
-                                    <span
-                                        class="flex items-center gap-2 text-sm"
-                                    >
-                                        <Lucide
-                                            icon="Accessibility"
-                                            class="h-4 w-4 text-slate-400"
-                                        />
-                                        Accesible / planta baja
-                                    </span>
-                                    <FormSwitch>
-                                        <FormSwitch.Input
-                                            id="room-accessible"
-                                            v-model="form.accessible"
-                                            type="checkbox"
-                                        />
-                                    </FormSwitch>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Ajuste de precio: concepto DISTINTO a la ocupación (vista, piso, ubicación) -->
-                        <div
-                            class="space-y-4 border-t border-slate-200/60 pt-6 dark:border-darkmode-400"
-                        >
-                            <div
-                                class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
-                            >
-                                <Lucide icon="DollarSign" class="h-3.5 w-3.5" />
-                                Ajuste de precio de esta habitación
-                            </div>
-                            <div class="max-w-sm">
-                                <FormLabel htmlFor="room-price-modifier"
-                                    >Ajuste sobre la tarifa del tipo
-                                    ($)</FormLabel
-                                >
-                                <div class="relative">
-                                    <Lucide
-                                        icon="DollarSign"
-                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
-                                    />
-                                    <FormInput
-                                        id="room-price-modifier"
-                                        v-model="form.price_modifier"
-                                        type="number"
-                                        step="0.01"
-                                        placeholder="0"
-                                        class="pl-9"
-                                    />
-                                </div>
-                                <FormHelp>
-                                    NO es por número de personas — es por
-                                    características de ESTE cuarto: +100 vista
-                                    al mar, −50 interior. Se suma a la tarifa
-                                    por cada noche/periodo que se cobre.
-                                </FormHelp>
-                                <FormHelp
-                                    v-if="errors.price_modifier"
-                                    class="text-danger"
-                                    >{{ errors.price_modifier }}</FormHelp
-                                >
                             </div>
                         </div>
 
@@ -2432,11 +2112,12 @@ async function submitDelete() {
                                 Ocupación de esta habitación
                             </div>
                             <p class="text-xs text-slate-500">
-                                El wizard y las reservas nunca aceptan más
-                                personas que la "ocupación máxima" de aquí abajo
-                                — si la dejas vacía, el techo es la capacidad
-                                del tipo. Entre las incluidas y el máximo, cada
-                                persona de más paga el cobro extra.
+                                Esto sí lo usan el wizard, el bot y las
+                                reservas: nunca aceptan más personas que la
+                                "ocupación máxima" de aquí abajo (si la dejas
+                                vacía, el techo es la capacidad del tipo). Entre
+                                las incluidas y el máximo, cada persona de más
+                                paga el cobro extra.
                             </p>
                             <div class="grid grid-cols-12 gap-x-5 gap-y-4">
                                 <div class="col-span-12 sm:col-span-4">
@@ -2654,6 +2335,370 @@ async function submitDelete() {
                                     class="text-danger"
                                     >{{ errors.optional_charges }}</FormHelp
                                 >
+                            </div>
+                        </div>
+
+                        <!-- Ajuste de precio: concepto DISTINTO a la ocupación (vista, piso, ubicación) -->
+                        <div
+                            class="space-y-4 border-t border-slate-200/60 pt-6 dark:border-darkmode-400"
+                        >
+                            <div
+                                class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                <Lucide icon="DollarSign" class="h-3.5 w-3.5" />
+                                Ajuste de precio de esta habitación
+                            </div>
+                            <div class="max-w-sm">
+                                <FormLabel htmlFor="room-price-modifier"
+                                    >Ajuste sobre la tarifa del tipo
+                                    ($)</FormLabel
+                                >
+                                <div class="relative">
+                                    <Lucide
+                                        icon="DollarSign"
+                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                    />
+                                    <FormInput
+                                        id="room-price-modifier"
+                                        v-model="form.price_modifier"
+                                        type="number"
+                                        step="0.01"
+                                        placeholder="0"
+                                        class="pl-9"
+                                    />
+                                </div>
+                                <FormHelp>
+                                    NO es por número de personas — es por
+                                    características de ESTE cuarto: +100 vista
+                                    al mar, −50 interior. Se suma a la tarifa
+                                    por cada noche/periodo que se cobre.
+                                </FormHelp>
+                                <FormHelp
+                                    v-if="errors.price_modifier"
+                                    class="text-danger"
+                                    >{{ errors.price_modifier }}</FormHelp
+                                >
+                            </div>
+                        </div>
+
+                        <!-- Ficha interna: nada de esto llega al huésped, al
+                             wizard ni al bot (ellos leen la ficha del tipo). Va
+                             después de cupo y precio porque es lo opcional. -->
+                        <div
+                            class="space-y-5 border-t border-slate-200/60 pt-6 dark:border-darkmode-400"
+                        >
+                            <div
+                                class="flex items-center gap-2 text-xs font-medium tracking-wide text-slate-400 uppercase"
+                            >
+                                <Lucide
+                                    icon="ClipboardList"
+                                    class="h-3.5 w-3.5"
+                                />
+                                Ficha interna de esta habitación
+                            </div>
+                            <p class="-mt-2 text-xs text-slate-500">
+                                Solo la ve el personal, en el plano y en la
+                                ficha de la habitación, para describirla por
+                                teléfono o en mostrador. El huésped, el wizard y
+                                el bot no la leen: ellos usan la ficha del tipo.
+                                Todo es opcional.
+                            </p>
+                            <div>
+                                <FormLabel htmlFor="room-description"
+                                    >Descripción</FormLabel
+                                >
+                                <FormTextarea
+                                    id="room-description"
+                                    v-model="form.description"
+                                    rows="2"
+                                    placeholder="Lo que distingue a este cuarto: ubicación, terraza, distribución…"
+                                />
+                                <FormHelp
+                                    v-if="errors.description"
+                                    class="text-danger"
+                                    >{{ errors.description }}</FormHelp
+                                >
+                            </div>
+
+                            <!-- Camas (grupo propio) -->
+                            <div>
+                                <div
+                                    class="mb-2 flex items-center justify-between"
+                                >
+                                    <FormLabel class="mb-0">Camas</FormLabel>
+                                    <Button
+                                        type="button"
+                                        variant="outline-secondary"
+                                        size="sm"
+                                        class="min-h-11 rounded-[0.5rem] sm:min-h-0"
+                                        @click="addBed"
+                                    >
+                                        <Lucide
+                                            icon="Plus"
+                                            class="mr-1 h-4 w-4"
+                                        />
+                                        Agregar cama
+                                    </Button>
+                                </div>
+                                <div
+                                    class="rounded-lg border border-dashed border-slate-300/70 p-3 dark:border-darkmode-400"
+                                >
+                                    <div
+                                        v-if="form.beds.length"
+                                        class="space-y-2.5"
+                                    >
+                                        <div
+                                            v-for="(bed, index) in form.beds"
+                                            :key="index"
+                                            class="flex items-center gap-2.5"
+                                        >
+                                            <div
+                                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-400 dark:bg-darkmode-400"
+                                            >
+                                                <Lucide
+                                                    icon="BedDouble"
+                                                    class="h-4 w-4"
+                                                />
+                                            </div>
+                                            <FormSelect
+                                                v-model="bed.type"
+                                                class="flex-1"
+                                            >
+                                                <option
+                                                    v-for="(
+                                                        label, value
+                                                    ) in bedTypes"
+                                                    :key="value"
+                                                    :value="value"
+                                                >
+                                                    {{ label }}
+                                                </option>
+                                            </FormSelect>
+                                            <FormInput
+                                                v-model.number="bed.qty"
+                                                type="number"
+                                                min="1"
+                                                class="w-20 text-center"
+                                            />
+                                            <button
+                                                type="button"
+                                                class="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-slate-400 transition hover:bg-danger/10 hover:text-danger"
+                                                title="Quitar cama"
+                                                @click="removeBed(index)"
+                                            >
+                                                <Lucide
+                                                    icon="Trash2"
+                                                    class="h-4 w-4"
+                                                />
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <div
+                                        v-else
+                                        class="flex items-center justify-center gap-2 py-2 text-xs text-slate-400"
+                                    >
+                                        <Lucide
+                                            icon="BedDouble"
+                                            class="h-4 w-4"
+                                        />
+                                        Sin camas configuradas — se hereda la
+                                        capacidad del tipo.
+                                    </div>
+                                </div>
+                                <FormHelp
+                                    v-if="errors.beds"
+                                    class="text-danger"
+                                    >{{ errors.beds }}</FormHelp
+                                >
+                            </div>
+
+                            <!-- Superficie / vista (la ocupación vive junto al recargo por persona extra, más abajo — son el mismo concepto) -->
+                            <div class="grid grid-cols-12 gap-x-5 gap-y-4">
+                                <div class="col-span-12 sm:col-span-6">
+                                    <FormLabel htmlFor="room-size"
+                                        >Superficie (m²)</FormLabel
+                                    >
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="Ruler"
+                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                        />
+                                        <FormInput
+                                            id="room-size"
+                                            v-model="form.size_m2"
+                                            type="number"
+                                            step="0.1"
+                                            min="0"
+                                            class="pl-9"
+                                            placeholder="24"
+                                        />
+                                    </div>
+                                    <FormHelp
+                                        v-if="errors.size_m2"
+                                        class="text-danger"
+                                        >{{ errors.size_m2 }}</FormHelp
+                                    >
+                                </div>
+                                <div class="col-span-12 sm:col-span-6">
+                                    <FormLabel htmlFor="room-view"
+                                        >Vista</FormLabel
+                                    >
+                                    <div class="relative">
+                                        <Lucide
+                                            icon="Eye"
+                                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                        />
+                                        <FormInput
+                                            id="room-view"
+                                            v-model="form.view"
+                                            type="text"
+                                            list="room-view-options"
+                                            class="pl-9"
+                                            placeholder="Ej. jardín, montaña"
+                                        />
+                                    </div>
+                                    <datalist id="room-view-options">
+                                        <option value="mar" />
+                                        <option value="jardín" />
+                                        <option value="ciudad" />
+                                        <option value="interior" />
+                                    </datalist>
+                                    <FormHelp
+                                        v-if="errors.view"
+                                        class="text-danger"
+                                        >{{ errors.view }}</FormHelp
+                                    >
+                                </div>
+                            </div>
+
+                            <!-- Amenidades -->
+                            <div>
+                                <FormLabel htmlFor="room-amenities"
+                                    >Amenidades extra de esta
+                                    habitación</FormLabel
+                                >
+                                <!-- Las del tipo ya cuentan: se muestran para
+                                     no volver a capturarlas aquí. -->
+                                <div
+                                    v-if="selectedFormType?.amenities?.length"
+                                    class="mb-2.5 flex flex-wrap items-center gap-1.5 text-xs text-slate-500"
+                                >
+                                    <span class="mr-0.5"
+                                        >Ya incluye el tipo:</span
+                                    >
+                                    <span
+                                        v-for="amenity in selectedFormType.amenities"
+                                        :key="amenity"
+                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-slate-600 dark:bg-darkmode-400 dark:text-slate-300"
+                                        >{{ amenity }}</span
+                                    >
+                                </div>
+                                <div class="relative">
+                                    <Lucide
+                                        icon="Sparkles"
+                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.3] text-slate-400"
+                                    />
+                                    <FormInput
+                                        id="room-amenities"
+                                        v-model="amenityInput"
+                                        type="text"
+                                        maxlength="100"
+                                        class="pl-9"
+                                        placeholder="Escribe y presiona Enter: solo lo que el tipo no trae"
+                                        @keydown.enter.prevent="addAmenity"
+                                    />
+                                </div>
+                                <div
+                                    v-if="form.amenities.length"
+                                    class="mt-2.5 flex flex-wrap gap-2 sm:gap-1.5"
+                                >
+                                    <span
+                                        v-for="(
+                                            amenity, index
+                                        ) in form.amenities"
+                                        :key="amenity"
+                                        class="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary"
+                                    >
+                                        {{ amenity }}
+                                        <button
+                                            type="button"
+                                            class="text-primary/50 hover:text-danger"
+                                            title="Quitar"
+                                            @click="removeAmenity(index)"
+                                        >
+                                            <Lucide icon="X" class="h-3 w-3" />
+                                        </button>
+                                    </span>
+                                </div>
+                                <!-- Sugerencias comunes: un clic agrega (extras propios de ESTA habitación) -->
+                                <div
+                                    class="mt-2.5 flex flex-wrap gap-2 sm:gap-1.5"
+                                >
+                                    <button
+                                        v-for="suggestion in AMENITY_SUGGESTIONS.filter(
+                                            (a) =>
+                                                !form.amenities.includes(a) &&
+                                                !typeAmenityKeys.has(
+                                                    a.toLowerCase(),
+                                                ),
+                                        )"
+                                        :key="suggestion"
+                                        type="button"
+                                        class="rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-sm text-slate-600 transition hover:border-primary hover:text-primary sm:px-2 sm:py-0.5 sm:text-xs sm:text-slate-500 dark:border-darkmode-400 dark:text-slate-300"
+                                        @click="form.amenities.push(suggestion)"
+                                    >
+                                        + {{ suggestion }}
+                                    </button>
+                                </div>
+                                <FormHelp
+                                    v-if="errors.amenities"
+                                    class="text-danger"
+                                    >{{ errors.amenities }}</FormHelp
+                                >
+                            </div>
+
+                            <!-- Características (switches en tarjetas) -->
+                            <div class="grid gap-3 sm:grid-cols-2">
+                                <div
+                                    class="flex items-center justify-between gap-3 rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
+                                >
+                                    <span
+                                        class="flex items-center gap-2 text-sm"
+                                    >
+                                        <Lucide
+                                            icon="Cigarette"
+                                            class="h-4 w-4 text-slate-400"
+                                        />
+                                        Se permite fumar
+                                    </span>
+                                    <FormSwitch>
+                                        <FormSwitch.Input
+                                            id="room-smoking"
+                                            v-model="form.smoking"
+                                            type="checkbox"
+                                        />
+                                    </FormSwitch>
+                                </div>
+                                <div
+                                    class="flex items-center justify-between gap-3 rounded-lg border border-slate-200/70 p-3 dark:border-darkmode-400"
+                                >
+                                    <span
+                                        class="flex items-center gap-2 text-sm"
+                                    >
+                                        <Lucide
+                                            icon="Accessibility"
+                                            class="h-4 w-4 text-slate-400"
+                                        />
+                                        Accesible / planta baja
+                                    </span>
+                                    <FormSwitch>
+                                        <FormSwitch.Input
+                                            id="room-accessible"
+                                            v-model="form.accessible"
+                                            type="checkbox"
+                                        />
+                                    </FormSwitch>
+                                </div>
                             </div>
                         </div>
 

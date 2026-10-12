@@ -22,7 +22,7 @@ enum RoomStatus: string
             self::Available => 'green',
             self::Reserved => 'cyan',
             self::Occupied => 'red',
-            self::Dirty => 'orange',
+            self::Dirty => 'brown',
             self::Cleaning => 'blue',
             self::Maintenance => 'gray',
         };

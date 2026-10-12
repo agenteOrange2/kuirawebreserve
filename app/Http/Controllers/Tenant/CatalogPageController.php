@@ -78,6 +78,8 @@ class CatalogPageController extends Controller
                     'duration_value' => $plan->duration_value,
                     'duration_label' => $plan->durationLabel(),
                     'price' => $plan->price,
+                    'included_people' => $plan->included_people,
+                    'max_people' => $plan->max_people,
                     'min_advance_unit' => $plan->min_advance_unit?->value,
                     'min_advance_value' => $plan->min_advance_value,
                     'min_advance_weekdays' => $plan->minAdvanceWeekdays(),

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Guest;
 use App\Models\Reservation;
 use App\Models\Room;
+use App\Services\StaffAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
@@ -30,8 +31,11 @@ class QuickSearchController extends Controller
 
         $user = $request->user();
         $groups = [];
+        // Lo que el rol tiene oculto (/usuarios/roles) tampoco se busca:
+        // el resultado lleva a una pantalla que le daría 403.
+        $hidden = StaffAccess::hiddenAreasFor($user);
 
-        if ($user?->can('reservations.view')) {
+        if ($user?->can('reservations.view') && ! in_array('reservas', $hidden, true)) {
             $groups[] = [
                 'label' => 'Reservas',
                 'icon' => 'CalendarCheck',
@@ -39,7 +43,7 @@ class QuickSearchController extends Controller
             ];
         }
 
-        if ($user?->can('guests.view')) {
+        if ($user?->can('guests.view') && ! in_array('huespedes', $hidden, true)) {
             $groups[] = [
                 'label' => 'Huéspedes',
                 'icon' => 'Users',
@@ -47,7 +51,7 @@ class QuickSearchController extends Controller
             ];
         }
 
-        if ($user?->can('rooms.view')) {
+        if ($user?->can('rooms.view') && ! in_array('habitaciones', $hidden, true)) {
             $groups[] = [
                 'label' => 'Habitaciones',
                 'icon' => 'BedDouble',

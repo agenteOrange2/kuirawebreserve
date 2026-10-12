@@ -173,6 +173,9 @@ class InboxController extends Controller
             // antes había que salir a /reservas o /pagos para saber si el
             // huésped ya había pagado o hasta qué hora se le sostiene.
             'reservation' => $this->reservationCard($refreshed),
+            // Ventana de 24 h de WhatsApp/Messenger/IG: cuánto le queda, o
+            // desde cuándo se cerró y si se puede retomar con plantilla.
+            'window' => $this->windowPayload($refreshed),
             'messages' => $conversation->messages()->with(['sender:id,name', 'media'])->orderBy('id')->get()->map(fn (Message $m) => [
                 'id' => $m->id,
                 'direction' => $m->direction,
@@ -184,6 +187,8 @@ class InboxController extends Controller
                 'voice_note' => (bool) ($m->meta['voice_note'] ?? false),
                 // El canal lo rechazó: el huésped NO lo recibió.
                 'undelivered' => (bool) ($m->meta['undelivered'] ?? false),
+                'delivery_error' => $m->meta['delivery_error'] ?? null,
+                'template' => $m->meta['template'] ?? null,
                 'attachments' => $m->attachmentsPayload(),
                 'at' => $m->created_at->format('d/m H:i'),
             ]),
@@ -293,12 +298,147 @@ class InboxController extends Controller
             }
         }
 
+        $closesAt = $conversation->windowClosesAt();
+
         return response()->json([
             'id' => $message->id,
             // El adjunto queda en el hilo aunque el canal no lo soporte; el
             // staff necesita saber que al huésped no le llegó.
             'delivered' => $delivered,
+            // Por eso no salió: la ventana de 24 h ya estaba cerrada.
+            'window_closed' => ! $delivered && $closesAt !== null && $closesAt->isPast(),
         ], 201);
+    }
+
+    /**
+     * Plantillas aprobadas de WhatsApp para retomar una conversación con la
+     * ventana de 24 h cerrada, y la que el hotel usó la última vez.
+     */
+    public function templates(Conversation $conversation, \App\Services\Meta\MetaApi $meta): JsonResponse
+    {
+        $link = $conversation->channel?->type === 'whatsapp' ? $meta->linkFor($conversation) : null;
+
+        if ($link === null) {
+            return response()->json(['templates' => [], 'reason' => 'Las plantillas salen por el WhatsApp oficial (Meta) y este hotel no lo tiene conectado. Por ahora contáctalo por otra vía.']);
+        }
+
+        $templates = $meta->approvedTemplates($link);
+
+        return response()->json([
+            'templates' => $templates ?? [],
+            'reason' => match (true) {
+                $templates === null => 'No se pudieron leer las plantillas de Meta. Revisa que el canal de WhatsApp siga conectado.',
+                $templates === [] => 'Tu cuenta de WhatsApp todavía no tiene plantillas aprobadas por Meta.',
+                default => null,
+            },
+            'default' => (Property::query()->first()?->settings ?? [])['whatsapp_reopen_template'] ?? null,
+        ]);
+    }
+
+    /**
+     * Retoma por WhatsApp con una plantilla aprobada: el único mensaje que
+     * Meta deja pasar 24 h después del último mensaje del huésped. Cuando
+     * contesta, la ventana se vuelve a abrir y ya se escribe normal.
+     */
+    public function sendTemplate(Request $request, Conversation $conversation, \App\Services\Meta\MetaApi $meta): JsonResponse
+    {
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:512'],
+            'language' => ['required', 'string', 'max:15'],
+        ]);
+
+        $link = $conversation->channel?->type === 'whatsapp' ? $meta->linkFor($conversation) : null;
+
+        if ($link === null) {
+            return response()->json(['message' => 'Las plantillas solo funcionan en el WhatsApp oficial del hotel.'], 422);
+        }
+
+        $template = collect($meta->approvedTemplates($link) ?? [])
+            ->first(fn (array $t) => $t['name'] === $data['name'] && $t['language'] === $data['language']);
+
+        if ($template === null) {
+            return response()->json(['message' => 'Esa plantilla ya no está aprobada en Meta.'], 422);
+        }
+
+        // {{1}} = nombre del huésped, {{2}} = nombre del hotel. Lo demás no
+        // lo sabe llenar la bandeja.
+        if ($template['params'] > 2) {
+            return response()->json(['message' => 'Esa plantilla pide más datos de los que la bandeja sabe llenar (nombre y hotel). Usa una con uno o dos campos.'], 422);
+        }
+
+        $property = Property::query()->first();
+        $name = trim((string) ($conversation->guest?->first_name ?: strtok((string) $conversation->contact_name, ' ')));
+        $values = array_slice([$name !== '' ? $name : 'hola', (string) ($property?->name ?? '')], 0, $template['params']);
+
+        $body = preg_replace_callback('/\{\{\s*(\d+)\s*\}\}/', fn (array $m) => $values[(int) $m[1] - 1] ?? '', $template['body']) ?? $template['body'];
+        $sent = $meta->sendTemplate($link, (string) $conversation->contact_phone, $template['name'], $template['language'], $values);
+
+        $message = $conversation->messages()->create([
+            'direction' => 'out',
+            'sender_type' => 'staff',
+            'sender_id' => $request->user()?->id,
+            'body' => $body,
+            'meta' => array_filter([
+                'template' => $template['name'],
+                'wamids' => $meta->lastSentIds ?: null,
+                'undelivered' => $sent ? null : true,
+                'delivery_error' => $sent ? null : 'Meta no aceptó la plantilla.',
+            ], fn ($v) => $v !== null),
+            'created_at' => now(),
+        ]);
+
+        $conversation->update([
+            'status' => Conversation::STATUS_OPEN,
+            'bot_enabled' => false,
+            'assigned_to' => $conversation->assigned_to ?? $request->user()?->id,
+            'last_message_at' => now(),
+            'archived_at' => null,
+        ]);
+
+        // La próxima vez la bandeja propone la misma.
+        if ($sent && $property !== null) {
+            $property->update(['settings' => array_merge($property->settings ?? [], [
+                'whatsapp_reopen_template' => ['name' => $template['name'], 'language' => $template['language']],
+            ])]);
+        }
+
+        return response()->json(['id' => $message->id, 'delivered' => $sent], $sent ? 201 : 422);
+    }
+
+    /**
+     * La ventana de 24 h vista desde la bandeja. WhatsApp, Messenger e
+     * Instagram solo dejan contestar con texto libre hasta 24 h después del
+     * último mensaje del huésped; pasado eso el mensaje "sale" y Meta lo
+     * rechaza. 48 h no existe: la regla es de Meta, no del hotel.
+     *
+     * @return array<string, mixed>|null
+     */
+    protected function windowPayload(Conversation $conversation): ?array
+    {
+        $type = $conversation->channel?->type;
+        $closesAt = $conversation->windowClosesAt();
+
+        if ($closesAt === null) {
+            return in_array($type, Conversation::WINDOW_CHANNELS, true)
+                ? ['open' => false, 'minutes_left' => 0, 'label' => 'El huésped todavía no ha escrito por este canal.', 'templates' => $type === 'whatsapp']
+                : null;
+        }
+
+        $minutes = (int) now()->diffInMinutes($closesAt, false);
+        $open = $minutes > 0;
+
+        return [
+            'open' => $open,
+            'minutes_left' => max(0, $minutes),
+            'closes_at' => $closesAt->toIso8601String(),
+            'closes_label' => $closesAt->locale('es')->isoFormat('ddd D [de] MMM, HH:mm'),
+            'label' => $open
+                ? 'Quedan '.$this->waitingLabel($minutes).' para contestar'
+                : 'La ventana de 24 h se cerró hace '.$this->waitingLabel((int) $closesAt->diffInMinutes(now())),
+            // Solo el WhatsApp oficial tiene plantillas; Messenger e IG no.
+            'templates' => $type === 'whatsapp',
+            'channel_label' => Channel::TYPE_LABELS[$type] ?? $type,
+        ];
     }
 
     /** Estado, asignación, devolución al bot y archivado. */
@@ -309,7 +449,15 @@ class InboxController extends Controller
             'assigned_to' => ['sometimes', 'nullable', 'exists:users,id'],
             'bot_enabled' => ['sometimes', 'boolean'],
             'archived' => ['sometimes', 'boolean'],
+            // Al devolver al bot: 'auto' contesta solo si el huésped quedó
+            // esperando; 'now' le pide que escriba aunque lo último haya sido
+            // del hotel; 'no' solo enciende el interruptor (como antes).
+            'respond' => ['sometimes', Rule::in(['auto', 'now', 'no'])],
         ]);
+
+        $respond = $data['respond'] ?? 'auto';
+        unset($data['respond']);
+        $returningToBot = ($data['bot_enabled'] ?? false) && ! $conversation->bot_enabled;
 
         if (array_key_exists('archived', $data)) {
             // Archivar implica cerrar; al desarchivar conserva su estado.
@@ -324,7 +472,23 @@ class InboxController extends Controller
 
         $conversation->update($data);
 
-        return response()->json(['ok' => true]);
+        // El bot contesta de una vez si el huésped quedó esperando (o si el
+        // personal se lo pidió), en vez de quedarse callado hasta el
+        // siguiente mensaje.
+        $botResponding = $returningToBot
+            && $respond !== 'no'
+            && $conversation->channel !== null
+            && ($respond === 'now' || \App\Jobs\ResumeBotReply::guestIsWaiting($conversation));
+
+        if ($botResponding) {
+            \App\Jobs\ResumeBotReply::dispatch(
+                (string) tenant('id'),
+                $conversation->id,
+                (int) $conversation->messages()->max('id'),
+            );
+        }
+
+        return response()->json(['ok' => true, 'bot_responding' => $botResponding]);
     }
 
     /** Archiva de golpe todas las conversaciones ya resueltas. */

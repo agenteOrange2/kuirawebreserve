@@ -32,8 +32,10 @@ use Throwable;
  *    justifica. El cierre de día itera reservas, así que jamás volvía a
  *    mirar un cuarto cuya reserva ya se cerró: eso congeló hoteles enteros
  *    durante días.
- * 4. Limpieza automática: sucia → en limpieza → disponible por tiempo,
- *    cuando el hotel eligió modo automático o ambos.
+ * 4. Limpieza automática: sucia → en limpieza por tiempo cuando el hotel
+ *    eligió modo automático o ambos; en limpieza → disponible también en
+ *    manual si prendió "liberar al cumplirse el tiempo". El registro de la
+ *    camarista se cierra como "la cerró el reloj" (ChangeRoomStatus).
  *
  * Correr por tenant: tenants:run.
  */
@@ -55,10 +57,20 @@ class AdvanceHousekeeping extends Command
         // nadie justifica no es limpieza, es un cuarto invendible.
         $this->releaseOrphanReserved($changeRoomStatus);
 
-        if ($policy->autoAdvances()) {
-            $advanced = $this->advance(RoomStatus::Dirty, RoomStatus::Cleaning, $policy->dirtyMinutes(), $changeRoomStatus)
-                + $this->advance(RoomStatus::Cleaning, RoomStatus::Available, $policy->cleaningMinutes(), $changeRoomStatus);
+        $advanced = 0;
 
+        if ($policy->autoAdvances()) {
+            $advanced += $this->advance(RoomStatus::Dirty, RoomStatus::Cleaning, $policy->dirtyMinutes(), $changeRoomStatus);
+        }
+
+        // Separado del anterior: en modo manual el hotel puede querer que la
+        // camarista INICIE a mano y aun así que el cuarto se libere solo al
+        // cumplirse el tiempo asignado.
+        if ($policy->releasesCleaningByClock()) {
+            $advanced += $this->advance(RoomStatus::Cleaning, RoomStatus::Available, $policy->cleaningMinutes(), $changeRoomStatus);
+        }
+
+        if ($advanced > 0) {
             $this->info("Limpieza automática: {$advanced} habitación(es) avanzada(s).");
         }
 

@@ -82,6 +82,13 @@
                 <td class="muted">Suma de los dos anteriores</td>
                 <td class="right">${{ number_format($money['sold_value'], 2) }}</td>
             </tr>
+            @if (($money['courtesies'] ?? 0) > 0)
+            <tr>
+                <td>Cortesías</td>
+                <td class="muted">{{ $money['courtesies_count'] }} aprobadas, ya restadas de lo vendido</td>
+                <td class="right">-${{ number_format($money['courtesies'], 2) }}</td>
+            </tr>
+            @endif
             <tr>
                 <td>Ya abonado de esas reservas</td>
                 <td class="muted">{{ $money['reserved_paid_pct'] }}% del hospedaje de reservas</td>

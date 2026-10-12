@@ -41,6 +41,8 @@ class PlanController extends Controller
                 'description' => $plan->description,
                 'price_monthly' => (int) $plan->price_monthly,
                 'activation_fee' => (int) $plan->activation_fee,
+                'billing_periods' => Plan::normalizePeriods($plan->billing_periods ?? []),
+                'billing_options' => $plan->billingOptions(),
                 'max_properties' => $plan->max_properties,
                 'max_rooms' => $plan->max_rooms,
                 'max_users' => $plan->max_users,
@@ -59,6 +61,11 @@ class PlanController extends Controller
                     'by_id' => $row->user_id,
                 ] : null,
             ]),
+            // Periodos por adelantado que se pueden ofrecer (meses => nombre).
+            'periods' => collect(Plan::PERIODS)
+                ->map(fn (string $label, int $months) => ['months' => $months, 'label' => $label])
+                ->values(),
+            'maxDiscount' => Plan::MAX_DISCOUNT,
             // Catálogo de módulos (config/modules.php): key => label,
             // description, available (false = en desarrollo).
             'moduleCatalog' => config('modules', []),
@@ -91,9 +98,29 @@ class PlanController extends Controller
 
     public function update(Request $request, Plan $plan): RedirectResponse
     {
+        $before = Plan::periodsSummary($plan->billing_periods);
         $plan->update($this->validated($request, key: false));
 
+        // La bitácora solo compara columnas simples; los periodos son una
+        // lista, así que el cambio se le pasa ya en palabras.
+        if (($after = Plan::periodsSummary($plan->billing_periods)) !== $before) {
+            $request->attributes->set('admin_activity.changes', ['billing_periods' => [$before, $after]]);
+        }
+
         return redirect()->route('admin.plans');
+    }
+
+    /**
+     * Interruptor de la tarjeta: solo prende o apaga la venta del plan. No
+     * pasa por la validación completa: con datos heredados (una cuota de IA
+     * en 0 del seed) el guardado entero se rechazaba y el switch regresaba
+     * a su lugar sin decir nada.
+     */
+    public function toggleActive(Request $request, Plan $plan): RedirectResponse
+    {
+        $plan->update($request->validate(['active' => ['required', 'boolean']]));
+
+        return back();
     }
 
     public function destroy(Plan $plan): RedirectResponse
@@ -133,6 +160,11 @@ class PlanController extends Controller
             'price_monthly' => ['required', 'integer', 'min:0'],
             // Cuota única de activación (tabla de inversión del documento).
             'activation_fee' => ['nullable', 'integer', 'min:0'],
+            // Pago por adelantado: periodos del catálogo, uno por duración,
+            // cada uno con su descuento por tiempo en porcentaje.
+            'billing_periods' => ['nullable', 'array', 'max:'.count(Plan::PERIODS)],
+            'billing_periods.*.months' => ['required', 'integer', Rule::in(array_keys(Plan::PERIODS)), 'distinct'],
+            'billing_periods.*.discount' => ['required', 'integer', 'min:0', 'max:'.Plan::MAX_DISCOUNT],
             'max_properties' => ['nullable', 'integer', 'min:1'],
             'max_rooms' => ['nullable', 'integer', 'min:1'],
             'max_users' => ['nullable', 'integer', 'min:1'],
@@ -150,11 +182,18 @@ class PlanController extends Controller
             'key.regex' => 'Solo minúsculas, números y guiones.',
             'key.unique' => 'Ya existe un plan con esa clave.',
             'modules.*.in' => 'Módulo desconocido.',
+            'billing_periods.*.months.distinct' => 'Ese periodo ya está en la lista.',
+            'billing_periods.*.discount.max' => 'El descuento no puede pasar de '.Plan::MAX_DISCOUNT.' %.',
+            'billing_periods.*.discount.*' => 'Escribe un descuento entre 0 y '.Plan::MAX_DISCOUNT.' %.',
         ]);
 
         // ai_enabled queda como columna espejo del módulo agente-ia un ciclo
         // por compatibilidad (Plan::toConfigArray ya lee de modules).
         $data['modules'] = array_values($data['modules'] ?? []);
+        if ($request->has('billing_periods')) {
+            // Vacío se guarda null (solo mensual), igual que un plan de antes.
+            $data['billing_periods'] = Plan::normalizePeriods($data['billing_periods'] ?? []) ?: null;
+        }
         $data['ai_enabled'] = $hasAi;
 
         return $data;

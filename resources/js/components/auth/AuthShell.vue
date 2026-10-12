@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { usePage } from '@inertiajs/vue3';
-import { computed, watchEffect } from 'vue';
+import { computed, onBeforeUnmount, onMounted, watchEffect } from 'vue';
 import Lucide from '@/components/Base/Lucide';
+import { updateTheme } from '@/composables/useAppearance';
+import type { Appearance } from '@/types';
 import type { TenantBrand } from '@/types/auth';
 
 /**
@@ -82,6 +84,23 @@ const overlayClass = computed(
         })[branding.value.login_overlay ?? 'strong'] ??
         'from-theme-1/80 to-theme-2/80',
 );
+
+// El acceso va siempre en claro (ver app.blade.php). Al llegar aquí desde el
+// panel sin recargar (cerrar sesión) se quita el modo oscuro, y al entrar se
+// devuelve la preferencia guardada de la persona.
+const storedAppearance = (): Appearance => {
+    try {
+        const saved = localStorage.getItem('appearance');
+        if (saved) return saved as Appearance;
+    } catch {
+        // Sin acceso a localStorage: se usa la cookie.
+    }
+    const cookie = document.cookie.match(/(?:^|;\s*)appearance=(\w+)/);
+
+    return (cookie?.[1] as Appearance | undefined) ?? 'system';
+};
+onMounted(() => document.documentElement.classList.remove('dark'));
+onBeforeUnmount(() => updateTheme(storedAppearance()));
 
 // Colores del panel del hotel también en su acceso (mismas variables que
 // pisa RazeLayout), para que entrar se sienta parte del mismo lugar.

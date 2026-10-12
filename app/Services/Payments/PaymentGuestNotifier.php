@@ -235,7 +235,7 @@ class PaymentGuestNotifier
         $body = "Tenemos listo el cobro de tu reserva {$reservation->displayCode()}: {$request->conceptLabel()} de {$request->amountLabel()}.";
 
         $body .= $request->checkout_url
-            ? " Puedes pagarlo en este link seguro: {$request->checkout_url}. Al completar el pago, tu reserva se confirma sola."
+            ? " Puedes pagarlo en este link seguro:\n{$request->checkout_url}\n\nAl completar el pago, tu reserva se confirma sola."
             : $this->transferInstructions();
 
         $this->push($request->reservation_id, $body, subject: 'Opciones de pago de tu reserva');
@@ -371,8 +371,12 @@ class PaymentGuestNotifier
         // el registro de llegada. El texto anterior la presentaba solo como
         // "pre-registro" sin decir qué era, y el dueño no entendía qué tenía
         // que ver (2026-09-13); ahora dice qué se hace ahí y con qué código.
+        // La liga va sola en su renglón y al final: pegada a un ":" WhatsApp
+        // la tomaba como parte de la dirección y la página no abría (pedido
+        // del dueño, 2026-10-08). Lleva el código para no teclearlo.
         if ($lookup = $this->bookingLookupUrl()) {
-            $body .= " Puedes consultar tu reserva y adelantar tu registro de llegada (hora estimada y placa del vehículo) en {$lookup}: entra con tu código {$reservation->displayCode()} y tu número de teléfono.";
+            $body .= "\n\nPuedes consultar tu reserva y adelantar tu registro de llegada (hora estimada y placa del vehículo) con tu código {$reservation->displayCode()} y tu número de teléfono aquí:\n"
+                .$this->lookupLink($lookup, $reservation->displayCode());
         }
 
         \Illuminate\Support\Facades\Cache::put($this->confirmationKey($reservation), true, now()->addMinutes(30));
@@ -411,14 +415,16 @@ class PaymentGuestNotifier
         if (($tenant === null || $tenant->hasModule('encuestas')) && $policy->postStaySurveyEnabled()) {
             $survey = \App\Models\StaySurvey::forStay($stay);
             $url = $this->absoluteTenantUrl(route('tenant.survey', ['token' => $survey->token], false));
-            $body .= " ¿Cómo te fue? Cuéntanos en un minuto: {$url}.";
+            $body .= " ¿Cómo te fue? Cuéntanos en un minuto aquí:\n{$url}";
         }
 
         if ($review = $policy->reviewUrl()) {
-            $body .= " Si tienes un minuto, tu opinión nos ayuda mucho: puedes dejarnos una reseña aquí: {$review}.";
+            $body .= "\n\nSi tienes un minuto, tu opinión nos ayuda mucho: puedes dejarnos una reseña aquí:\n{$review}";
         }
 
-        $body .= ' Te esperamos pronto de vuelta.';
+        // En su propio renglón: pegado a la liga, el canal lo tomaba como
+        // parte de ella.
+        $body .= "\n\nTe esperamos pronto de vuelta.";
 
         // Con reserva de por medio, el aviso sigue el hilo o el canal
         // directo de siempre; un walk-in sin reserva sale directo al
@@ -445,6 +451,12 @@ class PaymentGuestNotifier
      * secas hereda un host equivocado). null si el hotel no tiene el módulo
      * motor-web: la página respondería 403.
      */
+    /** La consulta pública con el folio ya puesto (/reserva lee ?codigo=). */
+    protected function lookupLink(string $lookup, string $code): string
+    {
+        return $lookup.'?codigo='.rawurlencode($code);
+    }
+
     protected function bookingLookupUrl(): ?string
     {
         $tenant = tenant();
@@ -521,7 +533,8 @@ class PaymentGuestNotifier
             .$this->guaranteeNotice($live->first());
 
         if ($lookup = $this->bookingLookupUrl()) {
-            $body .= " Puedes consultar tu reserva y adelantar tu registro de llegada en {$lookup}: entra con tu folio {$code} y tu número de teléfono.";
+            $body .= "\n\nPuedes consultar tu reserva y adelantar tu registro de llegada con tu folio {$code} y tu número de teléfono aquí:\n"
+                .$this->lookupLink($lookup, $code);
         }
 
         // El hilo puede estar colgado de cualquiera de las habitaciones del

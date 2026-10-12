@@ -1,11 +1,19 @@
 <script setup lang="ts">
-import { Link } from '@inertiajs/vue3';
+import { Link, usePage } from '@inertiajs/vue3';
 import axios from 'axios';
 import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import Lucide from '@/components/Base/Lucide';
+import { useModules } from '@/composables/useModules';
 import { useToasts } from '@/composables/useToasts';
 import RazeLayout from '@/layouts/RazeLayout.vue';
+
+// Cortesías (módulo cortesias): su tope lo pone solo el propietario.
+const sharedTenant = usePage().props.panelTenant as
+    | { is_owner?: boolean }
+    | undefined;
+const showCourtesySettings =
+    !!sharedTenant?.is_owner && useModules().hasModule('cortesias');
 
 interface PlanLimitRow {
     label: string;
@@ -517,6 +525,30 @@ async function requestModule(mod: PlanModuleRow) {
                             Área aparte: los conceptos y precios que se cobran
                             cuando se revisa la habitación antes de dejar salir
                             al cliente.
+                        </p>
+                    </div>
+                    <Lucide
+                        icon="ArrowRight"
+                        class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                    />
+                </Link>
+
+                <!-- Cortesías: tope mensual (solo propietario) -->
+                <Link
+                    v-if="showCourtesySettings"
+                    :href="route('tenant.courtesy-settings')"
+                    class="box box--stacked col-span-12 flex items-center gap-3 p-4 transition hover:border-primary/30 xl:col-span-6"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-pending/10 bg-pending/10 text-pending"
+                    >
+                        <Lucide icon="HandHeart" class="h-4 w-4" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="text-sm font-medium">Cortesías</div>
+                        <p class="mt-0.5 text-xs text-slate-500">
+                            Área aparte: el tope mensual de lo que se regala en
+                            hospedaje. Pasarlo pide confirmar dos veces.
                         </p>
                     </div>
                     <Lucide

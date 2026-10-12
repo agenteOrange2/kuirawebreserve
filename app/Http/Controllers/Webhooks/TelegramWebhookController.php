@@ -258,11 +258,15 @@ class TelegramWebhookController extends Controller
             $noCaption = $media !== null && in_array($body, ['[Imagen]', '[Documento]'], true)
                 && $mediaOutcome !== \App\Services\Channels\InboundMediaService::OUTCOME_DESCRIBED;
 
-            if (! $noCaption && $channel->mode === 'auto' && $conversation->bot_enabled && $brain->isConfigured()) {
+            // De guardia: el bot pasó la conversación al personal y nadie la
+            // ha tomado; lo nuevo que pregunte el huésped lo contesta él.
+            $covering = false;
+
+            if (! $noCaption && $channel->mode === 'auto' && ($conversation->bot_enabled || ($covering = $brain->coversHandoff($conversation))) && $brain->isConfigured()) {
                 // "escribiendo..." mientras piensa (Telegram lo apaga solo).
                 $this->api->sendChatAction($link, $from);
 
-                $reply = $brain->replyTo($conversation, $message);
+                $reply = $brain->replyTo($conversation, $message, $covering);
 
                 if ($reply?->body && ! $this->api->sendText($link, $from, $reply->body)) {
                     app(\App\Services\Channels\OutboundMessenger::class)->flagUndelivered($conversation, $reply);

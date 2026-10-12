@@ -81,6 +81,7 @@ class UpdateReservation
                 $adults + $children,
                 $ratePlan->unitsFor($start, $end),
                 $selectedConcepts,
+                $ratePlan,
             );
 
             // Las líneas congeladas (productos del wizard, add-ons y
@@ -105,7 +106,14 @@ class UpdateReservation
             // nuevo y se vuelve a juzgar SOLO lo que la edición pudo mover
             // (fechas, noches, tipo de habitación).
             [$couponCode, $discount] = $this->frozenDiscount($reservation, $ratePlan, $start, $end, $total);
-            $total = round(max(0, $total - $discount), 2);
+
+            // Cortesía aprobada (módulo cortesias): igual que el cupón, se
+            // congela y se vuelve a medir sobre el hospedaje nuevo — gratis
+            // y porcentaje lo siguen, un monto fijo se topa a él.
+            $courtesy = app(\App\Services\Courtesies\CourtesyService::class)
+                ->recalculate($reservation, $total, $extraCharges);
+
+            $total = round(max(0, $total - $discount - $courtesy), 2);
 
             $reservation->update([
                 'property_id' => $room->property_id,
@@ -128,6 +136,7 @@ class UpdateReservation
                 'total_amount' => $total,
                 'coupon_code' => $couponCode,
                 'discount_amount' => $discount,
+                'courtesy_amount' => $courtesy,
                 'extra_charges' => $extraCharges ?: null,
                 // Cambiar tarifa/fechas recalcula anticipo y fecha límite.
                 // El "último momento" se mide desde que se reservó, no desde

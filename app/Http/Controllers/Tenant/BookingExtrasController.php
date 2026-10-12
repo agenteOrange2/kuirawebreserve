@@ -173,9 +173,8 @@ class BookingExtrasController extends Controller
         // Fuera del horario de transferencias la opción no se ofrece: antes se
         // pintaba "Transferencia bancaria" a cualquier hora y al tocarla el
         // cobro se rechazaba.
-        $accountsCount = app(\App\Services\ReservationPolicy::class)
-            ->guestTransferAccounts($enabled['transfer'])
-            ->count();
+        $policy = app(\App\Services\ReservationPolicy::class);
+        $accountsCount = $policy->guestTransferAccounts($enabled['transfer'])->count();
 
         $enabledProviders = array_keys(array_filter([
             'stripe' => $enabled['stripe'],
@@ -197,6 +196,11 @@ class BookingExtrasController extends Controller
             'transfer' => [
                 'available' => $accountsCount > 0,
                 'accounts_count' => $accountsCount,
+                // Activa pero fuera de horario: se dice cuándo sí, en vez de
+                // que la opción desaparezca sin explicación.
+                'notice' => $enabled['transfer'] && $accountsCount === 0
+                    ? $policy->transferClosedNotice()
+                    : null,
             ],
         ]);
     }

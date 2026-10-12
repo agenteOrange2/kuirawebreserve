@@ -29,3 +29,25 @@ export function useEmbedResize() {
 
     onBeforeUnmount(() => observer?.disconnect());
 }
+
+/**
+ * Lleva la vista a un elemento. Dentro del widget (iframe que crece con su
+ * contenido y no tiene scroll propio) scrollIntoView no mueve la página del
+ * hotel: se le pide a widget.js que lo haga con `kuira:scroll`.
+ */
+export function revealElement(el: HTMLElement | null | undefined): void {
+    if (!el) return;
+    if (window.self === window.top) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+    }
+    const top = el.getBoundingClientRect().top + window.scrollY;
+    window.parent.postMessage({ type: 'kuira:scroll', top }, '*');
+}
+
+/** Dentro del widget, lleva la página del hotel al inicio del iframe. */
+export function revealEmbedTop(): void {
+    if (window.self !== window.top) {
+        window.parent.postMessage({ type: 'kuira:scroll', top: 0 }, '*');
+    }
+}

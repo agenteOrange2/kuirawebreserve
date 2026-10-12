@@ -175,37 +175,10 @@ class ExperienceWizardController extends Controller
      */
     public function paymentOptions(): JsonResponse
     {
-        $gate = app(\App\Services\Payments\PaymentMethodGate::class);
-        $enabled = $gate->methodsFor((string) tenant('id'));
-
-        // Fuera del horario de transferencias no se ofrece (también la usa el
-        // wizard de grupos).
-        $accountsCount = app(\App\Services\ReservationPolicy::class)
-            ->guestTransferAccounts($enabled['transfer'])
-            ->count();
-
-        $enabledProviders = array_keys(array_filter([
-            'stripe' => $enabled['stripe'],
-            'mercadopago' => $enabled['mercadopago'],
-            'paypal' => $enabled['paypal'],
-        ]));
-        $links = \App\Models\Central\PaymentGatewayLink::query()
-            ->where('tenant_id', (string) tenant('id'))
-            ->where('active', true)
-            ->whereIn('provider', $enabledProviders)
-            ->orderBy('id')
-            ->get();
-
-        return response()->json([
-            'gateways' => $links->map(fn (\App\Models\Central\PaymentGatewayLink $link) => [
-                'provider' => $link->provider,
-                'label' => $link->providerLabel(),
-            ])->values(),
-            'transfer' => [
-                'available' => $accountsCount > 0,
-                'accounts_count' => $accountsCount,
-            ],
-        ]);
+        // Las mismas formas de cobro que el wizard de habitaciones (también
+        // la usa el de grupos): era una copia exacta que había que mantener
+        // en dos lugares.
+        return app(BookingExtrasController::class)->paymentOptions();
     }
 
     /**

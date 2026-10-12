@@ -79,6 +79,7 @@ class GeneralSettingsPageController extends Controller
                 'check_in_time' => $settings['check_in_time'] ?? '15:00',
                 'check_out_time' => $settings['check_out_time'] ?? '12:00',
                 'night_cutoff_time' => $settings['night_cutoff_time'] ?? null,
+                'extension_rate_ladder' => (bool) ($settings['extension_rate_ladder'] ?? false),
                 'currency' => $settings['currency'] ?? 'MXN',
                 // Doble moneda: secundaria + tipo de cambio para mostrar el
                 // "aprox" en el wizard y las confirmaciones. Null = una sola.

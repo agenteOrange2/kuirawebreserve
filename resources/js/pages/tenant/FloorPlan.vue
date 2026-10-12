@@ -45,6 +45,7 @@ import CashDialog from '@/pages/tenant/floorplan/CashDialog.vue';
 import { useConfirm } from '@/pages/tenant/floorplan/confirm';
 import type { ConfirmOptions } from '@/pages/tenant/floorplan/confirm';
 import ConfirmDialog from '@/pages/tenant/floorplan/ConfirmDialog.vue';
+import MethodPicker from '@/pages/tenant/floorplan/MethodPicker.vue';
 import PlanModal from '@/pages/tenant/floorplan/PlanModal.vue';
 import ReserveModal from '@/pages/tenant/floorplan/ReserveModal.vue';
 import WalkInModal from '@/pages/tenant/floorplan/WalkInModal.vue';
@@ -124,6 +125,8 @@ const props = defineProps<{
     cleaningChecklist: { key: string; label: string }[];
     cleaningLinens: { key: string; label: string }[];
     cleaningKinds: Record<string, string>;
+    // Cortesías (módulo cortesias): quién puede darlas o pedirlas.
+    courtesyAccess?: import('@/components/courtesies/types').CourtesyAccess;
 }>();
 
 // Candado de edición (spec-plan-maestro E5): por defecto NADIE mueve
@@ -620,7 +623,7 @@ const STATUS_COLOR_TOKENS: Record<string, string> = {
     cyan: 'info',
     // Ver status.ts: ocupada es rojo, no el color de marca del hotel.
     red: 'danger',
-    orange: 'pending',
+    brown: 'dirty',
     blue: 'warning',
     gray: 'dark',
 };
@@ -741,7 +744,7 @@ const roomCreditEnabled = computed(() => !isMotel.value);
 const sellNowActions = computed<ArrivalAction[]>(() => {
     const express: ArrivalAction = {
         key: 'express',
-        label: isBoth.value ? 'Registro exprés' : 'Registrar llegada',
+        label: isBoth.value ? 'Registro exprés (Motel)' : 'Registrar llegada',
         hint: isBoth.value
             ? 'Placa o identificación y cobro, sin pedir datos'
             : 'Placa o identificación y cobro, aquí mismo',
@@ -751,7 +754,9 @@ const sellNowActions = computed<ArrivalAction[]>(() => {
 
     const walkIn: ArrivalAction = {
         key: 'walkin',
-        label: 'Llegó sin reserva',
+        // En "ambos" se ven las dos puertas juntas: la etiqueta dice cuál es
+        // la del motel y cuál la del hotel para que nadie dude cuál tocar.
+        label: isBoth.value ? 'Llegó sin reserva (Hotel)' : 'Llegó sin reserva',
         hint: isBoth.value
             ? 'Con nombre y contacto, registro completo'
             : 'Registrar su entrada ahora',
@@ -1965,11 +1970,11 @@ async function checkOutStay(room: RoomData) {
 
     checkoutRoom.value = room;
 
-    // La cuenta ya está en mano si el modal estuvo abierto; si no (la salida
-    // se pidió desde la hoja de acciones), se pide ahora.
-    if (roomFolio.value === null) {
-        await reloadFolio();
-    }
+    // Siempre la cuenta del MOMENTO: la que se pidió al abrir el cuarto ya
+    // no sirve si en medio se extendió, se cargó algo o se dio una cortesía
+    // (Hotel México 2026-10-09: extendió a 2 horas y la salida decía "sin
+    // saldo" con $40 pendientes).
+    await reloadFolio();
 
     if (roomFolio.value === null) {
         // Sin folio a la vista no se cobra a ciegas: se avisa y se cierra.
@@ -2334,6 +2339,58 @@ const extendUntil = ref('');
 const extendBusy = ref(false);
 const extendError = ref<string | null>(null);
 
+// Escalera de tarifas (Ajustes → Operación, opt-in): una estancia por horas
+// se extiende al siguiente escalón (1 → 2 → 3 h) o a la noche completa. El
+// servidor dice qué escalones hay; vacío = la hora libre de siempre.
+interface LadderOption {
+    rate_plan_id: number;
+    name: string;
+    kind: 'block' | 'night';
+    ends_at: string;
+    price: number;
+    amount: number;
+    difference: number;
+    fits: boolean;
+    capacity: number | null;
+}
+const extendLadder = ref<LadderOption[] | null>(null);
+// Cobrar al extender: el hotel que cobra por adelantado (las horas) no
+// espera a la salida para cobrar la diferencia.
+const extendChargeNow = ref(false);
+const extendMethod = ref<'cash' | 'card' | 'transfer'>('cash');
+const extendReference = ref('');
+const extendPlanId = ref<number | null>(null);
+const extendLoading = ref(false);
+
+const ladderTime = (iso: string) =>
+    new Date(iso).toLocaleString('es-MX', {
+        weekday: 'short',
+        day: '2-digit',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+
+async function loadExtendOptions(stayId: number) {
+    extendLoading.value = true;
+    extendLadder.value = null;
+    extendPlanId.value = null;
+    try {
+        const { data } = await axios.get<{ ladder: LadderOption[] }>(
+            `/api/stays/${stayId}/extend-options`,
+        );
+        extendLadder.value = data.ladder.length ? data.ladder : null;
+        // Por horas se cobra por adelantado: la diferencia, también.
+        extendChargeNow.value = data.ladder.length > 0;
+        extendPlanId.value =
+            data.ladder.find((option) => option.fits)?.rate_plan_id ?? null;
+    } catch {
+        extendLadder.value = null;
+    } finally {
+        extendLoading.value = false;
+    }
+}
+
 function openExtend(room: RoomData) {
     // Nunca encima del modal de habitación: son hermanos y el clic fuera del
     // de adentro cerraba los dos.
@@ -2346,6 +2403,14 @@ function openExtend(room: RoomData) {
     const base = current ? new Date(current) : new Date();
     base.setDate(base.getDate() + 1);
     extendUntil.value = toLocalInput(base);
+
+    extendChargeNow.value = false;
+    extendMethod.value = 'cash';
+    extendReference.value = '';
+
+    if (room.active_stay?.id) {
+        loadExtendOptions(room.active_stay.id);
+    }
 }
 
 async function submitExtend() {
@@ -2355,16 +2420,43 @@ async function submitExtend() {
     extendBusy.value = true;
     extendError.value = null;
     try {
-        await axios.patch(`/api/stays/${stayId}/extend`, {
-            planned_end_at: extendUntil.value,
-        });
+        await axios.patch(
+            `/api/stays/${stayId}/extend`,
+            extendLadder.value
+                ? { rate_plan_id: extendPlanId.value }
+                : { planned_end_at: extendUntil.value },
+        );
+
+        let charged = false;
+        if (extendChargeNow.value) {
+            try {
+                await axios.post(`/api/stays/${stayId}/settle`, {
+                    payment_method: extendMethod.value,
+                    reference: extendReference.value.trim() || null,
+                });
+                charged = true;
+            } catch (e: any) {
+                // Sin saldo (la extensión salió en $0) no es un error.
+                if (e.response?.status !== 422) {
+                    toast.error(
+                        'Extendida, pero el cobro no se registró',
+                        e.response?.data?.message ??
+                            'Cóbrala desde «Cobrar saldo» en la habitación.',
+                    );
+                }
+            }
+        }
+
         extending.value = null;
         backToRoom();
         toast.success(
             'Estancia extendida',
-            'La diferencia queda en su cuenta y se cobra al registrar la salida.',
+            charged
+                ? 'La diferencia quedó cobrada.'
+                : 'La diferencia queda en su cuenta: cóbrala con «Cobrar saldo» o al registrar la salida.',
         );
         reloadRooms();
+        reloadFolio();
     } catch (e: any) {
         extendError.value =
             e.response?.data?.message ?? 'No se pudo extender la estancia.';
@@ -2571,6 +2663,33 @@ provide(FloorPlanKey, {
     createBlock,
     deleteBlock,
     resetUsage,
+    courtesyAccess: props.courtesyAccess ?? {
+        enabled: false,
+        is_owner: false,
+        user_id: 0,
+        categories: {},
+    },
+    onCourtesyChanged: () => {
+        reloadRooms();
+        reloadFolio();
+    },
+    settleStay: async (payload) => {
+        const stayId = selectedRoom.value?.active_stay?.id;
+        if (!stayId) return false;
+
+        const ok = await runRoomAction(
+            'settle',
+            () => axios.post(`/api/stays/${stayId}/settle`, payload),
+            {
+                successTitle: 'Saldo cobrado',
+                successMessage: 'Quedó en tu corte; el huésped sigue adentro.',
+                errorTitle: 'No se pudo cobrar',
+            },
+        );
+        if (ok) reloadFolio();
+
+        return ok;
+    },
     onError: (message) => toast.error('No se pudo cobrar', message),
     close: closeRoom,
 });
@@ -3718,7 +3837,77 @@ provide(FloorPlanKey, {
                 backToRoom();
             "
         >
-            <div>
+            <div v-if="extendLoading" class="text-xs text-slate-500">
+                Buscando cómo se puede extender…
+            </div>
+
+            <!-- Escalera: el siguiente escalón por horas o la noche -->
+            <div v-else-if="extendLadder" class="space-y-2">
+                <div
+                    class="text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                >
+                    Pasar a
+                </div>
+                <button
+                    v-for="option in extendLadder"
+                    :key="option.rate_plan_id"
+                    type="button"
+                    class="flex w-full items-center gap-3 rounded-lg border px-3.5 py-2.5 text-left transition disabled:cursor-not-allowed disabled:opacity-50"
+                    :class="
+                        extendPlanId === option.rate_plan_id
+                            ? 'border-primary bg-primary/5'
+                            : 'border-slate-200 hover:border-primary/30 dark:border-darkmode-400'
+                    "
+                    :disabled="!option.fits"
+                    @click="extendPlanId = option.rate_plan_id"
+                >
+                    <div
+                        class="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border"
+                        :class="
+                            option.kind === 'night'
+                                ? 'border-info/10 bg-info/10 text-info'
+                                : 'border-pending/10 bg-pending/10 text-pending'
+                        "
+                    >
+                        <Lucide
+                            :icon="option.kind === 'night' ? 'Moon' : 'Clock'"
+                            class="h-4 w-4"
+                        />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="text-sm font-medium">
+                            {{ option.name }}
+                            <span
+                                v-if="option.kind === 'night'"
+                                class="text-xs font-normal text-slate-500"
+                                >· noche completa</span
+                            >
+                        </div>
+                        <div class="text-xs text-slate-500">
+                            Sale {{ ladderTime(option.ends_at) }} · hospedaje
+                            {{ formatMoney(option.amount) }}
+                        </div>
+                        <div
+                            v-if="!option.fits"
+                            class="text-[11px] text-danger"
+                        >
+                            Admite máximo {{ option.capacity }} personas.
+                        </div>
+                    </div>
+                    <div class="shrink-0 text-right">
+                        <div class="text-sm font-medium text-pending">
+                            +{{ formatMoney(Math.max(0, option.difference)) }}
+                        </div>
+                        <div class="text-[11px] text-slate-400">diferencia</div>
+                    </div>
+                </button>
+                <p class="text-xs text-slate-500">
+                    Se cobra la diferencia contra lo que ya traía. Pasada la
+                    tarifa por horas más larga, solo queda la noche completa.
+                </p>
+            </div>
+
+            <div v-else>
                 <label
                     for="extend-until"
                     class="mb-1.5 block text-xs font-medium text-slate-600 dark:text-slate-300"
@@ -3732,6 +3921,33 @@ provide(FloorPlanKey, {
                 <p class="mt-1.5 text-xs text-slate-500">
                     Lo que ya pagó no se toca: la diferencia se le cobra al
                     registrar su salida.
+                </p>
+            </div>
+
+            <!-- Cobrar al extender (sobre todo por horas, que se paga antes) -->
+            <div
+                v-if="!extendLoading && canManageReservations"
+                class="rounded-lg border border-slate-200/70 px-3.5 py-3 dark:border-darkmode-400"
+            >
+                <label
+                    class="flex cursor-pointer items-center gap-2.5 text-xs font-medium"
+                >
+                    <FormCheck.Input
+                        v-model="extendChargeNow"
+                        type="checkbox"
+                        class="shrink-0"
+                    />
+                    Cobrar la diferencia ahora
+                </label>
+                <div v-if="extendChargeNow" class="mt-3">
+                    <MethodPicker
+                        v-model:method="extendMethod"
+                        v-model:reference="extendReference"
+                        :disabled="extendBusy"
+                    />
+                </div>
+                <p v-else class="mt-1 text-[11px] text-slate-400">
+                    Queda en su cuenta y se cobra al registrar la salida.
                 </p>
             </div>
 
@@ -3756,7 +3972,11 @@ provide(FloorPlanKey, {
                 <Button
                     variant="primary"
                     class="h-9 rounded-[0.5rem] px-5 text-xs"
-                    :disabled="extendBusy || !extendUntil"
+                    :disabled="
+                        extendBusy ||
+                        extendLoading ||
+                        (extendLadder ? !extendPlanId : !extendUntil)
+                    "
                     @click="submitExtend"
                 >
                     <Lucide icon="CalendarPlus" class="mr-1.5 h-3.5 w-3.5" />

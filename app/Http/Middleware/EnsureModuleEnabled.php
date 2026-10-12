@@ -29,6 +29,19 @@ class EnsureModuleEnabled
             abort(403, "El módulo {$label} no está incluido en tu plan.");
         }
 
+        // Un huésped sin sesión (wizard de grupos o experiencias, menú,
+        // encuesta) NO es el hotel: la página de "no incluido en tu plan"
+        // va dentro del panel y le enseñaba el menú lateral, el nombre del
+        // plan y "Volver al dashboard". Al wizard de grupos o experiencias
+        // se llega desde el sitio del hotel: se le manda al de habitaciones.
+        if (! $request->user()) {
+            if ($request->is('reservar/*') && $tenant?->hasModule('motor-web')) {
+                return redirect('/reservar');
+            }
+
+            abort(404);
+        }
+
         return Inertia::render('tenant/ModuleDisabled', [
             'module' => [
                 'key' => $module,

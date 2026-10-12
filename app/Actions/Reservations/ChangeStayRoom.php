@@ -80,21 +80,49 @@ class ChangeStayRoom
                     max(1, (int) $stay->num_people),
                     $ratePlan->unitsFor($stay->check_in_at, $stay->planned_end_at),
                     $selectedConcepts,
+                    $ratePlan,
                 );
 
-                $changes['amount'] = round(
+                $gross = round(
                     $ratePlan->priceFor($stay->check_in_at, $stay->planned_end_at, $destination)
                     + array_sum(array_column($extraCharges, 'amount')),
                     2,
                 );
+
+                // Walk-in con cortesía aprobada: se vuelve a medir sobre el
+                // hospedaje nuevo (con reserva, la cortesía vive en ella).
+                $courtesy = $stay->reservation_id
+                    ? 0.0
+                    : app(\App\Services\Courtesies\CourtesyService::class)->recalculate($stay, $gross, $extraCharges);
+
+                $changes['amount'] = round(max(0, $gross - $courtesy), 2);
+                $changes['courtesy_amount'] = $courtesy;
                 $changes['extra_charges'] = $extraCharges ?: null;
             }
 
+            $previousAmount = (float) $stay->amount;
             $stay->update($changes);
 
             // La reserva de origen apunta al cuarto nuevo: si no, el rack y
-            // el plano seguirían mostrando al huésped donde ya no está.
-            $stay->reservation?->update(['room_id' => $destination->id]);
+            // el plano seguirían mostrando al huésped donde ya no está. Si se
+            // recalculó el precio, la diferencia va a SU total: el folio de
+            // una estancia con reserva cobra el de la reserva.
+            if ($stay->reservation) {
+                $reservationChanges = ['room_id' => $destination->id];
+
+                if (array_key_exists('amount', $changes)) {
+                    $reservationChanges['total_amount'] = max(0, round(
+                        (float) $stay->reservation->total_amount + ((float) $stay->amount - $previousAmount),
+                        2,
+                    ));
+                }
+
+                $stay->reservation->update($reservationChanges);
+
+                if (array_key_exists('total_amount', $reservationChanges)) {
+                    $stay->reservation->syncPaymentStatus();
+                }
+            }
 
             $this->changeRoomStatus->handle($destination, RoomStatus::Occupied->value, $user, [
                 'stay_id' => $stay->id,

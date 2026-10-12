@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Link, useForm } from '@inertiajs/vue3';
+import { Link, router, useForm } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
@@ -18,6 +18,8 @@ interface PlanRow {
     description: string | null;
     price_monthly: number;
     activation_fee: number;
+    billing_periods: { months: number; discount: number }[];
+    billing_options: BillingOption[];
     max_properties: number | null;
     max_rooms: number | null;
     max_users: number | null;
@@ -37,6 +39,15 @@ interface PlanRow {
     } | null;
 }
 
+interface BillingOption {
+    months: number;
+    label: string;
+    discount: number;
+    total: number;
+    monthly: number;
+    saving: number;
+}
+
 interface ModuleDef {
     label: string;
     description: string;
@@ -52,6 +63,8 @@ interface GroupDef {
 
 const props = defineProps<{
     plans: PlanRow[];
+    periods: { months: number; label: string }[];
+    maxDiscount: number;
     moduleCatalog: Record<string, ModuleDef>;
     moduleGroups: Record<string, GroupDef>;
     addonModules: Record<string, string[]>;
@@ -184,15 +197,24 @@ function toggleGroup(keys: string[]) {
         : [...new Set([...form.modules, ...keys])];
 }
 
-// Crear / editar comparten formulario; editing !== null distingue.
+// Crear / editar comparten formulario; editing !== null distingue. Los
+// datos van en función: con un objeto, Inertia toma lo último guardado como
+// nuevo "default" y "Nuevo plan" se abría con el plan recién editado.
 const showForm = ref(false);
 const editing = ref<PlanRow | null>(null);
-const form = useForm({
+const form = useForm(() => ({
     key: '',
     label: '',
     description: '',
     price_monthly: 0 as number | string,
     activation_fee: 0 as number | string,
+    // Un renglón por periodo del catálogo; al guardar solo viajan los
+    // encendidos como billing_periods.
+    billing: props.periods.map((p) => ({
+        months: p.months,
+        enabled: false,
+        discount: '' as number | string,
+    })),
     max_properties: '' as number | string,
     max_rooms: '' as number | string,
     max_users: '' as number | string,
@@ -202,7 +224,34 @@ const form = useForm({
     ai_monthly_replies: '' as number | string,
     active: true,
     public: true,
-});
+}));
+
+// Pago por adelantado: lo que costaría cada periodo con el precio y el
+// descuento que van en el formulario (misma cuenta que Plan::billingOptions).
+const periodQuote = (months: number, discount: number | string) => {
+    const full = Number(form.price_monthly || 0) * months;
+    const pct = Math.min(Math.max(Number(discount || 0), 0), props.maxDiscount);
+    const total = Math.round((full * (100 - pct)) / 100);
+
+    return {
+        total,
+        monthly: Math.round(total / months),
+        saving: full - total,
+    };
+};
+const enabledPeriods = computed(() => form.billing.filter((p) => p.enabled));
+// Los errores llegan por posición en la lista enviada (solo encendidos).
+const periodError = (months: number) => {
+    const i = enabledPeriods.value.findIndex((p) => p.months === months);
+    const errors = form.errors as Record<string, string | undefined>;
+
+    return i < 0
+        ? undefined
+        : (errors[`billing_periods.${i}.discount`] ??
+              errors[`billing_periods.${i}.months`]);
+};
+const periodLabel = (months: number) =>
+    props.periods.find((p) => p.months === months)?.label ?? `${months} meses`;
 
 function toggleModule(key: string) {
     form.modules = form.modules.includes(key)
@@ -225,6 +274,15 @@ function openEdit(plan: PlanRow) {
     form.description = plan.description ?? '';
     form.price_monthly = plan.price_monthly;
     form.activation_fee = plan.activation_fee;
+    form.billing = props.periods.map((p) => {
+        const saved = plan.billing_periods.find((b) => b.months === p.months);
+
+        return {
+            months: p.months,
+            enabled: !!saved,
+            discount: saved ? saved.discount : '',
+        };
+    });
     form.max_properties = plan.max_properties ?? '';
     form.max_rooms = plan.max_rooms ?? '';
     form.max_users = plan.max_users ?? '';
@@ -242,8 +300,17 @@ function openEdit(plan: PlanRow) {
 }
 
 function submit() {
-    const transform = (data: Record<string, unknown>) => ({
+    const transform = ({
+        billing,
+        ...data
+    }: Record<string, unknown> & { billing: typeof form.billing }) => ({
         ...data,
+        billing_periods: billing
+            .filter((p) => p.enabled)
+            .map((p) => ({
+                months: p.months,
+                discount: Number(p.discount || 0),
+            })),
         description: data.description === '' ? null : data.description,
         max_properties:
             data.max_properties === '' ? null : Number(data.max_properties),
@@ -278,23 +345,46 @@ function submit() {
     }
 }
 
-// Activar/desactivar rápido (sin abrir el modal).
+// Activar/desactivar rápido (sin abrir el modal). Va por su propia ruta:
+// reenviar el plan entero lo hacía fallar en silencio con datos heredados.
+const toggling = ref<string | null>(null);
 function toggleActive(plan: PlanRow) {
-    useForm({
-        label: plan.label,
-        description: plan.description,
-        price_monthly: plan.price_monthly,
-        activation_fee: plan.activation_fee,
-        max_properties: plan.max_properties,
-        max_rooms: plan.max_rooms,
-        max_users: plan.max_users,
-        max_channels: plan.max_channels,
-        max_gateways: plan.max_gateways,
-        modules: plan.modules,
-        ai_monthly_replies: plan.ai_monthly_replies,
-        active: !plan.active,
-    }).patch(route('admin.plans.update', plan.key), { preserveScroll: true });
+    toggling.value = plan.key;
+    router.patch(
+        route('admin.plans.active', plan.key),
+        { active: !plan.active },
+        {
+            preserveScroll: true,
+            onFinish: () => (toggling.value = null),
+        },
+    );
 }
+
+// Renglón de periodo: switch | nombre | descuento | resultado, con anchos
+// fijos para que los campos queden en columna en todos los renglones.
+const periodRow =
+    'grid grid-cols-[auto_minmax(0,1fr)_8rem] items-center gap-x-3 gap-y-1.5 px-3 py-2.5 sm:grid-cols-[auto_8rem_8rem_minmax(0,1fr)]';
+const periodResult =
+    'col-span-3 pl-[50px] text-xs text-slate-500 sm:col-span-1 sm:pl-0 sm:text-right';
+
+// Los cinco límites en una sola fila (dos columnas en el teléfono, el
+// último a todo lo ancho para no dejar hueco).
+const limitFields = [
+    { key: 'max_properties', label: 'Propiedades', min: 1, class: '' },
+    { key: 'max_rooms', label: 'Habitaciones', min: 1, class: '' },
+    { key: 'max_users', label: 'Usuarios', min: 1, class: '' },
+    { key: 'max_channels', label: 'Canales', min: 0, class: '' },
+    {
+        key: 'max_gateways',
+        label: 'Pasarelas',
+        min: 0,
+        class: 'col-span-2 sm:col-span-1',
+    },
+] as const;
+
+// Pagos por adelantado de la tarjeta (el mensual ya es el precio grande).
+const prepaidOptions = (plan: PlanRow) =>
+    plan.billing_options.filter((o) => o.months > 1);
 
 const deleting = ref<PlanRow | null>(null);
 const deleteForm = useForm({});
@@ -483,21 +573,24 @@ function submitDelete() {
                                 <div class="truncate text-sm font-medium">
                                     {{ plan.label }}
                                 </div>
+                                <!-- Un solo renglón: la clave se recorta y
+                                     las etiquetas no empujan la tarjeta -->
                                 <div
-                                    class="mt-1 flex flex-wrap items-center gap-1.5"
+                                    class="mt-1 flex min-w-0 items-center gap-1.5"
                                 >
                                     <span
-                                        class="rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-500 dark:bg-darkmode-400"
+                                        class="min-w-0 truncate rounded bg-slate-100 px-1.5 py-0.5 font-mono text-[11px] text-slate-500 dark:bg-darkmode-400"
+                                        :title="plan.key"
                                         >{{ plan.key }}</span
                                     >
                                     <span
                                         v-if="!plan.active"
-                                        class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-400"
+                                        class="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500 dark:bg-darkmode-400"
                                         >Inactivo</span
                                     >
                                     <span
                                         v-if="!plan.public"
-                                        class="inline-flex items-center gap-1 rounded-full bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info"
+                                        class="inline-flex shrink-0 items-center gap-1 rounded-full bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info"
                                         title="No se anuncia en la página de inicio; solo lo asignas tú"
                                     >
                                         <Lucide icon="EyeOff" class="h-3 w-3" />
@@ -515,6 +608,7 @@ function submitDelete() {
                             >
                                 <FormSwitch.Input
                                     :checked="plan.active"
+                                    :disabled="toggling === plan.key"
                                     type="checkbox"
                                     @change="toggleActive(plan)"
                                 />
@@ -536,12 +630,46 @@ function submitDelete() {
                                     >
                                 </template>
                             </div>
+                            <!-- Alturas fijas (2 renglones de descripción y
+                                 el renglón de pagos siempre presente) para
+                                 que los límites de tarjetas vecinas queden
+                                 a la misma altura -->
                             <p
-                                v-if="plan.description"
-                                class="mt-1 line-clamp-2 text-xs text-slate-500"
+                                class="mt-1 line-clamp-2 min-h-8 text-xs"
+                                :class="
+                                    plan.description
+                                        ? 'text-slate-500'
+                                        : 'text-slate-400 italic'
+                                "
+                                :title="plan.description ?? undefined"
                             >
-                                {{ plan.description }}
+                                {{ plan.description || 'Sin descripción' }}
                             </p>
+                            <div
+                                class="mt-2 flex min-h-5 flex-wrap items-center gap-1.5"
+                            >
+                                <span
+                                    v-if="!prepaidOptions(plan).length"
+                                    class="text-[11px] text-slate-400"
+                                    >Solo pago mensual</span
+                                >
+                                <span
+                                    v-for="option in prepaidOptions(plan)"
+                                    :key="option.months"
+                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                    :class="
+                                        option.discount
+                                            ? 'bg-success/10 text-success'
+                                            : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                    "
+                                    :title="`${money(option.total)} por ${option.months} meses · ${money(option.monthly)} al mes`"
+                                >
+                                    {{ option.label
+                                    }}<template v-if="option.discount">
+                                        −{{ option.discount }}%</template
+                                    >
+                                </span>
+                            </div>
                         </div>
 
                         <!-- Límites -->
@@ -778,11 +906,8 @@ function submitDelete() {
                         <!-- Qué es -->
                         <section>
                             <div :class="sectionLabel">Qué es</div>
-                            <div class="grid grid-cols-12 gap-4">
-                                <div
-                                    v-if="!editing"
-                                    class="col-span-12 sm:col-span-4"
-                                >
+                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                <div>
                                     <FormLabel class="text-xs"
                                         >Clave interna</FormLabel
                                     >
@@ -791,24 +916,20 @@ function submitDelete() {
                                         type="text"
                                         class="h-9 font-mono text-xs"
                                         placeholder="premium"
+                                        :readonly="!!editing"
+                                        :title="
+                                            editing
+                                                ? 'La clave no se puede cambiar'
+                                                : undefined
+                                        "
                                     />
                                     <FormHelp
                                         v-if="form.errors.key"
                                         class="text-danger"
                                         >{{ form.errors.key }}</FormHelp
                                     >
-                                    <FormHelp v-else
-                                        >No se puede cambiar después.</FormHelp
-                                    >
                                 </div>
-                                <div
-                                    class="col-span-12"
-                                    :class="
-                                        editing
-                                            ? 'sm:col-span-12'
-                                            : 'sm:col-span-8'
-                                    "
-                                >
+                                <div>
                                     <FormLabel class="text-xs"
                                         >Nombre del plan</FormLabel
                                     >
@@ -824,7 +945,7 @@ function submitDelete() {
                                         >{{ form.errors.label }}</FormHelp
                                     >
                                 </div>
-                                <div class="col-span-12">
+                                <div class="sm:col-span-2">
                                     <FormLabel class="text-xs"
                                         >Descripción</FormLabel
                                     >
@@ -840,19 +961,20 @@ function submitDelete() {
                                         class="text-danger"
                                         >{{ form.errors.description }}</FormHelp
                                     >
-                                    <FormHelp v-else
-                                        >Una línea de venta; se ve al asignar
-                                        plan a un hotel.</FormHelp
-                                    >
                                 </div>
                             </div>
+                            <p class="mt-2 text-xs text-slate-400">
+                                La clave identifica al plan en el sistema y no
+                                se cambia después. La descripción es una línea
+                                de venta: se ve al asignar plan a un hotel.
+                            </p>
                         </section>
 
                         <!-- Precio -->
                         <section>
                             <div :class="sectionLabel">Precio</div>
-                            <div class="grid grid-cols-12 gap-4">
-                                <div class="col-span-12 sm:col-span-6">
+                            <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                <div>
                                     <FormLabel class="text-xs"
                                         >Mensualidad (MXN)</FormLabel
                                     >
@@ -875,12 +997,8 @@ function submitDelete() {
                                             form.errors.price_monthly
                                         }}</FormHelp
                                     >
-                                    <FormHelp v-else
-                                        >Informativo; el cobro llega con la fase
-                                        de facturación.</FormHelp
-                                    >
                                 </div>
-                                <div class="col-span-12 sm:col-span-6">
+                                <div>
                                     <FormLabel class="text-xs"
                                         >Activación, pago único (MXN)</FormLabel
                                     >
@@ -905,114 +1023,188 @@ function submitDelete() {
                                     >
                                 </div>
                             </div>
+                            <p class="mt-2 text-xs text-slate-400">
+                                Informativo; el cobro llega con la fase de
+                                facturación.
+                            </p>
+                        </section>
+
+                        <!-- Pago por adelantado -->
+                        <section>
+                            <div :class="sectionLabel">Pago por adelantado</div>
+                            <div
+                                class="divide-y divide-slate-200/60 rounded-lg border border-slate-200/70 dark:divide-darkmode-400 dark:border-darkmode-400"
+                            >
+                                <!-- Mensual: siempre se ofrece, sin descuento -->
+                                <div :class="periodRow">
+                                    <div
+                                        class="flex h-6 w-[38px] items-center justify-center rounded-full bg-primary/10 text-primary"
+                                    >
+                                        <Lucide
+                                            icon="Check"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                    </div>
+                                    <div class="min-w-0">
+                                        <div class="text-xs font-medium">
+                                            Mensual
+                                        </div>
+                                        <div class="text-[11px] text-slate-400">
+                                            Siempre
+                                        </div>
+                                    </div>
+                                    <div
+                                        class="flex h-9 items-center text-xs text-slate-400"
+                                    >
+                                        Sin descuento
+                                    </div>
+                                    <div :class="periodResult">
+                                        <span
+                                            class="font-medium text-slate-700 dark:text-slate-300"
+                                            >{{
+                                                money(
+                                                    Number(
+                                                        form.price_monthly || 0,
+                                                    ),
+                                                )
+                                            }}</span
+                                        >
+                                        al mes
+                                    </div>
+                                </div>
+                                <label
+                                    v-for="period in form.billing"
+                                    :key="period.months"
+                                    :class="periodRow"
+                                    class="cursor-pointer transition hover:bg-slate-50/70 dark:hover:bg-darkmode-400/30"
+                                >
+                                    <FormSwitch>
+                                        <FormSwitch.Input
+                                            v-model="period.enabled"
+                                            type="checkbox"
+                                            :checked="period.enabled"
+                                        />
+                                    </FormSwitch>
+                                    <div class="min-w-0">
+                                        <div class="text-xs font-medium">
+                                            {{ periodLabel(period.months) }}
+                                        </div>
+                                        <div class="text-[11px] text-slate-400">
+                                            {{ period.months }} meses
+                                        </div>
+                                    </div>
+                                    <div class="relative">
+                                        <FormInput
+                                            v-model="period.discount"
+                                            type="number"
+                                            min="0"
+                                            :max="maxDiscount"
+                                            class="h-9 [appearance:textfield] pr-8 text-xs [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                                            placeholder="0"
+                                            :disabled="!period.enabled"
+                                            aria-label="Descuento por tiempo"
+                                        />
+                                        <span
+                                            class="pointer-events-none absolute inset-y-0 right-0 z-10 my-auto mr-3 flex items-center text-[11px] text-slate-400"
+                                            >%</span
+                                        >
+                                    </div>
+                                    <div :class="periodResult">
+                                        <template v-if="period.enabled">
+                                            <span
+                                                class="font-medium text-slate-700 dark:text-slate-300"
+                                                >{{
+                                                    money(
+                                                        periodQuote(
+                                                            period.months,
+                                                            period.discount,
+                                                        ).total,
+                                                    )
+                                                }}</span
+                                            >
+                                            por {{ period.months }} meses
+                                            <div
+                                                class="text-[11px] text-slate-400"
+                                            >
+                                                {{
+                                                    money(
+                                                        periodQuote(
+                                                            period.months,
+                                                            period.discount,
+                                                        ).monthly,
+                                                    )
+                                                }}
+                                                al mes<template
+                                                    v-if="
+                                                        periodQuote(
+                                                            period.months,
+                                                            period.discount,
+                                                        ).saving > 0
+                                                    "
+                                                >
+                                                    · ahorra
+                                                    {{
+                                                        money(
+                                                            periodQuote(
+                                                                period.months,
+                                                                period.discount,
+                                                            ).saving,
+                                                        )
+                                                    }}</template
+                                                >
+                                            </div>
+                                        </template>
+                                        <span v-else class="text-slate-400"
+                                            >No se ofrece</span
+                                        >
+                                    </div>
+                                    <FormHelp
+                                        v-if="periodError(period.months)"
+                                        class="col-span-full text-danger"
+                                        >{{
+                                            periodError(period.months)
+                                        }}</FormHelp
+                                    >
+                                </label>
+                            </div>
+                            <p class="mt-2 text-xs text-slate-400">
+                                El hotel paga el periodo completo por adelantado
+                                y el descuento se aplica sobre la mensualidad.
+                                Los periodos con descuento se anuncian en la
+                                página de inicio.
+                            </p>
                         </section>
 
                         <!-- Límites -->
                         <section>
                             <div :class="sectionLabel">Límites</div>
-                            <div class="grid grid-cols-12 gap-4">
-                                <div class="col-span-6 sm:col-span-4">
-                                    <FormLabel class="text-xs"
-                                        >Propiedades</FormLabel
-                                    >
+                            <div class="grid grid-cols-2 gap-4 sm:grid-cols-5">
+                                <div
+                                    v-for="field in limitFields"
+                                    :key="field.key"
+                                    :class="field.class"
+                                >
+                                    <FormLabel class="text-xs">{{
+                                        field.label
+                                    }}</FormLabel>
                                     <FormInput
-                                        v-model="form.max_properties"
+                                        v-model="form[field.key]"
                                         type="number"
-                                        min="1"
+                                        :min="field.min"
                                         class="h-9 text-xs"
                                         placeholder="Sin límite"
                                     />
                                     <FormHelp
-                                        v-if="form.errors.max_properties"
+                                        v-if="form.errors[field.key]"
                                         class="text-danger"
-                                        >{{
-                                            form.errors.max_properties
-                                        }}</FormHelp
-                                    >
-                                </div>
-                                <div class="col-span-6 sm:col-span-4">
-                                    <FormLabel class="text-xs"
-                                        >Habitaciones</FormLabel
-                                    >
-                                    <FormInput
-                                        v-model="form.max_rooms"
-                                        type="number"
-                                        min="1"
-                                        class="h-9 text-xs"
-                                        placeholder="Sin límite"
-                                    />
-                                    <FormHelp
-                                        v-if="form.errors.max_rooms"
-                                        class="text-danger"
-                                        >{{ form.errors.max_rooms }}</FormHelp
-                                    >
-                                </div>
-                                <div class="col-span-6 sm:col-span-4">
-                                    <FormLabel class="text-xs"
-                                        >Usuarios</FormLabel
-                                    >
-                                    <FormInput
-                                        v-model="form.max_users"
-                                        type="number"
-                                        min="1"
-                                        class="h-9 text-xs"
-                                        placeholder="Sin límite"
-                                    />
-                                    <FormHelp
-                                        v-if="form.errors.max_users"
-                                        class="text-danger"
-                                        >{{ form.errors.max_users }}</FormHelp
-                                    >
-                                </div>
-                                <div class="col-span-6 sm:col-span-6">
-                                    <FormLabel class="text-xs"
-                                        >Canales de mensajería</FormLabel
-                                    >
-                                    <FormInput
-                                        v-model="form.max_channels"
-                                        type="number"
-                                        min="0"
-                                        class="h-9 text-xs"
-                                        placeholder="Sin límite"
-                                    />
-                                    <FormHelp
-                                        v-if="form.errors.max_channels"
-                                        class="text-danger"
-                                        >{{
-                                            form.errors.max_channels
-                                        }}</FormHelp
-                                    >
-                                    <FormHelp v-else
-                                        >WhatsApp y páginas; el webchat no
-                                        cuenta.</FormHelp
-                                    >
-                                </div>
-                                <div class="col-span-12 sm:col-span-6">
-                                    <FormLabel class="text-xs"
-                                        >Pasarelas de pago</FormLabel
-                                    >
-                                    <FormInput
-                                        v-model="form.max_gateways"
-                                        type="number"
-                                        min="0"
-                                        class="h-9 text-xs"
-                                        placeholder="Sin límite"
-                                    />
-                                    <FormHelp
-                                        v-if="form.errors.max_gateways"
-                                        class="text-danger"
-                                        >{{
-                                            form.errors.max_gateways
-                                        }}</FormHelp
-                                    >
-                                    <FormHelp v-else
-                                        >Stripe o Mercado Pago; 0 = solo
-                                        transferencias.</FormHelp
+                                        >{{ form.errors[field.key] }}</FormHelp
                                     >
                                 </div>
                             </div>
                             <p class="mt-2 text-xs text-slate-400">
-                                Un límite vacío significa "sin límite".
+                                Vacío = sin límite. Canales: WhatsApp y páginas
+                                (el webchat no cuenta). Pasarelas: Stripe o
+                                Mercado Pago; 0 = solo transferencias.
                             </p>
                         </section>
 
@@ -1281,7 +1473,7 @@ function submitDelete() {
                         class="flex flex-wrap items-center gap-2 border-t border-slate-200/70 px-5 py-3.5 dark:border-darkmode-400"
                     >
                         <label
-                            class="mr-auto flex cursor-pointer items-center gap-2 text-xs"
+                            class="flex w-full cursor-pointer items-center gap-2 text-xs sm:mr-auto sm:w-auto"
                             title="Inactivo: no se ofrece a hoteles nuevos; los existentes conservan su plan"
                         >
                             <FormSwitch>
@@ -1300,26 +1492,34 @@ function submitDelete() {
                                 >
                             </span>
                         </label>
-                        <Button
-                            type="button"
-                            variant="outline-secondary"
-                            class="h-9 rounded-[0.5rem] px-5 text-xs"
-                            @click="showForm = false"
-                            >Cancelar</Button
+                        <!-- Teléfono: dos botones parejos; escritorio: fila -->
+                        <div
+                            class="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto"
                         >
-                        <Button
-                            type="submit"
-                            variant="primary"
-                            class="h-9 rounded-[0.5rem] px-5 text-xs shadow-md shadow-primary/20"
-                            :disabled="form.processing"
-                        >
-                            <Lucide icon="Check" class="mr-1.5 h-3.5 w-3.5" />
-                            {{
-                                form.processing
-                                    ? 'Guardando...'
-                                    : 'Guardar plan'
-                            }}
-                        </Button>
+                            <Button
+                                type="button"
+                                variant="outline-secondary"
+                                class="h-9 rounded-[0.5rem] px-5 text-xs"
+                                @click="showForm = false"
+                                >Cancelar</Button
+                            >
+                            <Button
+                                type="submit"
+                                variant="primary"
+                                class="h-9 rounded-[0.5rem] px-5 text-xs shadow-md shadow-primary/20"
+                                :disabled="form.processing"
+                            >
+                                <Lucide
+                                    icon="Check"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                {{
+                                    form.processing
+                                        ? 'Guardando...'
+                                        : 'Guardar plan'
+                                }}
+                            </Button>
+                        </div>
                     </div>
                 </form>
             </Dialog.Panel>

@@ -33,6 +33,11 @@ class LandingController extends Controller
                     'description' => $plan->description,
                     'price_monthly' => (int) $plan->price_monthly,
                     'activation_fee' => (int) $plan->activation_fee,
+                    // Pagos por adelantado con descuento (sin el mensual,
+                    // que ya es el precio grande de la tarjeta).
+                    'billing_options' => collect($plan->billingOptions())
+                        ->filter(fn (array $option) => $option['months'] > 1 && $option['discount'] > 0)
+                        ->values(),
                     'max_rooms' => $plan->max_rooms,
                     'max_users' => $plan->max_users,
                     'max_channels' => $plan->max_channels,

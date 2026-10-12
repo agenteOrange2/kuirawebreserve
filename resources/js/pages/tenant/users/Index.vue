@@ -34,6 +34,7 @@ const props = defineProps<{
     roles: RoleOption[];
     maxUsers: number | null;
     canManage: boolean;
+    canEditRoles: boolean;
 }>();
 
 const toast = useToasts();
@@ -288,6 +289,16 @@ async function submitDelete() {
                     >
                         <Lucide icon="History" class="mr-1.5 h-3.5 w-3.5" />
                         Bitácora
+                    </Button>
+                    <Button
+                        v-if="canEditRoles"
+                        :as="Link"
+                        :href="route('tenant.roles')"
+                        variant="outline-secondary"
+                        class="h-9 rounded-[0.5rem] bg-white text-xs"
+                    >
+                        <Lucide icon="ShieldCheck" class="mr-1.5 h-3.5 w-3.5" />
+                        Roles y accesos
                     </Button>
                     <Button
                         v-if="canManage"

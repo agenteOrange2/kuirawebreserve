@@ -27,6 +27,7 @@ class WizardAppearancePageController extends Controller
             'wizardUrl' => "https://{$request->getHost()}/reservar",
             'appearance' => $property->wizardAppearance(),
             'defaults' => Property::WIZARD_APPEARANCE_DEFAULTS,
+            'textDefaults' => Property::WIZARD_TEXT_DEFAULTS,
             'canManage' => $request->user()->can('properties.manage'),
         ]);
     }

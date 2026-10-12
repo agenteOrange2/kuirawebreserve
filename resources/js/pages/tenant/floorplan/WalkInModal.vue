@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import axios from 'axios';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+    computed,
+    nextTick,
+    onBeforeUnmount,
+    onMounted,
+    ref,
+    watch,
+} from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormDateTime,
@@ -9,10 +16,22 @@ import {
     FormLabel,
 } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
+import CourtesySection from '@/components/courtesies/CourtesySection.vue';
+import {
+    courtesyFormReady,
+    courtesyPayload,
+    emptyCourtesyForm,
+    estimateCourtesy,
+} from '@/components/courtesies/types';
+import type { CourtesyForm } from '@/components/courtesies/types';
+import { useCourtesyAccess } from '@/components/courtesies/useCourtesyAccess';
 import { useCounterMethods } from '@/composables/useCounterMethods';
+import type { GuestHit } from '@/composables/useGuestSearch';
+import { useGuestSearch } from '@/composables/useGuestSearch';
 import { usePropertyMode } from '@/composables/usePropertyMode';
 import type { CounterMethod } from '@/composables/useCounterMethods';
 import { useToasts } from '@/composables/useToasts';
+import GuestMatches from './GuestMatches.vue';
 import PlanModal from './PlanModal.vue';
 
 /**
@@ -41,6 +60,9 @@ interface RatePlanOption {
     duration_label: string;
     duration_unit: string | null;
     duration_value: number | null;
+    /** Personas de esta tarifa; null = las del cuarto. */
+    included_people?: number | null;
+    max_people?: number | null;
 }
 
 interface WalkInRoom {
@@ -62,8 +84,9 @@ interface AvailabilityData {
     units: number;
     duration_label: string;
     total: number;
+    regular_total?: number;
     advance_error: string | null;
-    rooms: { id: number; number: string }[];
+    rooms: { id: number; number: string; base_total?: number }[];
 }
 
 const props = defineProps<{
@@ -112,6 +135,16 @@ const extraConcepts = ref<string[]>([]);
 const guestName = ref('');
 const guestPhone = ref('');
 const guestEmail = ref('');
+// Huésped que ya vino: se busca al teclear nombre o teléfono y, al elegirlo,
+// llena los tres campos y la ficha queda ligada por guest_id en vez de
+// depender de que el teléfono se teclee igual que la vez pasada.
+const selectedGuest = ref<GuestHit | null>(null);
+const {
+    hits: guestHits,
+    searching: guestSearching,
+    search: searchGuests,
+    reset: resetGuestSearch,
+} = useGuestSearch();
 // Ficha del vehículo: lo estructurado vive en `vehicles` (VehicleRegistry),
 // no en la estancia. Se captura completo aquí porque es el único momento en
 // que el carro está enfrente.
@@ -218,6 +251,8 @@ watch(
         guestName.value = '';
         guestPhone.value = '';
         guestEmail.value = '';
+        selectedGuest.value = null;
+        resetGuestSearch();
         plate.value = '';
         vehicleBrand.value = '';
         vehicleModel.value = '';
@@ -225,6 +260,9 @@ watch(
         knownVehicle.value = null;
         paymentMethod.value = firstMethod.value;
         paymentReference.value = '';
+        courtesyOn.value = false;
+        courtesyForm.value = emptyCourtesyForm();
+        courtesyCapWarning.value = null;
         guaranteeEditing.value = false;
         guaranteeAmountInput.value = props.guaranteeAmount;
         guaranteeReason.value = '';
@@ -355,10 +393,23 @@ const units = computed(() => {
     );
 });
 
-const maxPeople = computed(() => modalRoom.value?.capacity ?? 20);
+// La tarifa puede traer sus propias personas (la Sencilla por horas admite
+// 3 e incluye 2; la Doble por horas, solo 2): manda sobre la del cuarto.
+const maxPeople = computed(
+    () => selectedPlan.value?.max_people ?? modalRoom.value?.capacity ?? 20,
+);
+const includedPeople = computed(
+    () =>
+        selectedPlan.value?.included_people ??
+        modalRoom.value?.included_occupancy ??
+        null,
+);
+watch(maxPeople, (max) => {
+    if (people.value > max) people.value = max;
+});
 
 const extraGuestsFee = computed(() => {
-    const included = modalRoom.value?.included_occupancy;
+    const included = includedPeople.value;
     const fee = modalRoom.value?.extra_guest_fee ?? 0;
     if (!included || !fee || people.value <= included) return 0;
     return (people.value - included) * fee * units.value;
@@ -370,21 +421,72 @@ const optionalTotal = computed(() =>
         .reduce((sum, charge) => sum + charge.amount, 0),
 );
 
+// Hospedaje con el precio del servidor en cuanto llega la disponibilidad
+// (temporadas, descuento por semana/mes, ajuste del cuarto); mientras, el
+// precio base de la tarifa.
+const stayPrice = computed(() => {
+    const avail = availability.value;
+    if (avail && avail.units === units.value) {
+        const room = avail.rooms.find((r) => r.id === modalRoom.value?.id);
+        return room?.base_total ?? avail.total;
+    }
+    return (selectedPlan.value?.price ?? 0) * units.value;
+});
+
 const total = computed(
-    () =>
-        (selectedPlan.value?.price ?? 0) * units.value +
-        extraGuestsFee.value +
-        optionalTotal.value,
+    () => stayPrice.value + extraGuestsFee.value + optionalTotal.value,
+);
+
+// ── Cortesía en el mismo alta (módulo cortesias) ──
+// La del propietario baja el hospedaje antes de cobrarlo. La del resto
+// queda esperando al propietario: entonces no se cobra al llegar, se cobra
+// al salir con lo que él decida.
+const courtesyOn = ref(false);
+const courtesyForm = ref<CourtesyForm>(emptyCourtesyForm());
+/** 409 del servidor: el siguiente envío confirma que pasa el tope. */
+const courtesyCapWarning = ref<string | null>(null);
+const courtesyAccess = useCourtesyAccess();
+const courtesyEnabled = computed(() => courtesyAccess.value.enabled);
+const courtesyIsOwner = computed(() => courtesyAccess.value.is_owner);
+
+/** Estimado de lo que se descuenta: solo hospedaje (tarifa y persona extra). */
+const courtesyDiscount = computed(() =>
+    courtesyOn.value && courtesyIsOwner.value
+        ? estimateCourtesy(
+              courtesyForm.value,
+              stayPrice.value + extraGuestsFee.value,
+          )
+        : 0,
+);
+
+/** Pedida al propietario: el hospedaje se cobra al salir. */
+const courtesyDefersCharge = computed(
+    () => courtesyOn.value && !courtesyIsOwner.value,
+);
+const chargesNow = computed(
+    () => props.chargeOnCheckin && !courtesyDefersCharge.value,
+);
+const chargeTotal = computed(() =>
+    Math.max(0, total.value - courtesyDiscount.value),
+);
+
+watch(
+    () => [courtesyForm.value.kind, courtesyForm.value.value, courtesyOn.value],
+    () => (courtesyCapWarning.value = null),
 );
 
 const peopleHint = computed(() => {
     const room = modalRoom.value;
     if (!room) return '';
     const parts: string[] = [];
-    if (room.capacity) parts.push(`Hasta ${room.capacity} personas`);
-    if (room.included_occupancy && room.extra_guest_fee) {
+    if (maxPeople.value < 20) parts.push(`Hasta ${maxPeople.value} personas`);
+    if (
+        includedPeople.value &&
+        room.extra_guest_fee &&
+        includedPeople.value < maxPeople.value
+    ) {
         parts.push(
-            `incluye ${room.included_occupancy} · extra ${money(room.extra_guest_fee)} c/u`,
+            `incluye ${includedPeople.value} · extra ${money(room.extra_guest_fee)} c/u`,
         );
     }
     return parts.join(' · ');
@@ -501,7 +603,8 @@ const canSubmit = computed(
         !!modalRoom.value &&
         // Un ajuste de fianza sin motivo lo rechaza el servidor con 422:
         // más vale que el botón lo diga antes de intentarlo.
-        !guaranteeBlocked.value,
+        !guaranteeBlocked.value &&
+        (!courtesyOn.value || courtesyFormReady(courtesyForm.value)),
 );
 
 // Mismo criterio que el estimado de /reservas: "2 noches", "3 × 12 horas".
@@ -529,6 +632,34 @@ function toggleConcept(concept: string) {
     else extraConcepts.value.push(concept);
 }
 
+// Cambiar el nombre de un huésped ya ligado lo suelta: es otra persona.
+// Corregir teléfono o correo no — el servidor completa lo que le falte a su
+// ficha sin pisar lo que ya tiene.
+function onGuestInput(field: 'name' | 'phone') {
+    if (selectedGuest.value) {
+        if (field !== 'name') return;
+        selectedGuest.value = null;
+    }
+    searchGuests(field === 'name' ? guestName.value : guestPhone.value);
+}
+
+function pickGuest(hit: GuestHit) {
+    selectedGuest.value = hit;
+    guestName.value = hit.full_name ?? guestName.value;
+    guestPhone.value = hit.phone ?? guestPhone.value;
+    guestEmail.value = hit.email ?? guestEmail.value;
+    resetGuestSearch();
+}
+
+function clearGuest() {
+    selectedGuest.value = null;
+    guestName.value = '';
+    guestPhone.value = '';
+    guestEmail.value = '';
+    resetGuestSearch();
+    nextTick(() => document.getElementById('walkin-name')?.focus());
+}
+
 async function submit() {
     if (!modalRoom.value || !canSubmit.value) return;
     saving.value = true;
@@ -540,6 +671,7 @@ async function submit() {
             rate_plan_id: ratePlanId.value,
             planned_end_at: endsAt.value || undefined,
             num_people: people.value,
+            guest_id: selectedGuest.value?.id,
             guest_name: guestName.value.trim() || undefined,
             guest_phone: guestPhone.value.trim() || undefined,
             guest_email: guestEmail.value.trim() || undefined,
@@ -553,12 +685,13 @@ async function submit() {
             extra_charges: extraConcepts.value.length
                 ? extraConcepts.value
                 : undefined,
-            // El cobro al llegar lo decide el ajuste del hotel, no el modal.
-            payment_method: props.chargeOnCheckin
+            // El cobro al llegar lo decide el ajuste del hotel, no el modal
+            // (salvo la cortesía pedida al propietario: se cobra al salir).
+            payment_method: chargesNow.value
                 ? coerceMethod(paymentMethod.value)
                 : undefined,
             payment_reference:
-                props.chargeOnCheckin &&
+                chargesNow.value &&
                 paymentMethod.value !== 'cash' &&
                 paymentReference.value.trim() !== ''
                     ? paymentReference.value.trim()
@@ -580,18 +713,33 @@ async function submit() {
             guarantee_reason: guaranteeAdjusted.value
                 ? guaranteeReason.value.trim()
                 : undefined,
+            courtesy: courtesyPayload(
+                courtesyEnabled.value && courtesyOn.value,
+                courtesyForm.value,
+                courtesyCapWarning.value !== null,
+            ),
         });
 
         toast.success(
             `Habitación ${roomNumber} ocupada`,
-            props.chargeOnCheckin
-                ? `Llegada registrada y hospedaje cobrado (${money(total.value)}).`
-                : 'Llegada registrada; el hospedaje se cobra al registrar la salida.',
+            courtesyDefersCharge.value
+                ? 'Llegada registrada y cortesía solicitada al propietario; el hospedaje se cobra al salir.'
+                : chargesNow.value && chargeTotal.value > 0
+                  ? `Llegada registrada y hospedaje cobrado (${money(chargeTotal.value)}).`
+                  : chargesNow.value
+                    ? 'Llegada registrada con cortesía: no hay hospedaje que cobrar.'
+                    : 'Llegada registrada; el hospedaje se cobra al registrar la salida.',
         );
         emit('registered');
         emit('close');
     } catch (error: any) {
         const data = error.response?.data;
+
+        if (error.response?.status === 409) {
+            courtesyCapWarning.value = data?.message ?? 'Pasa el tope del mes.';
+            return;
+        }
+
         modalError.value =
             data?.message ??
             (data?.errors
@@ -836,6 +984,13 @@ onBeforeUnmount(() => {
                 <Lucide icon="User" class="h-3.5 w-3.5" />
                 Huésped
             </div>
+            <GuestMatches
+                v-if="selectedGuest"
+                class="mb-3"
+                :hits="[]"
+                :selected="selectedGuest"
+                @clear="clearGuest"
+            />
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 <div>
                     <FormLabel
@@ -843,13 +998,22 @@ onBeforeUnmount(() => {
                         htmlFor="walkin-name"
                         >Nombre completo</FormLabel
                     >
-                    <FormInput
-                        class="h-9 text-xs"
-                        id="walkin-name"
-                        v-model="guestName"
-                        placeholder="Nombre y apellidos"
-                        maxlength="255"
-                    />
+                    <div class="relative">
+                        <Lucide
+                            :icon="guestSearching ? 'LoaderCircle' : 'Search'"
+                            class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-3.5 w-3.5 text-slate-400"
+                            :class="guestSearching ? 'animate-spin' : ''"
+                        />
+                        <FormInput
+                            class="h-9 pl-9 text-xs"
+                            id="walkin-name"
+                            v-model="guestName"
+                            placeholder="Nombre y apellidos"
+                            maxlength="255"
+                            autocomplete="off"
+                            @input="onGuestInput('name')"
+                        />
+                    </div>
                 </div>
                 <div>
                     <FormLabel
@@ -861,6 +1025,8 @@ onBeforeUnmount(() => {
                         class="h-9 text-xs"
                         id="walkin-phone"
                         v-model="guestPhone"
+                        autocomplete="off"
+                        @input="onGuestInput('phone')"
                         type="tel"
                         placeholder="6561234567"
                         maxlength="30"
@@ -882,10 +1048,17 @@ onBeforeUnmount(() => {
                     />
                 </div>
             </div>
-            <FormHelp
-                >Con nombre y teléfono queda su ficha en el CRM y se le puede
-                avisar; puedes dejarlo en blanco si solo pasa la
-                noche.</FormHelp
+            <GuestMatches
+                v-if="!selectedGuest && guestHits.length"
+                class="mt-3"
+                :hits="guestHits"
+                :selected="null"
+                @pick="pickGuest"
+            />
+            <FormHelp v-else
+                >Teclea nombre o teléfono: si ya vino antes aparece para
+                elegirlo. Con nombre y teléfono queda su ficha en el CRM; puedes
+                dejarlo en blanco si solo pasa la noche.</FormHelp
             >
         </section>
 
@@ -995,6 +1168,16 @@ onBeforeUnmount(() => {
             >
         </section>
 
+        <!-- Cortesía (módulo cortesias): gratis o con descuento -->
+        <CourtesySection
+            v-model:on="courtesyOn"
+            v-model:form="courtesyForm"
+            :lodging="stayPrice + extraGuestsFee"
+            :disabled="saving"
+            :cap-warning="courtesyCapWarning"
+            pending-note="Se le pide al propietario. La llegada se registra igual y el hospedaje se cobra al salir, con lo que él decida."
+        />
+
         <!-- Cobro del hospedaje: lo decide /ajustes/metodos-pago -->
         <section
             class="border-t border-slate-200/60 pt-5 dark:border-darkmode-400"
@@ -1005,7 +1188,14 @@ onBeforeUnmount(() => {
                 <Lucide icon="Wallet" class="h-3.5 w-3.5" />
                 Cobro del hospedaje
             </div>
-            <template v-if="chargeOnCheckin">
+            <p
+                v-if="chargeOnCheckin && courtesyDefersCharge"
+                class="text-xs text-slate-500"
+            >
+                Con la cortesía esperando al propietario, el hospedaje se cobra
+                al registrar la salida.
+            </p>
+            <template v-else-if="chargeOnCheckin">
                 <p class="mb-3 text-xs text-slate-500">
                     El hospedaje se cobra ahora y entra a tu corte; al registrar
                     la salida solo se cobran los consumos.
@@ -1193,11 +1383,12 @@ onBeforeUnmount(() => {
         <template #footer-start>
             <span
                 class="block text-sm font-medium text-slate-700 dark:text-slate-200"
-                >Total estimado {{ money(total) }}</span
+                >Total estimado {{ money(chargeTotal) }}</span
             >
             <span class="hidden sm:block"
-                >{{ unitsLabel }} · {{ money(selectedPlan?.price ?? 0) }} por
-                periodo; el sistema confirma el total exacto.</span
+                >{{ unitsLabel }} ·
+                {{ money(stayPrice / Math.max(1, units)) }} por periodo; el
+                sistema confirma el total exacto.</span
             >
         </template>
         <template #footer>
@@ -1219,9 +1410,11 @@ onBeforeUnmount(() => {
                 {{
                     saving
                         ? 'Registrando…'
-                        : chargeOnCheckin
-                          ? `Registrar y cobrar ${money(total)}`
-                          : 'Registrar llegada'
+                        : courtesyCapWarning
+                          ? 'Sí, pasar el tope'
+                          : chargesNow && chargeTotal > 0
+                            ? `Registrar y cobrar ${money(chargeTotal)}`
+                            : 'Registrar llegada'
                 }}
             </Button>
         </template>

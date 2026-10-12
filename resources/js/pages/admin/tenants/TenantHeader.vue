@@ -21,6 +21,7 @@ const props = defineProps<{
         | 'plan'
         | 'modules'
         | 'team'
+        | 'roles'
         | 'assistant'
         | 'channels'
         | 'payments';
@@ -55,6 +56,12 @@ const tabs: Array<{
         label: 'Equipo',
         icon: 'UserCog',
         routeName: 'admin.tenants.team',
+    },
+    {
+        key: 'roles',
+        label: 'Roles y accesos',
+        icon: 'ShieldCheck',
+        routeName: 'admin.tenants.roles',
     },
     {
         key: 'assistant',

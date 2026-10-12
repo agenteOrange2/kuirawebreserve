@@ -67,7 +67,7 @@ class CreateReservation
             // ver Room::effectiveMaxOccupancy) — único punto de verdad para
             // los tres canales que crean reservas (wizard, panel, agente).
             // Antes solo existía en el dato, nunca se hacía cumplir.
-            $capacity = $room->effectiveMaxOccupancy();
+            $capacity = $room->effectiveMaxOccupancy($ratePlan);
             if ($capacity !== null && ($adults + $children) > $capacity) {
                 throw NoAvailabilityException::exceedsCapacity($room->number, $capacity);
             }
@@ -78,6 +78,7 @@ class CreateReservation
                 $adults + $children,
                 $ratePlan->unitsFor($start, $end),
                 $data['extra_charges'] ?? [],
+                $ratePlan,
             );
 
             // Extras del wizard (productos reales del inventario/POS,
@@ -203,6 +204,20 @@ class CreateReservation
                 ),
                 'experiences' => $experienceLines ?: null,
             ])->saveQuietly();
+
+            // Cortesía capturada al reservar (módulo cortesias). Va DENTRO
+            // de la transacción y antes de los avisos: la confirmación al
+            // huésped sale ya con el precio de la cortesía, y si el tope del
+            // mes pide confirmar, no queda ni la reserva a medias.
+            if (! empty($data['courtesy']) && $user !== null) {
+                app(\App\Services\Courtesies\CourtesyService::class)->request(
+                    $reservation,
+                    $data['courtesy'],
+                    $user,
+                    (bool) ($data['courtesy']['confirm_over_cap'] ?? false),
+                );
+                $reservation->refresh();
+            }
 
             // Semáforo: solo si la llegada es hoy y la habitación está libre.
             if ($confirmed && $start->isToday() && $room->status->getMorphClass() === RoomStatus::Available->value) {
@@ -459,12 +474,24 @@ class CreateReservation
      */
     protected function resolveGuest(array $data): ?Guest
     {
-        if (! empty($data['guest_id'])) {
-            return Guest::findOrFail($data['guest_id']);
-        }
-
         $phone = $data['guest_phone'] ?? null;
         $email = $data['guest_email'] ?? null;
+
+        if (! empty($data['guest_id'])) {
+            $guest = Guest::findOrFail($data['guest_id']);
+
+            // Elegido del buscador del plano: lo que se tecleó completa los
+            // huecos de su ficha, nunca pisa un teléfono o correo guardado.
+            $guest->fill(array_filter([
+                'phone' => $guest->phone ? null : $phone,
+                'email' => $guest->email ? null : $email,
+            ]));
+            if ($guest->isDirty()) {
+                $guest->save();
+            }
+
+            return $guest;
+        }
 
         if (! $phone && ! $email) {
             return null;

@@ -64,7 +64,7 @@ class PlatformAlertScanner
 
         $found = collect()
             ->merge($this->aiQuota($tenants))
-            ->merge($this->aiProviders())
+            ->merge($this->aiProviders($tenants))
             ->merge($this->newTenants($tenants))
             ->merge($this->prospects())
             ->merge($this->moduleRequests())
@@ -210,16 +210,40 @@ class PlatformAlertScanner
             ->values();
     }
 
-    protected function aiProviders(): Collection
+    protected function aiProviders(Collection $tenants): Collection
     {
+        // El proveedor rechaza por saldo o llave (lo anota AgentBrain al
+        // fallar y lo borra en cuanto vuelve a contestar).
+        $outages = $tenants
+            ->map(function (Tenant $tenant) {
+                $outage = Cache::store()->get(\App\Services\Agent\AgentBrain::PROVIDER_OUTAGE_KEY.$tenant->id);
+
+                if (! is_array($outage)) {
+                    return null;
+                }
+
+                $since = Carbon::parse($outage['since'] ?? now());
+
+                return $this->alert('ai_outage', "ai_outage:{$tenant->id}", 'danger', $tenant->id,
+                    'El asistente no puede contestar',
+                    'El proveedor '.($outage['provider'] ?? '').' ('.($outage['model'] ?? '').') rechaza las llamadas desde el '
+                        .$since->timezone(config('app.timezone'))->format('d/m H:i')
+                        .($outage['platform'] ?? false ? ' con la llave de la plataforma' : ' con la llave del hotel')
+                        .': '.($outage['message'] ?? '').'. Cada huésped que escribe pasa a la bandeja.',
+                    route('admin.ai', [], false),
+                    ['since' => $outage['since'] ?? null]);
+            })
+            ->filter()
+            ->values();
+
         if (PlatformAiProvider::query()->active()->exists()) {
-            return collect();
+            return $outages;
         }
 
-        return collect([$this->alert('ai_providers', 'ai_providers:none', 'danger', null,
+        return $outages->push($this->alert('ai_providers', 'ai_providers:none', 'danger', null,
             'No hay llaves de IA activas',
             'Ningún bot que use las llaves de la plataforma puede contestar.',
-            route('admin.ai', [], false))]);
+            route('admin.ai', [], false)));
     }
 
     protected function newTenants(Collection $tenants): Collection

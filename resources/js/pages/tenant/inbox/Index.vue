@@ -49,6 +49,8 @@ interface ThreadMessage {
     voice_note: boolean;
     /** El canal rechazó el mensaje: el huésped NO lo recibió. */
     undelivered: boolean;
+    /** Salió como plantilla de WhatsApp (ventana de 24 h cerrada). */
+    template?: string | null;
     attachments: {
         id: number;
         url: string;
@@ -92,6 +94,23 @@ interface ReservationCard {
         summary: string | null;
         warnings: string[];
     } | null;
+}
+/** Ventana de 24 h de WhatsApp/Messenger/IG para contestar con texto libre. */
+interface WindowInfo {
+    open: boolean;
+    minutes_left: number;
+    closes_label?: string;
+    label: string;
+    /** Solo el WhatsApp oficial puede retomar con plantilla. */
+    templates: boolean;
+    channel_label?: string;
+}
+interface TemplateRow {
+    name: string;
+    language: string;
+    category: string;
+    body: string;
+    params: number;
 }
 interface ChannelRow {
     id: number;
@@ -343,6 +362,51 @@ const pendingCount = computed(
     () => props.conversations.filter((c) => c.status === 'pending').length,
 );
 
+// ── Lista plegable (solo escritorio): una barra angosta como el menú, con
+// avatares, no leídos y quién espera, para darle todo el ancho al hilo. Se
+// recuerda en el navegador; en el celular no aplica (ahí es lista O hilo). ──
+const RAIL_KEY = 'inbox.rail';
+const railPref = ref(false);
+const isWide = ref(false);
+let wideQuery: MediaQueryList | null = null;
+const rail = computed(() => railPref.value && isWide.value);
+
+function onWideChange(): void {
+    isWide.value = wideQuery?.matches ?? false;
+}
+
+function toggleRail(): void {
+    railPref.value = !railPref.value;
+    railCard.value = null;
+    try {
+        localStorage.setItem(RAIL_KEY, railPref.value ? '1' : '0');
+    } catch {
+        // Sin almacenamiento: la preferencia dura solo esta visita.
+    }
+}
+
+const unreadTotal = computed(() =>
+    props.conversations.reduce((n, c) => n + (c.unread || 0), 0),
+);
+
+// Tarjeta que se desliza al pasar el cursor por un avatar. Va fija a la
+// pantalla porque la barra tiene scroll y la recortaría.
+const railCard = ref<{ c: ConversationRow; top: number; left: number } | null>(
+    null,
+);
+let railCardTimer: ReturnType<typeof setTimeout> | null = null;
+
+function showRailCard(c: ConversationRow, e: MouseEvent): void {
+    if (railCardTimer) clearTimeout(railCardTimer);
+    const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    railCard.value = { c, top: box.top + box.height / 2, left: box.right + 10 };
+}
+
+function hideRailCard(): void {
+    if (railCardTimer) clearTimeout(railCardTimer);
+    railCardTimer = setTimeout(() => (railCard.value = null), 90);
+}
+
 // ── Hilo seleccionado ──
 const selected = ref<ConversationRow | null>(null);
 
@@ -380,6 +444,92 @@ const threadLoading = ref(false);
 // La reserva de la conversación abierta: folio, fechas y dinero. Antes había
 // que salir a /reservas o /pagos para saber si el huésped ya había pagado.
 const reservationCard = ref<ReservationCard | null>(null);
+
+// Ventana de 24 h: WhatsApp rechaza el texto libre 24 h después del último
+// mensaje del huésped (regla de Meta; 48 h no existe). Con la ventana
+// cerrada el compositor se apaga y se ofrece retomar con una plantilla.
+const windowInfo = ref<WindowInfo | null>(null);
+const templates = ref<TemplateRow[]>([]);
+const templatesReason = ref<string | null>(null);
+const templatesLoading = ref(false);
+const templateKey = ref('');
+const sendingTemplate = ref(false);
+const whatsappClosed = computed(
+    () => windowInfo.value?.open === false && windowInfo.value.templates,
+);
+const windowUrgent = computed(
+    () =>
+        windowInfo.value?.open === true && windowInfo.value.minutes_left <= 240,
+);
+const chosenTemplate = computed(
+    () =>
+        templates.value.find(
+            (t) => `${t.name}|${t.language}` === templateKey.value,
+        ) ?? null,
+);
+
+async function loadTemplates() {
+    if (!selected.value || templatesLoading.value) return;
+    templatesLoading.value = true;
+    try {
+        const { data } = await axios.get(
+            `/api/inbox/${selected.value.id}/templates`,
+        );
+        templates.value = data.templates ?? [];
+        templatesReason.value = data.reason ?? null;
+        const preferred = data.default
+            ? `${data.default.name}|${data.default.language}`
+            : '';
+        templateKey.value = templates.value.some(
+            (t) => `${t.name}|${t.language}` === preferred,
+        )
+            ? preferred
+            : templates.value[0]
+              ? `${templates.value[0].name}|${templates.value[0].language}`
+              : '';
+    } catch {
+        templatesReason.value =
+            'No se pudieron leer las plantillas. Intenta de nuevo en un momento.';
+    } finally {
+        templatesLoading.value = false;
+    }
+}
+
+async function sendTemplate() {
+    if (!selected.value || !chosenTemplate.value || sendingTemplate.value)
+        return;
+    sendingTemplate.value = true;
+    try {
+        await axios.post(`/api/inbox/${selected.value.id}/template`, {
+            name: chosenTemplate.value.name,
+            language: chosenTemplate.value.language,
+        });
+        toast.success(
+            'Plantilla enviada',
+            'Cuando el huésped conteste se vuelve a abrir la ventana y ya puedes escribirle normal.',
+        );
+        await refreshThread();
+    } catch (e: any) {
+        toast.error(
+            'La plantilla no salió',
+            e.response?.data?.message ??
+                'Meta la rechazó. Revisa que siga aprobada.',
+        );
+        await refreshThread();
+    } finally {
+        sendingTemplate.value = false;
+    }
+}
+
+/** El cuerpo de la plantilla como lo va a leer el huésped. */
+function templatePreview(t: TemplateRow): string {
+    const name = selected.value?.name?.split(/\s+/)[0] ?? '';
+    const values = [name, props.property.name];
+    return t.body.replace(
+        /\{\{\s*(\d+)\s*\}\}/g,
+        (_, n) => values[Number(n) - 1] ?? '',
+    );
+}
 
 const receiptTone: Record<string, string> = {
     match: 'bg-success/10 text-success',
@@ -435,6 +585,10 @@ async function open(c: ConversationRow) {
     threadLoading.value = true;
     thread.value = [];
     reservationCard.value = null;
+    windowInfo.value = null;
+    templates.value = [];
+    templatesReason.value = null;
+    templateKey.value = '';
     await refreshThread();
     threadLoading.value = false;
     c.unread = 0;
@@ -471,7 +625,15 @@ async function refreshThread() {
         const grew = data.messages.length !== thread.value.length;
         thread.value = data.messages;
         reservationCard.value = data.reservation ?? null;
+        windowInfo.value = data.window ?? null;
         Object.assign(selected.value, data.conversation);
+        if (
+            whatsappClosed.value &&
+            templates.value.length === 0 &&
+            templatesReason.value === null
+        ) {
+            loadTemplates();
+        }
         if (grew) scrollThread();
     } catch {
         /* la conversación pudo borrarse */
@@ -511,7 +673,12 @@ async function sendReply() {
 
         // Queda en el hilo aunque el canal lo rechace; se dice de frente en
         // vez de dejar creer que el huésped ya lo tiene.
-        if (data?.delivered === false) {
+        if (data?.window_closed) {
+            toast.error(
+                'La ventana de 24 horas está cerrada',
+                'WhatsApp ya no deja mandarle texto libre a este huésped. Retómalo con una plantilla aprobada.',
+            );
+        } else if (data?.delivered === false) {
             toast.error(
                 attachment.value
                     ? 'El archivo no salió'
@@ -550,6 +717,45 @@ async function patchConversation(
     } catch (e: any) {
         toast.error(
             'No se pudo actualizar',
+            e.response?.data?.message ?? 'Ocurrió un error.',
+        );
+    }
+}
+
+// ¿El huésped quedó esperando? Lo último del hilo, sin contar los avisos del
+// sistema ("Te comunicamos con una persona…"), es un mensaje suyo.
+const guestIsWaiting = computed(() => {
+    const last = [...thread.value]
+        .reverse()
+        .find((m) => m.direction === 'in' || m.sender_type !== 'system');
+    return last?.direction === 'in';
+});
+
+// Devolver al bot: si el huésped espera respuesta, el bot contesta de una
+// vez (antes se quedaba callado hasta que volvieran a escribir); con 'now'
+// escribe aunque lo último haya sido del hotel.
+async function returnToBot(respond: 'auto' | 'now') {
+    if (!selected.value) return;
+    try {
+        const { data } = await axios.patch<{ bot_responding?: boolean }>(
+            `/api/inbox/${selected.value.id}`,
+            { bot_enabled: true, status: 'open', respond },
+        );
+        toast.success(
+            'El bot retomó la conversación',
+            data.bot_responding
+                ? 'Ya está escribiendo la respuesta; aparece aquí en unos segundos.'
+                : 'Contestará en cuanto el huésped escriba.',
+        );
+        await refreshThread();
+        router.reload({ only: ['conversations', 'counts', 'pagination'] });
+        // La respuesta del bot sale de la cola en unos segundos.
+        if (data.bot_responding) {
+            window.setTimeout(() => refreshThread(), 8000);
+        }
+    } catch (e: any) {
+        toast.error(
+            'No se pudo devolver al bot',
             e.response?.data?.message ?? 'Ocurrió un error.',
         );
     }
@@ -815,6 +1021,16 @@ onMounted(() => {
     poller = setInterval(refreshIfVisible, 60000);
     document.addEventListener('visibilitychange', onVisibilityChange);
 
+    // xl de Tailwind: desde ahí lista e hilo van lado a lado.
+    wideQuery = window.matchMedia('(min-width: 1280px)');
+    onWideChange();
+    wideQuery.addEventListener('change', onWideChange);
+    try {
+        railPref.value = localStorage.getItem(RAIL_KEY) === '1';
+    } catch {
+        railPref.value = false;
+    }
+
     // Enlace directo a un hilo (?conversation=ID): lo usa la lista de
     // espera para enseñar el aviso que mandó el asistente. Si no está en la
     // lista cargada se pide al servidor: el enlace siempre abre el hilo.
@@ -828,6 +1044,8 @@ onBeforeUnmount(() => {
     if (poller) clearInterval(poller);
     if (refreshDebounce) clearTimeout(refreshDebounce);
     if (searchDebounce) clearTimeout(searchDebounce);
+    if (railCardTimer) clearTimeout(railCardTimer);
+    wideQuery?.removeEventListener('change', onWideChange);
     document.removeEventListener('visibilitychange', onVisibilityChange);
 });
 </script>
@@ -936,224 +1154,179 @@ onBeforeUnmount(() => {
             </div>
 
             <!-- Mensajero: lista e hilo en un mismo panel -->
-            <div class="box box--stacked mt-5 grid grid-cols-12">
-                <!-- Lista de conversaciones (en móvil se muestra lista O hilo) -->
+            <div class="box box--stacked mt-5 grid grid-cols-12 xl:flex">
+                <!-- Lista de conversaciones (en móvil se muestra lista O hilo;
+                     en escritorio se puede plegar a una barra de avatares) -->
                 <div
-                    class="col-span-12 h-[calc(100dvh-11.5rem)] min-h-[480px] flex-col border-slate-200/60 xl:col-span-4 xl:flex xl:h-[calc(100vh-15rem)] xl:min-h-[560px] xl:border-r dark:border-darkmode-400"
-                    :class="selected ? 'hidden' : 'flex'"
+                    class="col-span-12 h-[calc(100dvh-11.5rem)] min-h-[480px] flex-col border-slate-200/60 transition-[width] duration-300 ease-out xl:relative xl:flex xl:h-[calc(100vh-15rem)] xl:min-h-[560px] xl:shrink-0 xl:border-r dark:border-darkmode-400"
+                    :class="[
+                        selected ? 'hidden' : 'flex',
+                        rail ? 'xl:w-[76px]' : 'xl:w-1/3',
+                    ]"
                 >
-                    <!-- Búsqueda y pestañas -->
-                    <div
-                        class="space-y-3 border-b border-slate-200/60 p-4 dark:border-darkmode-400"
+                    <!-- Manija sobre la divisoria: pliega y despliega la lista
+                         sin quitarle espacio al buscador -->
+                    <button
+                        type="button"
+                        class="absolute top-1/2 -right-3.5 z-20 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:scale-110 hover:border-primary/50 hover:text-primary xl:flex dark:border-darkmode-400 dark:bg-darkmode-600"
+                        :title="
+                            rail
+                                ? 'Desplegar la lista de conversaciones'
+                                : 'Plegar la lista para darle más espacio al chat'
+                        "
+                        @click="toggleRail"
                     >
-                        <div class="flex flex-col gap-2.5 sm:flex-row">
-                            <div class="relative min-w-0 flex-1">
-                                <Lucide
-                                    icon="Search"
-                                    class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.5] text-slate-400"
-                                />
-                                <input
-                                    v-model="search"
-                                    type="search"
-                                    placeholder="Buscar nombre, teléfono, folio o mensaje"
-                                    class="h-9 w-full rounded-lg border border-slate-200 pr-3 pl-9 text-xs transition outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-darkmode-400 dark:bg-darkmode-600"
-                                    @input="onSearchInput"
-                                    @search="onSearchInput"
-                                />
-                            </div>
-                            <FormSelect
-                                v-model="leadFilter"
-                                class="shrink-0 text-xs sm:!w-auto"
-                            >
-                                <option value="all">Embudo: todos</option>
-                                <option value="quoting">Cotizando</option>
-                                <option value="hold">Con apartado</option>
-                                <option value="won">Ganados</option>
-                                <option value="lost">Perdidos</option>
-                            </FormSelect>
-                        </div>
-                        <p
-                            v-if="searching"
-                            class="flex items-center gap-1.5 text-[11px] text-slate-500"
-                        >
-                            <Lucide
-                                icon="Info"
-                                class="h-3.5 w-3.5 shrink-0 text-slate-400"
-                            />
-                            Se busca en toda la bandeja, incluidas resueltas y
-                            archivadas.
-                        </p>
-                        <button
-                            v-if="counts.waiting > 0 || filters.esperando"
-                            type="button"
-                            class="mb-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-[0.5rem] border px-2 text-xs font-medium transition"
-                            :class="
-                                filters.esperando
-                                    ? 'border-warning bg-warning/10 text-warning'
-                                    : 'border-slate-200/70 text-slate-500 hover:border-warning/60 hover:text-warning dark:border-darkmode-400'
-                            "
-                            title="Conversaciones que el asistente pasó a una persona y siguen sin respuesta"
-                            @click="toggleEsperando"
-                        >
-                            <Lucide icon="Hourglass" class="h-3.5 w-3.5" />
-                            Esperando al personal
-                            <span class="font-semibold">{{
-                                counts.waiting
-                            }}</span>
-                        </button>
+                        <Lucide
+                            :icon="rail ? 'ChevronRight' : 'ChevronLeft'"
+                            class="h-4 w-4"
+                        />
+                    </button>
+                    <!-- Barra plegada: avatares con no leídos, como el menú -->
+                    <template v-if="rail">
                         <div
-                            class="inline-flex w-full gap-1 rounded-[0.6rem] bg-slate-100/80 p-1 dark:bg-darkmode-700"
+                            class="flex flex-col items-center gap-1 border-b border-slate-200/60 px-2 py-3 dark:border-darkmode-400"
                         >
+                            <button
+                                type="button"
+                                class="relative flex h-10 w-10 items-center justify-center rounded-xl text-slate-500 transition hover:bg-primary/10 hover:text-primary"
+                                title="Desplegar la lista de conversaciones"
+                                @click="toggleRail"
+                            >
+                                <Lucide icon="PanelLeftOpen" class="h-5 w-5" />
+                                <span
+                                    v-if="unreadTotal"
+                                    class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-semibold text-white"
+                                    >{{ unreadTotal }}</span
+                                >
+                            </button>
                             <button
                                 v-for="f in [
                                     {
                                         key: 'active',
                                         label: 'Activas',
+                                        icon: 'Inbox',
                                         count: counts.active,
                                     },
                                     {
                                         key: 'resolved',
                                         label: 'Resueltas',
+                                        icon: 'CircleCheck',
                                         count: counts.resolved,
                                     },
                                     {
                                         key: 'archived',
                                         label: 'Archivadas',
+                                        icon: 'Archive',
                                         count: counts.archived,
                                     },
-                                ]"
+                                ] as const"
                                 :key="f.key"
-                                class="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-[0.5rem] px-2 text-xs font-medium transition"
+                                type="button"
+                                class="relative flex h-10 w-10 items-center justify-center rounded-xl transition"
                                 :class="
                                     tab === f.key
-                                        ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
-                                        : 'text-slate-500 hover:text-slate-700'
+                                        ? 'bg-primary/10 text-primary'
+                                        : 'text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-darkmode-400'
                                 "
-                                @click="setTab(f.key as InboxTab)"
+                                :title="`${f.label} (${f.count})`"
+                                @click="setTab(f.key)"
                             >
-                                {{ f.label }}
+                                <Lucide
+                                    :icon="f.icon"
+                                    class="h-[18px] w-[18px]"
+                                />
+                            </button>
+                            <button
+                                v-if="counts.waiting > 0 || filters.esperando"
+                                type="button"
+                                class="relative flex h-10 w-10 items-center justify-center rounded-xl transition"
+                                :class="
+                                    filters.esperando
+                                        ? 'bg-warning/15 text-warning'
+                                        : 'text-warning/80 hover:bg-warning/10 hover:text-warning'
+                                "
+                                :title="`Esperando al personal (${counts.waiting})`"
+                                @click="toggleEsperando"
+                            >
+                                <Lucide
+                                    icon="Hourglass"
+                                    class="h-[18px] w-[18px]"
+                                />
                                 <span
-                                    v-if="f.count"
-                                    class="rounded-full px-1.5 py-0.5 text-[11px] font-semibold"
-                                    :class="
-                                        tab === f.key
-                                            ? 'bg-primary/10 text-primary'
-                                            : 'bg-slate-200/80 text-slate-500 dark:bg-darkmode-400'
-                                    "
-                                    >{{ f.count }}</span
+                                    class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-warning px-1 text-[10px] font-semibold text-white"
+                                    >{{ counts.waiting }}</span
                                 >
                             </button>
                         </div>
                         <div
-                            v-if="
-                                tab === 'resolved' &&
-                                canManage &&
-                                counts.resolved > 0
-                            "
-                            class="flex items-center justify-between gap-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3.5 py-2.5 dark:border-darkmode-400 dark:bg-darkmode-700"
+                            class="flex flex-1 flex-col items-center gap-1.5 overflow-x-hidden overflow-y-auto py-3"
+                            @scroll="railCard = null"
                         >
-                            <span class="text-xs leading-snug text-slate-500">
-                                Archívalas para despejar la bandeja; el archivo
-                                se borra solo a los 30 días.
-                            </span>
-                            <Button
-                                variant="outline-secondary"
-                                class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
-                                :disabled="archivingAll"
-                                @click="archiveAllResolved"
-                            >
-                                <Lucide
-                                    icon="Archive"
-                                    class="mr-1.5 h-3.5 w-3.5"
-                                />
-                                {{
-                                    archivingAll
-                                        ? 'Archivando…'
-                                        : 'Archivar todas'
-                                }}
-                            </Button>
-                        </div>
-                        <div
-                            v-if="tab === 'archived'"
-                            class="flex items-center justify-between gap-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3.5 py-2.5 dark:border-darkmode-400 dark:bg-darkmode-700"
-                        >
-                            <span class="text-xs leading-snug text-slate-500">
-                                Se eliminan solas a los 30 días de archivadas;
-                                vuelven a la bandeja si el huésped escribe.
-                            </span>
-                            <Button
-                                v-if="canManage && counts.archived > 0"
-                                variant="outline-danger"
-                                class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
-                                @click="emptyArchiveOpen = true"
-                            >
-                                <Lucide
-                                    icon="Trash2"
-                                    class="mr-1.5 h-3.5 w-3.5"
-                                />
-                                Vaciar archivo
-                            </Button>
-                        </div>
-                    </div>
-
-                    <!-- Conversaciones (agrupadas por estado en Activas) -->
-                    <div class="flex-1 overflow-y-auto">
-                        <template v-for="g in groups" :key="g.key">
-                            <div
-                                v-if="g.label"
-                                class="sticky top-0 z-10 flex items-center gap-2 border-y border-slate-200/60 bg-slate-50/95 px-3.5 py-1.5 backdrop-blur-sm first:border-t-0 dark:border-darkmode-400 dark:bg-darkmode-700/95"
-                            >
-                                <Lucide
-                                    :icon="
-                                        g.key === 'pending'
-                                            ? 'UserCheck'
-                                            : 'MessageCircle'
-                                    "
-                                    class="h-4 w-4"
-                                    :class="
-                                        g.key === 'pending'
-                                            ? 'text-warning'
-                                            : 'text-slate-400'
-                                    "
-                                />
-                                <span
-                                    class="text-xs font-medium tracking-wide uppercase"
-                                    :class="
-                                        g.key === 'pending'
-                                            ? 'text-warning'
-                                            : 'text-slate-400'
-                                    "
-                                    >{{ g.label }}</span
-                                >
-                                <span class="text-xs text-slate-400"
-                                    >({{ g.items.length }})</span
-                                >
-                            </div>
-                            <div
-                                class="divide-y divide-slate-100 dark:divide-darkmode-400/60"
-                            >
+                            <template v-for="g in groups" :key="g.key">
                                 <div
+                                    v-if="g.label"
+                                    class="mt-1 flex w-full flex-col items-center gap-0.5 first:mt-0"
+                                    :title="`${g.label} (${g.items.length})`"
+                                >
+                                    <Lucide
+                                        :icon="
+                                            g.key === 'pending'
+                                                ? 'UserCheck'
+                                                : 'MessageCircle'
+                                        "
+                                        class="h-3.5 w-3.5"
+                                        :class="
+                                            g.key === 'pending'
+                                                ? 'text-warning'
+                                                : 'text-slate-400'
+                                        "
+                                    />
+                                    <span
+                                        class="h-px w-8 bg-slate-200 dark:bg-darkmode-400"
+                                    />
+                                </div>
+                                <button
                                     v-for="c in g.items"
                                     :key="c.id"
-                                    role="button"
-                                    tabindex="0"
-                                    class="group flex w-full cursor-pointer items-start gap-3 px-3.5 py-3 text-left transition hover:bg-slate-50 dark:hover:bg-darkmode-400/40"
-                                    :class="{
-                                        'bg-primary/5': selected?.id === c.id,
-                                        'bg-primary/[0.03]':
-                                            selected?.id !== c.id &&
-                                            c.unread > 0,
-                                    }"
+                                    type="button"
+                                    class="group/rail relative flex w-full justify-center py-0.5"
+                                    :aria-label="`Abrir conversación con ${c.name}`"
                                     @click="open(c)"
-                                    @keydown.enter.self.prevent="open(c)"
+                                    @mouseenter="showRailCard(c, $event)"
+                                    @mouseleave="hideRailCard"
+                                    @focus="
+                                        showRailCard(
+                                            c,
+                                            $event as unknown as MouseEvent,
+                                        )
+                                    "
+                                    @blur="hideRailCard"
                                 >
-                                    <div class="relative shrink-0">
-                                        <div
-                                            class="flex h-10 w-10 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
+                                    <!-- Marca de la abierta, como el menú -->
+                                    <span
+                                        class="absolute top-1/2 left-0 w-1 -translate-y-1/2 rounded-r-full bg-primary transition-all duration-200"
+                                        :class="
+                                            selected?.id === c.id
+                                                ? 'h-7 opacity-100'
+                                                : 'h-0 opacity-0 group-hover/rail:h-4 group-hover/rail:opacity-60'
+                                        "
+                                    />
+                                    <span
+                                        class="relative transition-transform duration-200 ease-out group-hover/rail:scale-110"
+                                    >
+                                        <span
+                                            class="flex h-10 w-10 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white ring-offset-2 transition-shadow dark:ring-offset-darkmode-600"
+                                            :class="
+                                                selected?.id === c.id
+                                                    ? 'ring-2 ring-primary'
+                                                    : c.status === 'pending'
+                                                      ? 'ring-2 ring-warning/70'
+                                                      : ''
+                                            "
                                         >
                                             {{ initials(c.name) }}
-                                        </div>
-                                        <div
+                                        </span>
+                                        <span
                                             class="absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white dark:border-darkmode-600"
                                             :class="
                                                 channelMeta[c.channel]?.tone ??
@@ -1168,226 +1341,574 @@ onBeforeUnmount(() => {
                                                 "
                                                 class="h-2.5 w-2.5"
                                             />
-                                        </div>
-                                    </div>
-                                    <div class="min-w-0 flex-1">
-                                        <div class="flex items-center gap-2">
-                                            <span
-                                                class="truncate text-sm"
-                                                :class="
-                                                    c.unread
-                                                        ? 'font-semibold'
-                                                        : 'font-medium'
-                                                "
-                                                >{{ c.name }}</span
-                                            >
-                                            <span
-                                                class="ml-auto shrink-0 text-xs text-slate-400"
-                                                >{{ c.last_message_at }}</span
-                                            >
-                                        </div>
-                                        <div
-                                            class="mt-1 flex items-center gap-2"
+                                        </span>
+                                        <span
+                                            v-if="c.unread"
+                                            class="absolute -top-1 -right-1.5 flex h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-primary px-1 text-[10px] font-semibold text-white dark:border-darkmode-600"
+                                            >{{ c.unread }}</span
                                         >
-                                            <span
-                                                class="truncate text-xs text-slate-500"
-                                                >{{ c.preview ?? '—' }}</span
-                                            >
-                                            <span
-                                                v-if="c.unread"
-                                                class="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white"
-                                                >{{ c.unread }}</span
-                                            >
-                                        </div>
-                                        <div
-                                            class="mt-1.5 flex flex-wrap items-center gap-1.5"
-                                        >
-                                            <span
-                                                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
-                                                :class="
-                                                    statusMeta[c.status]?.tone
-                                                "
-                                                >{{
-                                                    statusMeta[c.status]?.label
-                                                }}</span
-                                            >
-                                            <span
-                                                v-if="leadMeta[c.lead_status]"
-                                                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
-                                                :class="
-                                                    leadMeta[c.lead_status].tone
-                                                "
-                                                >{{
-                                                    leadMeta[c.lead_status]
-                                                        .label
-                                                }}</span
-                                            >
-                                            <span
-                                                v-if="
-                                                    c.waiting_label &&
-                                                    c.status === 'pending'
-                                                "
-                                                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
-                                                :class="
-                                                    esperaTono(
-                                                        c.waiting_minutes,
-                                                    )
-                                                "
-                                                title="Lleva este tiempo esperando a una persona del hotel"
-                                                >Espera
-                                                {{ c.waiting_label }}</span
-                                            >
-                                            <span
-                                                v-if="c.from_social"
-                                                class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
-                                                title="Nació de un comentario en redes sociales"
-                                                >Comentario</span
-                                            >
-                                            <span
-                                                v-if="
-                                                    c.payment_pending_verification
-                                                "
-                                                class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
-                                                >Verificar pago</span
-                                            >
-                                            <span
-                                                v-else-if="
-                                                    c.payment_status &&
-                                                    c.payment_status_label
-                                                "
-                                                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
-                                                :class="
-                                                    paymentMeta[
-                                                        c.payment_status
-                                                    ]?.tone
-                                                "
-                                                >{{
-                                                    c.payment_status_label
-                                                }}</span
-                                            >
-                                            <span
-                                                v-if="!c.bot_enabled"
-                                                class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
-                                                >{{
-                                                    c.assignee ?? 'Humano'
-                                                }}</span
-                                            >
-                                            <span
-                                                v-else
-                                                class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
-                                                >Bot</span
-                                            >
-                                            <button
-                                                v-if="
-                                                    canManage &&
-                                                    !c.archived &&
-                                                    c.status === 'resolved'
-                                                "
-                                                type="button"
-                                                class="ml-auto rounded-md p-1.5 text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-primary/10 hover:text-primary focus:opacity-100"
-                                                title="Archivar conversación"
-                                                :disabled="archivingId === c.id"
-                                                @click.stop="
-                                                    setArchived(c, true)
-                                                "
-                                            >
-                                                <Lucide
-                                                    icon="Archive"
-                                                    class="h-4 w-4"
-                                                />
-                                            </button>
-                                            <button
-                                                v-if="canManage && c.archived"
-                                                type="button"
-                                                class="ml-auto rounded-md p-1.5 text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-primary/10 hover:text-primary focus:opacity-100"
-                                                title="Restaurar a la bandeja"
-                                                :disabled="archivingId === c.id"
-                                                @click.stop="
-                                                    setArchived(c, false)
-                                                "
-                                            >
-                                                <Lucide
-                                                    icon="ArchiveRestore"
-                                                    class="h-4 w-4"
-                                                />
-                                            </button>
-                                            <button
-                                                v-if="canManage"
-                                                type="button"
-                                                class="rounded-md p-1.5 text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-danger/10 hover:text-danger focus:opacity-100"
-                                                :class="
-                                                    !c.archived &&
-                                                    c.status !== 'resolved'
-                                                        ? 'ml-auto'
-                                                        : ''
-                                                "
-                                                title="Eliminar conversación"
-                                                @click.stop="deleting = c"
-                                            >
-                                                <Lucide
-                                                    icon="Trash2"
-                                                    class="h-4 w-4"
-                                                />
-                                            </button>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </template>
-                        <div
-                            v-if="!filtered.length"
-                            class="flex flex-col items-center gap-3 py-12 text-center"
-                        >
-                            <div
-                                class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
-                            >
-                                <Lucide icon="MessagesSquare" class="h-5 w-5" />
-                            </div>
-                            <p class="px-6 text-sm text-slate-500">
-                                {{
-                                    searching
-                                        ? 'Ninguna conversación coincide con esa búsqueda, en toda la bandeja.'
-                                        : leadFilter !== 'all'
-                                          ? 'Sin resultados con estos filtros.'
-                                          : tab === 'archived'
-                                            ? 'El archivo está vacío; archiva las resueltas para despejar la bandeja.'
-                                            : tab === 'resolved'
-                                              ? 'No hay conversaciones resueltas pendientes de archivar.'
-                                              : 'Sin conversaciones activas todavía. Comparte el webchat de tu hotel para empezar.'
-                                }}
-                            </p>
+                                    </span>
+                                </button>
+                            </template>
+                            <Lucide
+                                v-if="!filtered.length"
+                                icon="MessagesSquare"
+                                class="mt-4 h-5 w-5 text-slate-300"
+                                title="Sin conversaciones con estos filtros"
+                            />
                         </div>
-                    </div>
-
-                    <!-- Cuántas se ven de cuántas hay: la lista es una
-                         ventana de las más recientes, no la bandeja entera. -->
-                    <div
-                        v-if="pagination.total > pagination.loaded"
-                        class="flex items-center justify-between gap-3 border-t border-slate-200/60 px-4 py-2.5 dark:border-darkmode-400"
-                    >
-                        <span class="text-xs text-slate-500">
-                            Mostrando {{ pagination.loaded }} de
-                            {{ pagination.total }}
-                        </span>
-                        <Button
+                        <button
                             v-if="pagination.has_more"
-                            variant="outline-secondary"
-                            class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
+                            type="button"
+                            class="mx-auto mb-2 flex h-9 w-9 items-center justify-center rounded-xl text-slate-400 transition hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-darkmode-400"
+                            :title="`Cargar más (se ven ${pagination.loaded} de ${pagination.total})`"
                             :disabled="loadingMore"
                             @click="loadMore"
                         >
-                            <Lucide
-                                icon="ChevronDown"
-                                class="mr-1.5 h-3.5 w-3.5"
-                            />
-                            {{ loadingMore ? 'Cargando…' : 'Cargar más' }}
-                        </Button>
-                    </div>
+                            <Lucide icon="ChevronDown" class="h-4 w-4" />
+                        </button>
+                    </template>
+
+                    <template v-else>
+                        <!-- Búsqueda y pestañas -->
+                        <div
+                            class="space-y-3 border-b border-slate-200/60 p-4 dark:border-darkmode-400"
+                        >
+                            <div class="flex flex-col gap-2.5 sm:flex-row">
+                                <div class="relative min-w-0 flex-1">
+                                    <Lucide
+                                        icon="Search"
+                                        class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-4 w-4 stroke-[1.5] text-slate-400"
+                                    />
+                                    <input
+                                        v-model="search"
+                                        type="search"
+                                        placeholder="Buscar nombre, teléfono, folio o mensaje"
+                                        class="h-9 w-full rounded-lg border border-slate-200 pr-3 pl-9 text-xs transition outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 dark:border-darkmode-400 dark:bg-darkmode-600"
+                                        @input="onSearchInput"
+                                        @search="onSearchInput"
+                                    />
+                                </div>
+                                <FormSelect
+                                    v-model="leadFilter"
+                                    class="shrink-0 text-xs sm:!w-auto"
+                                >
+                                    <option value="all">Embudo: todos</option>
+                                    <option value="quoting">Cotizando</option>
+                                    <option value="hold">Con apartado</option>
+                                    <option value="won">Ganados</option>
+                                    <option value="lost">Perdidos</option>
+                                </FormSelect>
+                            </div>
+                            <p
+                                v-if="searching"
+                                class="flex items-center gap-1.5 text-[11px] text-slate-500"
+                            >
+                                <Lucide
+                                    icon="Info"
+                                    class="h-3.5 w-3.5 shrink-0 text-slate-400"
+                                />
+                                Se busca en toda la bandeja, incluidas resueltas
+                                y archivadas.
+                            </p>
+                            <button
+                                v-if="counts.waiting > 0 || filters.esperando"
+                                type="button"
+                                class="mb-2 flex h-8 w-full items-center justify-center gap-1.5 rounded-[0.5rem] border px-2 text-xs font-medium transition"
+                                :class="
+                                    filters.esperando
+                                        ? 'border-warning bg-warning/10 text-warning'
+                                        : 'border-slate-200/70 text-slate-500 hover:border-warning/60 hover:text-warning dark:border-darkmode-400'
+                                "
+                                title="Conversaciones que el asistente pasó a una persona y siguen sin respuesta"
+                                @click="toggleEsperando"
+                            >
+                                <Lucide icon="Hourglass" class="h-3.5 w-3.5" />
+                                Esperando al personal
+                                <span class="font-semibold">{{
+                                    counts.waiting
+                                }}</span>
+                            </button>
+                            <div
+                                class="inline-flex w-full gap-1 rounded-[0.6rem] bg-slate-100/80 p-1 dark:bg-darkmode-700"
+                            >
+                                <button
+                                    v-for="f in [
+                                        {
+                                            key: 'active',
+                                            label: 'Activas',
+                                            count: counts.active,
+                                        },
+                                        {
+                                            key: 'resolved',
+                                            label: 'Resueltas',
+                                            count: counts.resolved,
+                                        },
+                                        {
+                                            key: 'archived',
+                                            label: 'Archivadas',
+                                            count: counts.archived,
+                                        },
+                                    ]"
+                                    :key="f.key"
+                                    class="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-[0.5rem] px-2 text-xs font-medium transition"
+                                    :class="
+                                        tab === f.key
+                                            ? 'bg-white text-primary shadow-sm dark:bg-darkmode-600'
+                                            : 'text-slate-500 hover:text-slate-700'
+                                    "
+                                    @click="setTab(f.key as InboxTab)"
+                                >
+                                    {{ f.label }}
+                                    <span
+                                        v-if="f.count"
+                                        class="rounded-full px-1.5 py-0.5 text-[11px] font-semibold"
+                                        :class="
+                                            tab === f.key
+                                                ? 'bg-primary/10 text-primary'
+                                                : 'bg-slate-200/80 text-slate-500 dark:bg-darkmode-400'
+                                        "
+                                        >{{ f.count }}</span
+                                    >
+                                </button>
+                            </div>
+                            <div
+                                v-if="
+                                    tab === 'resolved' &&
+                                    canManage &&
+                                    counts.resolved > 0
+                                "
+                                class="flex items-center justify-between gap-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3.5 py-2.5 dark:border-darkmode-400 dark:bg-darkmode-700"
+                            >
+                                <span
+                                    class="text-xs leading-snug text-slate-500"
+                                >
+                                    Archívalas para despejar la bandeja; el
+                                    archivo se borra solo a los 30 días.
+                                </span>
+                                <Button
+                                    variant="outline-secondary"
+                                    class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
+                                    :disabled="archivingAll"
+                                    @click="archiveAllResolved"
+                                >
+                                    <Lucide
+                                        icon="Archive"
+                                        class="mr-1.5 h-3.5 w-3.5"
+                                    />
+                                    {{
+                                        archivingAll
+                                            ? 'Archivando…'
+                                            : 'Archivar todas'
+                                    }}
+                                </Button>
+                            </div>
+                            <div
+                                v-if="tab === 'archived'"
+                                class="flex items-center justify-between gap-3 rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-3.5 py-2.5 dark:border-darkmode-400 dark:bg-darkmode-700"
+                            >
+                                <span
+                                    class="text-xs leading-snug text-slate-500"
+                                >
+                                    Se eliminan solas a los 30 días de
+                                    archivadas; vuelven a la bandeja si el
+                                    huésped escribe.
+                                </span>
+                                <Button
+                                    v-if="canManage && counts.archived > 0"
+                                    variant="outline-danger"
+                                    class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
+                                    @click="emptyArchiveOpen = true"
+                                >
+                                    <Lucide
+                                        icon="Trash2"
+                                        class="mr-1.5 h-3.5 w-3.5"
+                                    />
+                                    Vaciar archivo
+                                </Button>
+                            </div>
+                        </div>
+
+                        <!-- Conversaciones (agrupadas por estado en Activas) -->
+                        <div class="flex-1 overflow-y-auto">
+                            <template v-for="g in groups" :key="g.key">
+                                <div
+                                    v-if="g.label"
+                                    class="sticky top-0 z-10 flex items-center gap-2 border-y border-slate-200/60 bg-slate-50/95 px-3.5 py-1.5 backdrop-blur-sm first:border-t-0 dark:border-darkmode-400 dark:bg-darkmode-700/95"
+                                >
+                                    <Lucide
+                                        :icon="
+                                            g.key === 'pending'
+                                                ? 'UserCheck'
+                                                : 'MessageCircle'
+                                        "
+                                        class="h-4 w-4"
+                                        :class="
+                                            g.key === 'pending'
+                                                ? 'text-warning'
+                                                : 'text-slate-400'
+                                        "
+                                    />
+                                    <span
+                                        class="text-xs font-medium tracking-wide uppercase"
+                                        :class="
+                                            g.key === 'pending'
+                                                ? 'text-warning'
+                                                : 'text-slate-400'
+                                        "
+                                        >{{ g.label }}</span
+                                    >
+                                    <span class="text-xs text-slate-400"
+                                        >({{ g.items.length }})</span
+                                    >
+                                </div>
+                                <div
+                                    class="divide-y divide-slate-100 dark:divide-darkmode-400/60"
+                                >
+                                    <div
+                                        v-for="c in g.items"
+                                        :key="c.id"
+                                        role="button"
+                                        tabindex="0"
+                                        class="group flex w-full cursor-pointer items-start gap-3 px-3.5 py-3 text-left transition hover:bg-slate-50 dark:hover:bg-darkmode-400/40"
+                                        :class="{
+                                            'bg-primary/5':
+                                                selected?.id === c.id,
+                                            'bg-primary/[0.03]':
+                                                selected?.id !== c.id &&
+                                                c.unread > 0,
+                                        }"
+                                        @click="open(c)"
+                                        @keydown.enter.self.prevent="open(c)"
+                                    >
+                                        <div class="relative shrink-0">
+                                            <div
+                                                class="flex h-10 w-10 items-center justify-center rounded-full bg-linear-to-br from-theme-1 to-theme-2 text-xs font-semibold text-white"
+                                            >
+                                                {{ initials(c.name) }}
+                                            </div>
+                                            <div
+                                                class="absolute -right-1 -bottom-1 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white dark:border-darkmode-600"
+                                                :class="
+                                                    channelMeta[c.channel]
+                                                        ?.tone ?? 'bg-slate-100'
+                                                "
+                                            >
+                                                <Lucide
+                                                    :icon="
+                                                        channelMeta[c.channel]
+                                                            ?.icon ??
+                                                        'MessageCircle'
+                                                    "
+                                                    class="h-2.5 w-2.5"
+                                                />
+                                            </div>
+                                        </div>
+                                        <div class="min-w-0 flex-1">
+                                            <div
+                                                class="flex items-center gap-2"
+                                            >
+                                                <span
+                                                    class="truncate text-sm"
+                                                    :class="
+                                                        c.unread
+                                                            ? 'font-semibold'
+                                                            : 'font-medium'
+                                                    "
+                                                    >{{ c.name }}</span
+                                                >
+                                                <span
+                                                    class="ml-auto shrink-0 text-xs text-slate-400"
+                                                    >{{
+                                                        c.last_message_at
+                                                    }}</span
+                                                >
+                                            </div>
+                                            <div
+                                                class="mt-1 flex items-center gap-2"
+                                            >
+                                                <span
+                                                    class="truncate text-xs text-slate-500"
+                                                    >{{
+                                                        c.preview ?? '—'
+                                                    }}</span
+                                                >
+                                                <span
+                                                    v-if="c.unread"
+                                                    class="ml-auto flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-primary px-1.5 text-[11px] font-semibold text-white"
+                                                    >{{ c.unread }}</span
+                                                >
+                                            </div>
+                                            <div
+                                                class="mt-1.5 flex flex-wrap items-center gap-1.5"
+                                            >
+                                                <span
+                                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                    :class="
+                                                        statusMeta[c.status]
+                                                            ?.tone
+                                                    "
+                                                    >{{
+                                                        statusMeta[c.status]
+                                                            ?.label
+                                                    }}</span
+                                                >
+                                                <span
+                                                    v-if="
+                                                        leadMeta[c.lead_status]
+                                                    "
+                                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                    :class="
+                                                        leadMeta[c.lead_status]
+                                                            .tone
+                                                    "
+                                                    >{{
+                                                        leadMeta[c.lead_status]
+                                                            .label
+                                                    }}</span
+                                                >
+                                                <span
+                                                    v-if="
+                                                        c.waiting_label &&
+                                                        c.status === 'pending'
+                                                    "
+                                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                    :class="
+                                                        esperaTono(
+                                                            c.waiting_minutes,
+                                                        )
+                                                    "
+                                                    title="Lleva este tiempo esperando a una persona del hotel"
+                                                    >Espera
+                                                    {{ c.waiting_label }}</span
+                                                >
+                                                <span
+                                                    v-if="c.from_social"
+                                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                                                    title="Nació de un comentario en redes sociales"
+                                                    >Comentario</span
+                                                >
+                                                <span
+                                                    v-if="
+                                                        c.payment_pending_verification
+                                                    "
+                                                    class="rounded-full bg-pending/10 px-2 py-0.5 text-[11px] font-medium text-pending"
+                                                    >Verificar pago</span
+                                                >
+                                                <span
+                                                    v-else-if="
+                                                        c.payment_status &&
+                                                        c.payment_status_label
+                                                    "
+                                                    class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                                    :class="
+                                                        paymentMeta[
+                                                            c.payment_status
+                                                        ]?.tone
+                                                    "
+                                                    >{{
+                                                        c.payment_status_label
+                                                    }}</span
+                                                >
+                                                <span
+                                                    v-if="!c.bot_enabled"
+                                                    class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
+                                                    >{{
+                                                        c.assignee ?? 'Humano'
+                                                    }}</span
+                                                >
+                                                <span
+                                                    v-else
+                                                    class="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary"
+                                                    >Bot</span
+                                                >
+                                                <button
+                                                    v-if="
+                                                        canManage &&
+                                                        !c.archived &&
+                                                        c.status === 'resolved'
+                                                    "
+                                                    type="button"
+                                                    class="ml-auto rounded-md p-1.5 text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-primary/10 hover:text-primary focus:opacity-100"
+                                                    title="Archivar conversación"
+                                                    :disabled="
+                                                        archivingId === c.id
+                                                    "
+                                                    @click.stop="
+                                                        setArchived(c, true)
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        icon="Archive"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </button>
+                                                <button
+                                                    v-if="
+                                                        canManage && c.archived
+                                                    "
+                                                    type="button"
+                                                    class="ml-auto rounded-md p-1.5 text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-primary/10 hover:text-primary focus:opacity-100"
+                                                    title="Restaurar a la bandeja"
+                                                    :disabled="
+                                                        archivingId === c.id
+                                                    "
+                                                    @click.stop="
+                                                        setArchived(c, false)
+                                                    "
+                                                >
+                                                    <Lucide
+                                                        icon="ArchiveRestore"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </button>
+                                                <button
+                                                    v-if="canManage"
+                                                    type="button"
+                                                    class="rounded-md p-1.5 text-slate-400 opacity-0 transition group-hover:opacity-100 hover:bg-danger/10 hover:text-danger focus:opacity-100"
+                                                    :class="
+                                                        !c.archived &&
+                                                        c.status !== 'resolved'
+                                                            ? 'ml-auto'
+                                                            : ''
+                                                    "
+                                                    title="Eliminar conversación"
+                                                    @click.stop="deleting = c"
+                                                >
+                                                    <Lucide
+                                                        icon="Trash2"
+                                                        class="h-4 w-4"
+                                                    />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </template>
+                            <div
+                                v-if="!filtered.length"
+                                class="flex flex-col items-center gap-3 py-12 text-center"
+                            >
+                                <div
+                                    class="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary"
+                                >
+                                    <Lucide
+                                        icon="MessagesSquare"
+                                        class="h-5 w-5"
+                                    />
+                                </div>
+                                <p class="px-6 text-sm text-slate-500">
+                                    {{
+                                        searching
+                                            ? 'Ninguna conversación coincide con esa búsqueda, en toda la bandeja.'
+                                            : leadFilter !== 'all'
+                                              ? 'Sin resultados con estos filtros.'
+                                              : tab === 'archived'
+                                                ? 'El archivo está vacío; archiva las resueltas para despejar la bandeja.'
+                                                : tab === 'resolved'
+                                                  ? 'No hay conversaciones resueltas pendientes de archivar.'
+                                                  : 'Sin conversaciones activas todavía. Comparte el webchat de tu hotel para empezar.'
+                                    }}
+                                </p>
+                            </div>
+                        </div>
+
+                        <!-- Cuántas se ven de cuántas hay: la lista es una
+                         ventana de las más recientes, no la bandeja entera. -->
+                        <div
+                            v-if="pagination.total > pagination.loaded"
+                            class="flex items-center justify-between gap-3 border-t border-slate-200/60 px-4 py-2.5 dark:border-darkmode-400"
+                        >
+                            <span class="text-xs text-slate-500">
+                                Mostrando {{ pagination.loaded }} de
+                                {{ pagination.total }}
+                            </span>
+                            <Button
+                                v-if="pagination.has_more"
+                                variant="outline-secondary"
+                                class="h-8 shrink-0 rounded-[0.5rem] bg-white text-xs"
+                                :disabled="loadingMore"
+                                @click="loadMore"
+                            >
+                                <Lucide
+                                    icon="ChevronDown"
+                                    class="mr-1.5 h-3.5 w-3.5"
+                                />
+                                {{ loadingMore ? 'Cargando…' : 'Cargar más' }}
+                            </Button>
+                        </div>
+                    </template>
                 </div>
+
+                <!-- Tarjeta de la barra plegada: se desliza junto al avatar -->
+                <Transition
+                    enter-active-class="transition duration-200 ease-out"
+                    enter-from-class="-translate-x-2 opacity-0"
+                    leave-active-class="transition duration-150 ease-in"
+                    leave-to-class="-translate-x-2 opacity-0"
+                >
+                    <div
+                        v-if="rail && railCard"
+                        class="pointer-events-none fixed z-50 w-72 -translate-y-1/2 rounded-xl border border-slate-200/70 bg-white p-3 shadow-lg shadow-slate-900/10 transition-[top] duration-150 ease-out dark:border-darkmode-400 dark:bg-darkmode-600"
+                        :style="{
+                            top: `${railCard.top}px`,
+                            left: `${railCard.left}px`,
+                        }"
+                    >
+                        <div class="flex items-center gap-2">
+                            <span
+                                class="truncate text-sm"
+                                :class="
+                                    railCard.c.unread
+                                        ? 'font-semibold'
+                                        : 'font-medium'
+                                "
+                                >{{ railCard.c.name }}</span
+                            >
+                            <span
+                                class="ml-auto shrink-0 text-xs text-slate-400"
+                                >{{ railCard.c.last_message_at }}</span
+                            >
+                        </div>
+                        <p class="mt-1 line-clamp-2 text-xs text-slate-500">
+                            {{ railCard.c.preview ?? '—' }}
+                        </p>
+                        <div class="mt-2 flex flex-wrap items-center gap-1.5">
+                            <span
+                                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                :class="statusMeta[railCard.c.status]?.tone"
+                                >{{
+                                    statusMeta[railCard.c.status]?.label
+                                }}</span
+                            >
+                            <span
+                                v-if="
+                                    railCard.c.waiting_label &&
+                                    railCard.c.status === 'pending'
+                                "
+                                class="rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                :class="esperaTono(railCard.c.waiting_minutes)"
+                                >Espera {{ railCard.c.waiting_label }}</span
+                            >
+                            <span
+                                v-if="railCard.c.unread"
+                                class="rounded-full bg-primary px-2 py-0.5 text-[11px] font-semibold text-white"
+                                >{{ railCard.c.unread }} sin leer</span
+                            >
+                            <span
+                                class="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] text-slate-500 dark:bg-darkmode-400"
+                                >{{
+                                    channelMeta[railCard.c.channel]?.label ??
+                                    railCard.c.channel
+                                }}</span
+                            >
+                        </div>
+                    </div>
+                </Transition>
 
                 <!-- Hilo -->
                 <div
-                    class="col-span-12 min-h-[360px] flex-col xl:col-span-8 xl:flex xl:h-[calc(100vh-15rem)] xl:min-h-[560px]"
+                    class="col-span-12 min-h-[360px] flex-col xl:flex xl:h-[calc(100vh-15rem)] xl:min-h-[560px] xl:min-w-0 xl:flex-1"
                     :class="
                         selected
                             ? 'flex h-[calc(100dvh-7.5rem)] xl:h-[calc(100vh-15rem)]'
@@ -1706,21 +2227,38 @@ onBeforeUnmount(() => {
                                             v-if="!selected.bot_enabled"
                                             as="button"
                                             type="button"
-                                            @click="
-                                                patchConversation(
-                                                    {
-                                                        bot_enabled: true,
-                                                        status: 'open',
-                                                    },
-                                                    'El bot retomó la conversación.',
-                                                )
+                                            :title="
+                                                guestIsWaiting
+                                                    ? 'El huésped espera respuesta: el bot le contesta en cuanto lo devuelvas'
+                                                    : 'El bot contestará cuando el huésped vuelva a escribir'
                                             "
+                                            @click="returnToBot('auto')"
                                         >
                                             <Lucide
                                                 icon="Bot"
                                                 class="mr-2 h-4 w-4"
                                             />
-                                            Devolver al bot
+                                            {{
+                                                guestIsWaiting
+                                                    ? 'Devolver al bot y que conteste'
+                                                    : 'Devolver al bot'
+                                            }}
+                                        </Menu.Item>
+                                        <Menu.Item
+                                            v-if="
+                                                !selected.bot_enabled &&
+                                                !guestIsWaiting
+                                            "
+                                            as="button"
+                                            type="button"
+                                            title="Lo último fue del hotel; el bot retoma y escribe ahora mismo"
+                                            @click="returnToBot('now')"
+                                        >
+                                            <Lucide
+                                                icon="MessageSquareReply"
+                                                class="mr-2 h-4 w-4"
+                                            />
+                                            Devolver al bot y que escriba ya
                                         </Menu.Item>
                                         <Menu.Item
                                             v-if="
@@ -1979,6 +2517,17 @@ onBeforeUnmount(() => {
                                                 No se entregó
                                             </div>
                                             <div
+                                                v-if="m.template"
+                                                class="mt-1.5 ml-1 inline-flex items-center gap-1 rounded-full bg-info/10 px-2 py-0.5 text-[11px] font-medium text-info"
+                                                title="Salió como plantilla aprobada de WhatsApp"
+                                            >
+                                                <Lucide
+                                                    icon="FileText"
+                                                    class="h-3 w-3"
+                                                />
+                                                Plantilla
+                                            </div>
+                                            <div
                                                 v-if="m.attachments?.length"
                                                 class="mt-2 space-y-2"
                                             >
@@ -2169,6 +2718,160 @@ onBeforeUnmount(() => {
                                 </div>
                             </div>
 
+                            <!-- Ventana de 24 h (WhatsApp, Messenger, IG) -->
+                            <div
+                                v-if="windowInfo && windowInfo.open"
+                                class="mb-2.5 flex items-start gap-2 rounded-lg px-3 py-2 text-[11px] leading-snug"
+                                :class="
+                                    windowUrgent
+                                        ? 'bg-warning/10 text-warning'
+                                        : 'bg-slate-100 text-slate-500 dark:bg-darkmode-400'
+                                "
+                                :title="
+                                    windowInfo.closes_label
+                                        ? `Se cierra el ${windowInfo.closes_label}`
+                                        : undefined
+                                "
+                            >
+                                <Lucide
+                                    icon="Clock"
+                                    class="mt-px h-3.5 w-3.5 shrink-0"
+                                />
+                                <span
+                                    >{{ windowInfo.label }} por
+                                    {{ windowInfo.channel_label }}.
+                                    <template v-if="windowUrgent"
+                                        >Después, WhatsApp solo deja escribirle
+                                        con una plantilla aprobada.</template
+                                    ></span
+                                >
+                            </div>
+                            <div
+                                v-else-if="windowInfo && !windowInfo.open"
+                                class="mb-2.5 rounded-xl border border-danger/20 bg-danger/[0.04] p-3"
+                            >
+                                <div class="flex items-start gap-2">
+                                    <div
+                                        class="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-danger/10 bg-danger/10 text-danger"
+                                    >
+                                        <Lucide
+                                            icon="TimerOff"
+                                            class="h-3.5 w-3.5"
+                                        />
+                                    </div>
+                                    <div class="min-w-0 flex-1">
+                                        <p class="text-xs font-medium">
+                                            {{ windowInfo.label }}
+                                        </p>
+                                        <p
+                                            class="mt-0.5 text-[11px] leading-snug text-slate-500"
+                                        >
+                                            <template
+                                                v-if="windowInfo.templates"
+                                                >WhatsApp ya no deja mandarle
+                                                texto libre (es regla de Meta).
+                                                Retómalo con una plantilla
+                                                aprobada: cuando conteste, se
+                                                abre otra vez la ventana y
+                                                escribes normal.</template
+                                            >
+                                            <template v-else
+                                                >{{
+                                                    windowInfo.channel_label
+                                                }}
+                                                puede rechazar el mensaje
+                                                pasadas 24 h desde lo último que
+                                                escribió el huésped.</template
+                                            >
+                                        </p>
+                                    </div>
+                                </div>
+                                <div v-if="windowInfo.templates" class="mt-2.5">
+                                    <p
+                                        v-if="templatesLoading"
+                                        class="text-[11px] text-slate-400"
+                                    >
+                                        Buscando tus plantillas aprobadas…
+                                    </p>
+                                    <p
+                                        v-else-if="templates.length === 0"
+                                        class="text-[11px] text-slate-500"
+                                    >
+                                        {{
+                                            templatesReason ??
+                                            'Tu cuenta de WhatsApp todavía no tiene plantillas aprobadas por Meta.'
+                                        }}
+                                    </p>
+                                    <template v-else>
+                                        <div
+                                            class="flex flex-col gap-2 sm:flex-row"
+                                        >
+                                            <FormSelect
+                                                v-model="templateKey"
+                                                class="h-9 text-xs sm:flex-1"
+                                            >
+                                                <option
+                                                    v-for="t in templates"
+                                                    :key="`${t.name}|${t.language}`"
+                                                    :value="`${t.name}|${t.language}`"
+                                                >
+                                                    {{ t.name }} ·
+                                                    {{ t.language }}
+                                                </option>
+                                            </FormSelect>
+                                            <Button
+                                                variant="primary"
+                                                class="h-9 text-xs"
+                                                :disabled="
+                                                    !chosenTemplate ||
+                                                    sendingTemplate ||
+                                                    chosenTemplate.params > 2
+                                                "
+                                                @click="sendTemplate"
+                                            >
+                                                <Lucide
+                                                    :icon="
+                                                        sendingTemplate
+                                                            ? 'RefreshCw'
+                                                            : 'SendHorizontal'
+                                                    "
+                                                    class="mr-1.5 h-3.5 w-3.5"
+                                                    :class="
+                                                        sendingTemplate
+                                                            ? 'animate-spin'
+                                                            : ''
+                                                    "
+                                                />
+                                                {{
+                                                    sendingTemplate
+                                                        ? 'Enviando…'
+                                                        : 'Enviar plantilla'
+                                                }}
+                                            </Button>
+                                        </div>
+                                        <p
+                                            v-if="chosenTemplate"
+                                            class="mt-2 rounded-lg bg-white px-2.5 py-2 text-[11px] leading-relaxed whitespace-pre-line text-slate-600 dark:bg-darkmode-600 dark:text-slate-300"
+                                        >
+                                            {{
+                                                templatePreview(chosenTemplate)
+                                            }}
+                                        </p>
+                                        <p
+                                            v-if="
+                                                chosenTemplate &&
+                                                chosenTemplate.params > 2
+                                            "
+                                            class="mt-1.5 text-[11px] text-danger"
+                                        >
+                                            Esta plantilla pide más datos de los
+                                            que la bandeja sabe llenar (nombre y
+                                            hotel). Elige otra.
+                                        </p>
+                                    </template>
+                                </div>
+                            </div>
+
                             <!-- Una sola caja: el texto arriba y las
                                  herramientas abajo. Antes eran botones y
                                  textarea en la misma fila, y el ancho mínimo
@@ -2180,7 +2883,12 @@ onBeforeUnmount(() => {
                                     ref="replyRef"
                                     v-model="reply"
                                     rows="2"
-                                    placeholder="Responder como staff…"
+                                    :disabled="whatsappClosed"
+                                    :placeholder="
+                                        whatsappClosed
+                                            ? 'La ventana de 24 h está cerrada: usa una plantilla'
+                                            : 'Responder como staff…'
+                                    "
                                     class="block max-h-40 min-h-[52px] w-full resize-none overflow-y-auto border-0 bg-transparent px-3.5 pt-2.5 pb-1 text-sm leading-relaxed text-slate-700 outline-none placeholder:text-slate-400 dark:text-slate-200"
                                     @input="autosizeReply"
                                     @keydown.enter.exact.prevent="sendReply"
@@ -2238,7 +2946,7 @@ onBeforeUnmount(() => {
                                         type="button"
                                         class="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-slate-500 transition hover:bg-slate-100 hover:text-primary disabled:opacity-50 dark:hover:bg-darkmode-400"
                                         title="Adjuntar foto o PDF"
-                                        :disabled="sending"
+                                        :disabled="sending || whatsappClosed"
                                         @click="attachmentInput?.click()"
                                     >
                                         <Lucide
@@ -2257,6 +2965,7 @@ onBeforeUnmount(() => {
                                         title="Enviar (Enter)"
                                         :disabled="
                                             sending ||
+                                            whatsappClosed ||
                                             (!reply.trim() && !attachment)
                                         "
                                         @click="sendReply"

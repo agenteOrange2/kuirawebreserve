@@ -11,6 +11,10 @@ import type { Icon } from '@/components/Base/Lucide/Lucide.vue';
 import Table from '@/components/Base/Table';
 import { useCounterMethods } from '@/composables/useCounterMethods';
 import { useToasts } from '@/composables/useToasts';
+import CourtesyDialog from '@/components/courtesies/CourtesyDialog.vue';
+import type { CourtesyPayload } from '@/components/courtesies/types';
+import { useCourtesyAccess } from '@/components/courtesies/useCourtesyAccess';
+import { useModules } from '@/composables/useModules';
 import RazeLayout from '@/layouts/RazeLayout.vue';
 import ReservationsNav from './ReservationsNav.vue';
 
@@ -43,6 +47,8 @@ interface SettlementRow {
     settlement_closed_at: string | null;
     settlement_note: string | null;
     extra_charges: { concept: string; amount: number }[];
+    /** Cortesía viva de la cuenta (módulo cortesias). */
+    courtesy?: CourtesyPayload | null;
 }
 
 /**
@@ -68,6 +74,7 @@ interface ReservationRow {
     auto_closed: boolean;
     settlement_closed_at: string | null;
     settlement_note: string | null;
+    courtesy?: CourtesyPayload | null;
 }
 
 interface PaginationLink {
@@ -110,6 +117,56 @@ const props = defineProps<{
 }>();
 
 const toast = useToasts();
+
+// ── Cortesías (módulo cortesias) ──
+// Con el módulo, cerrar sin cobrar ES una cortesía: solo el propietario lo
+// hace. El resto la solicita y el propietario la aprueba (el servidor lo
+// exige igual). Sin el módulo, todo como siempre.
+const courtesyAccess = useCourtesyAccess();
+const { hasModule } = useModules();
+const ownerOnlyClose = computed(
+    () => hasModule('cortesias') && !courtesyAccess.value.is_owner,
+);
+const closeTitle = computed(() =>
+    ownerOnlyClose.value
+        ? 'Solicitar cortesía al propietario'
+        : 'Cerrar sin cobrar',
+);
+const closeIcon = computed<Icon>(() =>
+    ownerOnlyClose.value ? 'HandHeart' : 'Archive',
+);
+const courtesyTarget = ref<{
+    target: { reservation_id?: number | null; stay_id?: number | null };
+    subtitle: string;
+} | null>(null);
+
+/** El botón solo existe si sirve: cerrar, o pedir si aún no se pidió. */
+function showCloseAction(row: { courtesy?: CourtesyPayload | null }) {
+    if (!ownerOnlyClose.value) return true;
+
+    return courtesyAccess.value.enabled && !row.courtesy;
+}
+
+function closeOrRequest(
+    kind: 'stay' | 'reservation',
+    row: SettlementRow | ReservationRow,
+) {
+    if (!ownerOnlyClose.value) {
+        if (kind === 'stay') open('close', row as SettlementRow);
+        else openReservationClose(row as ReservationRow);
+        return;
+    }
+
+    const stay = kind === 'stay' ? (row as SettlementRow) : null;
+    courtesyTarget.value = {
+        target: stay
+            ? stay.reservation_id
+                ? { reservation_id: stay.reservation_id }
+                : { stay_id: stay.id }
+            : { reservation_id: row.id },
+        subtitle: `${row.room ? `Hab. ${row.room} · ` : ''}${row.guest_name} · debe ${money(row.pending)}`,
+    };
+}
 const { methods, first, labelFor } = useCounterMethods();
 
 const q = ref(props.filters.q);
@@ -816,15 +873,33 @@ async function reopen(stay: SettlementRow) {
                                                         class="h-4 w-4"
                                                     />
                                                 </button>
+                                                <span
+                                                    v-if="
+                                                        s.courtesy?.status ===
+                                                        'pending'
+                                                    "
+                                                    class="inline-flex shrink-0 items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-warning"
+                                                    :title="`{s.courtesy.requested_by_name} pidió {s.courtesy.kind_label.toLowerCase()}: {s.courtesy.reason}`"
+                                                    ><Lucide
+                                                        icon="HandHeart"
+                                                        class="h-3 w-3"
+                                                    />Cortesía esperando</span
+                                                >
                                                 <button
+                                                    v-if="showCloseAction(s)"
                                                     type="button"
                                                     :class="rowAction"
                                                     class="hover:bg-warning/10 hover:text-warning"
-                                                    title="Cerrar sin cobrar"
-                                                    @click="open('close', s)"
+                                                    :title="closeTitle"
+                                                    @click="
+                                                        closeOrRequest(
+                                                            'stay',
+                                                            s,
+                                                        )
+                                                    "
                                                 >
                                                     <Lucide
-                                                        icon="Archive"
+                                                        :icon="closeIcon"
                                                         class="h-4 w-4"
                                                     />
                                                 </button>
@@ -977,15 +1052,27 @@ async function reopen(stay: SettlementRow) {
                                                 class="h-4 w-4"
                                             />
                                         </button>
+                                        <span
+                                            v-if="
+                                                s.courtesy?.status === 'pending'
+                                            "
+                                            class="inline-flex shrink-0 items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-warning"
+                                            :title="`{s.courtesy.requested_by_name} pidió {s.courtesy.kind_label.toLowerCase()}: {s.courtesy.reason}`"
+                                            ><Lucide
+                                                icon="HandHeart"
+                                                class="h-3 w-3"
+                                            />Cortesía esperando</span
+                                        >
                                         <button
+                                            v-if="showCloseAction(s)"
                                             type="button"
                                             :class="rowAction"
                                             class="hover:bg-warning/10 hover:text-warning"
-                                            title="Cerrar sin cobrar"
-                                            @click="open('close', s)"
+                                            :title="closeTitle"
+                                            @click="closeOrRequest('stay', s)"
                                         >
                                             <Lucide
-                                                icon="Archive"
+                                                :icon="closeIcon"
                                                 class="h-4 w-4"
                                             />
                                         </button>
@@ -1198,17 +1285,33 @@ async function reopen(stay: SettlementRow) {
                                                     />
                                                     Cobrar
                                                 </Button>
+                                                <span
+                                                    v-if="
+                                                        r.courtesy?.status ===
+                                                        'pending'
+                                                    "
+                                                    class="inline-flex shrink-0 items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-warning"
+                                                    :title="`{r.courtesy.requested_by_name} pidió {r.courtesy.kind_label.toLowerCase()}: {r.courtesy.reason}`"
+                                                    ><Lucide
+                                                        icon="HandHeart"
+                                                        class="h-3 w-3"
+                                                    />Cortesía esperando</span
+                                                >
                                                 <button
+                                                    v-if="showCloseAction(r)"
                                                     type="button"
                                                     :class="rowAction"
                                                     class="hover:bg-warning/10 hover:text-warning"
-                                                    title="Cerrar sin cobrar"
+                                                    :title="closeTitle"
                                                     @click="
-                                                        openReservationClose(r)
+                                                        closeOrRequest(
+                                                            'reservation',
+                                                            r,
+                                                        )
                                                     "
                                                 >
                                                     <Lucide
-                                                        icon="Archive"
+                                                        :icon="closeIcon"
                                                         class="h-4 w-4"
                                                     />
                                                 </button>
@@ -1340,15 +1443,27 @@ async function reopen(stay: SettlementRow) {
                                         />
                                         Cobrar
                                     </Button>
+                                    <span
+                                        v-if="r.courtesy?.status === 'pending'"
+                                        class="inline-flex shrink-0 items-center gap-1 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap text-warning"
+                                        :title="`{r.courtesy.requested_by_name} pidió {r.courtesy.kind_label.toLowerCase()}: {r.courtesy.reason}`"
+                                        ><Lucide
+                                            icon="HandHeart"
+                                            class="h-3 w-3"
+                                        />Cortesía esperando</span
+                                    >
                                     <button
+                                        v-if="showCloseAction(r)"
                                         type="button"
                                         :class="rowAction"
                                         class="ml-auto hover:bg-warning/10 hover:text-warning"
-                                        title="Cerrar sin cobrar"
-                                        @click="openReservationClose(r)"
+                                        :title="closeTitle"
+                                        @click="
+                                            closeOrRequest('reservation', r)
+                                        "
                                     >
                                         <Lucide
-                                            icon="Archive"
+                                            :icon="closeIcon"
                                             class="h-4 w-4"
                                         />
                                     </button>
@@ -1579,5 +1694,14 @@ async function reopen(stay: SettlementRow) {
                 </div>
             </Dialog.Panel>
         </Dialog>
+        <CourtesyDialog
+            :open="courtesyTarget !== null"
+            :target="courtesyTarget?.target ?? {}"
+            :is-owner="courtesyAccess.is_owner"
+            :categories="courtesyAccess.categories"
+            :subtitle="courtesyTarget?.subtitle ?? null"
+            @close="courtesyTarget = null"
+            @done="router.reload()"
+        />
     </RazeLayout>
 </template>

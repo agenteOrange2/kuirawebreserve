@@ -69,6 +69,9 @@ interface RatePlanRow {
     duration_value: number | null;
     duration_label: string;
     price: string;
+    /** Personas de esta tarifa; null = las de la habitación. */
+    included_people?: number | null;
+    max_people?: number | null;
     min_advance_unit: string | null;
     min_advance_value: number | null;
     min_advance_weekdays: number[];
@@ -544,6 +547,9 @@ const planForm = reactive({
     duration_value: 1 as number | string,
     duration_unit: 'hour',
     price: '' as string | number,
+    // Vacío = lo que diga la habitación.
+    included_people: '' as string | number,
+    max_people: '' as string | number,
     has_advance: false,
     min_advance_value: 1 as number | string,
     min_advance_unit: 'hour',
@@ -572,6 +578,8 @@ function openPlan(plan: RatePlanRow | null) {
     planForm.duration_value = plan?.duration_value ?? 3;
     planForm.duration_unit = plan?.duration_unit ?? 'hour';
     planForm.price = plan?.price ?? '';
+    planForm.included_people = plan?.included_people ?? '';
+    planForm.max_people = plan?.max_people ?? '';
     planForm.has_advance = Boolean(plan?.min_advance_value);
     planForm.min_advance_value = plan?.min_advance_value ?? 4;
     planForm.min_advance_unit = plan?.min_advance_unit ?? 'hour';
@@ -615,6 +623,14 @@ function submitPlan() {
         duration_value:
             planForm.type === 'block' ? planForm.duration_value : null,
         price: planForm.price,
+        included_people:
+            String(planForm.included_people ?? '').trim() === ''
+                ? null
+                : Number(planForm.included_people),
+        max_people:
+            String(planForm.max_people ?? '').trim() === ''
+                ? null
+                : Number(planForm.max_people),
         min_advance_unit: planForm.has_advance
             ? planForm.min_advance_unit
             : null,
@@ -2144,6 +2160,53 @@ async function deleteSeason(season: SeasonRow) {
                             </FormHelp>
                         </div>
 
+                        <!-- Personas de esta tarifa (vacío = las del cuarto) -->
+                        <div class="grid grid-cols-2 gap-4">
+                            <div>
+                                <FormLabel htmlFor="plan-included"
+                                    >Personas incluidas</FormLabel
+                                >
+                                <FormInput
+                                    id="plan-included"
+                                    v-model="planForm.included_people"
+                                    type="number"
+                                    min="1"
+                                    placeholder="Las del cuarto"
+                                    class="h-9 text-xs"
+                                />
+                                <FormHelp
+                                    v-if="errors.included_people"
+                                    class="text-danger"
+                                    >{{ errors.included_people }}</FormHelp
+                                >
+                            </div>
+                            <div>
+                                <FormLabel htmlFor="plan-max"
+                                    >Máximo de personas</FormLabel
+                                >
+                                <FormInput
+                                    id="plan-max"
+                                    v-model="planForm.max_people"
+                                    type="number"
+                                    min="1"
+                                    placeholder="El del cuarto"
+                                    class="h-9 text-xs"
+                                />
+                                <FormHelp
+                                    v-if="errors.max_people"
+                                    class="text-danger"
+                                    >{{ errors.max_people }}</FormHelp
+                                >
+                            </div>
+                            <FormHelp class="col-span-2"
+                                >Solo si esta tarifa admite distinta gente que
+                                la habitación (ej. por horas: 2 incluidas y
+                                máximo 3). Vacío = lo que diga cada cuarto; la
+                                persona extra se cobra con el precio del
+                                cuarto.</FormHelp
+                            >
+                        </div>
+
                         <div
                             class="flex items-center gap-2 pt-1 text-xs font-medium tracking-wide text-slate-400 uppercase"
                         >
@@ -2209,7 +2272,9 @@ async function deleteSeason(season: SeasonRow) {
                                                 ? 'border-primary bg-primary text-white'
                                                 : 'border-slate-200/80 text-slate-500 hover:border-primary/40 hover:text-primary dark:border-darkmode-400'
                                         "
-                                        @click="toggleAdvanceWeekday(chip.value)"
+                                        @click="
+                                            toggleAdvanceWeekday(chip.value)
+                                        "
                                     >
                                         {{ chip.label }}
                                     </button>

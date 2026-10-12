@@ -149,3 +149,33 @@ it('el registro con placa sigue siendo válido sin ningún dato de contacto', fu
         ->and($stay->guest_id)->toBeNull()
         ->and($stay->payments()->where('kind', Payment::KIND_LODGING)->exists())->toBeTrue();
 });
+
+it('el huésped elegido del buscador liga la estancia a su ficha y completa el teléfono que le faltaba', function () {
+    $guest = Guest::create(['first_name' => 'Cliente', 'last_name' => 'Que Regresa']);
+    $known = Guest::create(['first_name' => 'Con', 'last_name' => 'Telefono', 'phone' => '6560001111']);
+
+    expressStore([
+        'guest_id' => $guest->id,
+        'guest_name' => 'Cliente Que Regresa',
+        'guest_phone' => '6569998877',
+        'payment_method' => 'cash',
+    ]);
+    expressStore([
+        'room_id' => Room::factory()->create([
+            'property_id' => $this->property->id,
+            'room_type_id' => $this->roomType->id,
+            'number' => '502',
+        ])->id,
+        'guest_id' => $known->id,
+        'guest_phone' => '6561234567',
+        'payment_method' => 'cash',
+    ]);
+
+    $stays = \App\Models\Stay::orderBy('id')->get();
+    expect($stays[0]->guest_id)->toBe($guest->id)
+        ->and($guest->fresh()->phone)->toBe('6569998877')
+        ->and($stays[1]->guest_id)->toBe($known->id)
+        // Un teléfono ya guardado no se pisa con lo tecleado.
+        ->and($known->fresh()->phone)->toBe('6560001111')
+        ->and(Guest::count())->toBe(2);
+});

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { router } from '@inertiajs/vue3';
+import { router, usePage } from '@inertiajs/vue3';
 import { useEcho } from '@laravel/echo-vue';
 import axios from 'axios';
 import { onMounted, ref } from 'vue';
@@ -44,6 +44,7 @@ const meta: Record<string, { icon: Icon; tone: string }> = {
     menu: { icon: 'UtensilsCrossed', tone: 'bg-warning/10 text-warning' },
     social: { icon: 'Share2', tone: 'bg-warning/10 text-warning' },
     incident: { icon: 'Wrench', tone: 'bg-danger/10 text-danger' },
+    courtesy: { icon: 'HandHeart', tone: 'bg-pending/10 text-pending' },
 };
 
 const metaFor = (type: string) =>
@@ -106,11 +107,19 @@ function goToAll() {
     router.visit('/bandeja/avisos');
 }
 
-// En vivo: el contador se mueve sin recargar ni preguntar cada rato.
-useEcho<{ id: number; title: string }>(
+const page = usePage();
+const myId = () =>
+    (page.props.auth as { user?: { id?: number } } | undefined)?.user?.id ??
+    null;
+
+// En vivo: el contador se mueve sin recargar ni preguntar cada rato. El
+// canal es de todo el staff; un aviso dirigido a otra persona (la cortesía
+// que le toca aprobar al propietario) no le sube el contador a nadie más.
+useEcho<{ id: number; title: string; user_id?: number | null }>(
     `tenant.${props.tenantId}.staff`,
     '.staff.notified',
-    () => {
+    (event) => {
+        if (event.user_id != null && event.user_id !== myId()) return;
         unread.value += 1;
         if (open.value) load();
     },

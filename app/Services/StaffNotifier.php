@@ -29,6 +29,9 @@ class StaffNotifier
                 ->where('type', $type)
                 ->where('subject_type', $subject->getMorphClass())
                 ->where('subject_id', $subject->getKey())
+                // Un aviso dirigido es de esa persona: la misma solicitud
+                // avisada a dos propietarios son dos avisos, no uno.
+                ->where(fn ($q) => $userId === null ? $q->whereNull('user_id') : $q->where('user_id', $userId))
                 ->whereNull('read_at')
                 ->latest('id')
                 ->first()

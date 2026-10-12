@@ -38,6 +38,9 @@ class AdminActivityCatalog
         'admin.tenants.users.store' => ['Agregó personal al hotel', 'UserPlus', 'tenants', 'success'],
         'admin.tenants.users.update' => ['Editó personal del hotel', 'UserCog', 'tenants'],
         'admin.tenants.users.destroy' => ['Quitó personal del hotel', 'UserMinus', 'tenants', 'danger'],
+        'admin.tenants.roles.store' => ['Creó un rol del hotel', 'ShieldCheck', 'tenants', 'success'],
+        'admin.tenants.roles.update' => ['Cambió los accesos de un rol del hotel', 'ShieldCheck', 'tenants'],
+        'admin.tenants.roles.destroy' => ['Eliminó un rol del hotel', 'ShieldCheck', 'tenants', 'danger'],
         'admin.tenants.addon-services' => ['Cambió un servicio adicional del hotel', 'PackagePlus', 'tenants'],
         'admin.tenants.meta-app.update' => ['Configuró la app de Meta del hotel', 'Settings', 'channels'],
         'admin.tenants.meta-app.destroy' => ['Quitó la app de Meta del hotel', 'Trash2', 'channels', 'danger'],
@@ -48,6 +51,7 @@ class AdminActivityCatalog
 
         'admin.plans.store' => ['Creó el plan', 'Layers', 'plans', 'success'],
         'admin.plans.update' => ['Editó el plan', 'Layers', 'plans'],
+        'admin.plans.active' => ['Cambió si se ofrece el plan', 'Power', 'plans'],
         'admin.plans.destroy' => ['Eliminó el plan', 'Trash2', 'plans', 'danger'],
         'admin.services.update' => ['Editó el servicio adicional', 'PackagePlus', 'plans'],
 

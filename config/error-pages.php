@@ -54,7 +54,7 @@ return [
             'body' => 'Tu usuario no tiene permiso para entrar aquí. No es un error: así quedó configurado tu perfil.',
             'hints' => [],
             'hints_panel' => [
-                'Si necesitas esta sección, pídele a la gerencia que te la habilite desde Usuarios.',
+                'Si necesitas esta sección, pídele al propietario del hotel que se la abra a tu rol en Usuarios › Roles y accesos.',
                 'Si crees que sí deberías tener acceso, cierra sesión y vuelve a entrar: los permisos se leen al iniciar.',
             ],
         ],

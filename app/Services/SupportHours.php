@@ -144,9 +144,29 @@ class SupportHours
                 .'Si necesita hablar con una persona, le responden '.$this->nextOpeningLabel($at).'.';
         }
 
-        return 'Nuestro horario de atención es '.$this->label()
-            .', así que en este momento el equipo ya no está en línea. '
-            .'Tomo tu solicitud y alguien del hotel te contacta '.$this->nextOpeningLabel($at).'.';
+        // Igual de tú: "tomo tu solicitud y alguien te contacta mañana" se
+        // lee como que no se puede reservar ahora (se encendió en cabañas
+        // el 2026-10-12).
+        return 'Nuestro horario de atención con personal es '.$this->label()
+            .'. Mientras tanto yo te atiendo: puedo cotizarte y hacer tu apartado ahora mismo. '
+            .'Si necesitas hablar con una persona, te responden '.$this->nextOpeningLabel($at).'.';
+    }
+
+    /**
+     * Frase del traspaso a una persona FUERA de horario. Pedido del dueño
+     * (cabañas, 2026-10-12): decir que sí se pasa con una persona, cuál es el
+     * horario de atención y que lo contactan lo más pronto posible — no
+     * "en un momento te atienden" un domingo a las 18:48.
+     */
+    public function afterHoursHandoffLine(?CarbonInterface $at = null): string
+    {
+        if ((bool) ($this->settings['formal_address'] ?? false)) {
+            return 'Le paso su mensaje a una persona del hotel. Nuestro horario de atención es '.$this->label()
+                .'; le contactan lo más pronto posible, '.$this->nextOpeningLabel($at).'.';
+        }
+
+        return 'Te paso con una persona del hotel. Nuestro horario de atención es '.$this->label()
+            .'; te contactan lo más pronto posible, '.$this->nextOpeningLabel($at).'.';
     }
 
     /**

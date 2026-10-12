@@ -41,6 +41,7 @@ Route::middleware(['auth', 'role:platform-admin', \App\Http\Middleware\RecordAdm
         Route::get('plan', [TenantAreaController::class, 'plan'])->name('plan');
         Route::get('modulos', [TenantAreaController::class, 'modules'])->name('modules');
         Route::get('equipo', [TenantAreaController::class, 'team'])->name('team');
+        Route::get('roles', [TenantAreaController::class, 'roles'])->name('roles');
         Route::get('asistente', [TenantAreaController::class, 'assistant'])->name('assistant');
         Route::get('canales', [TenantAreaController::class, 'channels'])->name('channels');
         Route::get('cobros', [TenantAreaController::class, 'payments'])->name('payments');
@@ -77,11 +78,19 @@ Route::middleware(['auth', 'role:platform-admin', \App\Http\Middleware\RecordAdm
         ->name('tenants.users.update');
     Route::delete('tenants/{tenant}/users/{userId}', [\App\Http\Controllers\Admin\TenantUserController::class, 'destroy'])
         ->name('tenants.users.destroy');
+    // Roles y accesos de cada hotel: qué áreas ve y qué puede hacer cada rol.
+    Route::post('tenants/{tenant}/roles', [\App\Http\Controllers\Admin\TenantRoleController::class, 'store'])
+        ->name('tenants.roles.store');
+    Route::put('tenants/{tenant}/roles/{roleId}', [\App\Http\Controllers\Admin\TenantRoleController::class, 'update'])
+        ->name('tenants.roles.update');
+    Route::delete('tenants/{tenant}/roles/{roleId}', [\App\Http\Controllers\Admin\TenantRoleController::class, 'destroy'])
+        ->name('tenants.roles.destroy');
 
     // Catálogo de planes: límites, precio e IA (aplican vía config('plans')).
     Route::get('planes', [PlanController::class, 'index'])->name('plans');
     Route::post('plans', [PlanController::class, 'store'])->name('plans.store');
     Route::patch('plans/{plan}', [PlanController::class, 'update'])->name('plans.update');
+    Route::patch('plans/{plan}/active', [PlanController::class, 'toggleActive'])->name('plans.active');
     Route::delete('plans/{plan}', [PlanController::class, 'destroy'])->name('plans.destroy');
 
     // Servicios adicionales: catálogo con precios y contratación por hotel

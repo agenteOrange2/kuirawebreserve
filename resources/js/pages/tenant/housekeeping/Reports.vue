@@ -26,6 +26,7 @@ interface HousekeeperRow {
     total_minutes: number;
     fastest: number;
     slowest: number;
+    outcomes: Record<string, number>;
     linens: LinenTotal[];
 }
 
@@ -40,6 +41,9 @@ interface DetailRow {
     minutes: number;
     open: boolean;
     source: string;
+    outcome: string | null;
+    outcome_label: string | null;
+    target_minutes: number | null;
     linens: LinenTotal[];
 }
 
@@ -92,6 +96,18 @@ const to = ref(props.filters.to);
 const housekeeper = ref<number | string>(props.filters.housekeeper ?? '');
 const kind = ref(props.filters.kind);
 const orden = ref(props.filters.orden);
+
+const outcomeTone: Record<string, string> = {
+    a_tiempo: 'bg-success/10 text-success',
+    tarde: 'bg-pending/10 text-pending',
+    reloj: 'bg-info/10 text-info',
+    interrumpida:
+        'bg-slate-100 text-slate-500 dark:bg-darkmode-400 dark:text-slate-300',
+};
+
+/** Las que se calificaron: las que tenían tiempo asignado y se cerraron. */
+const graded = (o: Record<string, number>) =>
+    (o.a_tiempo ?? 0) + (o.tarde ?? 0) + (o.reloj ?? 0);
 
 const sourceLabels: Record<string, string> = {
     plano: 'Cronómetro',
@@ -449,6 +465,12 @@ const linenSummary = (items: LinenTotal[]) =>
                                         </Table.Th>
                                         <Table.Th
                                             class="text-right whitespace-nowrap"
+                                            title="Terminadas por la camarista dentro del tiempo asignado, de las calificadas"
+                                        >
+                                            A tiempo
+                                        </Table.Th>
+                                        <Table.Th
+                                            class="text-right whitespace-nowrap"
                                         >
                                             Promedio
                                         </Table.Th>
@@ -492,6 +514,32 @@ const linenSummary = (items: LinenTotal[]) =>
                                             class="text-right font-medium"
                                         >
                                             {{ row.rooms }}
+                                        </Table.Td>
+                                        <Table.Td
+                                            class="text-right whitespace-nowrap"
+                                        >
+                                            <template
+                                                v-if="graded(row.outcomes) > 0"
+                                            >
+                                                <span class="font-medium">
+                                                    {{
+                                                        row.outcomes.a_tiempo ??
+                                                        0
+                                                    }}
+                                                    de
+                                                    {{ graded(row.outcomes) }}
+                                                </span>
+                                                <div
+                                                    v-if="row.outcomes.reloj"
+                                                    class="text-slate-500"
+                                                >
+                                                    {{ row.outcomes.reloj }}
+                                                    por el reloj
+                                                </div>
+                                            </template>
+                                            <span v-else class="text-slate-400"
+                                                >Sin dato</span
+                                            >
                                         </Table.Td>
                                         <Table.Td class="text-right">
                                             {{ row.avg_minutes }} min
@@ -781,6 +829,13 @@ const linenSummary = (items: LinenTotal[]) =>
                                         class="ml-1.5 rounded-full bg-warning/10 px-2 py-0.5 text-[11px] font-medium text-warning"
                                     >
                                         Abierta
+                                    </span>
+                                    <span
+                                        v-else-if="row.outcome"
+                                        class="ml-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                                        :class="outcomeTone[row.outcome]"
+                                    >
+                                        {{ row.outcome_label }}
                                     </span>
                                 </Table.Td>
                             </Table.Tr>

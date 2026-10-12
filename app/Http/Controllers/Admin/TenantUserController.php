@@ -3,13 +3,13 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
-use App\Http\Controllers\Tenant\UserController as HotelUserController;
 use App\Models\CashCut;
 use App\Models\Order;
 use App\Models\Payment;
 use App\Models\Shift;
 use App\Models\Tenant;
 use App\Models\User;
+use App\Services\StaffAccess;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -30,7 +30,7 @@ class TenantUserController extends Controller
                 'email' => ['required', 'email', 'max:255', 'unique:users,email'],
                 'phone' => ['nullable', 'string', 'max:30'],
                 'password' => ['required', 'string', 'min:8'],
-                'role' => ['required', Rule::in(HotelUserController::assignableRoles())],
+                'role' => ['required', Rule::in(StaffAccess::assignableRoles())],
             ]);
 
             $maxUsers = $tenant->planLimit('max_users');
@@ -64,7 +64,7 @@ class TenantUserController extends Controller
                 'email' => ['sometimes', 'required', 'email', 'max:255', Rule::unique('users', 'email')->ignore($user->id)],
                 'phone' => ['sometimes', 'nullable', 'string', 'max:30'],
                 'password' => ['nullable', 'string', 'min:8'],
-                'role' => ['sometimes', 'required', Rule::in(HotelUserController::assignableRoles())],
+                'role' => ['sometimes', 'required', Rule::in(StaffAccess::assignableRoles())],
             ]);
 
             // No dejar al hotel sin dueño.
@@ -145,7 +145,6 @@ class TenantUserController extends Controller
     protected function serialize(User $user): array
     {
         $role = $user->getRoleNames()->first();
-        $orden = array_keys(\App\Http\Controllers\Tenant\UsersPageController::ROLE_META);
 
         return [
             'id' => $user->id,
@@ -153,8 +152,8 @@ class TenantUserController extends Controller
             'email' => $user->email,
             'phone' => $user->phone,
             'role' => $role,
-            'role_label' => \App\Http\Controllers\Tenant\UsersPageController::ROLE_META[$role]['label'] ?? $role,
-            'rank' => ($i = $role ? array_search($role, $orden, true) : false) === false ? count($orden) : $i,
+            'role_label' => StaffAccess::labelFor($role),
+            'rank' => StaffAccess::rank($role),
             'on_shift' => false,
             'two_factor' => $user->two_factor_confirmed_at !== null,
             'created_at' => $user->created_at?->format('d/m/Y'),

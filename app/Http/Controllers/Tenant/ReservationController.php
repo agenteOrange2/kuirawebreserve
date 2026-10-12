@@ -72,10 +72,19 @@ class ReservationController extends Controller
             'extra_charges.*' => ['string', 'max:100'],
             'notes' => ['nullable', 'string'],
             'guest_notes' => ['nullable', 'string'],
-        ]);
+            // Cortesía al reservar (módulo cortesias): la del propietario
+            // nace aplicada; la del resto queda esperando su aprobación.
+            ...CourtesyController::nestedRules($request),
+        ], CourtesyController::nestedMessages());
+
+        CourtesyController::authorizeNested($request);
 
         try {
             $reservation = $action->handle($data, $request->user());
+        } catch (\App\Exceptions\CourtesyNeedsConfirmation $e) {
+            // Se pasó el tope del mes: nada se guardó; el modal pide
+            // confirmar y reenvía.
+            return response()->json(['message' => $e->getMessage(), 'needs_confirmation' => 'courtesy_cap'], 409);
         } catch (NoAvailabilityException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (\InvalidArgumentException $e) {

@@ -20,6 +20,7 @@ const props = defineProps<{
         check_in_time: string;
         check_out_time: string;
         night_cutoff_time: string | null;
+        extension_rate_ladder?: boolean;
         currency: string;
         currency_secondary: string | null;
         exchange_rate: number | null;
@@ -42,6 +43,7 @@ const form = reactive({
     check_out_time: props.settings.check_out_time,
     night_cutoff_enabled: Boolean(props.settings.night_cutoff_time),
     night_cutoff_time: props.settings.night_cutoff_time ?? '07:00',
+    extension_rate_ladder: Boolean(props.settings.extension_rate_ladder),
     currency: props.settings.currency,
     currency_mode: props.settings.currency_secondary ? 'both' : 'single',
     currency_secondary: props.settings.currency_secondary ?? 'USD',
@@ -100,6 +102,7 @@ async function submit() {
                 night_cutoff_time: form.night_cutoff_enabled
                     ? form.night_cutoff_time || null
                     : null,
+                extension_rate_ladder: form.extension_rate_ladder,
                 currency: form.currency || null,
                 currency_secondary:
                     form.currency_mode === 'both'
@@ -262,8 +265,43 @@ async function submit() {
                                     <FormHelp
                                         v-if="errors.night_cutoff_time"
                                         class="text-danger"
-                                        >{{ errors.night_cutoff_time }}</FormHelp
+                                        >{{
+                                            errors.night_cutoff_time
+                                        }}</FormHelp
                                     >
+                                </div>
+                            </div>
+                            <div
+                                class="rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                            >
+                                <div
+                                    class="flex items-start justify-between gap-4"
+                                >
+                                    <div class="text-xs">
+                                        <div class="text-sm font-medium">
+                                            Extender por escalones de horas
+                                        </div>
+                                        <p class="mt-1 text-xs text-slate-500">
+                                            Una estancia por horas que se alarga
+                                            pasa a la siguiente tarifa por horas
+                                            (1, 2, 3 horas) y, cumplida la más
+                                            larga, a la noche completa. Se cobra
+                                            la diferencia. Apagado, extender
+                                            multiplica la tarifa que trae.
+                                        </p>
+                                    </div>
+                                    <FormSwitch class="mt-1">
+                                        <FormSwitch.Input
+                                            :checked="
+                                                form.extension_rate_ladder
+                                            "
+                                            type="checkbox"
+                                            @change="
+                                                form.extension_rate_ladder =
+                                                    !form.extension_rate_ladder
+                                            "
+                                        />
+                                    </FormSwitch>
                                 </div>
                             </div>
                         </div>

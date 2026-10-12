@@ -348,6 +348,12 @@ class ReservationPolicy
 
         if ($pending > 0 && ($due = $this->balanceDueDateLabel($reservation)) !== null) {
             $summary .= " El saldo se liquida a más tardar el {$due}.";
+        } elseif ($pending > 0) {
+            // Sin fecha límite (reservó a menos de una semana, o se retiró al
+            // reabrir) el bot la calculaba de cabeza: "7 días antes de tu
+            // llegada, es decir, el domingo 27 de septiembre" a quien llegaba
+            // el 4 de octubre y escribía el 30 (cabañas, conv. 1640).
+            $summary .= ' No tiene fecha límite para el saldo: se cubre antes de su llegada y lo puede pagar por este chat cuando guste. No calcules otra fecha.';
         }
 
         return $summary;
@@ -951,6 +957,17 @@ class ReservationPolicy
         }
 
         return $value * $unit->minutes();
+    }
+
+    /**
+     * Extender por escalera de tarifas (Hotel México, opt-in): una estancia
+     * por horas que se alarga pasa a la siguiente tarifa por horas (1 → 2 →
+     * 3 h) y, agotadas, a la noche completa, cobrando la diferencia. Apagado
+     * = extender multiplica la tarifa que trae, como siempre.
+     */
+    public function extensionRateLadder(): bool
+    {
+        return (bool) ($this->settings()['extension_rate_ladder'] ?? false);
     }
 
     /** @return array<string, mixed> */

@@ -758,10 +758,18 @@ it('si dio la fecha con número, no se le pide confirmarla de más', function ()
 // sábado 19 de septiembre", con el sábado LLENO y sin herramienta para
 // cambiar nada.
 
-function saneaReagenda(string $texto, ?Conversation $c = null): string
+function saneaReagenda(string $texto, ?Conversation $c = null, bool $conReserva = true): string
 {
+    $c ??= conversacionQueDijo('Es para el sabado 19');
+
+    // El guardián solo cuida a quien TIENE una reserva viva (conv. 917 ya
+    // había pagado): quien cotiza no tiene nada que mover.
+    if ($conReserva && $c->reservation_id === null) {
+        $c->update(['reservation_id' => ocupar('Cabaña Luxury', now()->addDays(12))->id]);
+    }
+
     return (new ReflectionMethod(AgentBrain::class, 'enforceRescheduleClaims'))
-        ->invoke(app(AgentBrain::class), $texto, $c ?? conversacionQueDijo('Es para el sabado 19'));
+        ->invoke(app(AgentBrain::class), $texto, $c);
 }
 
 it('borra la promesa de mover la reserva y pasa con el personal', function () {
@@ -790,6 +798,17 @@ it('detecta las formas de prometerlo', function (string $frase) {
     'reagendar' => ['Puedo reagendar su estancia sin costo.'],
     'corrijo' => ['Corrijo las fechas de su apartado ahora mismo.'],
 ]);
+
+it('a quien solo cotiza no lo pasa con el personal: no tiene reserva que mover', function () {
+    // Auditoría cabañas 24-sep → 8-oct: las 6 veces que saltó eran
+    // cotizaciones y el huésped se quedó horas sin respuesta.
+    $c = conversacionQueDijo('Tienes paquetes para cabañas?');
+    $frase = 'Si cambia de fecha, con gusto reviso el sábado 24 de octubre.';
+
+    expect(saneaReagenda($frase, $c, conReserva: false))->toBe($frase)
+        ->and($c->fresh()->bot_enabled)->not->toBeFalse()
+        ->and($c->fresh()->status)->toBe(Conversation::STATUS_OPEN);
+});
 
 it('no estorba lo que el bot sí puede decir', function (string $frase) {
     expect(saneaReagenda($frase))->toBe($frase);
@@ -826,7 +845,7 @@ it('no juzga por el día de salida: "del 18 al 19" es la noche del 18', function
 
     $texto = "¡Buenas noticias! {$dicho} sí hay disponibilidad. Tenemos estas opciones:\n"
         ."- Cabaña Sencilla 1: \$3,000 por noche\n"
-        ."- Cabaña Sencilla 2: \$3,000 por noche";
+        .'- Cabaña Sencilla 2: $3,000 por noche';
 
     expect(sanear($texto))->toBe($texto);
 });

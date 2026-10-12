@@ -31,11 +31,14 @@ export const statusStyles: Record<
         dot: 'bg-danger',
         soft: 'bg-danger/10 text-danger dark:bg-danger/20 dark:text-slate-200',
     },
-    orange: {
-        bg: 'bg-pending',
-        ring: 'ring-pending/40',
-        dot: 'bg-pending',
-        soft: 'bg-pending/10 text-pending',
+    // Por limpiar: chocolate con rayas. El naranja de `pending` junto al rojo
+    // de ocupada se leía como el mismo color en el plano (cabañas, oct-2026);
+    // las rayas lo separan por textura además de por color.
+    brown: {
+        bg: 'bg-dirty bg-stripes',
+        ring: 'ring-dirty/40',
+        dot: 'bg-dirty',
+        soft: 'bg-dirty/10 text-dirty dark:bg-dirty/20 dark:text-slate-200',
     },
     blue: {
         bg: 'bg-warning',
@@ -55,7 +58,7 @@ export const statusLabels: Record<string, { label: string; color: string }> = {
     available: { label: 'Disponible', color: 'green' },
     reserved: { label: 'Reservada', color: 'cyan' },
     occupied: { label: 'Ocupada', color: 'red' },
-    dirty: { label: 'Por limpiar', color: 'orange' },
+    dirty: { label: 'Por limpiar', color: 'brown' },
     cleaning: { label: 'En limpieza', color: 'blue' },
     maintenance: { label: 'Mantenimiento', color: 'gray' },
 };

@@ -81,6 +81,10 @@ export interface ReservationRow {
     total_amount: string;
     coupon_code: string | null;
     discount_amount: number;
+    /** Cortesía aprobada, ya restada del total (módulo cortesias). */
+    courtesy_amount?: number;
+    /** La cortesía viva (pendiente o aprobada); solo la trae la ficha. */
+    courtesy?: import('@/components/courtesies/types').CourtesyPayload | null;
     extra_charges: ExtraChargeLine[];
     products: FrozenLine[];
     extras: FrozenLine[];

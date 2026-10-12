@@ -103,6 +103,13 @@ return [
         'group' => 'reservas',
     ],
 
+    'cortesias' => [
+        'label' => 'Cortesías',
+        'description' => 'Hospedaje gratis o con descuento (porcentaje o monto) con motivo obligatorio. El propietario la da directo; el resto del personal la solicita y solo un propietario la aprueba. Con tope mensual y reporte.',
+        'available' => true,
+        'group' => 'cobros',
+    ],
+
     /*
     |----------------------------------------------------------------------
     | Toggles de los planes Esencial / Profesional / Empresarial

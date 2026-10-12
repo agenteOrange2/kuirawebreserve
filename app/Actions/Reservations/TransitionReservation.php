@@ -100,6 +100,10 @@ class TransitionReservation
             // Cancelar la reserva libera también el cupo de sus tours.
             $this->syncLinkedExperiences($reservation, \App\Models\ExperienceBooking::STATUS_CANCELLED);
 
+            // Una cortesía que esperaba al propietario ya no tiene cuenta.
+            app(\App\Services\Courtesies\CourtesyService::class)
+                ->cancelPendingFor($reservation, 'La reserva se canceló antes de la respuesta.');
+
             // Libera el semáforo si esta reserva lo tenía apartado.
             $room = $reservation->room;
             if ($room && $room->status->getMorphClass() === RoomStatus::Reserved->value) {
@@ -477,6 +481,10 @@ class TransitionReservation
             ]);
 
             $stay->reservation?->update(['status' => ReservationStatus::Completed]);
+
+            // Una cortesía pendiente NO se cancela al salir: si el huésped se
+            // fue sin cobrar, la cuenta queda en Cuentas por cerrar y ahí la
+            // decide el propietario.
 
             // Solo mueve el semáforo si la habitación sigue ocupada: si
             // alguien ya lo movió a mano (sucia/limpieza/disponible), el

@@ -31,6 +31,9 @@ class StaffNotification extends Model
     /** Falla de mantenimiento: alta prioridad recién abierta, o vencida. */
     public const TYPE_INCIDENT = 'incident';
 
+    /** Cortesía: una solicitud que espera al propietario, o su respuesta. */
+    public const TYPE_COURTESY = 'courtesy';
+
     protected $fillable = [
         'type',
         'title',

@@ -71,6 +71,11 @@ const meta: Record<string, { icon: Icon; tone: string; label: string }> = {
         tone: 'bg-danger/10 text-danger',
         label: 'Mantenimiento',
     },
+    courtesy: {
+        icon: 'HandHeart',
+        tone: 'bg-pending/10 text-pending',
+        label: 'Cortesía',
+    },
 };
 
 const metaFor = (type: string) =>
@@ -259,6 +264,7 @@ async function submitDelete() {
                         <option value="payment">Pagos</option>
                         <option value="social">Redes sociales</option>
                         <option value="incident">Mantenimiento</option>
+                        <option value="courtesy">Cortesías</option>
                     </FormSelect>
                     <FormSelect v-model="state" class="w-full sm:w-40">
                         <option value="">Todos</option>

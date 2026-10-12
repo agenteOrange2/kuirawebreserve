@@ -19,6 +19,7 @@ use App\Models\Tenant;
 use App\Models\User;
 use App\Services\Payments\PaymentMethodGate;
 use App\Services\PropertyMode;
+use App\Services\StaffAccess;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -176,15 +177,16 @@ class TenantAreaController extends Controller
     /**
      * Equipo del hotel: quién entra al panel, con qué rol y desde cuándo.
      *
-     * El orden de los roles es el de ROLE_META, que va de más a menos
-     * mando — alfabético dejaba al gerente hasta abajo, después de cocina.
+     * El orden de los roles es el de StaffAccess::SYSTEM_ROLES, que va de
+     * más a menos mando — alfabético dejaba al gerente hasta abajo, después
+     * de cocina —, y luego los roles propios del hotel.
      */
     public function team(Tenant $tenant): Response
     {
         $team = $tenant->run(function () {
             $enTurno = \App\Models\Shift::query()->open()->pluck('user_id');
             $duenos = User::role('owner')->count();
-            $orden = array_keys(\App\Http\Controllers\Tenant\UsersPageController::ROLE_META);
+            $meta = StaffAccess::roleMeta();
 
             $users = User::query()
                 ->with('roles:id,name')
@@ -192,7 +194,7 @@ class TenantAreaController extends Controller
                 ->whereDoesntHave('roles', fn ($q) => $q->where('name', 'agent'))
                 ->orderBy('name')
                 ->get()
-                ->map(function (User $user) use ($enTurno, $duenos, $orden) {
+                ->map(function (User $user) use ($enTurno, $duenos, $meta) {
                     $role = $user->roles->first()?->name;
 
                     return [
@@ -201,11 +203,10 @@ class TenantAreaController extends Controller
                         'email' => $user->email,
                         'phone' => $user->phone,
                         'role' => $role,
-                        'role_label' => \App\Http\Controllers\Tenant\UsersPageController::ROLE_META[$role]['label'] ?? $role,
-                        // Un rol fuera del catálogo va al final, no arriba
-                        // del dueño (array_search da false y `?: 0` lo
-                        // convertía en el primer lugar).
-                        'rank' => ($i = $role ? array_search($role, $orden, true) : false) === false ? count($orden) : $i,
+                        'role_label' => $meta[$role]['label'] ?? $role,
+                        // Los roles propios del hotel van después de los de
+                        // fábrica, no arriba del dueño.
+                        'rank' => StaffAccess::rank($role),
                         'on_shift' => $enTurno->contains($user->id),
                         'two_factor' => $user->two_factor_confirmed_at !== null,
                         'created_at' => $user->created_at?->format('d/m/Y'),
@@ -218,27 +219,42 @@ class TenantAreaController extends Controller
                 ->sortBy([['rank', 'asc'], ['name', 'asc']])
                 ->values();
 
-            return [
-                'users' => $users,
-                'assignable' => \App\Http\Controllers\Tenant\UserController::assignableRoles(),
-            ];
-        });
+            // El catálogo en orden de jerarquía: alimenta los filtros y el
+            // selector del formulario, con la descripción de cada rol.
+            $roles = collect(StaffAccess::assignableRoles())
+                ->map(fn (string $name) => [
+                    'name' => $name,
+                    'label' => $meta[$name]['label'] ?? $name,
+                    'description' => $meta[$name]['description'] ?? '',
+                ])->values();
 
-        $meta = \App\Http\Controllers\Tenant\UsersPageController::ROLE_META;
+            return ['users' => $users, 'roles' => $roles];
+        });
 
         return Inertia::render('admin/tenants/Team', self::shell($tenant) + [
             'users' => $team['users'],
-            // El catálogo en orden de jerarquía: alimenta los filtros y el
-            // selector del formulario, con la descripción de cada rol.
-            'roles' => collect(array_keys($meta))
-                ->filter(fn (string $name) => in_array($name, $team['assignable'], true))
-                ->map(fn (string $name) => [
-                    'name' => $name,
-                    'label' => $meta[$name]['label'],
-                    'description' => $meta[$name]['description'],
-                ])->values(),
+            'roles' => $team['roles'],
             'maxUsers' => $tenant->planLimit('max_users'),
         ]);
+    }
+
+    /**
+     * Roles y accesos del hotel: qué áreas del panel ve cada rol y qué
+     * permisos tiene. Es el mismo editor que el propietario tiene en
+     * /usuarios/roles; aquí lo usa la plataforma al dar de alta o por
+     * soporte.
+     */
+    public function roles(Tenant $tenant): Response
+    {
+        try {
+            $payload = $tenant->run(fn () => StaffAccess::editorPayload());
+        } finally {
+            if (tenancy()->initialized) {
+                tenancy()->end();
+            }
+        }
+
+        return Inertia::render('admin/tenants/Roles', self::shell($tenant) + $payload);
     }
 
     /**

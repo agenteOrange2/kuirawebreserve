@@ -52,7 +52,12 @@ class StaySettlementController extends Controller
             : Stay::query()->pendingSettlement();
 
         $paginator = $query
-            ->with(['room:id,number', 'reservation:id,code,created_at', 'guest:id,first_name,last_name,phone'])
+            ->with([
+                'room:id,number', 'reservation:id,code,created_at', 'guest:id,first_name,last_name,phone',
+                // Cortesía viva de la cuenta (módulo cortesias): la pendiente
+                // se ve en el renglón para no cobrar lo que el dueño decide.
+                'liveCourtesy.requester:id,name', 'reservation.liveCourtesy.requester:id,name',
+            ])
             ->when($search !== '', fn ($q) => $q->where(function ($inner) use ($search) {
                 $inner->where('stays.guest_name', 'like', "%{$search}%")
                     ->orWhereHas('room', fn ($r) => $r->where('number', 'like', "%{$search}%"));
@@ -180,6 +185,10 @@ class StaySettlementController extends Controller
             return $error;
         }
 
+        if ($error = $this->assertMayCloseUnpaid($request)) {
+            return $error;
+        }
+
         $data = $request->validate([
             'note' => ['required', 'string', 'min:4', 'max:255'],
         ], [
@@ -190,6 +199,10 @@ class StaySettlementController extends Controller
             'settlement_closed_at' => now(),
             'settlement_note' => trim($data['note']),
         ]);
+
+        // Ya se decidió sin cobrar: lo que esperaba al propietario sobra.
+        app(\App\Services\Courtesies\CourtesyService::class)
+            ->cancelPendingFor($stay->reservation ?? $stay, 'La cuenta se cerró sin cobrar.');
 
         return response()->json(['closed' => true]);
     }
@@ -270,7 +283,7 @@ class StaySettlementController extends Controller
             : Reservation::query()->pendingSettlement();
 
         $paginator = $query
-            ->with(['room:id,number', 'guest:id,first_name,last_name,phone'])
+            ->with(['room:id,number', 'guest:id,first_name,last_name,phone', 'liveCourtesy.requester:id,name'])
             // La suma de abonos de una vez, no una consulta por renglón.
             ->withSum('payments', 'amount')
             ->when($search !== '', fn ($q) => $q->where(function ($inner) use ($search) {
@@ -299,6 +312,10 @@ class StaySettlementController extends Controller
             ], 422);
         }
 
+        if ($error = $this->assertMayCloseUnpaid($request)) {
+            return $error;
+        }
+
         $data = $request->validate([
             'note' => ['required', 'string', 'min:4', 'max:255'],
         ], [
@@ -309,6 +326,9 @@ class StaySettlementController extends Controller
             'settlement_closed_at' => now(),
             'settlement_note' => trim($data['note']),
         ]);
+
+        app(\App\Services\Courtesies\CourtesyService::class)
+            ->cancelPendingFor($reservation, 'La cuenta se cerró sin cobrar.');
 
         return response()->json(['closed' => true]);
     }
@@ -345,7 +365,26 @@ class StaySettlementController extends Controller
             'auto_closed' => str_contains((string) $reservation->cancellation_reason, 'Cierre de día automático'),
             'settlement_closed_at' => $reservation->settlement_closed_at?->format('d/m/Y H:i'),
             'settlement_note' => $reservation->settlement_note,
+            'courtesy' => $reservation->relationLoaded('liveCourtesy') ? $reservation->liveCourtesy?->toPayload() : null,
         ];
+    }
+
+    /**
+     * Con el módulo de cortesías, cerrar una cuenta sin cobrar ES una
+     * cortesía: solo el propietario lo hace. El resto la solicita y espera
+     * su aprobación, igual que en la ficha o en el plano. Sin el módulo,
+     * todo sigue como siempre.
+     */
+    protected function assertMayCloseUnpaid(Request $request): ?JsonResponse
+    {
+        if (! tenant()?->hasModule('cortesias')
+            || $request->user()?->hasRole(\App\Services\StaffAccess::OWNER)) {
+            return null;
+        }
+
+        return response()->json([
+            'message' => 'Solo el propietario cierra una cuenta sin cobrar. Solicita una cortesía y él la aprueba.',
+        ], 403);
     }
 
     /** Solo se toca la cuenta de una estancia cerrada y sin resolver. */
@@ -388,6 +427,9 @@ class StaySettlementController extends Controller
             'settlement_closed_at' => $stay->settlement_closed_at?->format('d/m/Y H:i'),
             'settlement_note' => $stay->settlement_note,
             'extra_charges' => $stay->extra_charges ?? [],
+            'courtesy' => ($stay->reservation_id
+                ? ($stay->reservation?->relationLoaded('liveCourtesy') ? $stay->reservation->liveCourtesy : null)
+                : ($stay->relationLoaded('liveCourtesy') ? $stay->liveCourtesy : null))?->toPayload(),
         ];
     }
 }

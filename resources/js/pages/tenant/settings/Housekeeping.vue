@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Link } from '@inertiajs/vue3';
 import axios from 'axios';
-import { reactive, ref } from 'vue';
+import { computed, reactive, ref } from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormCheck,
@@ -24,12 +24,14 @@ const props = defineProps<{
         hk_dirty_unit: string;
         hk_cleaning_value: number;
         hk_cleaning_unit: string;
+        hk_cleaning_auto_release: boolean;
         day_close_no_checkin: 'dirty' | 'available' | 'none';
         arrival_no_show_enabled: boolean;
         arrival_no_show_value: number;
         arrival_no_show_unit: string;
     };
     roomCounts: { reserved: number; dirty: number; cleaning: number };
+    cleaningsOverdue: number;
     arrivalsToday: number;
     arrivalsPending: number;
 }>();
@@ -46,6 +48,7 @@ const form = reactive({
     hk_dirty_unit: props.settings.hk_dirty_unit,
     hk_cleaning_value: props.settings.hk_cleaning_value,
     hk_cleaning_unit: props.settings.hk_cleaning_unit,
+    hk_cleaning_auto_release: props.settings.hk_cleaning_auto_release,
     day_close_no_checkin: props.settings.day_close_no_checkin,
     arrival_no_show_enabled: props.settings.arrival_no_show_enabled,
     arrival_no_show_value: props.settings.arrival_no_show_value,
@@ -96,6 +99,36 @@ const modeOptions: {
     },
 ];
 
+// En automático y ambos el reloj ya libera la habitación: el switch se ve
+// prendido y bloqueado para que no parezca que se puede apagar.
+const autoReleaseLocked = computed(() => form.hk_mode !== 'manual');
+
+const autoRelease = computed({
+    get: () => autoReleaseLocked.value || form.hk_cleaning_auto_release,
+    set: (value: boolean) => {
+        form.hk_cleaning_auto_release = value;
+    },
+});
+
+// Cómo queda cada limpieza en la bitácora de /limpieza.
+const outcomeLegend = [
+    {
+        label: 'A tiempo',
+        tone: 'bg-success/10 text-success',
+        help: 'La camarista la terminó dentro del tiempo asignado.',
+    },
+    {
+        label: 'Fuera de tiempo',
+        tone: 'bg-pending/10 text-pending',
+        help: 'La terminó, pero después del tiempo (solo pasa con el switch apagado).',
+    },
+    {
+        label: 'La cerró el reloj',
+        tone: 'bg-info/10 text-info',
+        help: 'Nadie la terminó: al cumplirse el tiempo la habitación pasó sola a disponible.',
+    },
+];
+
 const dayCloseOptions: {
     value: 'dirty' | 'available' | 'none';
     label: string;
@@ -130,6 +163,7 @@ async function submit() {
                 hk_dirty_unit: form.hk_dirty_unit,
                 hk_cleaning_value: form.hk_cleaning_value,
                 hk_cleaning_unit: form.hk_cleaning_unit,
+                hk_cleaning_auto_release: form.hk_cleaning_auto_release,
                 day_close_no_checkin: form.day_close_no_checkin,
                 arrival_no_show_enabled: form.arrival_no_show_enabled,
                 arrival_no_show_value: form.arrival_no_show_value,
@@ -350,38 +384,15 @@ async function submit() {
                                     <option value="hour">Horas</option>
                                 </FormSelect>
                             </div>
-                            <div class="flex flex-wrap items-center gap-2">
-                                <span class="text-xs text-slate-500"
-                                    >De en limpieza a disponible tras</span
-                                >
-                                <FormInput
-                                    v-model.number="form.hk_cleaning_value"
-                                    type="number"
-                                    min="1"
-                                    max="999"
-                                    class="!w-24 text-center"
-                                />
-                                <FormSelect
-                                    v-model="form.hk_cleaning_unit"
-                                    class="!w-36"
-                                >
-                                    <option value="minute">Minutos</option>
-                                    <option value="hour">Horas</option>
-                                </FormSelect>
-                            </div>
                             <FormHelp
                                 v-if="
                                     errors.hk_dirty_value ||
-                                    errors.hk_dirty_unit ||
-                                    errors.hk_cleaning_value ||
-                                    errors.hk_cleaning_unit
+                                    errors.hk_dirty_unit
                                 "
                                 class="text-danger"
                                 >{{
                                     errors.hk_dirty_value ??
-                                    errors.hk_dirty_unit ??
-                                    errors.hk_cleaning_value ??
-                                    errors.hk_cleaning_unit
+                                    errors.hk_dirty_unit
                                 }}</FormHelp
                             >
                             <p
@@ -392,8 +403,8 @@ async function submit() {
                                     class="mt-0.5 h-3.5 w-3.5 shrink-0"
                                 />
                                 El tiempo corre desde el último cambio de
-                                estado. Si limpieza libera antes a mano (modo
-                                ambos), el reloj ya no interviene.
+                                estado. El paso de en limpieza a disponible usa
+                                el tiempo de limpieza de abajo.
                             </p>
                         </div>
 
@@ -408,6 +419,133 @@ async function submit() {
                             Ahora mismo: {{ roomCounts.dirty }} habitación(es)
                             por limpiar y {{ roomCounts.cleaning }} en limpieza.
                         </p>
+                    </div>
+                </div>
+
+                <!-- Tiempo de limpieza: cuánto tiene la camarista y qué pasa
+                     si nadie la termina -->
+                <div class="col-span-12">
+                    <div class="box box--stacked p-4">
+                        <div
+                            class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
+                        >
+                            <Lucide icon="Timer" class="h-3.5 w-3.5" />
+                            Tiempo de limpieza
+                        </div>
+                        <p class="text-xs text-slate-500">
+                            Cuánto tiene la camarista para dejar lista una
+                            habitación desde que inicia la limpieza. Con este
+                            tiempo se califica en Limpieza cuáles se entregaron
+                            a tiempo.
+                        </p>
+
+                        <div class="mt-4 grid grid-cols-1 gap-5 lg:grid-cols-2">
+                            <div class="space-y-4">
+                                <div class="flex flex-wrap items-center gap-2">
+                                    <span class="text-xs text-slate-500"
+                                        >Tiempo asignado</span
+                                    >
+                                    <FormInput
+                                        v-model.number="form.hk_cleaning_value"
+                                        type="number"
+                                        min="1"
+                                        max="999"
+                                        class="h-9 !w-24 text-center text-xs"
+                                    />
+                                    <FormSelect
+                                        v-model="form.hk_cleaning_unit"
+                                        class="h-9 !w-36 text-xs"
+                                    >
+                                        <option value="minute">Minutos</option>
+                                        <option value="hour">Horas</option>
+                                    </FormSelect>
+                                </div>
+                                <FormHelp
+                                    v-if="
+                                        errors.hk_cleaning_value ||
+                                        errors.hk_cleaning_unit
+                                    "
+                                    class="text-danger"
+                                    >{{
+                                        errors.hk_cleaning_value ??
+                                        errors.hk_cleaning_unit
+                                    }}</FormHelp
+                                >
+
+                                <div>
+                                    <FormSwitch>
+                                        <FormSwitch.Input
+                                            id="hk_cleaning_auto_release"
+                                            v-model="autoRelease"
+                                            type="checkbox"
+                                            :disabled="autoReleaseLocked"
+                                        />
+                                        <FormSwitch.Label
+                                            for="hk_cleaning_auto_release"
+                                            class="text-xs"
+                                        >
+                                            Marcar disponible al cumplirse el
+                                            tiempo
+                                        </FormSwitch.Label>
+                                    </FormSwitch>
+                                    <p class="mt-1.5 text-xs text-slate-500">
+                                        <template v-if="autoReleaseLocked">
+                                            En flujo automático y ambos el reloj
+                                            siempre libera la habitación; para
+                                            decidirlo aquí, cambia el flujo a
+                                            manual.
+                                        </template>
+                                        <template v-else>
+                                            La limpieza se sigue iniciando a
+                                            mano con el nombre de la camarista;
+                                            si al cumplirse el tiempo nadie la
+                                            terminó, la habitación pasa sola a
+                                            disponible.
+                                        </template>
+                                    </p>
+                                </div>
+
+                                <p
+                                    class="text-xs"
+                                    :class="
+                                        cleaningsOverdue > 0
+                                            ? 'text-pending'
+                                            : 'text-slate-400'
+                                    "
+                                >
+                                    Ahora mismo: {{ cleaningsOverdue }}
+                                    limpieza(s) iniciada(s) ya pasaron su
+                                    tiempo.
+                                </p>
+                            </div>
+
+                            <div
+                                class="rounded-lg border border-dashed border-slate-300/70 bg-slate-50 px-4 py-3 dark:border-darkmode-400 dark:bg-darkmode-700"
+                            >
+                                <div class="text-xs font-medium">
+                                    Cómo queda en la bitácora de Limpieza
+                                </div>
+                                <ul class="mt-2 space-y-2">
+                                    <li
+                                        v-for="item in outcomeLegend"
+                                        :key="item.label"
+                                        class="flex items-start gap-2 text-xs text-slate-500"
+                                    >
+                                        <span
+                                            class="shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium whitespace-nowrap"
+                                            :class="item.tone"
+                                            >{{ item.label }}</span
+                                        >
+                                        <span>{{ item.help }}</span>
+                                    </li>
+                                </ul>
+                                <p class="mt-2 text-xs text-slate-400">
+                                    El tiempo asignado se guarda al iniciar cada
+                                    limpieza: cambiarlo no recalifica las
+                                    anteriores.
+                                </p>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -497,9 +635,9 @@ async function submit() {
                             Cuando el huésped no llega
                         </div>
                         <p class="text-xs text-slate-500">
-                            El cierre de día mira la hora de salida, así que
-                            una reserva de tres noches que nadie ocupó aparta
-                            la habitación las tres noches. Esto mira la hora de
+                            El cierre de día mira la hora de salida, así que una
+                            reserva de tres noches que nadie ocupó aparta la
+                            habitación las tres noches. Esto mira la hora de
                             entrada: pasado el tiempo que elijas sin registrar
                             la llegada, la reserva se marca como no llegó y la
                             habitación vuelve a venderse.
@@ -555,11 +693,11 @@ async function submit() {
                                 icon="Info"
                                 class="mt-0.5 h-3.5 w-3.5 shrink-0"
                             />
-                            Se marca no llegó y no solo se suelta la
-                            habitación: mientras la reserva siga confirmada
-                            aparta esas fechas, y el plano mostraría un cuarto
-                            libre que no se puede vender. Las reservas con
-                            llegada registrada no pasan por aquí.
+                            Se marca no llegó y no solo se suelta la habitación:
+                            mientras la reserva siga confirmada aparta esas
+                            fechas, y el plano mostraría un cuarto libre que no
+                            se puede vender. Las reservas con llegada registrada
+                            no pasan por aquí.
                         </p>
                         <p
                             class="mt-2 text-xs"
@@ -569,8 +707,8 @@ async function submit() {
                                     : 'text-slate-400'
                             "
                         >
-                            Ahora mismo: {{ arrivalsPending }} llegada(s) con
-                            la hora de entrada pasada y sin registrar.
+                            Ahora mismo: {{ arrivalsPending }} llegada(s) con la
+                            hora de entrada pasada y sin registrar.
                         </p>
                     </div>
                 </div>

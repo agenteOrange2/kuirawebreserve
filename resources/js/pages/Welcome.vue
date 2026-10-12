@@ -9,6 +9,13 @@ interface LandingPlan {
     description: string | null;
     price_monthly: number;
     activation_fee: number;
+    billing_options: {
+        months: number;
+        label: string;
+        discount: number;
+        total: number;
+        monthly: number;
+    }[];
     max_rooms: number | null;
     max_users: number | null;
     max_channels: number | null;
@@ -269,7 +276,7 @@ const roomStatus: Record<string, { label: string; tone: string }> = {
     available: { label: 'Disponible', tone: 'bg-success' },
     reserved: { label: 'Reservada', tone: 'bg-info' },
     occupied: { label: 'Ocupada', tone: 'bg-danger' },
-    dirty: { label: 'Sucia', tone: 'bg-pending' },
+    dirty: { label: 'Sucia', tone: 'bg-dirty' },
     cleaning: { label: 'Limpiando', tone: 'bg-warning' },
     maintenance: { label: 'Mantenimiento', tone: 'bg-dark' },
 };
@@ -1230,6 +1237,24 @@ const assistantSkills = [
                                         >Activación única de ${{
                                             money(plan.activation_fee)
                                         }}</span
+                                    >
+                                    <span
+                                        v-for="option in plan.billing_options"
+                                        :key="option.months"
+                                        class="mt-1 block text-xs"
+                                        :title="`$${money(option.total)} MXN por ${option.months} meses`"
+                                        >{{ option.label }}: ${{
+                                            money(option.monthly)
+                                        }}/mes
+                                        <span
+                                            class="font-medium"
+                                            :class="
+                                                isFeatured(index)
+                                                    ? 'text-white'
+                                                    : 'text-success'
+                                            "
+                                            >ahorra {{ option.discount }}%</span
+                                        ></span
                                     ></template
                                 >
                                 <template v-else

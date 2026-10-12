@@ -33,6 +33,9 @@ class TenantRolesSeeder extends Seeder
             'guests.manage',
             'guests.view-documents',
             'reports.view',
+            // Pedir una cortesía (módulo cortesias). Aprobarla no es un
+            // permiso: solo el propietario la decide.
+            'courtesies.request',
         ];
 
         foreach ($permissions as $permission) {
@@ -55,6 +58,7 @@ class TenantRolesSeeder extends Seeder
                 'guests.manage',
                 'guests.view-documents',
                 'reports.view',
+                'courtesies.request',
             ],
             // Front-desk hace el check-in: captura y verifica el INE.
             'front-desk' => [
@@ -67,6 +71,7 @@ class TenantRolesSeeder extends Seeder
                 'guests.view',
                 'guests.manage',
                 'guests.view-documents',
+                'courtesies.request',
             ],
             'housekeeping' => [
                 'rooms.view',

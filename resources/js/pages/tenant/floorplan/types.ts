@@ -42,6 +42,8 @@ export interface ActiveStaySummary {
     arrival_mode: 'vehicle' | 'foot' | null;
     id_document_type: string | null;
     id_document_photos: string[];
+    /** Cortesía viva de la cuenta (módulo cortesias). */
+    courtesy?: import('@/components/courtesies/types').CourtesyPayload | null;
 }
 
 /**
@@ -235,6 +237,8 @@ export interface CheckoutFolio {
     lodging_pending: number;
     consumption_pending: number;
     grand_pending: number;
+    /** Cortesía viva de la cuenta (módulo cortesias). */
+    courtesy?: import('@/components/courtesies/types').CourtesyPayload | null;
     /**
      * Daños y cargos capturados después del check-in. Se listan aparte del
      * hospedaje porque el mostrador tiene que ver QUÉ sumó y poder quitarlo

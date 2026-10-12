@@ -33,6 +33,7 @@ class HousekeepingSettingsPageController extends Controller
                 'hk_dirty_unit' => $settings['hk_dirty_unit'] ?? 'minute',
                 'hk_cleaning_value' => (int) ($settings['hk_cleaning_value'] ?? 45),
                 'hk_cleaning_unit' => $settings['hk_cleaning_unit'] ?? 'minute',
+                'hk_cleaning_auto_release' => (bool) ($settings['hk_cleaning_auto_release'] ?? false),
                 'day_close_no_checkin' => $settings['day_close_no_checkin'] ?? 'dirty',
                 'arrival_no_show_enabled' => (bool) ($settings['arrival_no_show_enabled'] ?? false),
                 'arrival_no_show_value' => (int) ($settings['arrival_no_show_value'] ?? 6),
@@ -45,6 +46,11 @@ class HousekeepingSettingsPageController extends Controller
                 'dirty' => Room::query()->where('status', RoomStatus::Dirty->value)->count(),
                 'cleaning' => Room::query()->where('status', RoomStatus::Cleaning->value)->count(),
             ],
+            // Limpiezas iniciadas que ya rebasaron su tiempo y siguen
+            // abiertas: las que el switch de liberar por tiempo resolvería.
+            'cleaningsOverdue' => \App\Models\RoomCleaning::query()->open()->get()
+                ->filter(fn (\App\Models\RoomCleaning $cleaning) => $cleaning->isOverdue())
+                ->count(),
             // Llegadas confirmadas cuya hora de entrada ya pasó y siguen sin
             // registrarse: son las que la ventana de llegada resolvería.
             'arrivalsPending' => \App\Models\Reservation::query()

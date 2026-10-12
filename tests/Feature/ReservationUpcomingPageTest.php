@@ -266,8 +266,17 @@ it('la cabecera de alojados mira la casa entera, aunque se busque', function () 
     expect($props['stays']['total'])->toBe(1)
         ->and($props['summary']['rooms'])->toBe(2)
         ->and($props['summary']['guests'])->toBe(5)
-        ->and($props['summary']['departures_today'])->toBe(2)
-        ->and($props['summary']['overdue'])->toBe(1);
+        // "Salen hoy" y "salida vencida" ya no se enciman: la dona y los
+        // filtros necesitan grupos que no se repitan, y tocar "Salen hoy (2)"
+        // para ver una sola estancia confundía.
+        ->and($props['summary']['departures_today'])->toBe(1)
+        ->and($props['summary']['overdue'])->toBe(1)
+        ->and($props['summary']['departures'])->toBe([
+            'vencida' => 1,
+            'hoy' => 1,
+            'manana' => 0,
+            'despues' => 0,
+        ]);
 });
 
 it('la página de reservas no cobra consultas por fila (el pagado viaja en la lista)', function () {

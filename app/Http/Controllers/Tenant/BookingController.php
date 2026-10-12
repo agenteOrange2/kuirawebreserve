@@ -76,6 +76,7 @@ class BookingController extends Controller
                 $ratePlan = $type->ratePlans()
                     ->sellableOnline()
                     ->where('type', $data['mode'])
+                    ->with('seasons')
                     ->orderBy('price')
                     ->first();
 
@@ -122,7 +123,7 @@ class BookingController extends Controller
                 // pueda haber un centavo de diferencia entre lo que se
                 // muestra desglosado y lo que en verdad se cobra.
                 $extraChargeLines = $offeredRoom
-                    ? $offeredRoom->extraChargeLines($guests, $ratePlan->unitsFor($start, $planEnd))
+                    ? $offeredRoom->extraChargeLines($guests, $ratePlan->unitsFor($start, $planEnd), [], $ratePlan)
                     : [];
                 $total = $offeredRoom
                     ? round($ratePlan->priceFor($start, $planEnd, $offeredRoom) + array_sum(array_column($extraChargeLines, 'amount')), 2)
@@ -151,6 +152,21 @@ class BookingController extends Controller
                     // recalcula igual: lo mostrado sigue siendo lo cobrado).
                     'total' => $total,
                     'price_breakdown' => $offeredRoom ? $ratePlan->priceBreakdown($start, $planEnd, $offeredRoom, $extraChargeLines) : [],
+                    // Noche por noche (gráfica del wizard): solo dice algo
+                    // cuando el precio cambia entre noches (fin de semana,
+                    // temporada); el frontend decide si la pinta.
+                    'nightly' => $ratePlan->nightlyPrices($start, $planEnd, $offeredRoom),
+                    // "Quédate 7 noches y la noche baja a…": descuentos por
+                    // estancia larga que esta búsqueda todavía no alcanza.
+                    'long_stay_offers' => $data['mode'] === 'night'
+                        ? $ratePlan->longStayOffers($start, $ratePlan->unitsFor($start, $planEnd))
+                        : [],
+                    // Ficha de cobro del cuarto ofrecido: /reservar/grupos
+                    // estima la persona extra por línea sin reconsultar
+                    // (mismo cálculo que Room::extraChargeLines).
+                    'included_occupancy' => $offeredRoom?->included_occupancy,
+                    'extra_guest_fee' => $offeredRoom?->extra_guest_fee !== null ? (float) $offeredRoom->extra_guest_fee : null,
+                    'units' => $ratePlan->unitsFor($start, $planEnd),
                     'requires_prepayment' => $this->requiresPrepaymentFor($ratePlan),
                     'available' => $availableRooms->isNotEmpty(),
                     'rooms_count' => $availableRooms->count(),
@@ -317,6 +333,9 @@ class BookingController extends Controller
         return [
             'code' => $reservation->displayCode(),
             'room_type' => $type->name,
+            // Miniatura para el resumen: al retomar el pago desde la pasarela
+            // el wizard ya no tiene la habitación elegida en memoria.
+            'room_photo' => $type->photosPayload()[0]['thumb_url'] ?? null,
             'starts_at' => $reservation->starts_at->toIso8601String(),
             'ends_at' => $reservation->ends_at->toIso8601String(),
             'room_total' => round((float) $reservation->total_amount - $productsTotal - $extrasTotal - $experiencesTotal, 2),

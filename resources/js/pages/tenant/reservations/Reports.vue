@@ -123,6 +123,9 @@ const props = defineProps<{
         reserved_pending: number;
         reserved_paid_pct: number;
         with_debt: number;
+        /** Cortesías aprobadas en el rango: ya restadas de lo vendido. */
+        courtesies?: number;
+        courtesies_count?: number;
         by_method: MethodRow[];
         by_concept: ConceptRow[];
     };
@@ -728,6 +731,21 @@ const paymentStatusMax = computed(() =>
                                     <span class="ml-auto font-medium">{{
                                         fmt(money.walkin)
                                     }}</span>
+                                </div>
+                                <div
+                                    v-if="(money.courtesies ?? 0) > 0"
+                                    class="flex items-center gap-2 py-2"
+                                >
+                                    <span class="text-slate-500"
+                                        >Cortesías ({{
+                                            money.courtesies_count
+                                        }})</span
+                                    >
+                                    <span
+                                        class="ml-auto font-medium text-pending"
+                                        title="Ya restadas de lo vendido; no son dinero"
+                                        >−{{ fmt(money.courtesies ?? 0) }}</span
+                                    >
                                 </div>
                                 <div class="flex items-center gap-2 py-2">
                                     <span class="text-slate-500"

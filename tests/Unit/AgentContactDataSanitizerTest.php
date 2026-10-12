@@ -87,3 +87,38 @@ it('un mensaje sin datos de contacto no se toca', function () {
 
     expect(limpiarContacto($texto))->toBe($texto);
 });
+
+// --- Auditoría cabañas 24-sep → 8-oct (2026-10-08) ---
+
+it('una liga con una letra cambiada se corrige por la liga real', function () {
+    // El modelo escribió ".../cabina/..." 8 veces en dos semanas y el
+    // huésped se quedaba con "Fotos aquí:" sin nada.
+    $limpio = limpiarContacto('Fotos de la Cabaña Real: https://cabanasrealdelasierra.com/cabina/cabana-real/');
+
+    expect($limpio)->toContain('https://cabanasrealdelasierra.com/cabana/cabana-real/')
+        ->and($limpio)->not->toContain('/cabina/');
+});
+
+it('una liga inventada de verdad se sigue quitando', function () {
+    expect(limpiarContacto('Paga aquí: http://pay.cabanasrealdelasierra.com/res-2026-1810'))
+        ->not->toContain('pay.cabanasrealdelasierra.com');
+});
+
+it('el correo que el huésped tecleó mal pasa corregido, no se vuelve el del hotel', function () {
+    // Conv. 1750: "JoshuaJoshuaavila0gmamail.con" → el bot preguntó "¿es
+    // crealdelasierra@gmail.com?".
+    $permitidos = permitidosCabanas() + ['guest_text' => 'Joshuaavila072000 JoshuaJoshuaavila0gmamail.con.'];
+    $limpio = contactSanitizer()->sanitizeContactData('Creo que el correo es joshuaavila0@gmail.com. ¿Es correcto?', null, $permitidos);
+
+    expect($limpio)->toContain('joshuaavila0@gmail.com')
+        ->and($limpio)->not->toContain('crealdelasierra@gmail.com');
+});
+
+it('un correo de ejemplo se quita en vez de volverse el del hotel', function () {
+    // Conv. 1572: "Ejemplo: usuario@gmail.com" se volvió el correo del
+    // hotel y acabó en la reserva de la huésped.
+    $limpio = limpiarContacto('Me lo confirma, por favor. Ejemplo: usuario@gmail.com');
+
+    expect($limpio)->not->toContain('usuario@gmail.com')
+        ->and($limpio)->not->toContain('crealdelasierra@gmail.com');
+});

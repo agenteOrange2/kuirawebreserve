@@ -1,6 +1,13 @@
 <script setup lang="ts">
 import axios from 'axios';
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import {
+    computed,
+    nextTick,
+    onBeforeUnmount,
+    onMounted,
+    ref,
+    watch,
+} from 'vue';
 import Button from '@/components/Base/Button';
 import {
     FormHelp,
@@ -9,9 +16,21 @@ import {
     FormSelect,
 } from '@/components/Base/Form';
 import Lucide from '@/components/Base/Lucide';
+import CourtesySection from '@/components/courtesies/CourtesySection.vue';
+import {
+    courtesyFormReady,
+    courtesyPayload,
+    emptyCourtesyForm,
+    estimateCourtesy,
+} from '@/components/courtesies/types';
+import type { CourtesyForm } from '@/components/courtesies/types';
+import { useCourtesyAccess } from '@/components/courtesies/useCourtesyAccess';
+import GuestMatches from './GuestMatches.vue';
 import PlanModal from './PlanModal.vue';
 import type { CounterMethod } from '@/composables/useCounterMethods';
 import { useCounterMethods } from '@/composables/useCounterMethods';
+import type { GuestHit } from '@/composables/useGuestSearch';
+import { useGuestSearch } from '@/composables/useGuestSearch';
 import { useToasts } from '@/composables/useToasts';
 
 /**
@@ -33,6 +52,9 @@ interface RatePlanOption {
     duration_label: string;
     duration_unit: string | null;
     duration_value: number | null;
+    /** Personas de esta tarifa; null = las del cuarto. */
+    included_people?: number | null;
+    max_people?: number | null;
 }
 
 interface ExpressRoom {
@@ -88,7 +110,8 @@ const modalRoom = ref<ExpressRoom | null>(null);
 
 const ratePlanId = ref<number | null>(null);
 // 'vehicle' = llegó en carro (placa); 'foot' = va a pie (identificación).
-const arrival = ref<'vehicle' | 'foot'>('vehicle');
+// Arranca a pie: es lo que más llega a la recepción, y el carro es un toque.
+const arrival = ref<'vehicle' | 'foot'>('foot');
 const plate = ref('');
 const vehicleDesc = ref('');
 // Ficha del vehículo (registro de placas del motel): marca y modelo se
@@ -106,6 +129,16 @@ const knownVehicle = ref<{
     blacklist_reason: string | null;
 } | null>(null);
 const guestName = ref('');
+// Huésped que ya vino: se busca mientras se teclea el nombre (mismo
+// /api/guests/search que el modal de reservas) y al elegirlo la estancia
+// queda ligada a su ficha en vez de nacer como un nombre suelto.
+const selectedGuest = ref<GuestHit | null>(null);
+const {
+    hits: guestHits,
+    searching: guestSearching,
+    search: searchGuests,
+    reset: resetGuestSearch,
+} = useGuestSearch();
 const docType = ref('ine');
 const docNumber = ref('');
 const stagedPhotos = ref<StagedPhoto[]>([]);
@@ -121,6 +154,11 @@ const guaranteeMethod = ref<CounterMethod>('cash');
 // Folio del comprobante: obligatorio cuando la fianza llega por
 // transferencia, que es por donde se devuelve.
 const guaranteeReference = ref('');
+// Contenedores de los campos de referencia: aparecen al cambiar de método y
+// quedaban abajo del pliegue, así que se traen a la vista y se enfocan.
+const paymentReferenceBox = ref<HTMLElement | null>(null);
+let hydrating = false;
+const guaranteeReferenceBox = ref<HTMLElement | null>(null);
 
 const documentTypes: Record<string, string> = {
     ine: 'INE',
@@ -147,7 +185,7 @@ watch(
         };
         // La lista ya viene ordenada por precio: la más barata preseleccionada.
         ratePlanId.value = modalRoom.value.rate_plans[0]?.id ?? null;
-        arrival.value = 'vehicle';
+        arrival.value = 'foot';
         plate.value = '';
         vehicleDesc.value = '';
         vehicleBrand.value = '';
@@ -155,6 +193,8 @@ watch(
         vehicleColor.value = '';
         knownVehicle.value = null;
         guestName.value = '';
+        selectedGuest.value = null;
+        resetGuestSearch();
         docType.value = 'ine';
         docNumber.value = '';
         clearPhotos();
@@ -162,9 +202,16 @@ watch(
         extraConcepts.value = [];
         paymentMethod.value = firstMethod.value;
         paymentReference.value = '';
+        courtesyOn.value = false;
+        courtesyForm.value = emptyCourtesyForm();
+        courtesyCapWarning.value = null;
         guaranteeMethod.value = firstMethod.value;
         guaranteeReference.value = '';
         collector.value = props.collectorDefault;
+        // El método que trae el reset no es un cambio de quien atiende: no
+        // se brinca hasta la referencia nomás de abrir.
+        hydrating = true;
+        nextTick(() => (hydrating = false));
     },
 );
 
@@ -205,7 +252,43 @@ watch(plate, (value) => {
     }, 400);
 });
 
-const maxPeople = computed(() => modalRoom.value?.capacity ?? 20);
+function onGuestNameInput() {
+    searchGuests(guestName.value);
+}
+
+function pickGuest(hit: GuestHit) {
+    selectedGuest.value = hit;
+    guestName.value = hit.full_name ?? guestName.value;
+    if (hit.id_document_type && hit.id_document_type in documentTypes) {
+        docType.value = hit.id_document_type;
+    }
+    resetGuestSearch();
+}
+
+function clearGuest() {
+    selectedGuest.value = null;
+    guestName.value = '';
+    resetGuestSearch();
+    nextTick(() => document.getElementById('express-guest-name')?.focus());
+}
+
+// Al cambiar a tarjeta o transferencia aparece la referencia, pero quedaba
+// abajo del pliegue y la gente no la veía: se trae a la vista y se enfoca.
+function revealField(box: HTMLElement | null) {
+    if (!box) return;
+    box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    box.querySelector('input')?.focus({ preventScroll: true });
+}
+
+watch(paymentMethod, (method, previous) => {
+    if (hydrating || method === 'cash' || previous !== 'cash') return;
+    nextTick(() => revealField(paymentReferenceBox.value));
+});
+
+watch(guaranteeMethod, (method) => {
+    if (hydrating || method !== 'transfer') return;
+    nextTick(() => revealField(guaranteeReferenceBox.value));
+});
 
 const selectedPlan = computed(
     () =>
@@ -214,9 +297,24 @@ const selectedPlan = computed(
         ) ?? null,
 );
 
+// La tarifa puede traer sus propias personas (la Sencilla por horas admite
+// 3 e incluye 2; la Doble por horas, solo 2): manda sobre la del cuarto.
+const maxPeople = computed(
+    () => selectedPlan.value?.max_people ?? modalRoom.value?.capacity ?? 20,
+);
+const includedPeople = computed(
+    () =>
+        selectedPlan.value?.included_people ??
+        modalRoom.value?.included_occupancy ??
+        null,
+);
+watch(maxPeople, (max) => {
+    if (people.value > max) people.value = max;
+});
+
 // Estimado de personas extra (el servidor recalcula con extraChargeLines).
 const extraGuestsFee = computed(() => {
-    const included = modalRoom.value?.included_occupancy;
+    const included = includedPeople.value;
     const fee = modalRoom.value?.extra_guest_fee ?? 0;
     if (!included || !fee || people.value <= included) return 0;
     return (people.value - included) * fee;
@@ -235,14 +333,51 @@ const total = computed(
         optionalTotal.value,
 );
 
+// ── Cortesía en el mismo registro (módulo cortesias) ──
+// La del propietario baja el hospedaje antes de cobrarlo; la del resto
+// queda esperando al propietario y el hospedaje se cobra al salir.
+const courtesyAccess = useCourtesyAccess();
+const courtesyOn = ref(false);
+const courtesyForm = ref<CourtesyForm>(emptyCourtesyForm());
+const courtesyCapWarning = ref<string | null>(null);
+const courtesyLodging = computed(
+    () => (selectedPlan.value?.price ?? 0) + extraGuestsFee.value,
+);
+const courtesyDiscount = computed(() =>
+    courtesyOn.value && courtesyAccess.value.is_owner
+        ? estimateCourtesy(courtesyForm.value, courtesyLodging.value)
+        : 0,
+);
+const courtesyDefersCharge = computed(
+    () => courtesyOn.value && !courtesyAccess.value.is_owner,
+);
+const chargeTotal = computed(() =>
+    Math.max(0, total.value - courtesyDiscount.value),
+);
+/** Se cobra en el acto: ni captura diferida, ni cortesía pedida, ni $0. */
+const chargesNow = computed(
+    () =>
+        !laterCapture.value &&
+        !courtesyDefersCharge.value &&
+        chargeTotal.value > 0,
+);
+watch(
+    () => [courtesyForm.value.kind, courtesyForm.value.value, courtesyOn.value],
+    () => (courtesyCapWarning.value = null),
+);
+
 const peopleHint = computed(() => {
     const room = modalRoom.value;
     if (!room) return '';
     const parts: string[] = [];
-    if (room.capacity) parts.push(`Hasta ${room.capacity} personas`);
-    if (room.included_occupancy && room.extra_guest_fee) {
+    if (maxPeople.value < 20) parts.push(`Hasta ${maxPeople.value} personas`);
+    if (
+        includedPeople.value &&
+        room.extra_guest_fee &&
+        includedPeople.value < maxPeople.value
+    ) {
         parts.push(
-            `incluye ${room.included_occupancy} · extra ${money(room.extra_guest_fee)} c/u`,
+            `incluye ${includedPeople.value} · extra ${money(room.extra_guest_fee)} c/u`,
         );
     }
     return parts.join(' · ');
@@ -267,7 +402,8 @@ const canSubmit = computed(
             props.guaranteeAmount > 0 &&
             guaranteeMethod.value === 'transfer' &&
             !guaranteeReference.value.trim()
-        ),
+        ) &&
+        (!courtesyOn.value || courtesyFormReady(courtesyForm.value)),
 );
 
 const money = (n: number) =>
@@ -317,6 +453,10 @@ async function submit() {
             room_id: modalRoom.value.id,
             rate_plan_id: ratePlanId.value,
             num_people: people.value,
+            guest_id:
+                arrival.value === 'foot' && selectedGuest.value
+                    ? selectedGuest.value.id
+                    : undefined,
             guest_name:
                 arrival.value === 'foot' ? guestName.value.trim() : undefined,
             vehicle_plate:
@@ -356,11 +496,11 @@ async function submit() {
             // Se guarda aunque no haya datos todavía: es lo que evita que el
             // diálogo de completar vuelva a preguntar en carro o a pie.
             arrival_mode: arrival.value,
-            payment_method: laterCapture.value
-                ? undefined
-                : coerceMethod(paymentMethod.value),
+            payment_method: chargesNow.value
+                ? coerceMethod(paymentMethod.value)
+                : undefined,
             payment_reference:
-                !laterCapture.value &&
+                chargesNow.value &&
                 paymentMethod.value !== 'cash' &&
                 paymentReference.value.trim() !== ''
                     ? paymentReference.value.trim()
@@ -373,6 +513,11 @@ async function submit() {
                 guaranteeMethod.value === 'transfer'
                     ? guaranteeReference.value.trim() || undefined
                     : undefined,
+            courtesy: courtesyPayload(
+                courtesyAccess.value.enabled && courtesyOn.value,
+                courtesyForm.value,
+                courtesyCapWarning.value !== null,
+            ),
         });
 
         let photosOk = true;
@@ -387,13 +532,17 @@ async function submit() {
         if (photosOk) {
             toast.success(
                 `Habitación ${roomNumber} ocupada`,
-                `Registrado y cobrado ${money(total.value)} en ${
-                    paymentMethod.value === 'cash'
-                        ? 'efectivo'
-                        : paymentMethod.value === 'card'
-                          ? 'tarjeta'
-                          : 'transferencia'
-                }.`,
+                courtesyDefersCharge.value
+                    ? 'Registrado; la cortesía espera al propietario y el hospedaje se cobra al salir.'
+                    : !chargesNow.value
+                      ? 'Registrado sin cobro en este momento.'
+                      : `Registrado y cobrado ${money(chargeTotal.value)} en ${
+                            paymentMethod.value === 'cash'
+                                ? 'efectivo'
+                                : paymentMethod.value === 'card'
+                                  ? 'tarjeta'
+                                  : 'transferencia'
+                        }.`,
             );
         } else {
             toast.error(
@@ -405,6 +554,11 @@ async function submit() {
         emit('registered');
         emit('close');
     } catch (error: any) {
+        if (error.response?.status === 409) {
+            courtesyCapWarning.value =
+                error.response.data?.message ?? 'Pasa el tope del mes.';
+            return;
+        }
         toast.error(
             'No se pudo registrar',
             error.response?.data?.message ??
@@ -706,16 +860,43 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                         htmlFor="express-guest-name"
                         >Nombre completo</FormLabel
                     >
-                    <FormInput
-                        class="h-9 text-xs"
-                        id="express-guest-name"
-                        v-model="guestName"
-                        placeholder="Nombre y apellidos del huésped"
-                        maxlength="255"
+                    <GuestMatches
+                        v-if="selectedGuest"
+                        :hits="[]"
+                        :selected="selectedGuest"
+                        @clear="clearGuest"
                     />
-                    <FormHelp v-if="footNameMissing" class="text-danger"
-                        >El huésped a pie se registra con su nombre.</FormHelp
-                    >
+                    <template v-else>
+                        <div class="relative">
+                            <Lucide
+                                :icon="
+                                    guestSearching ? 'LoaderCircle' : 'Search'
+                                "
+                                class="absolute inset-y-0 left-0 z-10 my-auto ml-3 h-3.5 w-3.5 text-slate-400"
+                                :class="guestSearching ? 'animate-spin' : ''"
+                            />
+                            <FormInput
+                                class="h-9 pl-9 text-xs"
+                                id="express-guest-name"
+                                v-model="guestName"
+                                placeholder="Nombre y apellidos del huésped"
+                                maxlength="255"
+                                autocomplete="off"
+                                @input="onGuestNameInput"
+                            />
+                        </div>
+                        <GuestMatches
+                            v-if="guestHits.length"
+                            class="mt-1.5"
+                            :hits="guestHits"
+                            :selected="null"
+                            @pick="pickGuest"
+                        />
+                        <FormHelp v-else
+                            >Teclea el nombre; si ya vino antes aparece para
+                            elegirlo.</FormHelp
+                        >
+                    </template>
                 </div>
                 <div class="grid items-start gap-3 sm:grid-cols-2">
                     <div>
@@ -864,8 +1045,18 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
             </div>
         </div>
 
+        <!-- Cortesía (módulo cortesias) -->
+        <CourtesySection
+            v-model:on="courtesyOn"
+            v-model:form="courtesyForm"
+            :lodging="courtesyLodging"
+            :disabled="saving"
+            :cap-warning="courtesyCapWarning"
+            pending-note="Se le pide al propietario. El acceso se abre igual y el hospedaje se cobra al salir, con lo que él decida."
+        />
+
         <!-- Cobro -->
-        <div v-if="!laterCapture">
+        <div v-if="chargesNow">
             <div
                 class="mb-2.5 flex items-center gap-2 text-[11px] font-medium tracking-wide text-slate-400 uppercase"
             >
@@ -896,13 +1087,22 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                     {{ method.label }}
                 </button>
             </div>
-            <FormInput
+            <div
                 v-if="paymentMethod !== 'cash'"
-                v-model="paymentReference"
-                class="mt-2.5 h-9 text-xs"
-                placeholder="Referencia o folio del voucher (opcional)"
-                maxlength="100"
-            />
+                ref="paymentReferenceBox"
+                class="mt-2.5 scroll-mb-4"
+            >
+                <FormInput
+                    v-model="paymentReference"
+                    class="h-9 text-xs"
+                    :placeholder="
+                        paymentMethod === 'card'
+                            ? 'Referencia o folio del voucher (opcional)'
+                            : 'Referencia o folio de la transferencia (opcional)'
+                    "
+                    maxlength="100"
+                />
+            </div>
             <div
                 v-if="guaranteeAmount > 0 && guaranteeMethods.length"
                 class="mt-3 flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-slate-300/70 px-3.5 py-2.5 text-xs dark:border-darkmode-400"
@@ -935,7 +1135,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                                  metido entre las pastillas quedaba de tres
                                  centímetros. Sin folio no hay cómo devolver
                                  una fianza recibida por transferencia. -->
-                <div v-if="guaranteeMethod === 'transfer'" class="w-full">
+                <div
+                    v-if="guaranteeMethod === 'transfer'"
+                    ref="guaranteeReferenceBox"
+                    class="w-full scroll-mb-4"
+                >
                     <FormInput
                         class="h-9 text-xs"
                         v-model="guaranteeReference"
@@ -955,8 +1159,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
         <template #footer-start>
             <span class="block">{{
                 laterCapture
-                    ? `Quedan ${money(total)} por cobrar en la habitación.`
-                    : 'El total exacto lo confirma el sistema.'
+                    ? `Quedan ${money(chargeTotal)} por cobrar en la habitación.`
+                    : courtesyDefersCharge
+                      ? 'El hospedaje se cobra al salir, con lo que decida el propietario.'
+                      : 'El total exacto lo confirma el sistema.'
             }}</span>
             <span v-if="guaranteeAmount > 0" class="block"
                 >+ {{ money(guaranteeAmount) }} de fianza (se devuelve al
@@ -986,9 +1192,13 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onEscape));
                 {{
                     saving
                         ? 'Registrando…'
-                        : laterCapture
-                          ? 'Abrir acceso'
-                          : `Registrar y cobrar ${money(total)}`
+                        : courtesyCapWarning
+                          ? 'Sí, pasar el tope'
+                          : laterCapture
+                            ? 'Abrir acceso'
+                            : chargesNow
+                              ? `Registrar y cobrar ${money(chargeTotal)}`
+                              : 'Registrar llegada'
                 }}
             </Button>
             <Button

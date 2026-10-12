@@ -128,7 +128,10 @@ class ReservationsPageController extends Controller
 
         $stays = Stay::query()
             ->active()
-            ->with(['room:id,number', 'ratePlan:id,name'])
+            // "Debe" por renglón sin consultar fila por fila (mismas cuentas
+            // que /reservas/alojados).
+            ->withBalance()
+            ->with(['room:id,number', 'ratePlan:id,name', 'guest:id,first_name,last_name,phone'])
             // La estancia que llega enfocada desde /reservas/alojados va
             // primero: si no, podría caer fuera del tope y el botón de
             // "Registrar salida" no abriría nada.
@@ -268,6 +271,45 @@ class ReservationsPageController extends Controller
         ]);
     }
 
+    /**
+     * Cuánto le queda al apartado, dicho como lo diría una persona.
+     *
+     * @return array{0: string|null, 1: string|null} estado y frase
+     */
+    protected function holdClock(?\Carbon\CarbonInterface $expiresAt): array
+    {
+        if (! $expiresAt) {
+            return [null, null];
+        }
+
+        $minutes = (int) round(now()->diffInMinutes($expiresAt, false));
+
+        if ($minutes < 0) {
+            return ['expired', 'venció '.$this->spellMinutes(abs($minutes)).' antes'];
+        }
+
+        // Media hora o menos: es lo que se pierde solo mientras nadie mira.
+        return [$minutes <= 30 ? 'urgent' : 'live', 'en '.$this->spellMinutes($minutes)];
+    }
+
+    /** "45 min", "3 h", "2 días" — sin decimales ni locales del sistema. */
+    protected function spellMinutes(int $minutes): string
+    {
+        if ($minutes < 60) {
+            return max(1, $minutes).' min';
+        }
+
+        if ($minutes < 60 * 24) {
+            $hours = intdiv($minutes, 60);
+
+            return $hours.' h';
+        }
+
+        $days = intdiv($minutes, 60 * 24);
+
+        return $days.($days === 1 ? ' día' : ' días');
+    }
+
     protected function policy(): \App\Services\ReservationPolicy
     {
         return $this->policy ??= app(\App\Services\ReservationPolicy::class);
@@ -281,15 +323,33 @@ class ReservationsPageController extends Controller
      */
     protected function serializeStay(Stay $stay): array
     {
+        $now = now();
+
         return [
             'id' => $stay->id,
             'room' => $stay->room?->number,
-            'guest_name' => $stay->guest_name,
+            'room_id' => $stay->room_id,
+            'reservation_id' => $stay->reservation_id,
+            // La estancia que nació de una reserva puede no traer el nombre
+            // copiado; la ficha del CRM lo tiene (solo si ya vino cargada).
+            'guest_name' => $stay->guest_name
+                ?: ($stay->relationLoaded('guest') ? $stay->guest?->full_name : null),
+            'guest_phone' => $stay->relationLoaded('guest') ? $stay->guest?->phone : null,
+            // Saldo solo si la consulta lo trajo calculado (scopeWithBalance):
+            // folio() por renglón son dos consultas más por fila.
+            'balance' => array_key_exists('lodging_total_calc', $stay->getAttributes())
+                ? $stay->pendingSettlementAmount()
+                : null,
+            'departs_today' => $stay->planned_end_at->isSameDay($now) && $stay->planned_end_at->gte($now),
+            'departs_tomorrow' => $stay->planned_end_at->isSameDay($now->copy()->addDay()),
             'num_people' => $stay->num_people,
             'vehicle_plate' => $stay->vehicle_plate,
             'vehicle_desc' => $stay->vehicle_desc,
             'rate_plan' => $stay->ratePlan?->name,
             'check_in_at' => $stay->check_in_at->format('d/m/Y H:i'),
+            'check_in_label' => \App\Support\FriendlyDate::moment($stay->check_in_at),
+            'planned_end_label' => \App\Support\FriendlyDate::moment($stay->planned_end_at),
+            'span_label' => \App\Support\FriendlyDate::span($stay->check_in_at, $stay->planned_end_at),
             'planned_end_at' => $stay->planned_end_at->format('d/m/Y H:i'),
             'planned_end_at_iso' => $stay->planned_end_at->toIso8601String(),
             'overdue' => $stay->planned_end_at->isPast(),
@@ -351,17 +411,35 @@ class ReservationsPageController extends Controller
             'starts_at_input' => $r->starts_at->format('Y-m-d\TH:i'),
             'ends_at' => $r->ends_at->format('d/m/Y H:i'),
             'ends_at_input' => $r->ends_at->format('Y-m-d\TH:i'),
+            // Las mismas fechas como se dicen en el mostrador ("Hoy 15:37",
+            // "dom 12 oct 12:00", "2 noches") y el día para agrupar la tabla.
+            'starts_label' => \App\Support\FriendlyDate::moment($r->starts_at),
+            'ends_label' => \App\Support\FriendlyDate::moment($r->ends_at),
+            'span_label' => \App\Support\FriendlyDate::span($r->starts_at, $r->ends_at),
+            'day_key' => $r->starts_at->format('Y-m-d'),
+            'day_label' => \App\Support\FriendlyDate::day($r->starts_at),
             'status' => $r->status->value,
             'status_label' => $r->status->label(),
             'hold_expires_at' => $r->hold_expires_at?->format('H:i'),
             // ISO para la tarjeta "holds por vencer" (se calcula en cliente).
             'hold_expires_at_iso' => $r->hold_expires_at?->toIso8601String(),
+            // El reloj del apartado en palabras ("en 11 min", "venció 1 h
+            // antes"): lo usan Pendientes, Próximas y la operación.
+            ...array_combine(
+                ['hold_state', 'hold_countdown'],
+                $r->status === ReservationStatus::Pending ? $this->holdClock($r->hold_expires_at) : [null, null],
+            ),
             'total_amount' => $r->total_amount,
             'extra_charges' => $r->extra_charges ?? [],
             // Cupón aplicado en el wizard (módulo cupones): el descuento ya
             // vive dentro de total_amount; el detalle muestra la línea.
             'coupon_code' => $r->coupon_code,
             'discount_amount' => (float) ($r->discount_amount ?? 0),
+            // Cortesía (módulo cortesias): aprobada ya está restada del
+            // total; la viva (pendiente o aprobada) solo viaja si quien
+            // arma la página la precargó, para no consultar por renglón.
+            'courtesy_amount' => (float) ($r->courtesy_amount ?? 0),
+            'courtesy' => $r->relationLoaded('liveCourtesy') ? $r->liveCourtesy?->toPayload() : null,
             // Líneas congeladas del wizard: productos POS, add-ons y
             // experiencias — el detalle desglosa de qué está hecho el total.
             'products' => $r->products ?? [],

@@ -49,6 +49,7 @@ class Stay extends Model implements HasMedia
         'thanks_sent_at',
         'status',
         'amount',
+        'courtesy_amount',
         'extra_charges',
         'channel',
         'notes',
@@ -72,6 +73,9 @@ class Stay extends Model implements HasMedia
             // llegada (placa o identificación) y marcar el cobro.
             'arrival_completed_at' => 'datetime',
             'amount' => 'decimal:2',
+            // Cortesía aprobada de un walk-in sin reserva (con reserva, la
+            // cortesía vive en ella): amount ya la trae restada.
+            'courtesy_amount' => 'decimal:2',
             'extra_charges' => 'array',
             // Identificación del huésped a pie (registro exprés de caseta):
             // cifrada en reposo, igual que Guest.id_document_number.
@@ -106,6 +110,15 @@ class Stay extends Model implements HasMedia
     public function reservation(): BelongsTo
     {
         return $this->belongsTo(Reservation::class);
+    }
+
+    /** Cortesía pendiente o aprobada de un walk-in sin reserva. */
+    public function liveCourtesy(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(Courtesy::class)->ofMany(
+            ['id' => 'max'],
+            fn ($q) => $q->whereIn('status', Courtesy::LIVE),
+        );
     }
 
     public function ratePlan(): BelongsTo
@@ -253,8 +266,33 @@ class Stay extends Model implements HasMedia
     }
 
     /**
-     * Saldo de la fila que trajo scopePendingSettlement, sin volver a
-     * consultar. Fuera de ese scope cae a folio(), que sí consulta.
+     * Las mismas tres columnas de scopePendingSettlement (hospedaje, pagado y
+     * consumos sin liquidar) para estancias VIVAS, en subconsultas
+     * correlacionadas y sin join: /reservas/alojados pinta "debe $X" por
+     * renglón sin consultar fila por fila, y sin join el `status` de
+     * scopeActive no choca con el de reservations.
+     */
+    public function scopeWithBalance(Builder $query): Builder
+    {
+        $payments = fn (string $where) => "(select coalesce(sum(p.amount), 0) from payments p where {$where})";
+
+        return $query
+            ->select('stays.*')
+            ->selectRaw('coalesce((select r.total_amount from reservations r where r.id = stays.reservation_id), stays.amount) as lodging_total_calc')
+            ->selectRaw('case when stays.reservation_id is null then '
+                .$payments("p.stay_id = stays.id and p.kind = 'lodging'")
+                .' else '
+                .$payments('p.reservation_id = stays.reservation_id')
+                .' end as lodging_paid_calc')
+            ->selectRaw('(select coalesce(sum(o.total), 0) from orders o'
+                ." where o.stay_id = stays.id and o.status = 'completed'"
+                ." and o.payment_method = 'room' and o.settled_at is null) as consumption_pending_calc");
+    }
+
+    /**
+     * Saldo de la fila que trajo scopePendingSettlement (o scopeWithBalance),
+     * sin volver a consultar. Fuera de esos scopes cae a folio(), que sí
+     * consulta.
      */
     public function pendingSettlementAmount(): float
     {

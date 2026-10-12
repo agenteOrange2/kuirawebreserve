@@ -41,6 +41,9 @@ class GuestController extends Controller
                 'visits' => $guest->visits,
                 'is_blacklisted' => $guest->is_blacklisted,
                 'blacklist_reason' => $guest->blacklist_reason,
+                // Solo el tipo (nunca el número, va cifrado): el exprés
+                // preselecciona la identificación del huésped que regresa.
+                'id_document_type' => $guest->id_document_type,
             ]);
 
         return response()->json($guests);

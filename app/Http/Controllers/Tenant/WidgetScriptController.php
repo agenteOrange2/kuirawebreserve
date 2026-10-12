@@ -50,11 +50,20 @@ class WidgetScriptController extends Controller
     }
 
     window.addEventListener('message', function (e) {
-        if (e.origin !== ORIGIN || !e.data || e.data.type !== 'kuira:height') return;
+        if (e.origin !== ORIGIN || !e.data) return;
         var frames = document.querySelectorAll('[data-kuira-widget] iframe');
         for (var i = 0; i < frames.length; i++) {
-            if (frames[i].contentWindow === e.source) {
+            if (frames[i].contentWindow !== e.source) continue;
+            if (e.data.type === 'kuira:height') {
                 frames[i].style.minHeight = Math.max(480, e.data.height) + 'px';
+            }
+            // El iframe crece con su contenido y no tiene scroll propio: al
+            // cambiar de paso o abrir una ventana pide que la pagina lo lleve
+            // a ese punto (si no, el huesped seguia viendo el final del paso
+            // anterior).
+            if (e.data.type === 'kuira:scroll' && typeof e.data.top === 'number') {
+                var y = frames[i].getBoundingClientRect().top + window.pageYOffset + e.data.top - 16;
+                window.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
             }
         }
     });

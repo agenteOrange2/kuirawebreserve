@@ -78,12 +78,13 @@ it('el override del admin manda sobre el plan, en ambos sentidos', function () {
 it('enabledModules respeta el orden del catálogo', function () {
     $pro = moduleTenant('hotel-pro', 'pro');
 
-    // Pro tiene todo el catálogo menos motor-web y los que hoy se venden
-    // como servicio adicional (redes sociales, menú digital): el orden
+    // Pro tiene todo el catálogo menos motor-web, los que hoy se venden
+    // como servicio adicional (redes sociales, menú digital) y cortesías,
+    // que no viene en ningún plan (se enciende por hotel): el orden
     // esperado es el del catálogo mismo (config/modules.php), no el del plan.
     expect($pro->enabledModules())->toBe(array_values(array_diff(
         array_keys(config('modules')),
-        ['motor-web', 'redes-sociales', 'menu-digital'],
+        ['motor-web', 'redes-sociales', 'menu-digital', 'cortesias'],
     )));
 });
 

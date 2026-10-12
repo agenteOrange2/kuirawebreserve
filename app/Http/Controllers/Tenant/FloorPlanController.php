@@ -26,12 +26,15 @@ class FloorPlanController extends Controller
             ->where('property_id', $property->id)
             ->with([
                 'zone:id,name,kind,color',
-                'roomType:id,name,icon,capacity,amenities,check_in_time,check_out_time',
+                'roomType:id,property_id,name,icon,capacity,amenities,check_in_time,check_out_time',
+                // El horario del hotel (salida de la noche, corte de
+                // madrugada) cuando el tipo no trae uno propio.
+                'roomType.property:id,settings',
                 // Fotos del tipo para el modal: sin este eager load, getMedia
                 // dispara una consulta por habitación.
                 'roomType.media',
                 'roomType.ratePlans' => fn ($query) => $query
-                    ->select(['id', 'room_type_id', 'name', 'type', 'price', 'duration_minutes', 'duration_unit', 'duration_value', 'active'])
+                    ->select(['id', 'room_type_id', 'name', 'type', 'price', 'included_people', 'max_people', 'duration_minutes', 'duration_unit', 'duration_value', 'active'])
                     ->where('active', true)
                     ->orderBy('price'),
                 'activeStay' => fn ($query) => $query
@@ -45,6 +48,12 @@ class FloorPlanController extends Controller
                         // pagado de la reserva se agrega aquí y el payload
                         // calcula el neto sin una consulta por cuarto.
                         'reservation' => fn ($r) => $r->withSum('payments as paid_total', 'amount'),
+                        // Cortesía viva de la cuenta (módulo cortesias): con
+                        // reserva vive en ella, en walk-in en la estancia.
+                        'reservation.liveCourtesy.requester:id,name',
+                        'reservation.liveCourtesy.decider:id,name',
+                        'liveCourtesy.requester:id,name',
+                        'liveCourtesy.decider:id,name',
                     ])
                     ->withSum(
                         ['orders as consumos_total' => fn ($orderQuery) => $orderQuery->where('status', Order::STATUS_COMPLETED)],
@@ -98,6 +107,13 @@ class FloorPlanController extends Controller
             'properties' => Property::query()->get(['id', 'name']),
             'rooms' => $rooms,
             'canManage' => $request->user()->can('rooms.update-status'),
+            // Cortesías (módulo cortesias): quién puede darlas o pedirlas.
+            'courtesyAccess' => [
+                'enabled' => (bool) tenant()?->hasModule('cortesias') && $request->user()->can('courtesies.request'),
+                'is_owner' => $request->user()->hasRole(\App\Services\StaffAccess::OWNER),
+                'user_id' => $request->user()->id,
+                'categories' => config('courtesies.categories'),
+            ],
             'canManageReservations' => $request->user()->can('reservations.manage'),
             'canManageOrders' => $request->user()->can('orders.manage'),
             // En modo de check-in "automático" puro (/ajustes/limpieza) la

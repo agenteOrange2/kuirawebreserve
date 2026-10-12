@@ -8,6 +8,7 @@ use App\Models\Housekeeper;
 use App\Models\Room;
 use App\Models\RoomCleaning;
 use App\Services\HousekeepingChecklist;
+use App\Services\HousekeepingPolicy;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
@@ -42,6 +43,7 @@ class HousekeepingPageController extends Controller
     public function index(Request $request): Response
     {
         $checklist = new HousekeepingChecklist;
+        $policy = app(HousekeepingPolicy::class);
 
         return Inertia::render('tenant/housekeeping/Index', [
             'rooms' => $this->board($request),
@@ -51,6 +53,17 @@ class HousekeepingPageController extends Controller
                 'orden' => $this->boardOrder($request),
             ],
             'cleanings' => $this->log($request),
+            // Cómo se cerraron las limpiezas del rango: a tiempo, fuera de
+            // tiempo, por el reloj o interrumpidas. Ignora el filtro de
+            // situación para que los cuatro números se lean juntos.
+            'outcomes' => $this->outcomes($request),
+            // El tiempo con que se califica y si el reloj libera solo: el
+            // tablero lo dice para que nadie se sorprenda de un cuarto que se
+            // liberó sin que lo terminaran.
+            'cleaningPolicy' => [
+                'minutes' => $policy->cleaningMinutes(),
+                'auto_release' => $policy->releasesCleaningByClock(),
+            ],
             'logFilters' => [
                 'rango' => $this->logRange($request),
                 'camarista' => $request->integer('camarista') ?: null,
@@ -186,6 +199,10 @@ class HousekeepingPageController extends Controller
             ->when($tipo !== '', fn (Builder $query) => $query->where('kind', $tipo))
             ->when($situacion === 'abiertas', fn (Builder $query) => $query->open())
             ->when($situacion === 'cerradas', fn (Builder $query) => $query->closed())
+            ->when(
+                array_key_exists($situacion, RoomCleaning::OUTCOMES),
+                fn (Builder $query) => $query->outcome($situacion),
+            )
             ->when($hab !== '', fn (Builder $query) => $query->whereHas(
                 'room',
                 fn ($r) => $r->where('number', 'like', "%{$hab}%"),
@@ -252,7 +269,38 @@ class HousekeepingPageController extends Controller
     {
         $situacion = $request->string('situacion')->toString();
 
-        return in_array($situacion, ['abiertas', 'cerradas'], true) ? $situacion : '';
+        return in_array($situacion, ['abiertas', 'cerradas', ...array_keys(RoomCleaning::OUTCOMES)], true)
+            ? $situacion
+            : '';
+    }
+
+    /**
+     * Conteo por resultado del cierre en el rango y filtros de la bitácora
+     * (menos la situación): es el historial de quién entregó a tiempo.
+     *
+     * @return array<string, int>
+     */
+    protected function outcomes(Request $request): array
+    {
+        [$from, $to] = $this->logWindow($this->logRange($request));
+
+        $camarista = $request->integer('camarista') ?: null;
+        $tipo = $this->logKind($request);
+        $hab = trim($request->string('hab')->toString());
+
+        $base = RoomCleaning::query()
+            ->when($from, fn (Builder $query) => $query->where('started_at', '>=', $from))
+            ->when($to, fn (Builder $query) => $query->where('started_at', '<=', $to))
+            ->when($camarista, fn (Builder $query) => $query->where('housekeeper_id', $camarista))
+            ->when($tipo !== '', fn (Builder $query) => $query->where('kind', $tipo))
+            ->when($hab !== '', fn (Builder $query) => $query->whereHas(
+                'room',
+                fn ($r) => $r->where('number', 'like', "%{$hab}%"),
+            ));
+
+        return collect(array_keys(RoomCleaning::OUTCOMES))
+            ->mapWithKeys(fn (string $outcome) => [$outcome => (clone $base)->outcome($outcome)->count()])
+            ->all();
     }
 
     protected function logOrder(Request $request): string

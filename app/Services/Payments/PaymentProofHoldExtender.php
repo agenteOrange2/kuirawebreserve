@@ -11,6 +11,7 @@ use App\Models\Reservation;
 use App\Services\Channels\InboundMediaService;
 use App\Services\ReservationPolicy;
 use Carbon\CarbonInterface;
+use Illuminate\Http\UploadedFile;
 use Spatie\MediaLibrary\MediaCollections\Events\MediaHasBeenAddedEvent;
 
 /**
@@ -85,16 +86,75 @@ class PaymentProofHoldExtender
             return 0;
         }
 
+        $wasExpired = $reservation->isExpiredHold();
+        $sustained = $this->sustain($reservation, 'por chat');
+
+        if ($wasExpired && $sustained > 0) {
+            $conversation->markLead(\App\Models\Conversation::LEAD_HOLD);
+        }
+
+        return $sustained;
+    }
+
+    /**
+     * Comprobante que el huésped sube él mismo en la consulta pública
+     * (/reserva). Las reservas del wizard web no tienen conversación: antes
+     * la página solo decía "envía tu comprobante al hotel" y no había a
+     * dónde. Mismo trato que el del chat —sostiene o reabre el apartado,
+     * deja un cobro por transferencia vivo— y el archivo queda pegado a ese
+     * cobro para aprobarse en Pagos viéndolo. No da nada por pagado.
+     *
+     * @return PaymentRequest|null El cobro al que quedó pegado; null si ya
+     *                             no hay nada que aprobar.
+     */
+    public function holdForUploadedProof(Reservation $reservation, UploadedFile $file): ?PaymentRequest
+    {
+        $this->sustain($reservation, 'desde la consulta en línea', rescueChat: false);
+        $reservation->refresh();
+
+        // Pendiente sin reloj o ya confirmada con saldo: también necesita
+        // su cobro en la cola de Pagos.
+        if (in_array($reservation->status, [ReservationStatus::Pending, ReservationStatus::Confirmed], true)) {
+            $this->ensureTransferRequest(
+                collect([$reservation]),
+                now()->addMinutes($this->policy->proofReviewMinutes()),
+                rescueChat: false,
+            );
+        }
+
+        $request = $reservation->reservation_group_id
+            ? PaymentRequest::query()->where('reservation_group_id', $reservation->reservation_group_id)
+            : $reservation->paymentRequests();
+
+        $request = $request
+            ->where('method', PaymentRequest::METHOD_TRANSFER)
+            ->where('status', PaymentRequest::STATUS_PENDING)
+            ->latest('id')
+            ->first();
+
+        if (! $request) {
+            return null;
+        }
+
+        $request->addMedia($file)
+            ->withCustomProperties(['source' => 'lookup'])
+            ->toMediaCollection('receipt');
+
+        return $request;
+    }
+
+    /**
+     * Sostiene (o reabre, si llegó tarde) el apartado de la reserva y los de
+     * su grupo mientras el hotel verifica el comprobante.
+     *
+     * @return int Apartados sostenidos o reabiertos.
+     */
+    protected function sustain(Reservation $reservation, string $via, bool $rescueChat = true): int
+    {
         // Comprobante tardío: el apartado ya venció. Se reabre si la
         // habitación sigue libre; si ya la ganó otro, el personal decide.
         if ($reservation->isExpiredHold()) {
-            $reopened = $this->reopenLate($reservation);
-
-            if ($reopened > 0) {
-                $conversation->markLead(\App\Models\Conversation::LEAD_HOLD);
-            }
-
-            return $reopened;
+            return $this->reopenLate($reservation, $rescueChat);
         }
 
         $holds = Reservation::query()
@@ -117,7 +177,8 @@ class PaymentProofHoldExtender
                 activity('reservation')
                     ->performedOn($hold)
                     ->log(sprintf(
-                        'Comprobante recibido por chat: el apartado se sostiene hasta el %s mientras el hotel verifica el pago',
+                        'Comprobante recibido %s: el apartado se sostiene hasta el %s mientras el hotel verifica el pago',
+                        $via,
                         $until->format('d/m/Y H:i'),
                     ));
 
@@ -126,7 +187,7 @@ class PaymentProofHoldExtender
         }
 
         if ($holds->isNotEmpty()) {
-            $this->ensureTransferRequest($holds, $until);
+            $this->ensureTransferRequest($holds, $until, $rescueChat);
         }
 
         // Ya confirmada y con saldo (el comprobante del resto, o uno que el
@@ -134,7 +195,7 @@ class PaymentProofHoldExtender
         if ($holds->isEmpty()
             && $reservation->status === ReservationStatus::Confirmed
             && $reservation->pendingBalance() > 0) {
-            $this->ensureTransferRequest(collect([$reservation]), $until);
+            $this->ensureTransferRequest(collect([$reservation]), $until, $rescueChat);
         }
 
         return $extended;
@@ -145,7 +206,7 @@ class PaymentProofHoldExtender
      * ventana de verificación. Solo si venció hace menos que esa misma
      * ventana: una foto cualquiera no revive un apartado de hace una semana.
      */
-    protected function reopenLate(Reservation $reservation): int
+    protected function reopenLate(Reservation $reservation, bool $rescueChat = true): int
     {
         $window = $this->policy->proofReviewMinutes();
 
@@ -185,7 +246,7 @@ class PaymentProofHoldExtender
         }
 
         if ($reopened->isNotEmpty()) {
-            $this->ensureTransferRequest($reopened, now()->addMinutes($window));
+            $this->ensureTransferRequest($reopened, now()->addMinutes($window), $rescueChat);
         }
 
         return $reopened->count();
@@ -199,7 +260,7 @@ class PaymentProofHoldExtender
      *
      * @param  \Illuminate\Support\Collection<int, Reservation>  $reservations
      */
-    protected function ensureTransferRequest(\Illuminate\Support\Collection $reservations, CarbonInterface $until): void
+    protected function ensureTransferRequest(\Illuminate\Support\Collection $reservations, CarbonInterface $until, bool $rescueChat = true): void
     {
         $groups = $reservations->whereNotNull('reservation_group_id')->pluck('reservation_group_id')->unique();
         $singles = $reservations->whereNull('reservation_group_id');
@@ -214,7 +275,7 @@ class PaymentProofHoldExtender
                 ?? app(IssueGroupPayment::class)->handle(
                     \App\Models\ReservationGroup::query()->findOrFail($groupId),
                     PaymentRequest::METHOD_TRANSFER,
-                ), $until);
+                ), $until, $rescueChat);
         }
 
         foreach ($singles as $reservation) {
@@ -223,12 +284,12 @@ class PaymentProofHoldExtender
                 ->where('status', PaymentRequest::STATUS_PENDING)
                 ->latest('id')
                 ->first()
-                ?? app(IssuePaymentRequest::class)->handle($reservation, PaymentRequest::METHOD_TRANSFER), $until);
+                ?? app(IssuePaymentRequest::class)->handle($reservation, PaymentRequest::METHOD_TRANSFER), $until, $rescueChat);
         }
     }
 
     /** @param  callable(): PaymentRequest  $resolve */
-    protected function keepRequestAlive(callable $resolve, CarbonInterface $until): void
+    protected function keepRequestAlive(callable $resolve, CarbonInterface $until, bool $rescueChat = true): void
     {
         try {
             $request = $resolve();
@@ -238,8 +299,11 @@ class PaymentProofHoldExtender
             }
 
             // La foto va pegada al cobro: en Pagos se aprueba viéndola, sin
-            // ir a buscarla a la bandeja (caso real RES-2026-1693).
-            app(InboundMediaService::class)->rescueLatestAttachment($request);
+            // ir a buscarla a la bandeja (caso real RES-2026-1693). La que
+            // sube el huésped en /reserva se pega aparte, no se rescata.
+            if ($rescueChat) {
+                app(InboundMediaService::class)->rescueLatestAttachment($request);
+            }
         } catch (\InvalidArgumentException) {
             // Sin saldo, o la reserva ya no admite cobros: nada que aprobar.
         } catch (\Throwable $e) {

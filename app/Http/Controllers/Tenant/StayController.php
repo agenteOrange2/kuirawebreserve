@@ -106,10 +106,17 @@ class StayController extends Controller
             'guarantee_amount' => ['nullable', 'numeric', 'min:0', 'max:999999'],
             'guarantee_reason' => ['nullable', 'string', 'max:255'],
             'guarantee_reference' => ['nullable', 'string', 'max:100'],
-        ]);
+            // Cortesía en el mismo alta (módulo cortesias + permiso).
+            ...CourtesyController::nestedRules($request),
+        ], CourtesyController::nestedMessages());
+
+        CourtesyController::authorizeNested($request);
 
         try {
             $stay = $action->handle($data, $request->user());
+        } catch (\App\Exceptions\CourtesyNeedsConfirmation $e) {
+            // Se pasó el tope del mes: el modal pide confirmar y reenvía.
+            return response()->json(['message' => $e->getMessage(), 'needs_confirmation' => 'courtesy_cap'], 409);
         } catch (NoAvailabilityException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException) {
@@ -130,16 +137,73 @@ class StayController extends Controller
     public function extend(Request $request, Stay $stay, ExtendStay $action): JsonResponse
     {
         $data = $request->validate([
-            'planned_end_at' => ['required', 'date', 'after:now'],
+            // Escalera de tarifas (Hotel México): el plano manda el escalón
+            // elegido y el servidor fija la salida; sin escalera, la hora.
+            'planned_end_at' => ['required_without:rate_plan_id', 'nullable', 'date', 'after:now'],
+            'rate_plan_id' => ['nullable', 'integer', 'exists:rate_plans,id'],
         ]);
 
         try {
-            $stay = $action->handle($stay, Carbon::parse($data['planned_end_at']), $request->user());
+            $stay = $action->handle(
+                $stay,
+                ! empty($data['planned_end_at']) ? Carbon::parse($data['planned_end_at']) : null,
+                $request->user(),
+                isset($data['rate_plan_id']) ? (int) $data['rate_plan_id'] : null,
+            );
         } catch (NoAvailabilityException|InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
         return response()->json($this->serialize($stay->load(['room:id,number', 'ratePlan:id,name,type'])));
+    }
+
+    /**
+     * Cobrar el saldo con el huésped adentro: lo que quedó de extender, la
+     * persona extra o los consumos, sin registrar la salida. Antes la única
+     * forma de cobrarlo era el diálogo de salida.
+     */
+    public function settle(Request $request, Stay $stay, SettleStay $settle): JsonResponse
+    {
+        $data = $request->validate([
+            'payment_method' => ['required', Rule::in($this->counterMethods())],
+            'reference' => ['nullable', 'string', 'max:100'],
+        ]);
+
+        if ($stay->status !== Stay::STATUS_ACTIVE) {
+            return response()->json(['message' => 'Esa estancia ya terminó: su cuenta se trabaja en Cuentas por cerrar.'], 422);
+        }
+
+        if ($stay->folio()['grand_pending'] <= 0) {
+            return response()->json(['message' => 'Esta estancia no tiene saldo por cobrar.'], 422);
+        }
+
+        try {
+            $settle->handle($stay, [
+                'method' => $data['payment_method'],
+                'reference' => $data['reference'] ?? null,
+            ], $request->user());
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($this->serializeFolio($stay->refresh()));
+    }
+
+    /**
+     * Escalones para extender una estancia por horas (escalera de tarifas):
+     * vacío si el hotel no la usa o la estancia no es por horas, y entonces
+     * el plano ofrece la hora libre de siempre.
+     */
+    public function extendOptions(Stay $stay, ExtendStay $action): JsonResponse
+    {
+        return response()->json([
+            'ladder' => $action->ladderOptions($stay->load(['ratePlan', 'room.roomType'])),
+            'current' => [
+                'rate_plan' => $stay->ratePlan?->name,
+                'amount' => (float) $stay->amount,
+                'planned_end_at' => $stay->planned_end_at?->toIso8601String(),
+            ],
+        ]);
     }
 
     /**
@@ -356,6 +420,17 @@ class StayController extends Controller
                 'check_out_at' => $stay->check_out_at?->format('d/m/Y H:i'),
             ],
             'lodging_total' => $folio['lodging_total'],
+            // Cortesía viva (módulo cortesias): la aprobada ya está restada
+            // del hospedaje; la pendiente avisa antes de cobrar la salida.
+            'courtesy' => \App\Models\Courtesy::query()
+                ->where(fn ($q) => $stay->reservation_id
+                    ? $q->where('reservation_id', $stay->reservation_id)
+                    : $q->where('stay_id', $stay->id))
+                ->live()
+                ->with(['requester:id,name', 'decider:id,name'])
+                ->latest('id')
+                ->first()
+                ?->toPayload(),
             'lodging_paid' => $folio['lodging_paid'],
             'lodging_pending' => $folio['lodging_pending'],
             'consumption_pending' => $folio['consumption_pending'],

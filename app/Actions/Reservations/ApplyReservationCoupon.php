@@ -52,9 +52,17 @@ class ApplyReservationCoupon
                 );
             }
 
+            // Cupón y cortesía no se acumulan: con una cortesía dada (o
+            // pedida al propietario) el cupón no entra.
+            if ($courtesy = \App\Models\Courtesy::query()->where('reservation_id', $reservation->id)->live()->first()) {
+                throw new InvalidArgumentException($courtesy->isPending()
+                    ? 'Esta reserva tiene una cortesía esperando al propietario: el cupón no se acumula con ella.'
+                    : 'Esta reserva tiene una cortesía: el cupón no se acumula con ella. Retira la cortesía primero.');
+            }
+
             // Punto de partida: lo que costaría sin ningún cupón. Nunca se
             // descuenta sobre un total ya descontado.
-            $gross = round((float) $reservation->total_amount + (float) $reservation->discount_amount, 2);
+            $gross = round((float) $reservation->total_amount + (float) $reservation->discount_amount + (float) $reservation->courtesy_amount, 2);
             $previous = $reservation->coupon_code;
 
             $coupon = $this->coupons->resolve(

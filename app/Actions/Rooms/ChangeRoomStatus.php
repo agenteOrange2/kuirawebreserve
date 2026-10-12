@@ -5,6 +5,7 @@ namespace App\Actions\Rooms;
 use App\Enums\RoomStatus;
 use App\Events\RoomStatusChanged;
 use App\Models\Room;
+use App\Models\RoomCleaning;
 use App\Models\User;
 use App\States\Room\RoomState;
 use Spatie\ModelStates\Exceptions\CouldNotPerformTransition;
@@ -51,6 +52,21 @@ class ChangeRoomStatus
             app(SyncRoomUsageLock::class)->handle($room, $changedBy, array_filter([
                 'auto' => (bool) ($context['auto'] ?? false),
             ]));
+        }
+
+        // Una habitación que sale de "en limpieza" sin que nadie terminara el
+        // registro (el reloj la liberó, alguien la mandó a mantenimiento)
+        // cierra aquí su limpieza abierta. Antes el cronómetro corría para
+        // siempre y la siguiente limpieza de ese cuarto se rechazaba por "ya
+        // tiene una en curso". Quien la termina con el formulario la cierra
+        // ANTES de mover el semáforo, así que aquí ya no encuentra nada.
+        if ($from === RoomStatus::Cleaning->value
+            && $toStatus !== RoomStatus::Cleaning->value
+            && empty($context['cleaning_id'])) {
+            RoomCleaning::closeOpenFor(
+                $room,
+                ($context['auto'] ?? false) ? RoomCleaning::CLOSED_BY_CLOCK : RoomCleaning::CLOSED_BY_STATUS,
+            );
         }
 
         RoomStatusChanged::dispatch($room, $from, $changedBy?->id);

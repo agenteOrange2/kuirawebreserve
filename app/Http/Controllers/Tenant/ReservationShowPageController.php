@@ -37,6 +37,8 @@ class ReservationShowPageController extends ReservationsPageController
             'roomType:id,name',
             'ratePlan:id,name,type',
             'guest:id,first_name,last_name,phone,email',
+            'liveCourtesy.requester:id,name',
+            'liveCourtesy.decider:id,name',
         ])->loadSum('payments', 'amount');
 
         $activities = Activity::query()
@@ -101,6 +103,14 @@ class ReservationShowPageController extends ReservationsPageController
             'chargeOptions' => $chargeOptions,
             'holdMinutes' => $this->policy()->holdMinutes(),
             'contract' => $this->contractPayload($reservation),
+            // Cortesías (módulo cortesias): quién puede darlas o pedirlas y
+            // si quien mira las decide.
+            'courtesyAccess' => [
+                'enabled' => (bool) tenant()?->hasModule('cortesias') && $request->user()->can('courtesies.request'),
+                'is_owner' => $request->user()->hasRole(\App\Services\StaffAccess::OWNER),
+                'user_id' => $request->user()->id,
+                'categories' => config('courtesies.categories'),
+            ],
         ]);
     }
 

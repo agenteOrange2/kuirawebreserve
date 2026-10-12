@@ -242,7 +242,19 @@ class ReservationReportsController extends Controller
         $reservedPending = round((float) $sold->sum(fn (Reservation $r) => $this->pendingOf($r)), 2);
         $withDebt = $sold->filter(fn (Reservation $r) => $this->pendingOf($r) > 0.009)->count();
 
+        // Cortesías aprobadas en el rango (módulo cortesias): ya están
+        // restadas del hospedaje vendido. No son dinero: se informan aparte
+        // para que "vendimos menos" tenga explicación.
+        $courtesies = \App\Models\Courtesy::query()
+            ->where('status', \App\Models\Courtesy::STATUS_APPROVED)
+            ->whereBetween('decided_at', [$from, $to])
+            ->when($roomId, fn ($q) => $q->where(fn ($inner) => $inner
+                ->whereHas('reservation', fn ($r) => $r->where('room_id', $roomId))
+                ->orWhereHas('stay', fn ($st) => $st->where('room_id', $roomId))));
+
         return [
+            'courtesies' => round((float) (clone $courtesies)->sum('amount'), 2),
+            'courtesies_count' => (clone $courtesies)->count(),
             'lodging' => $cash['lodging'],
             'pos' => $cash['pos'],
             'collected' => $cash['collected'],
